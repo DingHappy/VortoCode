@@ -28,13 +28,14 @@ import hashlib
 import json
 import logging
 import re
-import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.scheduling import codex_watch
+from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
 
 logger = logging.getLogger("vortocode.codex")
 
@@ -67,29 +68,66 @@ def _path(root: str) -> Path:
     return Path(root) / ".vortocode" / "codex" / "supervisor.json"
 
 
+def _valid_record(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    config, marks = data.get("config", {}), data.get("marks", {})
+    if not isinstance(config, dict) or not isinstance(marks, dict):
+        return False
+    if "nudge" in config and type(config["nudge"]) is not bool:
+        return False
+    if "interval_minutes" in config:
+        minutes = config["interval_minutes"]
+        low, high = _LIMITS["interval_minutes"]
+        if type(minutes) is not int or not low <= minutes <= high:
+            return False
+    if "last_check" in data and codex_watch._parse(data["last_check"]) is None:
+        return False
+    for mark in marks.values():
+        if not isinstance(mark, dict):
+            return False
+        if "reviewed_turn" in mark and (not isinstance(mark["reviewed_turn"], str) or not mark["reviewed_turn"]):
+            return False
+        if "review_status" in mark:
+            status = mark["review_status"]
+            if (not mark.get("reviewed_turn") or not isinstance(status, str)
+                    or status not in {"running", "succeeded", "failed", "superseded"}):
+                return False
+    return True
+
+
 def _load(root: str) -> Dict[str, Any]:
     try:
         data = json.loads(_path(root).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError):
+        raise OSError("Codex 监管记录无法读取，已保留原文件；未重置判断记录或设置") from None
+    if not _valid_record(data):
+        raise OSError("Codex 监管记录格式无效，已保留原文件；未重置判断记录或设置")
+    return data
 
 
 def _save(root: str, data: Dict[str, Any]) -> None:
-    path = _path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        json.dump(data, handle, ensure_ascii=False)
-        temp = Path(handle.name)
-    temp.replace(path)
+    write_json(_path(root), data)
+
+
+@contextmanager
+def _state_lock(root: str):
+    try:
+        with pipeline_lock(root, "codex-supervisor", kind="state"):
+            yield
+    except PipelineBusy:
+        raise OSError("Codex 监管记录正在更新，请稍后核对") from None
 
 
 def _save_progress(root: str, data: Dict[str, Any]) -> None:
     """观察写入保留用户刚保存的设置；配置写入仍由 save_config 完成。"""
-    latest = _load(root)
-    if "config" in latest:
-        data["config"] = latest["config"]
-    _save(root, data)
+    with _state_lock(root):
+        latest = _load(root)
+        if "config" in latest:
+            data["config"] = latest["config"]
+        _save(root, data)
 
 
 def load_config(root: str) -> Dict[str, Any]:
@@ -101,19 +139,22 @@ def load_config(root: str) -> Dict[str, Any]:
 
 
 def save_config(root: str, **changes: Any) -> Dict[str, Any]:
-    data = _load(root)
-    config = load_config(root)
-    for key, value in changes.items():
-        if value is None or key not in DEFAULTS:
-            continue
-        if key == "nudge":
-            config[key] = bool(value)
-        else:
-            low, high = _LIMITS[key]
-            config[key] = max(low, min(high, int(value)))
-    data["config"] = config
-    _save(root, data)
-    return config
+    with _state_lock(root):
+        data = _load(root)
+        config = {**DEFAULTS, **data.get("config", {})}
+        for key, value in changes.items():
+            if value is None or key not in DEFAULTS:
+                continue
+            if key == "nudge":
+                if type(value) is not bool:
+                    raise ValueError("nudge 必须是布尔值")
+                config[key] = value
+            else:
+                low, high = _LIMITS[key]
+                config[key] = max(low, min(high, int(value)))
+        data["config"] = config
+        _save(root, data)
+        return config
 
 
 def describe_config(config: Dict[str, Any]) -> str:
@@ -340,6 +381,17 @@ def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
 
 
 async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -> None:
+    """同一运行端一次只巡视一轮；跨进程锁随取消或进程退出释放。"""
+    if not _path(root).parent.exists():
+        return  # 没有观察记录或动作，保留从未启用时不创建状态目录的行为。
+    try:
+        with pipeline_lock(root, "codex-supervisor", kind="check"):
+            await _supervise_once(root, now, notify=notify, llm=llm)
+    except PipelineBusy:
+        return  # 另一个巡视者在处理；不排队、不重复认领。
+
+
+async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -> None:
     """到点才检查一次。没收到过 Codex 报告就什么也不做。"""
     now = now if now.tzinfo else now.astimezone()
     # Mac 不再报到时 record_report 不会跑：认领后断线的动作在这里也要落到「结果无法确认」
@@ -528,6 +580,8 @@ def build_supervisor_tools(root: str) -> list:
             config = save_config(root, **changes) if changes else load_config(root)
         except (TypeError, ValueError):
             return "没改成：分钟数要是整数。"
+        except OSError:
+            return "监管记录暂不可用，未修改设置；请先核对存储和现有记录。"
         return ("已更新。" if changes else "现在的设置：") + describe_config(config) + _review_issues(root)
 
     return [Tool("codex_supervision",
