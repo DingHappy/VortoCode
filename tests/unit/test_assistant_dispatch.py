@@ -48,6 +48,63 @@ def test_propose_only_records_and_targets_registered_projects(tmp_path):
         dispatch.propose(str(tmp_path), project="VortoCode", title="", goal="y")
 
 
+def test_retry_chain_cannot_fork_or_reset_attempts_from_an_old_parent(tmp_path):
+    root = str(tmp_path)
+    parent = dispatch.propose(root, project="VortoCode", title="修复", goal="目标")
+    dispatch._update(root, parent["id"], lambda item: item.update(status="failed"))
+    child = dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=parent["id"])
+    assert child["attempt"] == 2
+    with pytest.raises(dispatch.DispatchError, match="已有后续尝试"):
+        dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=parent["id"])
+    dispatch._update(root, child["id"], lambda item: item.update(status="failed"))
+    last = dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=child["id"])
+    assert last["attempt"] == dispatch.MAX_ATTEMPTS
+    dispatch._update(root, last["id"], lambda item: item.update(status="failed"))
+    with pytest.raises(dispatch.DispatchError, match="上限"):
+        dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=last["id"])
+    assert len(dispatch.list_dispatches(root)) == 3
+
+
+def test_concurrent_retry_proposals_create_one_child(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    root = str(tmp_path)
+    parent = dispatch.propose(root, project="VortoCode", title="修复", goal="目标")
+    dispatch._update(root, parent["id"], lambda item: item.update(status="failed"))
+
+    def propose(_):
+        try:
+            return dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=parent["id"])
+        except dispatch.DispatchError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(propose, range(4)))
+    assert sum(result is not None for result in results) == 1
+    assert len(dispatch.list_dispatches(root)) == 2
+
+
+def test_archived_or_cancelled_child_does_not_reopen_an_old_retry_parent(tmp_path):
+    root = str(tmp_path)
+    parent = dispatch.propose(root, project="VortoCode", title="修复", goal="目标")
+    dispatch._update(root, parent["id"], lambda item: item.update(status="failed"))
+    child = dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=parent["id"])
+    dispatch.cancel(root, child["id"])
+    # Archived children can be absent from the active list; the parent retains the consumed continuation.
+    dispatch._save(root, [item for item in dispatch.list_dispatches(root) if item["id"] != child["id"]])
+    with pytest.raises(dispatch.DispatchError, match="已有后续尝试"):
+        dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=parent["id"])
+
+
+def test_legacy_child_without_parent_marker_still_blocks_a_fork(tmp_path):
+    root = str(tmp_path)
+    parent = dispatch.propose(root, project="VortoCode", title="修复", goal="目标")
+    dispatch._update(root, parent["id"], lambda item: item.update(status="failed"))
+    child = dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=parent["id"])
+    dispatch._update(root, parent["id"], lambda item: item.pop("retry_dispatch_id"))
+    with pytest.raises(dispatch.DispatchError, match=child["id"]):
+        dispatch.propose(root, project="VortoCode", title="修复", goal="目标", retry_of=parent["id"])
+
+
 async def test_approve_sends_prompt_to_registered_loopback_port(tmp_path):
     entry = dispatch.propose(str(tmp_path), project="VortoCode", title="修登录", goal="改超时", criteria=["单测"])
     http = _Http([{"id": dispatch.submission_task_id(entry["request_id"]), "status": "queued"}])

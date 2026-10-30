@@ -197,16 +197,6 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
     if retry_note:
         goal = goal + "\n\n这次换个做法：" + retry_note
     attempt = 1
-    if retry_of:
-        previous = next((item for item in _load(root) if item.get("id") == retry_of), None)
-        if previous is None:
-            raise DispatchError(f"没有任务单 {retry_of}")
-        if previous.get("status") not in {"failed", "stopped", "send_failed"}:
-            raise DispatchError("只能接着失败或没做完的任务单重派")
-        attempt = int(previous.get("attempt") or 1) + 1
-        if attempt > MAX_ATTEMPTS:
-            raise DispatchError(f"这件事已经试了 {MAX_ATTEMPTS} 次，再派多半还是失败：先跟用户商量换个做法或拆小")
-        goal = goal + "\n\n" + _retry_context(previous)
     goal = goal[:MAX_GOAL]
     entry = {
         "id": f"dsp-{uuid.uuid4().hex[:10]}",
@@ -232,6 +222,27 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
     }
     with _transaction(root):
         items = _load(root)
+        if retry_of:
+            previous = next((item for item in items if item.get("id") == retry_of), None)
+            if previous is None:
+                raise DispatchError(f"没有任务单 {retry_of}")
+            if previous.get("status") not in {"failed", "stopped", "send_failed"}:
+                raise DispatchError("只能接着失败或没做完的任务单重派")
+            if previous.get("project") != target["name"]:
+                raise DispatchError("重试必须保留原任务单的项目")
+            child = previous.get("retry_dispatch_id") or next(
+                (item["id"] for item in items if item.get("retry_of") == retry_of), "")
+            if child:
+                raise DispatchError(f"这张任务单已有后续尝试 {child}，请核对该任务，不要从旧失败单重复派")
+            attempt = previous.get("attempt", 1)
+            if type(attempt) is not int or attempt < 1:
+                raise DispatchError("尝试次数记录无效，请先与用户核对")
+            if attempt >= MAX_ATTEMPTS:
+                raise DispatchError(f"这件事已经试了 {MAX_ATTEMPTS} 次，已达尝试上限：先跟用户商量换个做法或拆小")
+            entry["attempt"] = attempt + 1
+            entry["goal"] = (goal + "\n\n" + _retry_context(previous))[:MAX_GOAL]
+            # 与子单一起落盘，后续子单归档也不能从旧父单再分叉。
+            previous["retry_dispatch_id"] = entry["id"]
         if link and link.get("criterion_id") and not retry_of:
             busy = next((item for item in items if (item.get("goal_link") or {}).get("criterion_id") == link["criterion_id"]
                          and (item.get("goal_link") or {}).get("id") == link["id"]
@@ -304,6 +315,49 @@ def confirm_goal(root: str, dispatch_id: str) -> Dict[str, Any]:
 def record_outcome(root: str, dispatch_id: str, outcome: Dict[str, Any]) -> Dict[str, Any]:
     """记下助理对一张结束的任务单的复盘（逐条验收 / 失败诊断）。只记一次：结束一轮复盘一次。"""
     return _update(root, dispatch_id, lambda item: item.update(outcome={**outcome, "at": _now()}))
+
+
+def _review_source(item: Dict[str, Any]) -> str:
+    import hashlib
+    source = {key: item.get(key) for key in ("status", "project", "title", "goal", "brief", "criteria",
+                                           "result", "error", "branch", "goal_link", "tainted", "session",
+                                           "attempt", "remote_task_id", "request_id")}
+    evidence = item.get("delivery_evidence") or {}
+    source["verification"] = evidence.get("verification") if isinstance(evidence, dict) else None
+    return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def claim_dispatch_review(root: str, dispatch_id: str) -> tuple[Dict[str, Any], bool]:
+    """认领一次终态复盘；通知重试、并发巡检和进程恢复不能再次烧模型。"""
+    with _transaction(root):
+        items = _load(root)
+        item = next((value for value in items if value["id"] == dispatch_id), None)
+        if item is None:
+            raise DispatchError(f"没有这张任务单：{dispatch_id}")
+        if item.get("status") not in {"done", "failed"} or item.get("outcome") or item.get("outcome_review"):
+            return dict(item), False
+        item["outcome_review"] = {"id": uuid.uuid4().hex, "status": "running",
+                                  "source": _review_source(item), "at": _now()}
+        _save(root, items)
+        return dict(item), True
+
+
+def finish_dispatch_review(root: str, dispatch_id: str, review_id: str,
+                           outcome: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """只接收原认领的结果；状态/正文变化时不采用旧判断或起草下一次。"""
+    def finish(item: Dict[str, Any]) -> None:
+        claim = item.get("outcome_review") or {}
+        if claim.get("id") != review_id or claim.get("status") != "running":
+            raise DispatchError("复盘认领已变化，请核对当前任务")
+        if item.get("outcome") or claim.get("source") != _review_source(item):
+            claim["status"] = "superseded"
+        elif outcome:
+            claim["status"] = "completed"
+            item["outcome"] = {**outcome, "at": _now()}
+        else:
+            claim["status"] = "failed"
+        claim["finished_at"] = _now()
+    return _update(root, dispatch_id, finish)
 
 
 def list_dispatches(root: str) -> List[Dict[str, Any]]:

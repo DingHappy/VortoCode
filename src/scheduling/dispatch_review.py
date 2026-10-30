@@ -119,15 +119,26 @@ async def review_outcome(item: Dict[str, Any], *, llm: Any = None) -> Optional[D
 
 
 async def follow_up(root: str, item: Dict[str, Any], review=review_outcome) -> Dict[str, Any]:
-    """结束的任务单复盘一次；失败且值得再试时起草下一次。返回带复盘结果的任务单（复盘失败就原样返回）。"""
+    """持久认领后复盘一次；失败不自动重跑，只有有效结果才可起草下一次。"""
     if item.get("outcome") or item.get("status") not in {"done", "failed"}:
         return item
+    try:
+        item, claimed = assistant_dispatch.claim_dispatch_review(root, item["id"])
+    except (assistant_dispatch.DispatchError, OSError):
+        return {**item, "outcome_review": {"status": "unavailable"}}  # 未落盘，不调用模型。
+    if not claimed:
+        return item
+    review_id = item["outcome_review"]["id"]
     try:
         outcome = await review(item)
     except Exception as error:  # noqa: BLE001 —— 复盘是锦上添花：失败照常通知
         logger.warning("任务单复盘失败：%s", type(error).__name__)
         outcome = None
-    if not outcome:
+    try:
+        item = assistant_dispatch.finish_dispatch_review(root, item["id"], review_id, outcome)
+    except (assistant_dispatch.DispatchError, OSError):
+        return item  # 保留持久认领，不能因结果保存失败再跑模型。
+    if not outcome or item["outcome_review"]["status"] != "completed":
         return item
     if outcome.get("kind") == "diagnosis" and outcome.get("retry"):
         attempt = int(item.get("attempt") or 1)
@@ -147,7 +158,10 @@ async def follow_up(root: str, item: Dict[str, Any], review=review_outcome) -> D
             except assistant_dispatch.DispatchError as error:
                 outcome["retry"] = False
                 outcome["draft_error"] = str(error)[:200]
+            except OSError:
+                outcome["retry"] = False
+                outcome["draft_error"] = "重试任务保存结果不明，请先核对任务列表，不要重复起草"
     try:
         return assistant_dispatch.record_outcome(root, item["id"], outcome)
-    except assistant_dispatch.DispatchError:
+    except (assistant_dispatch.DispatchError, OSError):
         return {**item, "outcome": outcome}
