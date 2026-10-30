@@ -108,7 +108,10 @@ async def test_bad_or_broken_review_still_notifies_plainly(tmp_path):
     async def boom(_item):
         raise TimeoutError
     done = _ended(root, "done", branch="vorto/fix")
-    assert await review.follow_up(root, done, boom) is done
+    unfinished = await review.follow_up(root, done, boom)
+    assert unfinished["status"] == "done" and "outcome" not in unfinished
+    assert unfinished["outcome_review"]["status"] == "failed"
+    assert "助理复盘未完成" in watch.status_message(unfinished)
     unsure = review.parse_outcome(json.dumps({"criteria": [{"text": "x", "verdict": "probably"}]}), done)
     assert unsure is None                                                   # 读不懂的判定不当真
 
@@ -166,3 +169,154 @@ async def test_malformed_retry_does_not_create_a_task_draft(tmp_path):
 def test_retry_diagnosis_and_change_cannot_be_coerced_from_structured_data(field, value):
     response = {"diagnosis": "原因待核对", "retry": True, "change": "补齐依赖后再试", field: value}
     assert review.parse_outcome(json.dumps(response), {"status": "failed"}) is None
+
+
+@pytest.mark.parametrize("mode", ["exception", "invalid"])
+async def test_failed_review_is_attempted_once_even_with_stale_caller_snapshot(tmp_path, mode):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="测试失败")
+    calls = 0
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        if mode == "exception":
+            raise RuntimeError("temporary failure")
+        return None
+
+    for _ in range(3):
+        latest = await review.follow_up(root, item, reviewer)
+    assert calls == 1 and latest["outcome_review"]["status"] == "failed"
+    assert "outcome" not in latest and len(dispatch.list_dispatches(root)) == 1
+
+
+async def test_concurrent_reviews_only_call_one_worker(tmp_path):
+    import asyncio
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="测试失败")
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return {"kind": "diagnosis", "diagnosis": "等待外部修复", "retry": False, "change": ""}
+
+    first = asyncio.create_task(review.follow_up(root, item, reviewer))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        second = await review.follow_up(root, item, reviewer)
+        assert calls == 1 and second["outcome_review"]["status"] == "running"
+    finally:
+        release.set()
+        await first
+    assert dispatch.list_dispatches(root)[0]["outcome_review"]["status"] == "completed"
+
+
+async def test_interrupted_claim_is_not_replayed_after_recovery(tmp_path):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+    claimed, ok = dispatch.claim_dispatch_review(root, item["id"])
+    assert ok and claimed["outcome_review"]["status"] == "running"
+
+    async def forbidden(_item):
+        pytest.fail("Recovered claim cannot call the model again")
+
+    latest = await review.follow_up(root, item, forbidden)
+    assert latest["outcome_review"]["status"] == "running"
+    assert "助理复盘未完成" in watch.status_message(latest)
+
+
+@pytest.mark.parametrize("phase", ["claim", "finish"])
+async def test_failed_review_write_cannot_replay_the_model(tmp_path, monkeypatch, phase):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+    calls = 0
+    save = dispatch._save
+
+    def broken(root, items):
+        raise OSError("private path")
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        monkeypatch.setattr(dispatch, "_save", broken)
+        return {"kind": "diagnosis", "diagnosis": "需核对", "retry": True, "change": "换个做法"}
+
+    if phase == "claim":
+        monkeypatch.setattr(dispatch, "_save", broken)
+    latest = await review.follow_up(root, item, reviewer)
+    assert calls == (0 if phase == "claim" else 1) and "outcome" not in latest
+    assert len(dispatch.list_dispatches(root)) == 1
+    monkeypatch.setattr(dispatch, "_save", save)
+    if phase == "finish":
+        await review.follow_up(root, item, reviewer)
+        assert calls == 1
+
+
+@pytest.mark.parametrize("change,value", [
+    ("status", "running"), ("result", "新结果"), ("criteria", ["新标准"]), ("goal", "新目标"),
+    ("tainted", True), ("session", "new-owner"), ("attempt", 3), ("remote_task_id", "t2"),
+    ("delivery_evidence", {"verification": {"status": "failed"}}),
+])
+async def test_changed_review_source_cannot_create_a_retry(tmp_path, change, value):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+
+    async def reviewer(_item):
+        dispatch._update(root, item["id"], lambda current: current.update({change: value}))
+        return {"kind": "diagnosis", "diagnosis": "过期判断", "retry": True, "change": "旧做法"}
+
+    latest = await review.follow_up(root, item, reviewer)
+    assert latest["outcome_review"]["status"] == "superseded" and "outcome" not in latest
+    assert len(dispatch.list_dispatches(root)) == 1
+
+
+async def test_notification_retry_does_not_repeat_a_failed_review(tmp_path):
+    root = str(tmp_path)
+    item = dispatch.propose(root, project="VortoCode", title="修复", goal="目标")
+    calls, notices = 0, []
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError
+
+    async def refresh(_root):
+        return dispatch.list_dispatches(root)
+
+    async def notify(text, confirm_id=""):
+        notices.append(text)
+        return len(notices) > 1
+
+    await watch.watch_once(root, NOW, notify=notify, refresh=refresh, times=[], review=reviewer)
+    dispatch._update(root, item["id"], lambda row: row.update(status="failed"))
+    for _ in range(3):
+        await watch.watch_once(root, NOW, notify=notify, refresh=refresh, times=[], review=reviewer)
+    assert calls == 1 and len(notices) == 2
+    assert all("助理复盘未完成" in text for text in notices)
+    assert watch._load_state(root)["seen"][item["id"]] == "failed"
+
+
+async def test_retry_draft_save_failure_is_visible_and_never_replayed(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+    calls = 0
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        return {"kind": "diagnosis", "diagnosis": "换个办法", "retry": True, "change": "调整方案"}
+
+    def broken(*args, **kwargs):
+        raise OSError("private path")
+
+    monkeypatch.setattr(dispatch, "propose", broken)
+    latest = await review.follow_up(root, item, reviewer)
+    assert latest["outcome"]["retry"] is False
+    assert "尚未确认生成" in watch.status_message(latest)
+    assert "private path" not in watch.status_message(latest)
+    await review.follow_up(root, item, reviewer)
+    assert calls == 1 and len(dispatch.list_dispatches(root)) == 1
