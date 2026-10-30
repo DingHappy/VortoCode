@@ -969,10 +969,10 @@ export class GatewayClient {
     await this.request(`/api/goals/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
-  async runGoal(id: string, resume = false): Promise<{ goal: GoalItem; task: TaskItem }> {
+  async runGoal(id: string, resume = false, previousTaskId = ""): Promise<{ goal: GoalItem; task: TaskItem; replayed: boolean }> {
     return this.request(`/api/goals/${encodeURIComponent(id)}/run`, {
       method: "POST",
-      body: JSON.stringify({ resume }),
+      body: JSON.stringify({ resume, expected_task_id: previousTaskId }),
     });
   }
 

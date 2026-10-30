@@ -961,6 +961,7 @@ export interface GoalItem {
 }
 
 export interface CreateGoalInput {
+  request_id?: string;
   objective: string;
   acceptance_criteria: string[];
   constraints?: string[];

@@ -2112,10 +2112,10 @@ function App() {
     const taskScope = captureTaskScope();
     setGoalSubmitting(true);
     try {
-      const result = await client.runGoal(goal.id, resume);
+      const result = await client.runGoal(goal.id, resume, goal.task_ids[goal.task_ids.length - 1] ?? "");
       setGoals((previous) => [result.goal, ...previous.filter((item) => item.id !== goal.id)]);
       if (taskScope.current()) upsertTask(result.task, client);
-      setBanner(resume ? "已从持久计划断点续跑" : goal.status === "draft" ? "目标合同已确认，隔离开发任务开始执行" : "已按目标合同开始新一轮执行");
+      setBanner(result.replayed ? "已找到本轮原任务，未重复下发，请核对任务状态" : resume ? "已从持久计划断点续跑" : goal.status === "draft" ? "目标合同已确认，隔离开发任务开始执行" : "已按目标合同开始新一轮执行");
     } catch (error) {
       setBanner(errorText(error, "目标执行失败"));
     } finally {
