@@ -395,7 +395,7 @@ def test_claimed_action_without_receipt_becomes_unknown_not_failed_or_resent(tmp
     action = watch.load_actions(root)[0]
     assert action["status"] == "unknown" and "可能已经发出，也可能没有" in action["error"]
     assert "不会自动重发" in watch.action_result_notice(action)
-    assert not sup._pending_action(root, "th1")            # 不再把这个会话永远挡在「还有动作没办完」
+    assert sup._pending_action(root, "th1")                # 结果不明仍阻止自动推进，不等于没发出去
     with pytest.raises(watch.CodexActionError, match="无法确认"):
         watch.claim_action(root, action_id)                # 不会被重新认领、重发
     assert watch.settle_unconfirmed_actions(root, claimed_at + timedelta(hours=1)) == []      # 只标一次

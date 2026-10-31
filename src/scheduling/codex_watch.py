@@ -405,6 +405,11 @@ def _goal_supervision(root: str, state: dict, records: dict, stamp: datetime) ->
                 raise ValueError("执行观测已过期，请刷新后核对")
             reason = codex_goal.stopped(rows, goal, link)
             if not reason:
+                try:
+                    reason = uncertain_action_reason([a for a in blocking_actions(root, tid) if action_outcome(a) == "unknown"])
+                except CodexActionStorageError:
+                    reason = "动作记录不可用，自动推进已暂停，请核对存储"
+            if not reason:
                 reason = codex_review_context.blocked_reason(thread.get("turn") or {})
             item.update(state="confirmed" if goal["confirmed"] else "paused" if reason else "active",
                         reason=reason or "按已授权验收项跟进，下一步仍需批准")
@@ -548,7 +553,29 @@ def build_codex_tools(root: str) -> list:
 _ACTION_TEXT_MAX = 2000
 _ACTIONS_KEEP = 100
 _ACTION_TERMINAL = {"sent", "failed", "cancelled", "expired"}
-_ACTION_STATES = _ACTION_TERMINAL | {"proposed", "approved", "sending", "unknown"}
+_ACTION_PENDING = {"proposed", "approved", "sending", "unknown"}
+_ACTION_STATES = _ACTION_TERMINAL | _ACTION_PENDING
+_UNCERTAIN_OUTCOME = re.compile(r"无法确认|可能已送达")
+
+
+def action_outcome(action: dict) -> str:
+    """Legacy uncertain failures remain uncertain in every backend consumer."""
+    status = action.get("status", "")
+    return "unknown" if status == "failed" and _UNCERTAIN_OUTCOME.search(str(action.get("error") or "")) else status
+
+
+def blocking_actions(root: str, thread_id: str) -> List[dict]:
+    return [a for a in load_actions(root) if a.get("thread_id") == thread_id and action_outcome(a) in _ACTION_PENDING]
+
+
+def uncertain_action_reason(actions: List[dict]) -> str:
+    return (f"有 {len(actions)} 条动作结果仍无法确认，自动推进已暂停；请核对原会话，等待真实回执，不要重复发送。"
+            if actions else "")
+
+
+def _automatic_action(action: dict) -> bool:
+    return (action.get("automatic") is True or action.get("requires_complete_context") is True
+            or ("automatic" not in action and not action.get("session")))
 
 
 def _actions_path(root: str) -> Path:
@@ -578,6 +605,7 @@ def _validate_actions(items: Any) -> None:
                 or not isinstance(item.get("status"), str) or item["status"] not in _ACTION_STATES
                 or not isinstance(item.get("text", ""), str) or len(item.get("text", "")) > _ACTION_TEXT_MAX
                 or (item["kind"] == "message" and not item.get("text", "").strip())
+                or ("automatic" in item and type(item["automatic"]) is not bool)
                 or any(k in item and (not isinstance(item[k], str) or _parse(item[k]) is None) for k in ("created_at", "updated_at"))):
             raise CodexActionStorageError("Codex 动作记录格式无效，已保留原文件；未重建或重发，请核对存储")
         if item["id"] in seen:
@@ -588,7 +616,7 @@ def _validate_actions(items: Any) -> None:
 def _save_actions(root: str, items: List[dict]) -> None:
     _validate_actions(items)
     excess = max(0, len(items) - _ACTIONS_KEEP)
-    retired = {i for i, item in enumerate(items) if item["status"] in _ACTION_TERMINAL}
+    retired = {i for i, item in enumerate(items) if action_outcome(item) in _ACTION_TERMINAL}
     if len(retired) < excess:
         raise CodexActionError("Codex 未解决动作记录已达上限，请先核对现有动作；未保存新提议，也未删除旧记录")
     remove = set(sorted(retired)[:excess])
@@ -797,7 +825,7 @@ def owner_driving(root: str, thread: dict) -> bool:
     request = " ".join(str(turn.get("request") or "").split())[:200]
     ours = [" ".join(str(item.get("text") or "").split())[:200] for item in load_actions(root)
             if item.get("thread_id") == thread.get("id") and item.get("kind") == "message"
-            and item.get("status") in {"sending", "sent", "unknown"}]
+            and action_outcome(item) in {"sending", "sent", "unknown"}]
     return not any(text and request and (request.startswith(text[:120]) or text.startswith(request[:120]))
                    for text in ours)
 
@@ -806,19 +834,21 @@ def propose_action(root: str, *, thread: str, kind: str, text: str = "", session
                    tainted: bool = False, expected_turn_id: Optional[str] = None,
                    expected_handover_token: Optional[str] = None, expected_goal_revision: Optional[int] = None,
                    expected_context_fingerprint: Optional[str] = None,
-                   expected_handover_fingerprint: Optional[str] = None) -> dict:
+                   expected_handover_fingerprint: Optional[str] = None, automatic: bool = False) -> dict:
     # Fixed order: handover -> actions. No model/RPC/notification under either lock.
     with _handover_lock(root), _actions_lock(root):
         return _propose_action(root, thread=thread, kind=kind, text=text, session=session, tainted=tainted,
                                expected_turn_id=expected_turn_id, expected_handover_token=expected_handover_token,
                                expected_goal_revision=expected_goal_revision, expected_context_fingerprint=expected_context_fingerprint,
-                               expected_handover_fingerprint=expected_handover_fingerprint)
+                               expected_handover_fingerprint=expected_handover_fingerprint, automatic=automatic)
 
 
 def _propose_action(root: str, *, thread: str, kind: str, text: str, session: str, tainted: bool,
                     expected_turn_id: Optional[str], expected_handover_token: Optional[str],
                     expected_goal_revision: Optional[int], expected_context_fingerprint: Optional[str],
-                    expected_handover_fingerprint: Optional[str]) -> dict:
+                    expected_handover_fingerprint: Optional[str], automatic: bool) -> dict:
+    if type(automatic) is not bool:
+        raise CodexActionError("自动动作标记必须是布尔值")
     target = _find_thread(root, thread)
     if not is_handed_over(root, target["id"]):
         raise CodexActionError(f"{thread_label(target)}没交给助理：默认只看不插手。要替它拟话或叫停，"
@@ -845,7 +875,8 @@ def _propose_action(root: str, *, thread: str, kind: str, text: str, session: st
               "thread_cwd": target.get("cwd") or "",
               "kind": kind, "text": text[:_ACTION_TEXT_MAX], "status": "proposed", "tainted": bool(tainted),
               "session": str(session or "")[:80], "turn_id": (target.get("turn") or {}).get("id") or "",
-              "created_at": now, "updated_at": now, "error": ""}
+              "created_at": now, "updated_at": now, "error": "",
+              "automatic": automatic or expected_context_fingerprint is not None}
     if expected_context_fingerprint is not None or (kind == "message" and not session):
         action.update(context_fingerprint=context.fingerprint, requires_complete_context=expected_context_fingerprint is not None)
     record = load_handovers(root).get(target["id"], {})
@@ -864,6 +895,8 @@ def _propose_action(root: str, *, thread: str, kind: str, text: str, session: st
         action.update(handover_token=record["token"], goal_id=goal["id"], goal_revision=goal["revision"],
                       goal_criterion_ids=record["goal"]["criterion_ids"])
     items = load_actions(root)
+    if action["automatic"] and any(a.get("thread_id") == target["id"] and action_outcome(a) in _ACTION_PENDING for a in items):
+        raise CodexActionError("会话已有待处理或结果不明动作，未拟自动下一步；请先核对原会话")
     items.append(action)
     _save_actions(root, items)
     return action
@@ -939,6 +972,8 @@ def _goal_action_current(root: str, action_id: str) -> None:
         reason = stale_reason(action, load_state(root).get("threads") or [])
         if reason:
             raise CodexActionError(f"动作已过时：{reason}")
+        if _automatic_action(action) and any(a["id"] != action_id for a in blocking_actions(root, action["thread_id"])):
+            raise CodexActionError("会话已有其他待处理或结果不明动作，请核对后重新拟话")
         target = _find_thread(root, action["thread_id"])
         context = codex_review_context.read(target.get("turn") or {})
         if "context_fingerprint" in action:
@@ -1007,9 +1042,13 @@ def finish_action(root: str, action_id: str, *, ok: bool, error: str = "", uncer
 def _finish_action(root: str, action_id: str, *, ok: bool, error: str, uncertain: bool) -> dict:
     # unknown 也收：Mac 恢复后补报的迟到回执比「无法确认」更准
     error = str(error or "")[:300]
-    if not ok and (uncertain or "无法确认" in error):
-        return _change(root, action_id, {"sending", "unknown"}, status="unknown", error=error or UNCONFIRMED_ERROR)
-    return _change(root, action_id, {"sending", "unknown"}, status="sent" if ok else "failed", error=error)
+    current = next((a for a in load_actions(root) if a["id"] == action_id), {})
+    allowed = {"sending", "unknown"}
+    if current.get("status") == "failed" and action_outcome(current) == "unknown":
+        allowed.add("failed")
+    if not ok and (uncertain or _UNCERTAIN_OUTCOME.search(error)):
+        return _change(root, action_id, allowed, status="unknown", error=error or UNCONFIRMED_ERROR)
+    return _change(root, action_id, allowed, status="sent" if ok else "failed", error=error)
 
 
 SENDING_TIMEOUT = timedelta(minutes=10)
@@ -1020,8 +1059,8 @@ UNCONFIRMED_ERROR = ("交给 Codex 后一直没收到回执（Mac 断线或观�
 def settle_unconfirmed_actions(root: str, now: Optional[datetime] = None) -> List[dict]:
     """认领后超过 SENDING_TIMEOUT 还没回执的动作标成 unknown（结果无法确认），返回这次标的。
 
-    不当成功也不当失败，更不重发：认领后 Mac 可能已经交给 Codex 才断的线。以前它们会永远停在
-    sending，监管把这个会话当成「还有动作没办完」，再也不给它拟下一步。"""
+    不当成功也不当失败，更不重发：认领后 Mac 可能已经交给 Codex 才断的线。
+    unknown 仍暂停自动推进；真实回执到达后才解除这个条件。"""
     try:
         with _actions_lock(root):
             return _settle_unconfirmed_actions(root, now)
@@ -1062,11 +1101,11 @@ def action_overview(root: str, *, now: Optional[datetime] = None, limit: int = 4
     真机 2026-10-29：上一条早已受理、正在跑，它两次提醒主人「按顺序批准」。只给助理工具看，不进早晚报。"""
     now = now or _now()
     recent = [item for item in load_actions(root)
-              if (_parse(item.get("updated_at")) or now) >= now - within]
+              if action_outcome(item) in _ACTION_PENDING or (_parse(item.get("updated_at")) or now) >= now - within]
     if not recent:
         return ""
     threads = {thread.get("id"): thread for thread in load_state(root).get("threads") or []}
-    lines = ["助理拟过的 Codex 动作（最近 24 小时，以这里的状态为准，不要猜）："]
+    lines = ["助理拟过的 Codex 动作（含全部尚未解决动作与最近 24 小时历史，以这里的状态为准，不要猜）："]
     by_thread: Dict[str, List[dict]] = {}
     for item in recent:
         by_thread.setdefault(str(item.get("thread_id") or ""), []).append(item)
@@ -1074,10 +1113,17 @@ def action_overview(root: str, *, now: Optional[datetime] = None, limit: int = 4
         thread = threads.get(thread_id) or {"id": thread_id, "name": items[-1].get("thread_name"), "cwd": items[-1].get("thread_cwd")}
         waiting = sum(1 for item in items if item.get("status") == "proposed")
         lines.append(f"- {thread_label(thread)}：{'有 ' + str(waiting) + ' 条等主人批准' if waiting else '没有等批的'}")
-        for item in items[-limit:]:
+        uncertain = [item for item in items if action_outcome(item) == "unknown"]
+        if uncertain:
+            lines.append("  " + uncertain_action_reason(uncertain))
+        shown = uncertain[:max(0, limit)]
+        remaining = max(0, limit - len(shown))
+        if remaining:
+            shown += [item for item in items if action_outcome(item) != "unknown"][-remaining:]
+        for item in shown:
             verb = "叫停" if item.get("kind") == "interrupt" else f"发话「{str(item.get('text') or '')[:40]}」"
             detail = f"：{str(item.get('error') or '')[:80]}" if item.get("status") in {"failed", "expired"} and item.get("error") else ""
-            lines.append(f"  · {item.get('id')} {verb} → {ACTION_STATUS_TEXT.get(item.get('status'), item.get('status'))}{detail}")
+            lines.append(f"  · {item.get('id')} {verb} → {ACTION_STATUS_TEXT.get(action_outcome(item), action_outcome(item))}{detail}")
     return "\n".join(lines)
 
 
@@ -1101,7 +1147,7 @@ def action_notice(action: dict) -> str:
 
 def action_result_notice(action: dict) -> str:
     label = _action_label(action)
-    if action.get("status") == "unknown":
+    if action_outcome(action) == "unknown":
         verb = "叫停" if action.get("kind") == "interrupt" else "发话"
         return (f"⚠️ 给 {label} 的{verb}没收到回执：可能已经发出，也可能没有。"
                 "去 Codex 窗口看一眼，不会自动重发。")

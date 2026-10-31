@@ -188,3 +188,38 @@ async def test_stuck_interrupt_rechecks_the_grant_at_proposal_creation(scenario,
     monkeypatch.setattr(watch, "propose_action", changed)
     await supervisor.supervise_once(scenario.root, scenario.now(), notify=notify)
     assert not watch.load_actions(scenario.root)
+
+
+@pytest.mark.parametrize("kind", ["message", "interrupt"])
+async def test_timeout_unknown_blocks_followup_across_restart_until_real_receipt(scenario, kind):
+    notes = []
+
+    async def notify(text, confirm_id=""):
+        notes.append(text)
+        return True
+
+    thread = scenario.report(0, active=True)
+    watch.hand_over(scenario.root, thread, now=T0)
+    await supervisor.supervise_once(scenario.root, T0, notify=notify)
+    action = watch.propose_action(scenario.root, thread=TID, kind=kind, text="可能已生效的人工指令", session="owner")
+    watch.decide_action(scenario.root, action["id"], True)
+    watch.claim_action(scenario.root, action["id"])
+    scenario.report(5)
+    scenario.report(30)
+    model = Model()
+    await supervisor.supervise_once(scenario.root, scenario.now(), notify=notify, llm=model)
+    assert model.calls == 0 and len(watch.load_actions(scenario.root)) == 1
+    assert watch.load_actions(scenario.root)[0]["status"] == "unknown"
+    assert any("自动推进已暂停" in text for text in notes)
+    scenario.regrant()
+    scenario.report(60)
+    await supervisor.supervise_once(scenario.root, scenario.now(), notify=notify, llm=model)
+    assert model.calls == 0
+    # Native receipt reconciliation is the evidence; a regrant or heartbeat was not.
+    watch.finish_action(scenario.root, action["id"], ok=True)
+    scenario.report(90)
+    await supervisor.supervise_once(scenario.root, scenario.now(), notify=notify, llm=model)
+    assert model.calls == 1
+    rows = watch.load_actions(scenario.root)
+    assert rows[0]["id"] == action["id"] and rows[0]["status"] == "sent"
+    assert len(rows) == 2 and rows[1]["automatic"] is True

@@ -5,12 +5,12 @@
 
 来源：决策队列（目标阻塞、子 Agent 提问、委派待验收、后台任务失败、最新一次仍失败的运行）
 + 常驻助理任务单里等你的（待确认下发、在等你回答、下发失败、提交结果待核对）
-+ 助理替你拟给 Codex、等你批准的话（以及最近一天结果无法确认的）。
++ 助理替你拟给 Codex、等你批准的话，以及仍未核对的结果不明动作。
 不含实时操作确认：那只存在于正在进行的会话里，要在那个会话当场回答；早晚报和语音里提它也已过期。
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import PurePath
 from typing import Any, Dict, List, Optional
 
@@ -43,26 +43,18 @@ _CODEX = {
     "proposed": ("medium", "等你批准给 Codex 发话"),
     "unknown": ("high", "给 Codex 的话不确定发没发出去"),
 }
-_CODEX_UNKNOWN_WITHIN = timedelta(hours=24)     # 结果无法确认的没有「处理掉」的按钮，过一天就不再挂着
 
 
 def codex_items(actions: List[Dict[str, Any]], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """助理拟给 Codex 的动作里要主人动手的。真机 2026-10-29 晚报：等批的那条不在这里，
     模型只好拿白天对话里「待批准」的旧结局去说，报了 3 条其实早已发出的。"""
-    now = now or datetime.now(timezone.utc)
+    from src.scheduling.codex_watch import action_outcome
     output = []
     for item in actions:
-        status = str(item.get("status") or "")
+        status = action_outcome(item)
         if status not in _CODEX:
             continue
         updated = str(item.get("updated_at") or item.get("created_at") or "")
-        if status == "unknown":
-            try:
-                moment = datetime.fromisoformat(updated.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if now - (moment if moment.tzinfo else moment.astimezone()) > _CODEX_UNKNOWN_WITHIN:
-                continue
         severity, label = _CODEX[status]
         if status == "proposed" and item.get("kind") == "interrupt":
             label = "等你批准叫停 Codex"

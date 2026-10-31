@@ -271,6 +271,7 @@ def _review_current(root: str, thread: dict, now: datetime, *, handover_fingerpr
             and codex_review_context.read(thread.get("turn") or {}).status == "complete"
             and bool(record)
             and (handover_fingerprint is None or codex_goal.digest(record) == handover_fingerprint)
+            and not _pending_action(root, thread["id"])
             and not codex_watch.owner_driving(root, current)
             and (current.get("execution") or {}).get("ref") == (thread.get("execution") or {}).get("ref")
             and _signature(current) == _signature(thread)
@@ -326,14 +327,13 @@ async def review_turn(thread: dict, *, llm: Any = None, goal: Optional[dict] = N
 
 
 def _pending_action(root: str, thread_id: str) -> bool:
-    return any(item.get("thread_id") == thread_id and item.get("status") in {"proposed", "approved", "sending"}
-               for item in codex_watch.load_actions(root))
+    return bool(codex_watch.blocking_actions(root, thread_id))
 
 
 def _review_order(root: str, state: dict, marks: dict, now: datetime, *, goal_reviews: Optional[dict] = None) -> List[str]:
     """仅从原有完成事件选候选，不另建队列；同名 turn_id 也必须属于同一会话。"""
     pending = {item.get("thread_id") for item in codex_watch.load_actions(root)
-               if item.get("status") in {"proposed", "approved", "sending"}}
+               if codex_watch.action_outcome(item) in {"proposed", "approved", "sending", "unknown"}}
     candidates = []
     handed = codex_watch.load_handovers(root)
     for thread in state.get("threads") or []:
@@ -498,6 +498,7 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
     on_mac: List[str] = []            # 只能你在 Mac 上处理的（登录、额度），不提「我拟好话给 Codex」
     drafts: List[tuple] = []          # (正文, 动作)
     review_failures: List[str] = []
+    uncertain_notices: Dict[str, str] = {}
     review_order = _review_order(root, state, marks, now, goal_reviews=data.get("goal_reviews", {})) if config["nudge"] else []
     review_rank = {tid: rank for rank, tid in enumerate(review_order)}
     review_deadline = started + REVIEW_BUDGET_SECONDS
@@ -552,7 +553,7 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
             if codex_watch.is_handed_over(root, tid) and not _pending_action(root, tid):
                 try:
                     action = codex_watch.propose_action(root, thread=tid, kind="interrupt", expected_turn_id=turn.get("id") or "",
-                                                        expected_handover_fingerprint=handover_fingerprint)
+                                                        expected_handover_fingerprint=handover_fingerprint, automatic=True)
                     drafts.append((text + "\n要叫停这一轮就点「批准」，让它继续跑就点「拒绝」。", action))
                 except codex_watch.CodexActionError:
                     needs_you.append(text[2:])
@@ -580,6 +581,16 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                     if mark.get("goal_notice") != notice_key:
                         needs_you.append(f"{label}{reason}")
                         mark["goal_notice"] = notice_key
+        uncertain = [a for a in codex_watch.blocking_actions(root, tid) if codex_watch.action_outcome(a) == "unknown"]
+        if uncertain and config["nudge"] and record and not codex_watch.owner_driving(root, thread):
+            reason = codex_watch.uncertain_action_reason(uncertain)
+            notice_key = codex_goal.digest(sorted(a["id"] for a in uncertain))
+            if mark.get("uncertain_notice") != notice_key:
+                assessment = reason
+                needs_you.append(f"{label}{reason}")
+                uncertain_notices[tid] = notice_key
+            elif moved or finished:
+                assessment = reason
         context = codex_review_context.read(turn)
         if (config["nudge"] and record and goal_allowed and thread.get("status") == "idle"
                 and turn.get("status") == "completed" and not codex_watch.owner_driving(root, thread)
@@ -648,7 +659,7 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                                                             expected_handover_token=record.get("token"),
                                                             expected_goal_revision=goal["revision"] if goal else None,
                                                             expected_context_fingerprint=context.fingerprint,
-                                                            expected_handover_fingerprint=handover_fingerprint)
+                                                            expected_handover_fingerprint=handover_fingerprint, automatic=True)
                         drafts.append((f"🧭 Codex{label}做完了一轮。{assessment}\n\n" + codex_watch.action_notice(action),
                                        action))
                     except (codex_watch.CodexActionError, OSError) as error:
@@ -697,7 +708,9 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
             if await _send(notify, text):
                 for tid in review_failures:
                     marks[tid]["review_failure_notified"] = True
-                if review_failures:
+                for tid, key in uncertain_notices.items():
+                    marks[tid]["uncertain_notice"] = key
+                if review_failures or uncertain_notices:
                     _save_progress(root, data)
     for body, action in drafts:
         await _send(notify, body, action["id"])
