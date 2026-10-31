@@ -105,9 +105,23 @@ def set_owner_confirm_sender(sender) -> None:
 
 def register_owner_routes(notifier, confirm, media):
     """Identity-scoped cleanup: an old owner cannot clear a newer registration."""
-    set_owner_notifier(notifier)
-    set_owner_confirm_sender(confirm)
-    set_owner_media_sender(media)
+    global _OWNER_NOTIFIER, _OWNER_CONFIRM_SENDER, _OWNER_MEDIA_SENDER
+    global _NOTIFIER_GENERATION, _CONFIRM_GENERATION, _MEDIA_GENERATION
+    previous = (_OWNER_NOTIFIER, _OWNER_CONFIRM_SENDER, _OWNER_MEDIA_SENDER,
+                _NOTIFIER_GENERATION, _CONFIRM_GENERATION, _MEDIA_GENERATION)
+    try:
+        set_owner_notifier(notifier)
+        set_owner_confirm_sender(confirm)
+        set_owner_media_sender(media)
+    except BaseException:
+        _OWNER_NOTIFIER, _OWNER_CONFIRM_SENDER, _OWNER_MEDIA_SENDER = previous[:3]
+        _NOTIFIER_GENERATION, _CONFIRM_GENERATION, _MEDIA_GENERATION = previous[3:]
+        try:
+            from src.agents.tools.media import set_owner_media_sender as restore_media
+            restore_media(send_owner_media if _OWNER_MEDIA_SENDER is not None else None)
+        except Exception:
+            pass
+        raise
     generations = (_NOTIFIER_GENERATION, _CONFIRM_GENERATION, _MEDIA_GENERATION)
 
     def release():

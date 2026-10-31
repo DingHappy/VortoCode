@@ -349,6 +349,25 @@ async def test_old_route_cleanup_cannot_clear_a_new_registration_of_same_callabl
         newer()
 
 
+async def test_partial_route_setup_failure_restores_previous_owner_and_generation(monkeypatch):
+    previous_messages, new_messages = [], []
+    async def previous(text): previous_messages.append(text)
+    async def newer(text): new_messages.append(text)
+    old = im_runtime.register_owner_routes(previous, None, None)
+    try:
+        def fail(_sender):
+            raise RuntimeError("media route setup failed")
+        with monkeypatch.context() as patch:
+            patch.setattr(im_runtime, "set_owner_media_sender", fail)
+            with pytest.raises(RuntimeError, match="setup failed"):
+                im_runtime.register_owner_routes(newer, None, None)
+            assert await im_runtime.notify_owner("previous owner", relay=False)
+            assert previous_messages == ["previous owner"] and not new_messages
+    finally:
+        old()
+    assert not await im_runtime.notify_owner("old handle still cleans up", relay=False)
+
+
 async def test_adapter_close_failure_retains_identity_until_explicit_cleanup(tmp_path, monkeypatch):
     root, _ = setup_config(tmp_path, monkeypatch, configuration(1))
     class Adapter(HostedAdapter):
