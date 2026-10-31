@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 from src.agents.backends.codex import codex_execution_state
 from src.agents.backends.execution import ExecutionProgress, ExecutionSnapshot
 from src.agents.backends.observation_order import ObservationConflict, ObservationCursor, ObservationOrder
+from src.scheduling import codex_goal
+from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
 
 WAIT_GRACE = timedelta(minutes=2)
 STALE_AFTER = timedelta(minutes=30)     # 这么久没收到报告：观察员不在了（Mac 合盖、Desktop 关了）
@@ -168,11 +170,13 @@ def progress_snapshot(root: str) -> dict:
     """Existing API projection; recheck stored observations without changing state."""
     state = load_state(root)
     threads = _clean_threads({"threads": state.get("threads") or []})
-    handed = set(load_handovers(root))
+    records = load_handovers(root)
+    handed = set(records)
     return {"overview": _overview({**state, "threads": threads}, _now(), handed), "threads": threads,
             "handed_over": sorted(handed & {thread["id"] for thread in threads}),
             "received_at": state.get("received_at"), "report_protocol": 1,
-            "report_cursor": state.get("report_cursor")}
+            "report_cursor": state.get("report_cursor"),
+            "goal_supervision": _goal_supervision(root, {**state, "threads": threads}, records, _now())}
 
 
 def execution_is_current(thread: dict, now: datetime) -> bool:
@@ -357,7 +361,50 @@ STATUS_TEXT = {"active": "正在做", "idle": "空闲", "systemError": "出错",
 
 def overview(root: str, *, now: Optional[datetime] = None) -> str:
     """给助理和早晚报用的一段 Codex 进度。没有报告就说明为什么看不到。"""
-    return _overview(load_state(root), now or _now(), set(load_handovers(root)))
+    state, records, stamp = load_state(root), load_handovers(root), now or _now()
+    text = _overview(state, stamp, set(records))
+    for item in _goal_supervision(root, state, records, stamp):
+        text += (f"\n关联目标 {item['goal_id']} → {item['thread_id']}：{item.get('objective', '')}；"
+                 f"推进判断 {item.get('used', '?')}/{item.get('limit', '?')}；"
+                 f"未验收项 {', '.join(item.get('pending', [])) or '无'}；{item['reason']}")
+    return text
+
+
+def goal_supervision(root: str, *, now: Optional[datetime] = None) -> list[dict]:
+    """Project original goal/handover/supervisor records without repairing or running them."""
+    return _goal_supervision(root, load_state(root), load_handovers(root), now or _now())
+
+
+def _goal_supervision(root: str, state: dict, records: dict, stamp: datetime) -> list[dict]:
+    from src.scheduling.codex_supervisor import goal_review_state
+    handed = {tid: record for tid, record in records.items() if "goal" in record}
+    if not handed:
+        return []
+    out = []
+    try:
+        rows = goal_review_state(root)
+    except OSError:
+        return [{"thread_id": tid, "goal_id": record["goal"]["id"], "state": "unknown",
+                 "reason": "推进判断记录不可读，未重置额度，请人工核对"} for tid, record in handed.items()]
+    received = _parse(state.get("received_at"))
+    for tid, record in handed.items():
+        link = record["goal"]
+        item = {"thread_id": tid, "goal_id": link["id"], "limit": link["review_limit"],
+                "used": rows.get(link["id"], {}).get("used", 0), "criterion_ids": link["criterion_ids"]}
+        try:
+            thread = next(t for t in state.get("threads", []) if t["id"] == tid)
+            goal = codex_goal.current(root, record, thread)
+            item.update(objective=goal["objective"], revision=goal["revision"], pending=goal["pending"])
+            if (received is None or not timedelta(0) <= stamp - received <= STALE_AFTER
+                    or not execution_is_current(thread, stamp)):
+                raise ValueError("执行观测已过期，请刷新后核对")
+            reason = codex_goal.stopped(rows, goal, link)
+            item.update(state="confirmed" if goal["confirmed"] else "paused" if reason else "active",
+                        reason=reason or "按已授权验收项跟进，下一步仍需批准")
+        except (KeyError, TypeError, ValueError, OSError, StopIteration) as error:
+            item.update(state="unknown", reason=f"目标状态待核对：{error}")
+        out.append(item)
+    return out
 
 
 def _overview(state: dict, now: datetime, handed: Optional[set] = None) -> str:
@@ -553,36 +600,86 @@ def _handover_path(root: str) -> Path:
 def load_handovers(root: str) -> Dict[str, dict]:
     try:
         data = json.loads(_handover_path(root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
-    return {key: value for key, value in data.items() if isinstance(value, dict)} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        raise CodexActionError("交接记录不可读，已停止插手，请核对原文件") from None
+    if not isinstance(data, dict) or any(not isinstance(v, dict) for v in data.values()):
+        raise CodexActionError("交接记录格式无效，请核对原文件")
+    for record in data.values():
+        if "goal" in record:
+            link = record["goal"]
+            if (not isinstance(link, dict) or set(link) != {"id", "contract", "revision", "review_limit", "criterion_ids"}
+                    or not isinstance(link["id"], str) or not re.fullmatch(r"personal-[A-Za-z0-9_-]{1,64}", link["id"])
+                    or not isinstance(link["contract"], str) or not re.fullmatch(r"[a-f0-9]{64}", link["contract"])
+                    or type(link["revision"]) is not int or link["revision"] < 1
+                    or type(link["review_limit"]) is not int or not 1 <= link["review_limit"] <= codex_goal.MAX_REVIEWS
+                    or not isinstance(link["criterion_ids"], list) or not link["criterion_ids"]
+                    or not all(isinstance(i, str) and i for i in link["criterion_ids"])
+                    or len(set(link["criterion_ids"])) != len(link["criterion_ids"])
+                    or not all(isinstance(record.get(k), str) and record[k] for k in ("token", "instance_id", "cwd"))):
+                raise CodexActionError("目标交接记录格式无效，请核对原文件")
+    return data
 
 
 def _save_handovers(root: str, items: Dict[str, dict]) -> None:
-    path = _handover_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        json.dump(items, handle, ensure_ascii=False)
-        temp = Path(handle.name)
-    temp.replace(path)
+    write_json(_handover_path(root), items)
+
+
+@contextmanager
+def _handover_lock(root: str):
+    try:
+        with pipeline_lock(root, "codex-handover", kind="state"):
+            yield
+    except PipelineBusy:
+        raise CodexActionError("交接正在更新，请稍后重试") from None
 
 
 def is_handed_over(root: str, thread_id: str) -> bool:
     return bool(thread_id) and thread_id in load_handovers(root)
 
 
-def hand_over(root: str, thread: dict, *, now: Optional[datetime] = None) -> dict:
+def hand_over(root: str, thread: dict, *, now: Optional[datetime] = None, goal: Optional[dict] = None) -> dict:
     """把一个会话交给助理。调用方负责先问过主人（确认门）。"""
+    with _handover_lock(root):
+        return _hand_over(root, thread, now=now, goal=goal)
+
+
+def _hand_over(root: str, thread: dict, *, now: Optional[datetime], goal: Optional[dict]) -> dict:
     items = load_handovers(root)
     record = {"name": str(thread.get("name") or "")[:80], "cwd": str(thread.get("cwd") or "")[:200],
               "since": (now or _now()).timestamp()}
+    if goal is not None:
+        latest = _find_thread(root, str(thread["id"]))
+        if latest != thread or not execution_is_current(thread, now or _now()) or not thread.get("execution"):
+            raise CodexActionError("执行观测已变化或不支持宿主身份，请刷新后再交接目标")
+        try:
+            link = codex_goal.binding(root, goal["id"], goal["revision"], goal["review_limit"], goal["criterion_ids"])
+        except (KeyError, TypeError, ValueError, OSError) as error:
+            raise CodexActionError(f"目标不能交接：{error}") from error
+        import uuid
+        record.update(goal=link, instance_id=thread["execution"]["ref"]["instance_id"], token=uuid.uuid4().hex)
+        if any(key != thread["id"] and value.get("goal", {}).get("id") == link["id"] for key, value in items.items()):
+            raise CodexActionError("这个目标已交给另一个会话，请先收回原交接")
+        from src.scheduling.codex_supervisor import ensure_goal_allowance
+        ensure_goal_allowance(root, link["id"], link["review_limit"],
+                              already_bound=any(v.get("goal", {}).get("id") == link["id"] for v in items.values()))
+    elif items.get(str(thread["id"]), {}).get("goal"):
+        raise CodexActionError("该会话已绑定目标；请先收回，不能静默降级为无目标交接")
     items[str(thread["id"])] = record
     _save_handovers(root, items)
     return record
 
 
-def take_back(root: str, thread_id: str) -> bool:
+def take_back(root: str, thread_id: str, *, expected_token: Optional[str] = None) -> bool:
+    with _handover_lock(root):
+        return _take_back(root, thread_id, expected_token=expected_token)
+
+
+def _take_back(root: str, thread_id: str, *, expected_token: Optional[str]) -> bool:
     items = load_handovers(root)
+    if expected_token is not None and items.get(thread_id, {}).get("token") != expected_token:
+        return False
     if items.pop(thread_id, None) is None:
         return False
     _save_handovers(root, items)
@@ -591,6 +688,11 @@ def take_back(root: str, thread_id: str) -> bool:
 
 def prune_handovers(root: str, threads: List[dict]) -> List[dict]:
     """会话关了就收回交接（下次同名的新会话不会继承）；返回这次收回的。"""
+    with _handover_lock(root):
+        return _prune_handovers(root, threads)
+
+
+def _prune_handovers(root: str, threads: List[dict]) -> List[dict]:
     items = load_handovers(root)
     live = {thread.get("id") for thread in threads}
     gone = [dict(value, id=key) for key, value in items.items() if key not in live]
@@ -622,7 +724,8 @@ def owner_driving(root: str, thread: dict) -> bool:
 
 
 def propose_action(root: str, *, thread: str, kind: str, text: str = "", session: str = "",
-                   tainted: bool = False, expected_turn_id: Optional[str] = None) -> dict:
+                   tainted: bool = False, expected_turn_id: Optional[str] = None,
+                   expected_handover_token: Optional[str] = None, expected_goal_revision: Optional[int] = None) -> dict:
     target = _find_thread(root, thread)
     if not is_handed_over(root, target["id"]):
         raise CodexActionError(f"{thread_label(target)}没交给助理：默认只看不插手。要替它拟话或叫停，"
@@ -647,6 +750,18 @@ def propose_action(root: str, *, thread: str, kind: str, text: str = "", session
               "kind": kind, "text": text[:_ACTION_TEXT_MAX], "status": "proposed", "tainted": bool(tainted),
               "session": str(session or "")[:80], "turn_id": (target.get("turn") or {}).get("id") or "",
               "created_at": now, "updated_at": now, "error": ""}
+    record = load_handovers(root).get(target["id"], {})
+    if expected_handover_token is not None and record.get("token") != expected_handover_token:
+        raise CodexActionError("目标交接已更新，旧建议不再适用")
+    if "goal" in record:
+        try:
+            goal = codex_goal.current(root, record, target)
+        except (KeyError, TypeError, ValueError, OSError) as error:
+            raise CodexActionError(f"目标状态待核对：{error}") from error
+        if expected_goal_revision is not None and goal["revision"] != expected_goal_revision:
+            raise CodexActionError("目标版本已变化，旧建议不再适用")
+        action.update(handover_token=record["token"], goal_id=goal["id"], goal_revision=goal["revision"],
+                      goal_criterion_ids=record["goal"]["criterion_ids"])
     items = load_actions(root)
     items.append(action)
     _save_actions(root, items)
@@ -695,9 +810,14 @@ def expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> Lis
     items = load_actions(root)
     expired = []
     for item in items:
-        if item.get("status") != "proposed":
+        if item.get("status") != "proposed" and not (item.get("handover_token") and item.get("status") == "approved"):
             continue
         reason = stale_reason(item, threads)
+        if not reason and item.get("handover_token"):
+            try:
+                _goal_action_current(root, item["id"])
+            except CodexActionError as error:
+                reason = str(error)
         if reason:
             item.update(status="expired", error=reason, updated_at=_now().isoformat())
             expired.append(dict(item))
@@ -706,14 +826,44 @@ def expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> Lis
     return expired
 
 
+def _goal_action_current(root: str, action_id: str) -> None:
+    action = next((a for a in load_actions(root) if a.get("id") == action_id), {})
+    record = load_handovers(root).get(action.get("thread_id"), {})
+    if not action.get("handover_token"):
+        if record.get("goal"):
+            raise CodexActionError("旧动作未绑定当前目标，请重新拟话")
+        return
+    try:
+        if record.get("token") != action["handover_token"]:
+            raise ValueError("目标交接已收回或更新")
+        target = _find_thread(root, action["thread_id"])
+        goal = codex_goal.current(root, record, target)
+        if action.get("kind") == "message":
+            from src.scheduling.codex_supervisor import goal_review_state
+            if goal["id"] not in goal_review_state(root):
+                raise ValueError("目标推进额度记录缺失，请人工核对")
+        if (goal["id"] != action["goal_id"] or goal["revision"] != action["goal_revision"]
+                or not execution_is_current(target, _now())):
+            raise ValueError("目标或执行观测已变化，请重新拟话")
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        raise CodexActionError(str(error)) from error
+
+
 def decide_action(root: str, action_id: str, approved: bool) -> dict:
     if approved:
         expire_stale_actions(root)       # 批准前按最新进度再核一次：过时的不放行
+        _goal_action_current(root, action_id)
     return _change(root, action_id, {"proposed"}, status="approved" if approved else "cancelled")
 
 
 def claim_action(root: str, action_id: str) -> dict:
-    return _change(root, action_id, {"approved"}, status="sending")
+    with _handover_lock(root):
+        try:
+            _goal_action_current(root, action_id)
+        except CodexActionError as error:
+            _change(root, action_id, {"approved"}, status="expired", error=str(error))
+            raise
+        return _change(root, action_id, {"approved"}, status="sending")
 
 
 def finish_action(root: str, action_id: str, *, ok: bool, error: str = "", uncertain: bool = False) -> dict:
@@ -754,7 +904,9 @@ def settle_unconfirmed_actions(root: str, now: Optional[datetime] = None) -> Lis
 
 def _action_label(action: dict) -> str:
     where = f"（{action['thread_cwd']}）" if action.get("thread_cwd") else ""
-    return f"Codex「{action.get('thread_name')}」{where}"
+    goal = (f"〔目标 {action['goal_id']}，版本 {action.get('goal_revision')}；"
+            f"本次 {', '.join(action.get('goal_criterion_ids', []))}〕" if action.get("goal_id") else "")
+    return f"Codex「{action.get('thread_name')}」{where}{goal}"
 
 
 ACTION_STATUS_TEXT = {"proposed": "等主人批准", "approved": "已批准，等 Mac 交给 Codex", "sending": "正在交给 Codex，结果待核对",
@@ -829,13 +981,33 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
         label = thread_label(target)
         if str(args.get("take_back") or "").strip().lower() in {"1", "true", "yes", "on", "是", "收回"}:
             return f"已收回 {label}：之后只看不插手。" if take_back(root, target["id"]) else f"{label}本来就没交接。"
-        if is_handed_over(root, target["id"]):
+        if not args.get("goal_id") and any(key in args for key in ("goal_revision", "review_limit", "criterion_ids")):
+            return "没有交接：范围和额度必须指定 goal_id，不能降级为无目标交接。"
+        if is_handed_over(root, target["id"]) and not args.get("goal_id"):
             return f"{label}已经交给助理了。"
+        goal = None
+        if args.get("goal_id"):
+            try:
+                goal = codex_goal.binding(root, args["goal_id"], args.get("goal_revision"),
+                                         args.get("review_limit", codex_goal.DEFAULT_REVIEWS),
+                                         args.get("criterion_ids"))
+                objective = codex_goal.snapshot(root, goal["id"])["objective"]
+            except (KeyError, TypeError, ValueError, OSError) as error:
+                return f"没有交接目标：{error}"
         question = (f"把 Codex 会话{label}交给助理盯？\n交接后助理会替它拟下一步、补充要求或叫停，"
                     "每一条仍要你批准；你在 Codex 里亲手发话时它不插话。会话关了或做完就自动收回。")
+        if goal:
+            question = question.replace("会话关了或做完就自动收回。", "会话关闭或目标逐项验收通过后结束交接，单轮结束不算目标完成。")
+            question += (f"\n关联目标：{objective}（{goal['id']}，版本 {goal['revision']}）。"
+                         f"本次仅推进验收项：{', '.join(goal['criterion_ids'])}；其余留待下一次交接。"
+                         f"该目标累计最多 {goal['review_limit']} 次推进判断，包含失败；重交接不清零。"
+                         "相同缺口连续两轮无新验收证据会暂停；目标完成仍需逐项用户验收。")
         if confirm is None or not await confirm(question):
             return f"主人没同意交接 {label}，仍然只看不插手。"
-        hand_over(root, target)
+        try:
+            hand_over(root, target, goal=goal)
+        except (CodexActionError, OSError) as error:
+            return f"没有交接：{error}"
         return f"已交接 {label}。"
 
     async def _propose(kind: str, args: dict) -> str:
@@ -867,7 +1039,11 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
         Tool("codex_handover",
              "把 Mac 上某个 Codex 会话交给助理盯，或收回。默认助理对 Codex 只看不插手；只有交接过的会话才能拟话或叫停。"
              "只在主人明确要求时调用；用会话 id 指定（codex_status 里有），同名时不要猜。交接要主人确认，收回直接生效。",
-             {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用）", "take_back": "true = 收回交接；不填 = 交接"},
+             {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用）", "take_back": "true = 收回交接；不填 = 交接",
+              "goal_id": "可选，关联当前助理已有的 personal- 目标；先用 personal_goals 查询，不按名称猜",
+              "goal_revision": "关联目标时必填，查询取得的当前 revision",
+              "criterion_ids": "可选，英文逗号分隔的本次允许推进的未通过验收项ID；不填为全部未通过项。留到以后的项不要包含",
+              "review_limit": "目标累计推进判断上限，默认4，最高12；含失败，收回/重交接不清零，增加需重新确认"},
              _handover, read_only=False, serial=True),
         Tool("propose_codex_message",
              "替用户给 Mac 上某个已交接的 Codex 会话拟一句话（下一步指令、补充要求、回答它的问题）。只是提议，"
