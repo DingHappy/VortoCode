@@ -146,6 +146,7 @@ def _shared_text(text: str, images: Optional[list], files: Optional[list]) -> st
 class IMBridge:
     conversation = "primary"  # Default for legacy host integrations constructed before this field existed.
     session_role = "standard"
+    _input_controller = None
 
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
                  channel: str = "im", mode: str = "plan", llm=None, runner=None,
@@ -164,6 +165,7 @@ class IMBridge:
             raise ValueError("research_read requires an isolated interactive conversation")
         self.session_role = session_role
         self._claim_turn = claim_turn
+        self._input_controller = None
         if bot_identity is not None and (not isinstance(bot_identity, str) or
                                          re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", bot_identity) is None):
             raise ValueError("Invalid logical bot identity")
@@ -328,7 +330,7 @@ class IMBridge:
             from src.gateway.agent_session import session_behavior_fp, session_tool_names
             from src.gateway.session_store import save_session
             channel = self._sid.split("-")[1] if self._sid.count("-") >= 2 else "im"
-            save_session(self.repo_root, self._sid,
+            saved = save_session(self.repo_root, self._sid,
                          transcript=list(getattr(self, "_transcript", []))[-_MAX_TRANSCRIPT:],
                          title=f"📱 {_CHANNEL_NAMES.get(channel, channel)}",
                          history=[] if self._shares_main_chat() else self.agent.history,
@@ -336,10 +338,16 @@ class IMBridge:
                          plan=getattr(self.agent, "plan", None),
                          tool_names=session_tool_names(self.agent),
                          behavior_fp=session_behavior_fp(self.agent),
-                         mode=self.mode)
+                         mode=self.mode, managed_im=True if self._input_controller is not None else None,
+                         durable=self._input_controller is not None)
+            if not saved and self._input_controller is not None:
+                raise OSError("Managed IM history write failed")
         except Exception as e:  # noqa: BLE001 —— 存盘失败不炸回合，但会话会静默丢，要留痕
             import logging
             logging.getLogger("vortocode.im").warning("IM 会话存盘失败：%s", _exc_text(e)[:160])
+            if self._input_controller is not None:
+                self._input_controller.store.blocked = True
+                raise
 
     # ------------------------------------------------------------ 配置自检（只诊断，不改判定）
     def inbound_state(self) -> str:
@@ -460,7 +468,11 @@ class IMBridge:
         except Exception:  # noqa: BLE001 —— 自定义 adapter 没实现就给空，别让运维面挂掉
             lv = {}
         lv["channel"] = self._sid.split("-")[1] if "-" in self._sid else "im"
-        lv["busy"] = self._turn_task is not None and not self._turn_task.done()
+        lv["busy"] = (self._input_controller.busy() if self._input_controller is not None else
+                      self._turn_task is not None and not self._turn_task.done())
+        if self._input_controller is not None:
+            store = self._input_controller.store
+            lv["input_storage"] = "blocked" if store.blocked else "full" if store.full else "ready"
         lv["role"] = "notify" if self.notification_only else "interactive"
         lv["conversation"] = self.conversation
         lv["policy"] = self.session_role
@@ -612,6 +624,11 @@ class IMBridge:
             imgs = list(getattr(ev, "images", []) or [])
             atts = list(getattr(ev, "files", []) or [])
             bad = str(getattr(ev, "unsupported", "") or "").strip()
+            if self._input_controller is not None:
+                command = _norm_cmd(text.split()[0] if text.split() else "")
+                await self._input_controller.receive(ev, text, imgs, atts,
+                    command if command.startswith("/") else "")
+                return
             if bad:
                 # 附件取不到就**如实说**——静默丢弃等于让人对着石沉大海干等
                 await self._safe_send(f"⚠️ {bad}")
@@ -654,6 +671,8 @@ class IMBridge:
 
     def _start_turn(self, text: str, images: list, files: list) -> bool:
         """起一个回合，收尾时自动取下一条排队消息——队列在这里前进，不靠外部驱动。"""
+        if self._input_controller is not None:
+            return False  # Managed messages must enter through their durable receipt.
         claim = getattr(self, "_claim_turn", None)
         release = claim() if claim is not None else (lambda: None)
         if release is None:
@@ -681,7 +700,10 @@ class IMBridge:
         """Wait for this binding's turns before releasing its adapter/registration."""
         from src.utils.async_ops import cancel_requested, request_cancel
         self._pending_msgs.clear()
-        tasks = [task for task in (self._turn_task, self._heartbeat_task, *self._pr_jobs.values())
+        if self._input_controller is not None:
+            await self._input_controller.close()
+        turn = self._turn_task if self._input_controller is None else None
+        tasks = [task for task in (turn, self._heartbeat_task, *self._pr_jobs.values())
                  if task is not None and task is not asyncio.current_task() and not task.done()]
         for task in tasks:
             if not cancel_requested(task):
@@ -710,7 +732,8 @@ class IMBridge:
         elif cmd == "/bind" and self.channel == "telegram":
             await self._safe_send("已完成主人配对；旧配对码不能再次使用。")
         elif cmd == "/status":
-            busy = self._turn_task is not None and not self._turn_task.done()
+            busy = (self._input_controller.busy() if self._input_controller is not None else
+                    self._turn_task is not None and not self._turn_task.done())
             msg = (f"仓库 {Path(self.repo_root).name} · 模式 {self.mode} · "
                    f"{'运行中' if busy else '空闲'} · 白名单 {len(self.allow_from)} 人 · "
                    f"已忽略白名单外 {self._ignored} 条、群里没 @ 我 {self._ignored_no_mention} 条")
@@ -1453,7 +1476,7 @@ class IMBridge:
                 q.put_nowait(("__done__", None))
 
         await self._drain(q, asyncio.create_task(_inner()))
-        if reply_holder.get("entry") is not None:
+        if reply_holder.get("entry") is not None and self._input_controller is None:
             # 不阻塞下一条消息：摘要在后台生成，写好后再存一次盘
             asyncio.create_task(self._digest(text, reply_holder["entry"]))
 

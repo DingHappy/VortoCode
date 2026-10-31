@@ -146,6 +146,21 @@ def stop_embedded(binding_id=None, *, expected=None) -> None:
         im_registry.unregister(binding_id, expected=expected)
 
 
+def managed_session_bridge(root, key):
+    from src.gateway.im_registry import entries
+    from pathlib import Path
+    return next((item.bridge for item in entries()
+                 if item.root == str(Path(root).resolve()) and item.bridge._sid == key
+                 and getattr(item.bridge, "_input_controller", None) is not None), None)
+
+
+def is_managed_session(root, key):
+    from src.gateway.session_store import load_session
+    if managed_session_bridge(root, key) is not None:
+        return True
+    return (load_session(root, key) or {}).get("managed_im") is True
+
+
 def current_bridge(binding_id=None):
     from src.gateway.im_registry import current
     return current(binding_id)

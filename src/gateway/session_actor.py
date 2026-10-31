@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from src.llm.routing import clean_model_request
-from src.utils.async_ops import request_cancel
+from src.utils.async_ops import cancel_requested, request_cancel
 
 MAX_PROMPT_QUEUE = 20
 Prompt = dict[str, Any]
@@ -346,7 +346,8 @@ class SessionActors:
                 self.stop_reasons[key] = reason
             if task.done() or self._operation_kind.get(key, "").endswith("_cleanup"):
                 return True  # Cleanup owns the slot; let it apply the latest stop reason.
-            request_cancel(task)
+            if not cancel_requested(task):
+                request_cancel(task)
             return True
         return False
 

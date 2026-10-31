@@ -5,10 +5,11 @@
 `.vortocode/web_sessions/<sid>.json`，重启后按 sid 复原。
 
 只持久化 sid 会话（`sid-` 前缀）；ws-id 的临时连接不落盘。任何 IO 出错都安全吞掉，
-绝不让持久化影响对话本身。
+绝不让持久化影响旧对话本身。托管 IM 显式使用 strict 读取和 durable 保存，并在失败时停止受理。
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from src.utils.ids import safe_id
@@ -23,7 +24,7 @@ _MAX_PROMPT_QUEUE = 20
 def session_has_content(data: dict) -> bool:
     """Context/capability metadata alone is a draft, not a recent conversation."""
     return any(data.get(key) for key in (
-        "transcript", "history", "plan", "activities", "prompt_queue", "title"))
+        "transcript", "history", "plan", "activities", "prompt_queue", "title", "im_inputs"))
 
 
 def _sid_of(key: str) -> Optional[str]:
@@ -64,7 +65,9 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
                  tool_names: Optional[List[str]] = None,
                  behavior_fp: Optional[str] = None,
                  mode: Optional[str] = None,
-                 prompt_queue_paused: Optional[bool] = None) -> bool:
+                 prompt_queue_paused: Optional[bool] = None,
+                 im_inputs: Optional[dict] = None, managed_im: Optional[bool] = None,
+                 durable: bool = False) -> bool:
     """保存一个 sid 会话。返回保存成功或新空草稿无需保存（非法键/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
@@ -79,7 +82,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     p = _path(repo_root, sid)
     existing: Dict[str, Any] = {}
     if (title is None or context_usage is None or tool_names is None
-            or behavior_fp is None or mode is None or prompt_queue_paused is None) and p.is_file():
+            or behavior_fp is None or mode is None or prompt_queue_paused is None
+            or im_inputs is None or managed_im is None) and p.is_file():
         try:
             loaded = json.loads(p.read_text(encoding="utf-8"))
             existing = loaded if isinstance(loaded, dict) else {}
@@ -112,6 +116,9 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         data["behavior_fp"] = str(behavior_fp)
     if mode in ("plan", "build"):                   # 只认这两个值，别把脏数据带进下次装配
         data["mode"] = mode
+    for field, value in (("im_inputs", im_inputs), ("managed_im", managed_im)):
+        if value is not None or field in existing:
+            data[field] = value if value is not None else existing[field]
     # 新空草稿不落盘；但主人显式切到 build 是一次决定，重启不许抹回 plan（IM 会话常在开口前就切模式）。
     if not session_has_content(data) and data.get("mode") != "build" and not p.exists():
         return True  # Clean draft: nothing needs saving; never remove historical files.
@@ -120,28 +127,56 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortocode 生成态写入点（自忽略，防足迹）
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        if durable:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(data, stream, ensure_ascii=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+        else:
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         tmp.replace(p)                       # 原子替换，避免读到半截文件
+        if durable and hasattr(os, "O_DIRECTORY"):
+            fd = os.open(p.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
         return True
     except (OSError, TypeError, ValueError):
         return False
 
 
-def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
+def load_session(repo_root: str, key: str, *, strict: bool = False, max_bytes: int | None = None) -> Optional[Dict[str, Any]]:
     """按 sid 读回会话 {transcript, history, plan, activities, prompt_queue, context_usage}。"""
     sid = _sid_of(key)
     if sid is None:
         return None
     p = _path(repo_root, sid)
     if not p.is_file():
+        if strict and p.exists():
+            raise ValueError("会话记录不是普通文件")
         return None
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        if strict and (p.is_symlink() or (max_bytes is not None and p.stat().st_size > max_bytes)):
+            raise ValueError("会话记录身份或容量无效")
+        def unique_object(pairs):
+            result = {}
+            for name, value in pairs:
+                if name in result:
+                    raise ValueError("Duplicate session field")
+                result[name] = value
+            return result
+        data = json.loads(p.read_text(encoding="utf-8"), object_pairs_hook=unique_object if strict else None)
     except (OSError, ValueError):
+        if strict:
+            raise ValueError("会话记录不可读或损坏") from None
         return None
     if not isinstance(data, dict):
+        if strict:
+            raise ValueError("会话记录格式无效")
         return None
-    return {
+    result = {
         "transcript": data.get("transcript") or [],
         "history": data.get("history") or [],
         "plan": data.get("plan") or [],
@@ -155,6 +190,10 @@ def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
         "behavior_fp": data.get("behavior_fp"),
         "mode": data.get("mode"),
     }
+    for field in ("im_inputs", "managed_im"):
+        if field in data:
+            result[field] = data[field]
+    return result
 
 
 def list_sessions(repo_root: str) -> List[Dict[str, Any]]:

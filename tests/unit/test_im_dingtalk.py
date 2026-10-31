@@ -56,6 +56,21 @@ class FakeWS:
 
 
 # ------------------------------------------------------------ 帧处理
+async def test_native_input_identity_is_independent_of_frame_and_reply_credentials():
+    adapter = DingTalkAdapter("c", "s", "owner-1")
+    events = []
+    for frame_id, webhook in (("frame-1", "https://first"), ("frame-2", "https://rotated")):
+        raw = json.loads(_bot(frame_id, "owner-1", "same text", webhook))
+        body = json.loads(raw["data"])
+        body.update(msgId="native-message", conversationId="native-conversation")
+        raw["data"] = json.dumps(body)
+        events.extend(await adapter._handle_frame(FakeWS([]), json.dumps(raw)))
+    assert [(ev.source_event_id, ev.source_conversation_id) for ev in events] == [
+        ("native-message", "native-conversation"), ("native-message", "native-conversation")]
+    missing = await adapter._handle_frame(FakeWS([]), _bot("only-frame-id", "owner-1", "same text"))
+    assert missing[0].source_event_id == missing[0].source_conversation_id == ""
+
+
 @pytest.mark.asyncio
 async def test_ping_responds_pong_with_opaque():
     a = DingTalkAdapter("c", "s", "o")
