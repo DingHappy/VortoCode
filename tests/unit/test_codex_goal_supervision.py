@@ -412,10 +412,10 @@ async def test_concurrent_approval_cannot_restore_an_already_claimed_action(setu
     from concurrent.futures import ThreadPoolExecutor
 
     root, _, _, _ = setup
-    await first_review(setup, Model())
-    first = watch.load_actions(root)[0]
+    report(root, 5)
+    first = watch.propose_action(root, thread="thread-000001", kind="message", text="人工确认的当前验收范围", session="owner-session")
     watch.decide_action(root, first["id"], True)
-    second = watch.propose_action(root, thread="thread-000001", kind="message", text="核对当前验收范围")
+    second = watch.propose_action(root, thread="thread-000001", kind="message", text="核对当前验收范围", session="owner-session")
     entered, release = threading.Event(), threading.Event()
     save = watch._save_actions
 

@@ -88,6 +88,6 @@ def test_codex_drafts_waiting_for_approval_are_on_the_list(tmp_path):
         {"id": "cdx-5", "status": "proposed", "kind": "interrupt", "thread_name": "跑测试", "updated_at": old},
     ])
     items = attention_items(str(tmp_path))
-    assert [item["target_id"] for item in items] == ["cdx-2", "cdx-1", "cdx-5"]    # 结果不明的最急；过时一天的不明不挂
-    assert items[1]["title"] == "等你批准给 Codex 发话 · codex-p1「未命名」" and items[1]["detail"] == "实现 div"
-    assert items[2]["title"].startswith("等你批准叫停 Codex")
+    assert [item["target_id"] for item in items] == ["cdx-2", "cdx-3", "cdx-1", "cdx-5"]  # 不明结果不因过一天而消失
+    assert items[2]["title"] == "等你批准给 Codex 发话 · codex-p1「未命名」" and items[2]["detail"] == "实现 div"
+    assert items[3]["title"].startswith("等你批准叫停 Codex")

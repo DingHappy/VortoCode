@@ -265,9 +265,9 @@ def _codex_now_status(root: str) -> tuple[Callable[[str], str], str]:
     """对话结局是当时写的（「拟好了，待批准」），到晚报时早就发出或过时了。
     真机 2026-10-29 晚报：把白天三条「待批准」当成现在还在等，其实都已发出。
     这里按编号补上现在的状态；编号随后被 _scrub_ids 去掉，留下的是状态。"""
-    from src.scheduling.codex_watch import ACTION_STATUS_TEXT, CodexActionStorageError, load_actions
+    from src.scheduling.codex_watch import ACTION_STATUS_TEXT, CodexActionStorageError, action_outcome, load_actions
     try:
-        status = {str(item.get("id")): str(item.get("status") or "") for item in load_actions(root)}
+        status = {str(item.get("id")): action_outcome(item) for item in load_actions(root)}
     except CodexActionStorageError:
         issue = "Codex 动作记录不可用，无法确认待批和发送结果；请核对存储，未重建或重发。"
         return lambda text: "（现在：动作记录不可用，无法核对）" if _CODEX_ACTION_ID.search(text) else "", issue
@@ -435,8 +435,12 @@ async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None
 
     什么都没发生的日子不调模型：早报一行，晚报不发（返回空串，调用方当作已发）。
     """
-    _, action_issue = _codex_now_status(root)
-    if action_issue:
+    from src.scheduling.codex_watch import CodexActionStorageError, action_outcome, load_actions
+    try:
+        uncertain = any(action_outcome(action) == "unknown" for action in load_actions(root))
+    except CodexActionStorageError:
+        uncertain = True
+    if uncertain:
         return _scrub_ids(build_report(root, now, label))
     quiet = quiet_report(root, now, label)
     if quiet is not None:

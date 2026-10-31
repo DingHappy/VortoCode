@@ -68,8 +68,9 @@ async def codex_actions(status: str | None = None):
         for action in settled:
             await notify(codex_watch.action_result_notice(action))
     if status:
-        items = [item for item in items if item.get("status") == status]
-    return {"actions": list(reversed(items))[:50]}
+        items = [item for item in items if codex_watch.action_outcome(item) == status]
+    # Human views retain all bounded unresolved records; execution polling stays bounded at 50.
+    return {"actions": list(reversed(items))[:50 if status else 100]}
 
 
 async def _decide(action_id: str, approved: bool):
