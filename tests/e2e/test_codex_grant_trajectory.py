@@ -73,6 +73,65 @@ async def begin_review(state, model, notify):
     return original
 
 
+def owner_command(state, *, ok=True):
+    action = watch.propose_action(state.root, thread=TID, kind="message", text="先暂停，按新增要求核对", session="owner")
+    watch.decide_action(state.root, action["id"], True)
+    watch.claim_action(state.root, action["id"])
+    return watch.finish_action(state.root, action["id"], ok=ok, error="" if ok else "明确拒绝")
+
+
+@pytest.mark.parametrize("verdict", ["continue", "ask", "done"])
+@pytest.mark.parametrize("ok", [True, False])
+async def test_finished_owner_command_during_review_invalidates_old_result_without_replay(scenario, verdict, ok):
+    notices = []
+
+    async def notify(text, confirm_id=""):
+        notices.append(text)
+        return True
+
+    model = Model(verdict=verdict, during_review=lambda: owner_command(scenario, ok=ok))
+    grant = await begin_review(scenario, model, notify)
+    await supervisor.supervise_once(scenario.root, scenario.now(), notify=notify, llm=model)
+    assert [a["status"] for a in watch.load_actions(scenario.root)] == ["sent" if ok else "failed"]
+    assert watch.load_handovers(scenario.root)[TID] == grant
+    assert supervisor._load(scenario.root)["marks"][TID]["review_status"] == "superseded"
+    assert all("旧交接里" not in text for text in notices)
+    scenario.report(60)
+    await supervisor.supervise_once(scenario.root, scenario.now(), notify=notify, llm=model)
+    assert model.calls == 1 and len(watch.load_actions(scenario.root)) == 1
+
+
+@pytest.mark.parametrize("verdict", ["continue", "done"])
+async def test_finished_command_between_review_validation_and_commit_is_fenced(scenario, monkeypatch, verdict):
+    async def notify(*args, **kwargs):
+        return True
+
+    model = Model(verdict=verdict)
+    grant = await begin_review(scenario, model, notify)
+    if verdict == "continue":
+        original = watch.propose_action
+
+        def race(*args, **kwargs):
+            if kwargs.get("automatic"):
+                monkeypatch.setattr(watch, "propose_action", original)
+                owner_command(scenario)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(watch, "propose_action", race)
+    else:
+        original = watch.take_back
+
+        def release_race(*args, **kwargs):
+            owner_command(scenario)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(watch, "take_back", release_race)
+    await supervisor.supervise_once(scenario.root, scenario.now(), notify=notify, llm=model)
+    assert watch.load_handovers(scenario.root)[TID] == grant
+    assert [a["status"] for a in watch.load_actions(scenario.root)] == ["sent"]
+    assert model.calls == 1
+
+
 @pytest.mark.parametrize("verdict", ["continue", "ask", "done"])
 async def test_revoke_regrant_restart_does_not_adopt_or_repeat_an_old_review(scenario, verdict):
     notices = []

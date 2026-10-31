@@ -14,7 +14,8 @@ import os
 import re
 import sys
 import tempfile
-from contextlib import contextmanager
+import uuid
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -418,7 +419,10 @@ def _goal_supervision(root: str, state: dict, records: dict, stamp: datetime) ->
             if (not reason and waiting.get("token") == record["token"] and waiting.get("goal_id") == goal["id"]
                     and waiting.get("revision") == goal["revision"] and waiting.get("turn_id") == turn.get("id")
                     and thread.get("status") == "idle" and turn.get("status") == "completed"):
-                item.update(state="awaiting_user", reason=waiting["reason"])
+                if waiting.get("action_version") == action_version(root, tid):
+                    item.update(state="awaiting_user", reason=waiting["reason"])
+                else:
+                    item.update(state="paused", reason="原判断的动作版本已变化或无法核对，请按最新指令确认；旧判断未自动重跑")
         except (KeyError, TypeError, ValueError, OSError, StopIteration) as error:
             item.update(state="unknown", reason=f"目标状态待核对：{error}")
         out.append(item)
@@ -552,6 +556,8 @@ def build_codex_tools(root: str) -> list:
 
 _ACTION_TEXT_MAX = 2000
 _ACTIONS_KEEP = 100
+_ACTION_REVISIONS_KEEP = 256
+_ACTION_REVISION_MAX = 2**53 - 1
 _ACTION_TERMINAL = {"sent", "failed", "cancelled", "expired"}
 _ACTION_PENDING = {"proposed", "approved", "sending", "unknown"}
 _ACTION_STATES = _ACTION_TERMINAL | _ACTION_PENDING
@@ -583,14 +589,56 @@ def _actions_path(root: str) -> Path:
 
 
 def load_actions(root: str) -> List[dict]:
+    return _load_action_store(root)["actions"]
+
+
+def _action_identity(value: Any) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= 80 and bool(value.strip()) and "\x00" not in value
+
+
+def valid_action_version(value: Any) -> bool:
+    """Only bounded opaque versions; legacy snapshots never confer authority."""
+    if not isinstance(value, dict) or type(value.get("schema_version")) is not int:
+        return False
+    if value["schema_version"] == 0:
+        return (set(value) == {"schema_version", "fingerprint"}
+                and isinstance(value["fingerprint"], str) and re.fullmatch(r"[0-9a-f]{64}", value["fingerprint"]) is not None)
+    return (value["schema_version"] == 1 and set(value) == {"schema_version", "store_id", "revision"}
+            and isinstance(value["store_id"], str) and re.fullmatch(r"[0-9a-f]{32}", value["store_id"]) is not None
+            and type(value["revision"]) is int and 0 <= value["revision"] <= _ACTION_REVISION_MAX)
+
+
+def _load_action_store(root: str) -> dict:
     try:
         data = json.loads(_actions_path(root).read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return []
+        data = []
     except (OSError, ValueError):
         raise CodexActionStorageError("Codex 动作记录不可读，已保留原文件；未重建或重发，请核对存储") from None
-    _validate_actions(data)
+    if isinstance(data, list):
+        _validate_actions(data)
+        return {"schema_version": 0, "actions": data}
+    if (not isinstance(data, dict) or set(data) != {"schema_version", "store_id", "thread_revisions", "actions"}
+            or not valid_action_version({"schema_version": data.get("schema_version"), "store_id": data.get("store_id"), "revision": 0})
+            or not isinstance(data["thread_revisions"], dict) or len(data["thread_revisions"]) > _ACTION_REVISIONS_KEEP
+            or any(not _action_identity(tid) or type(revision) is not int or not 1 <= revision <= _ACTION_REVISION_MAX
+                   for tid, revision in data["thread_revisions"].items())):
+        raise CodexActionStorageError("Codex 动作版本无效，已保留原文件；未重建或重发，请核对存储")
+    _validate_actions(data["actions"])
+    if any(a["thread_id"] not in data["thread_revisions"] for a in data["actions"]):
+        raise CodexActionStorageError("Codex 动作版本缺失，已保留原文件；未重建或重发，请核对存储")
     return data
+
+
+def _action_version(store: dict, thread_id: str) -> dict:
+    if store["schema_version"] == 0:
+        return {"schema_version": 0, "fingerprint": codex_goal.digest([a for a in store["actions"] if a["thread_id"] == thread_id])}
+    return {"schema_version": 1, "store_id": store["store_id"], "revision": store["thread_revisions"].get(thread_id, 0)}
+
+
+def action_version(root: str, thread_id: str) -> dict:
+    """Read one thread's causal version from the same atomic file as its actions."""
+    return _action_version(_load_action_store(root), thread_id)
 
 
 def _validate_actions(items: Any) -> None:
@@ -606,6 +654,7 @@ def _validate_actions(items: Any) -> None:
                 or not isinstance(item.get("text", ""), str) or len(item.get("text", "")) > _ACTION_TEXT_MAX
                 or (item["kind"] == "message" and not item.get("text", "").strip())
                 or ("automatic" in item and type(item["automatic"]) is not bool)
+                or ("action_version" in item and not valid_action_version(item["action_version"]))
                 or any(k in item and (not isinstance(item[k], str) or _parse(item[k]) is None) for k in ("created_at", "updated_at"))):
             raise CodexActionStorageError("Codex 动作记录格式无效，已保留原文件；未重建或重发，请核对存储")
         if item["id"] in seen:
@@ -613,21 +662,56 @@ def _validate_actions(items: Any) -> None:
         seen.add(item["id"])
 
 
-def _save_actions(root: str, items: List[dict]) -> None:
+def _save_actions(root: str, items: List[dict], *, new_automatic_id: Optional[str] = None) -> List[dict]:
+    """Caller holds the action lock; publish rows and causal versions together."""
     _validate_actions(items)
+    old = _load_action_store(root)
+    previous = {a["id"]: a for a in old["actions"]}
+    incoming = {a["id"]: a for a in items}
+    # Compare BEFORE retention: pruning another thread's terminal history is not
+    # a new command/receipt for that thread. Keep versions for active grants.
+    changed: Dict[str, set] = {}
+    for aid in previous.keys() | incoming.keys():
+        before, after = previous.get(aid), incoming.get(aid)
+        if before != after:
+            for row in (before, after):
+                if row is not None:
+                    changed.setdefault(row["thread_id"], set()).add(aid)
+    revisions = dict(old.get("thread_revisions", {}))
+    for tid in changed:
+        if revisions.get(tid, 0) >= _ACTION_REVISION_MAX:
+            raise CodexActionStorageError("Codex 动作版本已达上限，未保存变更；请核对存储")
+        revisions[tid] = revisions.get(tid, 0) + 1
+    for row in items:
+        revisions.setdefault(row["thread_id"], 1)
+    store = {"schema_version": 1, "store_id": old.get("store_id") or uuid.uuid4().hex,
+             "thread_revisions": revisions, "actions": []}
+    items = [dict(a) for a in items]
+    for row in items:
+        before = previous.get(row["id"])
+        if ((row["id"] == new_automatic_id and before is None and _automatic_action(row))
+                or (before is not None and _automatic_action(row)
+                    and changed.get(row["thread_id"]) == {row["id"]}
+                    and before.get("action_version") == _action_version(old, row["thread_id"]))):
+            row["action_version"] = _action_version(store, row["thread_id"])
     excess = max(0, len(items) - _ACTIONS_KEEP)
     retired = {i for i, item in enumerate(items) if action_outcome(item) in _ACTION_TERMINAL}
     if len(retired) < excess:
         raise CodexActionError("Codex 未解决动作记录已达上限，请先核对现有动作；未保存新提议，也未删除旧记录")
     remove = set(sorted(retired)[:excess])
     kept = [item for i, item in enumerate(items) if i not in remove]
+    live = {a["thread_id"] for a in kept} | set(load_handovers(root))
+    store["thread_revisions"] = {tid: rev for tid, rev in revisions.items() if tid in live}
+    if len(store["thread_revisions"]) > _ACTION_REVISIONS_KEEP:
+        raise CodexActionStorageError("Codex 动作版本容量已满，未保存变更；请核对存储")
+    store["actions"] = kept
     path = _actions_path(root)
     temp = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
             temp = Path(handle.name)
-            json.dump(kept, handle, ensure_ascii=False)
+            json.dump(store, handle, ensure_ascii=False)
         temp.replace(path)
     except OSError:
         raise CodexActionStorageError("Codex 动作记录未能保存，未确认状态变更；请核对存储") from None
@@ -637,6 +721,7 @@ def _save_actions(root: str, items: List[dict]) -> None:
                 temp.unlink(missing_ok=True)
             except OSError:
                 pass
+    return kept
 
 
 class CodexActionError(ValueError):
@@ -776,8 +861,11 @@ def _hand_over(root: str, thread: dict, *, now: Optional[datetime], goal: Option
 
 
 def take_back(root: str, thread_id: str, *, expected_token: Optional[str] = None,
-              expected_fingerprint: Optional[str] = None) -> bool:
-    with _handover_lock(root):
+              expected_fingerprint: Optional[str] = None, expected_action_version: Optional[dict] = None) -> bool:
+    with _handover_lock(root), (_actions_lock(root) if expected_action_version is not None else nullcontext()):
+        if expected_action_version is not None and (not valid_action_version(expected_action_version)
+                or action_version(root, thread_id) != expected_action_version):
+            return False
         return _take_back(root, thread_id, expected_token=expected_token, expected_fingerprint=expected_fingerprint)
 
 
@@ -834,22 +922,27 @@ def propose_action(root: str, *, thread: str, kind: str, text: str = "", session
                    tainted: bool = False, expected_turn_id: Optional[str] = None,
                    expected_handover_token: Optional[str] = None, expected_goal_revision: Optional[int] = None,
                    expected_context_fingerprint: Optional[str] = None,
-                   expected_handover_fingerprint: Optional[str] = None, automatic: bool = False) -> dict:
+                   expected_handover_fingerprint: Optional[str] = None, automatic: bool = False,
+                   expected_action_version: Optional[dict] = None) -> dict:
     # Fixed order: handover -> actions. No model/RPC/notification under either lock.
     with _handover_lock(root), _actions_lock(root):
         return _propose_action(root, thread=thread, kind=kind, text=text, session=session, tainted=tainted,
                                expected_turn_id=expected_turn_id, expected_handover_token=expected_handover_token,
                                expected_goal_revision=expected_goal_revision, expected_context_fingerprint=expected_context_fingerprint,
-                               expected_handover_fingerprint=expected_handover_fingerprint, automatic=automatic)
+                               expected_handover_fingerprint=expected_handover_fingerprint, automatic=automatic,
+                               expected_action_version=expected_action_version)
 
 
 def _propose_action(root: str, *, thread: str, kind: str, text: str, session: str, tainted: bool,
                     expected_turn_id: Optional[str], expected_handover_token: Optional[str],
                     expected_goal_revision: Optional[int], expected_context_fingerprint: Optional[str],
-                    expected_handover_fingerprint: Optional[str], automatic: bool) -> dict:
+                    expected_handover_fingerprint: Optional[str], automatic: bool, expected_action_version: Optional[dict]) -> dict:
     if type(automatic) is not bool:
         raise CodexActionError("自动动作标记必须是布尔值")
     target = _find_thread(root, thread)
+    if expected_action_version is not None and (not valid_action_version(expected_action_version)
+            or action_version(root, target["id"]) != expected_action_version):
+        raise CodexActionError("会话动作已变化，旧建议不再适用")
     if not is_handed_over(root, target["id"]):
         raise CodexActionError(f"{thread_label(target)}没交给助理：默认只看不插手。要替它拟话或叫停，"
                                "先请主人把这个会话交接给你（codex_handover）。")
@@ -898,8 +991,8 @@ def _propose_action(root: str, *, thread: str, kind: str, text: str, session: st
     if action["automatic"] and any(a.get("thread_id") == target["id"] and action_outcome(a) in _ACTION_PENDING for a in items):
         raise CodexActionError("会话已有待处理或结果不明动作，未拟自动下一步；请先核对原会话")
     items.append(action)
-    _save_actions(root, items)
-    return action
+    saved = _save_actions(root, items, new_automatic_id=action["id"] if action["automatic"] else None)
+    return next(a for a in saved if a["id"] == action["id"])
 
 
 def _change(root: str, action_id: str, allowed: set, **updates) -> dict:
@@ -916,8 +1009,8 @@ def _change(root: str, action_id: str, allowed: set, **updates) -> dict:
                                         "failed": "这条已经失败了", "cancelled": "这条已经撤回了"}
                                        .get(item.get("status"), "状态不允许这个操作"))
             item.update(updates, updated_at=_now().isoformat())
-            _save_actions(root, items)
-            return dict(item)
+            saved = _save_actions(root, items)
+            return next(a for a in saved if a["id"] == action_id)
     raise CodexActionError(f"没有这条 Codex 动作：{action_id}")
 
 
@@ -969,6 +1062,8 @@ def _expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> Li
 def _goal_action_current(root: str, action_id: str) -> None:
     action = next((a for a in load_actions(root) if a.get("id") == action_id), {})
     if action:
+        if _automatic_action(action) and action.get("action_version") != action_version(root, action["thread_id"]):
+            raise CodexActionError("动作已过时：会话动作已变化或旧建议缺少动作版本，请核对后重新拟话")
         reason = stale_reason(action, load_state(root).get("threads") or [])
         if reason:
             raise CodexActionError(f"动作已过时：{reason}")
