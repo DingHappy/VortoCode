@@ -315,13 +315,18 @@ def build_read_tools(repo_root: str) -> list[Tool]:
 
         return _ignored
 
+    def _bulk_read_path(rel: str) -> Path | None:
+        # A non-secret symlink target can still be outside the selected project.
+        from src.agents.capabilities import is_sensitive_repo_path
+        path = _resolve_within(repo_root, rel)
+        return path if path is not None and path.is_file() and not is_sensitive_repo_path(rel, repo_root) else None
+
     def _all_files() -> list[str]:
         import os
-        from src.agents.capabilities import is_sensitive_repo_path
         base = Path(repo_root)
         git_files = _git_visible_files(base)
         if git_files is not None:
-            return [rel for rel in git_files if not is_sensitive_repo_path(rel, repo_root)]
+            return [rel for rel in git_files if _bulk_read_path(rel) is not None]
         ignored = _load_root_gitignore(base)
         out: list[str] = []
         for root, dirs, files in os.walk(base):
@@ -337,7 +342,7 @@ def build_read_tools(repo_root: str) -> list[Tool]:
                 rel = _rel_posix(fp, base)
                 if _skip_builtin(rel) or ignored(rel, is_dir=False):
                     continue
-                if not is_sensitive_repo_path(rel, repo_root):
+                if _bulk_read_path(rel) is not None:
                     out.append(rel)
                 if len(out) >= 6000:
                     return sorted(out)
@@ -461,13 +466,14 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             return f"dir 越界或非法（只能在仓库内搜索）: {bad}"
         files = [f for f in _files() if _under_dir(f, sub)] if sub else _files()
         ctx = max(0, min(_int(args.get("context")) or 0, 5))     # 上下文行数（±N），上限 5 防输出爆炸
-        base = Path(repo_root)
-
         if ctx == 0:                                             # 紧凑模式（默认）：path:line: text 单行命中
             hits: list[str] = []
             for f in files:
                 try:
-                    lines = (base / f).read_text(encoding="utf-8", errors="ignore").splitlines()
+                    path = _bulk_read_path(f)
+                    if path is None:
+                        continue
+                    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
                 except Exception:  # noqa: BLE001
                     continue
                 for i, line in enumerate(lines, 1):
@@ -481,7 +487,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         out: list[str] = []
         for f in files:
             try:
-                lines = (base / f).read_text(encoding="utf-8", errors="ignore").splitlines()
+                path = _bulk_read_path(f)
+                if path is None:
+                    continue
+                lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
             except Exception:  # noqa: BLE001
                 continue
             matches = [i for i, line in enumerate(lines) if rx.search(line)]   # 0-based 命中行

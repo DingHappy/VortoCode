@@ -145,20 +145,29 @@ def _shared_text(text: str, images: Optional[list], files: Optional[list]) -> st
 
 class IMBridge:
     conversation = "primary"  # Default for legacy host integrations constructed before this field existed.
+    session_role = "standard"
 
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
                  channel: str = "im", mode: str = "plan", llm=None, runner=None,
                  with_dev: bool = True, persona: str = "",
                  allow_from: Optional[Iterable] = None, workspace_scope=None,
-                 notification_only: bool = False, conversation: str = "primary"):
+                 notification_only: bool = False, conversation: str = "primary",
+                 session_role: str = "standard"):
         if not isinstance(conversation, str) or conversation not in {"primary", "isolated"}:
             raise ValueError("IM conversation must be primary or isolated")
         if not isinstance(channel, str) or re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", channel) is None:
             raise ValueError("IM channel name is invalid")
         self.conversation = conversation
+        if session_role not in {"standard", "research_read"}:
+            raise ValueError("Unknown IM session role")
+        if session_role == "research_read" and (conversation != "isolated" or notification_only):
+            raise ValueError("research_read requires an isolated interactive conversation")
+        self.session_role = session_role
         from src.gateway.workspace_scope import current_workspace_scope, normalize_workspace_scope
         self.workspace_scope = (current_workspace_scope() if workspace_scope is None
                                 else normalize_workspace_scope(workspace_scope, default="general"))
+        if session_role == "research_read" and self.workspace_scope != "project":
+            raise ValueError("只读研究角色需要显式选择 Project 工作区")
         self.repo_root = str(repo_root)
         self.adapter = adapter
         self.channel = channel
@@ -166,7 +175,11 @@ class IMBridge:
         self.owner_id = str(owner_id)
         # 入站白名单：没配 → 只放 owner（配对制原样）；配了空 → 全拒。判定见 normalize_allow_from。
         self.allow_from = normalize_allow_from(allow_from, self.owner_id)
+        if session_role == "research_read" and not self.allow_from.issubset({self.owner_id}):
+            raise ValueError("只读研究入口仅允许已配对主人")
         self.mode = mode if mode in ("plan", "build") else "plan"
+        if session_role == "research_read":
+            self.mode = "plan"
         self._llm = llm
         self._sid = f"sid-{channel}-{self.owner_id}"     # session_store 要求 sid- 前缀
         identity_of = getattr(adapter, "conversation_identity", None)
@@ -175,6 +188,10 @@ class IMBridge:
             raise ValueError("IM adapter account identity is invalid")
         if identity:
             key = json.dumps([channel, identity, self.owner_id, conversation], ensure_ascii=False)
+            if session_role == "research_read":
+                from src.agents.research_read import policy_fingerprint
+                key = json.dumps([channel, identity, self.owner_id, conversation,
+                                  session_role, policy_fingerprint()], ensure_ascii=False)
             self._sid = f"sid-{channel}-{hashlib.sha256(key.encode()).hexdigest()[:40]}"
         elif conversation == "isolated":
             raise ValueError("An isolated bot needs a stable adapter account identity")
@@ -197,7 +214,7 @@ class IMBridge:
         # 后台任务运行时：serve 内嵌模式注入共享 runner（单一并发池/台账/订阅集，kind="im-dev"
         # 分发回本 bridge 的 worker，见 gateway/im_service）；standalone 懒建自己的（向后兼容）
         # 研究员助手（给同事用）：不给改主项目代码/落分支/开 PR 的工具面
-        self._with_dev = bool(with_dev) and self.workspace_scope == "project"
+        self._with_dev = bool(with_dev) and self.workspace_scope == "project" and session_role == "standard"
         # 人设：由本人首次对话时自述，落在自己的状态目录里（见 _persona_path）
         self._persona = str(persona or "")
         self._runner = runner
@@ -269,7 +286,8 @@ class IMBridge:
                               on_tool_event=bindings.emit_tool_event, llm=self._llm,
                               task_owner=(lambda: self._sid) if self.workspace_scope == "general" else None,
                               can_ask_human=True,
-                              untrusted_input=True, workspace_scope=self.workspace_scope)
+                              untrusted_input=True, workspace_scope=self.workspace_scope,
+                              session_role=getattr(self, "session_role", "standard"))
         self._restore_session(agent)
         return agent
 
@@ -288,7 +306,7 @@ class IMBridge:
                 agent.plan = saved["plan"]
             # 模式跟着会话走：`/mode build` 是主人的一次显式决定，不该被一次服务重启抹回 plan
             # （真机 2026-07-27：一天重启七八次，主人每次动手都要重新授权一遍，问"每次都要这样吗"）。
-            if saved.get("mode") in ("plan", "build"):
+            if saved.get("mode") in ("plan", "build") and self.session_role == "standard":
                 self.mode = saved["mode"]
             # 升级后复原旧会话：工具清单有变要告诉模型，否则历史里过期的「我做不到」会被
             # 当真话复读（真机 2026-07-27：#243 部署后钉钉里要截图仍被拒，模型把升级前那句
@@ -434,6 +452,7 @@ class IMBridge:
         lv["busy"] = self._turn_task is not None and not self._turn_task.done()
         lv["role"] = "notify" if self.notification_only else "interactive"
         lv["conversation"] = self.conversation
+        lv["policy"] = self.session_role
         lv["queued"] = len(self._pending_msgs)
         # 入站闸的配置状态（只给类别，不给 id）：「机器人装死」时一眼看出是不是白名单把人挡在外面。
         # 只发通知的角色本来就不收入站，不报。真机 2026-10-11：交互角色继承了 .env 里 ''（全拒）。
@@ -597,7 +616,7 @@ class IMBridge:
             # **不由管理员代填**——本人两句话胜过旁人揣摩三段。
             # 常驻助理（通用范围）不走这道门：「关于你」在 Desktop 身份卡里填，没填也能直接聊；
             # 否则主人发一句「你好」只会收到引导语、不进对话也不落记录（真机 2026-10-11）。
-            if not self._with_dev and self.workspace_scope != "general" and not self._load_persona():
+            if self.session_role == "standard" and not self._with_dev and self.workspace_scope != "general" and not self._load_persona():
                 if len(text) >= 8:                       # 够长就当作自述收下
                     self._save_persona(text)
                     await self._safe_send(
@@ -655,10 +674,12 @@ class IMBridge:
                    f"{'运行中' if busy else '空闲'} · 白名单 {len(self.allow_from)} 人 · "
                    f"已忽略白名单外 {self._ignored} 条、群里没 @ 我 {self._ignored_no_mention} 条")
             msg += "\n" + self._session_age_line()
-            pipe = self._pipeline_status_line() if self.workspace_scope == "project" else ""
+            if self.session_role == "research_read":
+                msg += "\n只读研究：项目内读取/检索，无执行、写入或联网权限。"
+            pipe = self._pipeline_status_line() if self.workspace_scope == "project" and self.session_role == "standard" else ""
             if pipe:
                 msg += "\n" + pipe
-            recent = self._recent_plan() if self.workspace_scope == "project" else None
+            recent = self._recent_plan() if self.workspace_scope == "project" and self.session_role == "standard" else None
             if recent:
                 msg += f"\n最近计划：{recent}"
             warn = self.allow_from_warning()             # 白名单配错的自检（开机横幅可能早刷没了）
@@ -1343,7 +1364,7 @@ class IMBridge:
                 # 文件走文本告知路径（agent 用 read_file 自己读）；图片走 run_turn 的
                 # images 通道（#186 的多模态入口）。**两者都在污点回合内**——kind="im" 的
                 # 会话每回合无条件打污点，图里写的指令因此拿不到任何免确认授权。
-                prompt = text + (self._pipeline_pointer() if self.workspace_scope == "project" else "")
+                prompt = text + (self._pipeline_pointer() if self.workspace_scope == "project" and self.session_role == "standard" else "")
                 if files:
                     prompt = ((prompt + "\n\n") if prompt else "") + \
                         "（用户随消息发来文件，已存到：\n" + \

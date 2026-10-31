@@ -158,6 +158,8 @@ class ToolRuntime:
                 args,
                 tool.required_capabilities,
                 external_content=tool.external_content,
+                read_only=tool.read_only,
+                outward=tool.outward,
             )
             if reason:
                 ctx.say(housekeeping(f"🔧 [b]{name}[/b][dim] —— 被会话能力边界拦下[/dim]"))
