@@ -261,18 +261,22 @@ def report_material(root: str, now: datetime):
 _CODEX_ACTION_ID = re.compile(r"(?<![0-9A-Za-z-])cdx-[0-9a-f]{6,}(?![0-9a-f])")   # 紧贴汉字时 \b 不算边界
 
 
-def _codex_now_status(root: str) -> Callable[[str], str]:
+def _codex_now_status(root: str) -> tuple[Callable[[str], str], str]:
     """对话结局是当时写的（「拟好了，待批准」），到晚报时早就发出或过时了。
     真机 2026-10-29 晚报：把白天三条「待批准」当成现在还在等，其实都已发出。
     这里按编号补上现在的状态；编号随后被 _scrub_ids 去掉，留下的是状态。"""
-    from src.scheduling.codex_watch import ACTION_STATUS_TEXT, load_actions
-    status = {str(item.get("id")): str(item.get("status") or "") for item in load_actions(root)}
+    from src.scheduling.codex_watch import ACTION_STATUS_TEXT, CodexActionStorageError, load_actions
+    try:
+        status = {str(item.get("id")): str(item.get("status") or "") for item in load_actions(root)}
+    except CodexActionStorageError:
+        issue = "Codex 动作记录不可用，无法确认待批和发送结果；请核对存储，未重建或重发。"
+        return lambda text: "（现在：动作记录不可用，无法核对）" if _CODEX_ACTION_ID.search(text) else "", issue
 
     def describe(text: str) -> str:
         found = [ACTION_STATUS_TEXT.get(status[action_id], status[action_id])
                  for action_id in dict.fromkeys(_CODEX_ACTION_ID.findall(text)) if action_id in status]
         return f"（现在：{'；'.join(found)}）" if found else ""
-    return describe
+    return describe, ""
 
 
 def build_report(root: str, now: datetime, label: str) -> str:
@@ -281,7 +285,7 @@ def build_report(root: str, now: datetime, label: str) -> str:
     lines = [f"🗒 {label}（{now:%m月%d日 %H:%M}）"]
     if turns:
         lines.append(f"今天聊了 {len(turns)} 件事。")
-    now_status = _codex_now_status(root)
+    now_status, action_issue = _codex_now_status(root)
     for turn in turns[:5]:
         title, outcome = turn.get("title"), str(turn.get("outcome") or "—")
         lines.append(f"· {title}：{outcome}{now_status(f'{title} {outcome}')}")
@@ -293,7 +297,11 @@ def build_report(root: str, now: datetime, label: str) -> str:
             freshness = " · 当前无法核实" if item.get("sync_state") == "unreachable" else ""
             lines.append(f"· [{names.get(item.get('status'), item.get('status'))}] {item.get('project')}：{item.get('title')}{freshness}")
     lines.append("")
-    lines.append(f"等你处理：{len(waiting)} 件。" if waiting else "没有等你处理的事。")
+    if action_issue:
+        lines.append(action_issue)
+        lines.append(f"其他已读取入口等你处理：{len(waiting)} 件。" if waiting else "其他已读取入口没有待处理事项；Codex 动作仍待核对。")
+    else:
+        lines.append(f"等你处理：{len(waiting)} 件。" if waiting else "没有等你处理的事。")
     for item in waiting[:5]:
         lines.append(f"· {item.get('title')}")
     return "\n".join(lines)
@@ -322,6 +330,9 @@ def quiet_report(root: str, now: datetime, label: str) -> Optional[str]:
 
     只剩早就写好、今天没动过的待确认任务单时，早报照常提（带按钮），晚报不再重复
     （真机 2026-10-21：同一张单子两天推了 6 次，晚报整份只有这一句）。"""
+    _, action_issue = _codex_now_status(root)
+    if action_issue:
+        return None  # Never turn unavailable action facts into a quiet all-clear.
     turns, active, waiting = report_material(root, now)
     if label != "早报" and not turns and _only_old_proposals(active, waiting, now):
         return ""
@@ -424,6 +435,9 @@ async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None
 
     什么都没发生的日子不调模型：早报一行，晚报不发（返回空串，调用方当作已发）。
     """
+    _, action_issue = _codex_now_status(root)
+    if action_issue:
+        return _scrub_ids(build_report(root, now, label))
     quiet = quiet_report(root, now, label)
     if quiet is not None:
         return quiet

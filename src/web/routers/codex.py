@@ -29,6 +29,8 @@ async def codex_report(payload: dict = Body(...)):
         raise HTTPException(409, str(error)) from error
     except codex_watch.ObservationBusy as error:
         raise HTTPException(503, str(error)) from error
+    except codex_watch.CodexActionStorageError as error:
+        raise HTTPException(503, str(error)) from error
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
     notices = accepted.notices
@@ -48,20 +50,23 @@ async def codex_status():
 
 
 def _action_error(error: Exception) -> HTTPException:
-    return HTTPException(409, str(error))
+    return HTTPException(503 if isinstance(error, codex_watch.CodexActionStorageError) else 409, str(error))
 
 
 @router.get("/api/codex/actions")
 async def codex_actions(status: str | None = None):
     """Desktop 卡片列全部；Mac 观察员带 status=approved 取待执行的。"""
     root = _general_root()
-    settled = codex_watch.settle_unconfirmed_actions(root)
+    try:
+        settled = codex_watch.settle_unconfirmed_actions(root)
+        items = codex_watch.load_actions(root)
+    except codex_watch.CodexActionStorageError as error:
+        raise _action_error(error) from error
     if settled:
         from src.scheduling.notices import make_notifier
         notify = make_notifier(root, source="codex")
         for action in settled:
             await notify(codex_watch.action_result_notice(action))
-    items = codex_watch.load_actions(root)
     if status:
         items = [item for item in items if item.get("status") == status]
     return {"actions": list(reversed(items))[:50]}
@@ -103,8 +108,8 @@ async def claim_codex_action(action_id: str):
 async def codex_action_result(action_id: str, payload: dict = Body(...)):
     root = _general_root()
     try:
-        action = codex_watch.finish_action(root, action_id, ok=bool(payload.get("ok")), error=str(payload.get("error") or ""),
-                                           uncertain=bool(payload.get("uncertain")))
+        action = codex_watch.finish_action(root, action_id, ok=payload.get("ok"), error=str(payload.get("error") or ""),
+                                           uncertain=payload.get("uncertain", False))
     except codex_watch.CodexActionError as error:
         raise _action_error(error) from error
     from src.scheduling.notices import make_notifier

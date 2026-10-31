@@ -71,7 +71,7 @@ def test_a_broken_ledger_does_not_hide_the_others(tmp_path):
 def _codex_actions(tmp_path, items):
     path = tmp_path / ".vortocode" / "codex" / "actions.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(items, ensure_ascii=False))
+    path.write_text(json.dumps([{"thread_id": "synthetic-thread", **item} for item in items], ensure_ascii=False))
 
 
 def test_codex_drafts_waiting_for_approval_are_on_the_list(tmp_path):
