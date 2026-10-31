@@ -297,11 +297,12 @@ async def test_agent_refuses_unattended_profile(fake_cli, tmp_path):
     assert not (tmp_path / "impl.txt").exists()
 
 
-async def test_agent_failure_raises_like_llm_channel_error(fake_cli, tmp_path, monkeypatch):
+async def test_agent_failure_after_start_requires_inspection(fake_cli, tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_MODE", "fail")
     agent = ew.ExternalWorkerAgent("claude", str(tmp_path), write=False)
-    with pytest.raises(ew.ExternalWorkerError, match="退出码"):
+    with pytest.raises(ew.ExternalWorkerRecoveryRequired, match="需核对"):
         await agent.run_turn("go")
+    assert "退出码" in agent.last_run.error
 
 
 async def test_agent_marks_taint_only_when_worker_went_online(fake_cli, tmp_path, monkeypatch):
@@ -690,7 +691,7 @@ class _Internal:
 
 
 async def test_unavailable_worker_hands_the_block_to_the_internal_agent(fake_cli, tmp_path, monkeypatch):
-    monkeypatch.setenv("FAKE_MODE", "limit")
+    monkeypatch.setattr(ew, "worker_binary", lambda _worker: None)
     internal, progress = _Internal(), []
     agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, fallback=lambda: internal,
                                    on_progress=progress.append)
@@ -700,18 +701,19 @@ async def test_unavailable_worker_hands_the_block_to_the_internal_agent(fake_cli
     assert any("不可用" in line and "内置子 Agent 接手" in line for line in progress)
 
 
-async def test_ordinary_failures_still_raise_for_the_pipeline_retry(fake_cli, tmp_path, monkeypatch):
+async def test_started_failures_stop_automatic_repair(fake_cli, tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_MODE", "crash")
     internal = _Internal()
     agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, fallback=lambda: internal)
-    with pytest.raises(ew.ExternalWorkerError, match="SyntaxError"):
+    with pytest.raises(ew.ExternalWorkerRecoveryRequired, match="需核对"):
         await agent.run_turn("go")
+    assert "SyntaxError" in agent.last_run.error
     assert internal.calls == [] and not ew.cooling_down("codex")
 
 
 async def test_without_fallback_unavailable_still_fails_honestly(fake_cli, tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_MODE", "limit")
-    with pytest.raises(ew.ExternalWorkerError, match="usage limit"):
+    with pytest.raises(ew.ExternalWorkerRecoveryRequired, match="需核对"):
         await ew.ExternalWorkerAgent("codex", str(tmp_path), write=True).run_turn("go")
 
 
@@ -854,7 +856,7 @@ async def test_unanswerable_cli_question_is_not_a_finished_agent_turn(fake_cli, 
 
 async def test_fallback_reports_the_actual_native_executor(fake_cli, tmp_path, monkeypatch):
     from src.agents.agent_loop import MainAgent
-    monkeypatch.setenv("FAKE_MODE", "limit")
+    monkeypatch.setattr(ew, "worker_binary", lambda _worker: None)
     class LLM:
         async def chat(self, messages, **kwargs):
             return {"content": "native result"}
@@ -864,6 +866,34 @@ async def test_fallback_reports_the_actual_native_executor(fake_cli, tmp_path, m
     assert agent.last_run.execution_report.state == ExecutionState.FAILED
     assert agent.execution_report.ref.backend_id == "vortocode"
     assert agent.execution_report.state == ExecutionState.FINISHED
+
+
+@pytest.mark.parametrize("worker", ["codex", "claude"])
+@pytest.mark.parametrize("mode", ["build", "plan"])
+async def test_started_limit_never_constructs_fallback_or_starts_cooldown(fake_cli, tmp_path, monkeypatch, worker, mode):
+    monkeypatch.setenv("FAKE_MODE", "limit")
+    factories = []
+
+    def fallback():
+        factories.append(True)
+        return _Internal()
+
+    agent = ew.ExternalWorkerAgent(worker, str(tmp_path), write=mode == "build", fallback=fallback)
+    with pytest.raises(ew.ExternalWorkerRecoveryRequired) as error:
+        await agent.run_turn("go", mode=mode)
+    assert agent.last_run.started and error.value.snapshot.error.effect == "possible"
+    assert agent.execution_report.error.retryable is False
+    assert agent.execution_report.ref == agent.last_run.execution_report.ref
+    assert not factories and not ew.cooling_down(worker)
+
+
+async def test_fallback_cannot_recursively_select_an_external_agent(tmp_path, monkeypatch):
+    monkeypatch.setattr(ew, "worker_binary", lambda _worker: None)
+    another = ew.ExternalWorkerAgent("claude", str(tmp_path), write=True)
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, fallback=lambda: another)
+    with pytest.raises(ew.ExternalWorkerError, match="递归"):
+        await agent.run_turn("go")
+    assert another.last_run is None and not ew.cooling_down("codex")
 
 
 async def test_each_worker_attempt_has_a_distinct_process_scoped_identity(fake_cli, tmp_path):

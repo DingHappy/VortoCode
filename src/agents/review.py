@@ -19,6 +19,8 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from src.agents.backends.recovery import RecoveryRequired
+
 _SEVERITIES = ("P0", "P1")
 
 
@@ -181,7 +183,7 @@ async def review_branch(repo_root: str, branch: str, base: str, *, llm=None,
 
 # --------------------------------------------------------------- 审查关（orchestration，可注入以便测试）
 async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str, *,
-                        test_cmd, guidelines: str, log) -> tuple:
+                        test_cmd, guidelines: str, log, terminal_errors: Optional[set] = None) -> tuple:
     """一轮（可能多视角的）审查：并行跑全部 reviewer，findings 打视角标后去重合并。
 
     错误**按视角名归档**返回（不是拼好的字符串），调用方才能回答"是哪个视角没看成"——复审的
@@ -198,6 +200,8 @@ async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str,
     for name, res in zip(names, results):
         if isinstance(res, BaseException):
             errors[name] = str(res)
+            if isinstance(res, RecoveryRequired) and terminal_errors is not None:
+                terminal_errors.add(name)
             log(f"（视角 {name or 'reviewer'} 审查出错：{res}；已跳过该视角）")
             continue
         if not isinstance(res, list) or any(not isinstance(f, dict) for f in res):
@@ -223,20 +227,24 @@ def _names_text(names) -> str:
 
 
 async def _review_round_retrying(reviewers: dict, repo_root: str, branch: str, base: str, *,
-                                 test_cmd, guidelines: str, log) -> tuple:
+                                 test_cmd, guidelines: str, log, terminal_errors: Optional[set] = None) -> tuple:
     """跑一轮审查，**只把出错的视角重试一次**。
 
     单个视角的一次抖动（模型回散文、relay 502）不该决定整条流水线的出口；重试只重跑失败的那几只，
     成本是"失败视角数"而不是"视角数"。
     """
+    terminal = terminal_errors if terminal_errors is not None else set()
     merged, errors = await _review_round(reviewers, repo_root, branch, base,
-                                         test_cmd=test_cmd, guidelines=guidelines, log=log)
-    if not errors:
+                                         test_cmd=test_cmd, guidelines=guidelines, log=log,
+                                         terminal_errors=terminal)
+    retryable = {name: reviewers[name] for name in errors if name not in terminal}
+    if not retryable:
         return merged, errors
-    log(f"（{_names_text(errors)} 视角出错，重试一次）")
-    again, errors = await _review_round({n: reviewers[n] for n in errors}, repo_root, branch, base,
-                                        test_cmd=test_cmd, guidelines=guidelines, log=log)
-    return _merge_findings(merged, again), errors
+    log(f"（{_names_text(retryable)} 视角出错，重试一次）")
+    again, retried_errors = await _review_round(retryable, repo_root, branch, base,
+                                               test_cmd=test_cmd, guidelines=guidelines, log=log,
+                                               terminal_errors=terminal)
+    return _merge_findings(merged, again), {**{n: errors[n] for n in errors if n in terminal}, **retried_errors}
 
 
 async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, repair,
@@ -263,15 +271,19 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
             on_incomplete({stage: dict(errors)})
 
     log(f"🔍 PR 前对抗审查{lens}：reviewer 子 agent 挑刺中…")
+    terminal_errors: set = set()
     try:
         findings, errors = await _review_round_retrying(
             reviewers, repo_root, branch, base,
-            test_cmd=test_cmd, guidelines=guidelines, log=log)
+            test_cmd=test_cmd, guidelines=guidelines, log=log, terminal_errors=terminal_errors)
     except Exception as e:  # noqa: BLE001
         _report("review", {"": str(e)})
         return (f"\n（审查未能完成：{e}；未拦截，以人工 PR 审核为准。）", False)
     _report("review", errors)
     confirmed = confirmed_findings(findings)
+    if terminal_errors:
+        detail = "\n" + format_findings(confirmed) if confirmed else ""
+        return (f"\n（审查需人工核对：{_error_text(errors)}；未自动修复，发现保留。）" + detail, bool(confirmed))
     if not confirmed:
         if errors:
             return (f"\n（审查未能完成{lens}：{_error_text(errors)}；未拦截，以人工 PR 审核为准。）", False)

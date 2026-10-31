@@ -1,4 +1,4 @@
-"""git worktree 隔离——在一次性工作树里跑"写"工作、收集 diff、保证清理。
+"""git worktree 隔离——运行、收集 diff；正常清理，需核对的尝试保留现场。
 
 让可写子 agent 在隔离的 worktree 里改代码，**绝不碰主工作区/主分支**；改动整体产出
 unified diff 待人工确认。这是大工程量"并行实现"的地基（本步先做单个、串行、不自动并入）。
@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 from src.utils.async_ops import await_thread
 from src.agents.tool import ToolTurnYield
+from src.agents.backends.recovery import RecoveryRequired
 
 
 def _git(cwd, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -68,8 +69,8 @@ def add_worktree(repo_root, wid: str) -> Path:
     ensure_state_gitignore(repo_root)              # dev_isolated-only 流程也要自忽略（没有计划文件可触发）
     path = _worktrees_dir(repo_root) / wid
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():                              # 残留则先清，避免 add 冲突
-        remove_worktree(repo_root, path)
+    if path.exists():
+        raise RuntimeError("隔离工作区已存在，请先核对并显式清理；未覆盖原工作区")
     _git(repo_root, "worktree", "add", "--detach", str(path), "HEAD")
     include_local_files(repo_root, path)
     from src.agents.worktree_bindings import record_worktree_binding
@@ -320,14 +321,27 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list,
 
 async def in_worktree(repo_root, wid: str,
                       work: Callable[[Path], Awaitable]) -> tuple[str, object]:
-    """在隔离 worktree 里 await work(path)，返回 (diff, work 的返回值)；无论成败都清理 worktree。"""
+    """隔离运行并收集 diff；普通退出清理，需人工核对的尝试保留。"""
     path = _worktrees_dir(repo_root) / wid
+    retain, created = False, False
+
+    def create():
+        nonlocal created
+        result = add_worktree(repo_root, wid)
+        created = True  # Set inside the thread before cancellation can discard its return value.
+        return result
+
     try:
-        path = await _git_op(add_worktree, repo_root, wid)
+        path = await _git_op(create)
         result = await work(path)                          # work（子 agent）在锁外 → 并行时真并发
         return await _git_op(collect_diff, path), result
+    except RecoveryRequired as error:
+        retain = True
+        error.workspace = str(path)
+        raise
     finally:
-        await _git_op(remove_worktree, repo_root, path)
+        if created and not retain:
+            await _git_op(remove_worktree, repo_root, path)
 
 
 def _test_timeout(default: int = 1200) -> int:
@@ -522,8 +536,16 @@ async def run_isolated_task(repo_root, wid: str, description: str,
     build_agent(worktree_path) -> 有 run_turn 的 agent（注入便于测试、也避免本模块依赖 MainAgent）。
     """
     path = _worktrees_dir(repo_root) / wid
+    retain, created = False, False
+
+    def create():
+        nonlocal created
+        result = add_worktree(repo_root, wid)
+        created = True
+        return result
+
     try:
-        path = await _git_op(add_worktree, repo_root, wid)
+        path = await _git_op(create)
         agent = build_agent(str(path))
         from src.agents.taint import merge_nested_taint
         with merge_nested_taint():
@@ -543,8 +565,13 @@ async def run_isolated_task(repo_root, wid: str, description: str,
             head = _git(path, "rev-parse", "HEAD", check=False).stdout.strip()
             verification = await await_thread(compare_with_base, repo_root, head, verification)
         return diff, conclusion, verification
+    except RecoveryRequired as error:
+        retain = True
+        error.workspace = str(path)
+        raise
     finally:
-        await _git_op(remove_worktree, repo_root, path)
+        if created and not retain:
+            await _git_op(remove_worktree, repo_root, path)
 
 
 def ensure_branch(repo_root, branch: str, base: str = "HEAD") -> None:
@@ -562,9 +589,10 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
     红/无改动则丢弃、branch 不动。返回 {ok, conclusion, output}。绝不碰主工作区/主分支。
     """
     path = _worktrees_dir(repo_root) / wid
+    retain = False
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        await _git_op(remove_worktree, repo_root, path)
+        raise RuntimeError("隔离工作区已存在，请先核对并显式清理；未覆盖原工作区")
     # 检出 branch（非 detached）——git 操作丢线程 + 全局串行（不冻循环/不竞争共享 .git）
     try:
         add = await _git_op(_git, repo_root, "worktree", "add", str(path), branch, check=False)
@@ -580,6 +608,11 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
                 )  # 锁外
         except ToolTurnYield:
             raise
+        except RecoveryRequired as error:
+            retain = True
+            error.workspace = str(path)
+            return {"ok": False, "conclusion": "", "output": str(error),
+                    "failure_kind": "recovery_required", "retained_worktree": str(path)}
         except Exception as e:  # noqa: BLE001 —— 通道故障（LLM 502/超时）：如实报因，branch 不动
             return {"ok": False, "conclusion": "",
                     "output": "LLM 通道故障: " + (str(e) or repr(e))[:300]}
@@ -597,7 +630,8 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
                     "output": "无改动或提交失败: " + (cm.stdout + cm.stderr).strip()[:200]}
         return {"ok": True, "conclusion": conclusion, "output": ""}
     finally:
-        await _git_op(remove_worktree, repo_root, path)
+        if not retain:
+            await _git_op(remove_worktree, repo_root, path)
 
 
 def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
