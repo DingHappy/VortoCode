@@ -106,7 +106,8 @@ Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑
 记录 Grok 源码对照、现有缺口、会话隔离底座和分阶段联动；不等于已支持同 runtime 多 IM 桥或微信。
 首个角色切片已接入原 IM/会话工厂：显式 `research_read` 只提供项目内读取与检索，工具
 运行层阻止动态追加权限；它还不是双 bot 托管或跨 runtime 研究往返，配置与验证边界见上述方案。
-身份、权限、消息/任务交接、预算、取消及生命周期的待评审合同见 [多 bot 工程设计 v1.3](MULTI_BOT_DESIGN.md)。
+身份、权限、消息/任务交接、预算、取消及生命周期的待评审合同见 [多 bot 工程设计 v1.4](MULTI_BOT_DESIGN.md)。
+目标为一个总助手加 N 个专职 bot，两入口仅是首个连通场景；注册数量、渠道绑定和模型并发分别准入。
 其中职责分层、单次执行引用和源码迁移表属于拟实施结构，不能当作当前源码已经完成的重构。
 原稿的 [对抗审核与修订](MULTI_BOT_ADVERSARIAL_REVIEW.md) 保留反例、证据类型和未通过的实施门禁。
 [官方架构参考](MULTI_BOT_ARCHITECTURE_REFERENCES.md) 记录可借鉴的机制、不能推定的保证和第二轮取舍。

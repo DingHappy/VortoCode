@@ -1,4 +1,5 @@
 """Private-project reader: actual tool execution and IM turns, all offline."""
+import asyncio
 import json
 import os
 import subprocess
@@ -198,6 +199,31 @@ def test_switching_a_standard_isolated_bot_to_reader_never_adopts_its_history(tm
     restored = bot(tmp_path)
     assert restored._sid == instance._sid and restored.agent.history == instance.agent.history
     assert restored.mode == "plan"
+
+
+@pytest.mark.parametrize("count", [1, 2, 4, 8])
+async def test_many_reader_instances_keep_parallel_turns_and_histories_separate(tmp_path, count):
+    # This exercises N actual cores/bridge instances, not embedded N-account hosting.
+    instances = []
+    clients = []
+    for index in range(count):
+        name = f"evidence-{index}.py"
+        (tmp_path / name).write_text(f"OBSERVED_{index}_ONLY")
+        client = ScriptedLLM(json.dumps({"tool": "read_file", "args": {"path": name}}),
+                             f"RESULT_{index}_ONLY")
+        clients.append(client)
+        instances.append(IMBridge(str(tmp_path), AccountAdapter(f"bot-{index}"), "owner-1",
+                                  channel="telegram", conversation="isolated", session_role="research_read",
+                                  llm=client))
+    await asyncio.gather(*(instance._run_turn(f"PRIVATE_QUESTION_{index}_ONLY 读取 evidence-{index}.py")
+                           for index, instance in enumerate(instances)))
+    assert len({instance._sid for instance in instances}) == count
+    assert len({id(instance.agent) for instance in instances}) == count
+    for index, instance in enumerate(instances):
+        history = str(instance.agent.history)
+        assert f"OBSERVED_{index}_ONLY" in history and clients[index].n == 2
+        assert instance._transcript[-1]["text"] == f"RESULT_{index}_ONLY"
+        assert all(f"PRIVATE_QUESTION_{other}_ONLY" not in history for other in range(count) if other != index)
 
 
 async def test_reader_does_not_read_project_pipeline_metadata(tmp_path, monkeypatch):
