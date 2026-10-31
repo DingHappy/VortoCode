@@ -26,6 +26,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/scheduling/codex_goal.py` / `codex_supervisor.py` | 原私人目标与 Codex 交接关联、当前验收材料、累计判断额度、重复缺口暂停；[跟进合同](CODEX_GOAL_SUPERVISION.md) | 目标验收写入、外部执行、自动批准、供应商金额硬预算或第二套任务库 |
 | `desktop/src/components/AssistantWorkday.tsx` / `lib/assistantWorkday.ts` / `assistantWorkdayReads.ts` | 现有目标、任务单、确认和 Codex 报告的今日投影、独立读取与来源失效；[统计合同](ASSISTANT_WORKDAY.md) | 第二套任务库、自动验收、代替用户审批或判定真实部署完成 |
 | `desktop/src/lib/personalGoalSnapshot.ts` | 今日工作与目标详情共用的读取结构校验、逐条及整体用户验收依据判断；未知状态保守显示 | 目标持久化、自动修复记录、执行或批准操作 |
+| `desktop/src/lib/codexGoalSupervision.ts` / `components/CodexGoalProgress.tsx` | 原目标与执行的有界只读关联、版本/时效核对、等待原因和验收导航 | 写入目标、修改交接/额度、批准、执行或从 Codex 推断目标达成 |
 | `desktop/src/components/settings/CodexWatchCard.tsx` / `lib/codexObserverHealth.ts` | 本机 General 观察员运行诊断、来源复核、状态时效和刷新隔离；[观测合同](OBSERVATION_ORDER.md) | 启动或重启引擎、自动接管、保存凭据、使用远端状态冒充本机健康 |
 | `src/agents/main_agent.py` | 标准主 Agent 工具装配、旧导入兼容 | 开发流水线和角色执行实现 |
 | `src/agents/dev_policy.py` | 环境预检、重试策略、测试改动与诚实结果摘要 | 模型执行、客户端通知 |

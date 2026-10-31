@@ -273,6 +273,8 @@ export interface CodexAction {
 export interface CodexProgressSnapshot {
   overview: string;
   received_at?: string;
+  /** Additive resident goal projection; decode before displaying or linking. Missing on older hosts. */
+  goal_supervision?: unknown;
   threads: Array<{
     id: string; name: string; cwd?: string; status: string; flags: string[]; updated_at?: number;
     turn?: { id: string; status: string; request?: string; reply?: string; plan?: string; error?: string } | null;

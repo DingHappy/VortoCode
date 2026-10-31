@@ -7,6 +7,9 @@ import { assistantWorkdayReads, startWorkdayClock } from "../lib/assistantWorkda
 import { startPolling } from "../lib/polling";
 import { CodexActionCard } from "./CodexActionCard";
 import { ResidentComputerCard } from "./ResidentComputerCard";
+import { CodexGoalProgress } from "./CodexGoalProgress";
+import { codexGoalProgress, codexProgressFresh } from "../lib/codexGoalSupervision";
+import { freshAt } from "../lib/readFreshness";
 import "./AssistantWorkday.css";
 
 const BUCKETS = [
@@ -137,6 +140,10 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
     sessions, activeSid, mainSid, projectSources, ops, notices, connected, now });
   const action = selected?.kind === "codex_action" ? codexActions.find(item => item.id === selected.id) : null;
   const thread = selected?.kind === "codex" ? codex.data?.threads.find(item => item.id === selected.id) : null;
+  const goalProgress = codexGoalProgress({ snapshot: codex.data, goals: goals.data,
+    codexCurrent: codexProgressFresh(codex, connected, now.getTime()),
+    goalsCurrent: connected && goals.status === "current" && freshAt(goals.checkedAt, now.getTime()), now: now.getTime() })
+    .items.find(item => item.threadId === thread?.id);
   const opsRow = selected?.kind === "ops" ? ops?.data.find(item => item.source === selected.id) : null;
   const notice = selected?.kind === "notice" ? notices?.data.find(item => JSON.stringify([item.ts, item.source, item.text]) === selected.id) : null;
   return <>
@@ -152,10 +159,12 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
       onDecide={decision => onCodexDecision(action, decision)} />}
     {thread && <article className="assistant-task-card workday-codex-detail" aria-label={`Codex 进度：${thread.name}`}>
       <header><strong>{thread.name}</strong></header>
+      {thread.cwd && <p>{thread.cwd}</p>}
       <p>最近报告：{codex.data?.received_at ? new Date(codex.data.received_at).toLocaleString() : "尚无报告"}</p>
       <p>{thread.turn?.request || "尚无任务说明"}</p>
       {thread.turn?.reply && <details><summary>Codex 最近回复</summary><p>{thread.turn.reply}</p></details>}
       <p>等待批准或回答时，请到 Codex 处理；此处的报告不替代交付验收。</p>
+      {goalProgress && <CodexGoalProgress progress={goalProgress} onOpenGoal={id => { setSelected(null); onGoals(id); }} />}
     </article>}
     {opsRow && <article className="assistant-task-card workday-codex-detail" aria-label={`运维报到：${opsRow.source}`}>
       <header><strong>运维 · {opsRow.source}</strong></header>
