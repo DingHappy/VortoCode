@@ -24,15 +24,15 @@ class IMConfigError(Exception):
     """IM 通道凭证缺失/不合法（fail-closed：宁可拒启，不带残缺配对上线）。"""
 
 
-_ACTIVE: dict = {"bridge": None, "unsubscribe": None}   # serve 内嵌单例（standalone 模式不登记）
 
 
-def build_adapter(channel: str) -> Tuple[object, str]:
+def build_adapter(channel: str, *, env=None) -> Tuple[object, str]:
     """按 env 凭证构造通道 adapter，返回 (adapter, owner_id)。缺凭证抛 IMConfigError（fail-closed）。"""
     channel = (channel or "").strip().lower()
+    values = os.environ if env is None else env
     if channel == "telegram":
-        token = os.getenv("VORTOCODE_TG_TOKEN", "").strip()
-        owner = os.getenv("VORTOCODE_TG_OWNER_ID", "").strip()
+        token = values.get("VORTOCODE_TG_TOKEN", "").strip()
+        owner = values.get("VORTOCODE_TG_OWNER_ID", "").strip()
         if token and not owner:
             from src.im.telegram_pairing import PairingError, load_paired_owner
             try:
@@ -48,11 +48,11 @@ def build_adapter(channel: str) -> Tuple[object, str]:
         # 刻意不进上面的 fail-closed 必填项——它缺失只会让群消息更不响应，不影响私聊凭证路径。
         return TelegramAdapter(
             token, owner,
-            bot_username=os.getenv("VORTOCODE_TG_BOT_USERNAME", "").strip() or None), owner
+            bot_username=values.get("VORTOCODE_TG_BOT_USERNAME", "").strip() or None), owner
     if channel == "dingtalk":
-        cid = os.getenv("VORTOCODE_DD_CLIENT_ID", "").strip()
-        secret = os.getenv("VORTOCODE_DD_CLIENT_SECRET", "").strip()
-        owner = os.getenv("VORTOCODE_DD_OWNER_ID", "").strip()
+        cid = values.get("VORTOCODE_DD_CLIENT_ID", "").strip()
+        secret = values.get("VORTOCODE_DD_CLIENT_SECRET", "").strip()
+        owner = values.get("VORTOCODE_DD_OWNER_ID", "").strip()
         if not cid or not secret or not owner:
             raise IMConfigError(
                 "钉钉桥需要环境变量 VORTOCODE_DD_CLIENT_ID / VORTOCODE_DD_CLIENT_SECRET / "
@@ -105,98 +105,64 @@ def load_session_role() -> str:
 
 
 def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
-                   adapter=None, owner: Optional[str] = None, runner=None, register_worker=None):
-    """在 serve 进程内起 bridge：构造（或注入，测试用）adapter → 建 bridge（共享 runner）→
-    登记单例 + kind 分发 → 返回 (bridge, adapter)。调用方负责 asyncio.create_task(bridge.run())。
-    """
-    from src.im.bridge import IMBridge
-    role = os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower()
-    if role not in {"interactive", "notify"}:
-        raise IMConfigError("VORTOCODE_IM_ROLE must be interactive or notify")
-    conversation = load_conversation()
-    session_role = load_session_role()
-    if role == "notify" and conversation == "isolated":
+                   adapter=None, owner: Optional[str] = None, runner=None, register_worker=None,
+                   binding_id=None, bot_id=None, conversation=None, session_role=None,
+                   notification_only=None, owner_ref="paired-owner", claim_turn=None, primary_binding=None):
+    """Register a legacy bridge or an explicitly addressed host binding."""
+    from src.gateway import im_registry
+    legacy = binding_id is None
+    if legacy:
+        role = os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower()
+        if role not in {"interactive", "notify"}:
+            raise IMConfigError("VORTOCODE_IM_ROLE must be interactive or notify")
+        conversation = load_conversation()
+        session_role = load_session_role()
+        notification_only = role == "notify"
+    elif conversation not in {"primary", "isolated"} or session_role not in {"standard", "research_read"}:
+        raise IMConfigError("Hosted bindings require explicit conversation and policy")
+    if notification_only and conversation == "isolated":
         raise IMConfigError("An isolated bot cannot own the primary notification route")
-    if _ACTIVE["bridge"] is not None:
-        raise IMConfigError("An IM bridge already owns this Runtime")
     if runner is None or register_worker is None:
         raise IMConfigError("Embedded IM requires an injected Runtime runner and worker registrar")
     if adapter is None:
         adapter, owner = build_adapter(channel)
-    if role == "notify" and channel == "telegram":
+    if notification_only and channel == "telegram":
         adapter.notification_only = True
-    bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner,
-                      allow_from=load_allow_from(channel), notification_only=role == "notify",
-                      conversation=conversation, session_role=session_role)
-    claim = getattr(adapter, "claim_polling", None)
-    if claim is not None:
-        claim()
-    # IM 也收任务进度/终态（与 WS 同一订阅集）；unsubscribe 必须留着——stop 时不退订的话，
-    # lifespan 重启/动态启停会把更新继续投给已停的 bridge/adapter（评审抓的订阅泄漏）
-    try:
-        if role != "notify" and conversation == "primary":
-            register_worker(bridge._task_worker)
-        _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update) if conversation == "primary" else None
-    except Exception:
-        register_worker(None)
-        release = getattr(adapter, "release_polling", None)
-        if release is not None:
-            release()
-        raise
-    _ACTIVE["bridge"] = bridge
-    _ACTIVE["register_worker"] = register_worker if conversation == "primary" else None
-    _ACTIVE["owner_routes"] = conversation == "primary"
-    if conversation == "isolated":
-        return bridge, adapter
-    from src.gateway import im_runtime
-    # 注册**不吞异常**的 notify_send，而不是 _safe_send：通知投递路径必须让失败冒出来，
-    # notify_owner 才能返回 False、投递器才能落"未送达"的账（2026-07-28 早上的教训）。
-    im_runtime.set_owner_notifier(bridge.notify_send)
-    im_runtime.set_owner_confirm_sender(adapter.send_confirm)
-
-    async def _send_media(path: str, caption: str, kind: str) -> bool:
-        fn = adapter.send_file if kind == "file" else adapter.send_image
-        return bool(await fn(path, caption))
-    im_runtime.set_owner_media_sender(_send_media)
-    return bridge, adapter
+    return im_registry.register(channel, repo_root, adapter=adapter, owner=owner, runner=runner,
+                                register_worker=register_worker, mode=mode, conversation=conversation,
+                                session_role=session_role, notification_only=bool(notification_only),
+                                allow_from=load_allow_from(channel),
+                                binding_id=binding_id, bot_id=bot_id, owner_ref=owner_ref, claim_turn=claim_turn,
+                                primary_binding=primary_binding)
 
 
-def stop_embedded() -> None:
-    """注销内嵌 bridge（serve 关停时调；adapter 的关闭由调用方负责）：单例、kind 分发、订阅全清。"""
-    _ACTIVE["bridge"] = None
-    from src.gateway import im_runtime
-    if _ACTIVE.pop("owner_routes", False):
-        im_runtime.set_owner_notifier(None)
-        im_runtime.set_owner_confirm_sender(None)
-        im_runtime.set_owner_media_sender(None)
-    unsub = _ACTIVE.pop("unsubscribe", None)
-    _ACTIVE["unsubscribe"] = None
-    if unsub is not None:
-        try:
-            unsub()                                        # 从共享 runner 退订（防泄漏到已停 bridge）
-        except Exception:  # noqa: BLE001
-            pass
-    register_worker = _ACTIVE.pop("register_worker", None)
-    if register_worker is not None:
-        register_worker(None)
+def stop_embedded(binding_id=None, *, expected=None) -> None:
+    """Unregister stopped bindings; managed callers await their host stop first."""
+    from src.gateway import im_registry
+    if binding_id is None:
+        for binding in im_registry.entries():
+            im_registry.unregister(binding.id, expected=expected)
+    else:
+        im_registry.unregister(binding_id, expected=expected)
 
 
-def current_bridge():
-    return _ACTIVE["bridge"]
+def current_bridge(binding_id=None):
+    from src.gateway.im_registry import current
+    return current(binding_id)
 
 
 def bridge_liveness() -> dict:
-    """内嵌桥的活性快照，供 `GET /api/im/status` 与 doctor 用。没内嵌桥 → `{"bridge": false}`。
-
-    **不含任何凭证或会话标识**（见 ChannelAdapter.liveness）——这份快照会经 API 吐出去。
-    """
-    bridge = _ACTIVE.get("bridge")
-    if bridge is None:
-        return {"bridge": False}
+    """Keep the primary status contract and expose addressed, non-secret bindings."""
+    from src.gateway import im_registry
+    bridge = current_bridge()
     try:
-        return {"bridge": True, **bridge.liveness()}
-    except Exception as e:  # noqa: BLE001 —— 运维面绝不能因为取状态失败而挂
-        return {"bridge": True, "error": f"{type(e).__name__}: {e}"}
+        primary = {"bridge": True, **bridge.liveness()} if bridge is not None else {"bridge": False}
+    except Exception:
+        primary = {"bridge": True, "error": "liveness_unavailable"}
+    bindings = im_registry.status()
+    if bindings and bindings[0]["binding_id"] != "legacy":
+        primary["bindings"] = bindings
+    return primary
 
 
 async def notify_owner(text: str) -> bool:

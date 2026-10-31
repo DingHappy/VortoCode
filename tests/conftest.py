@@ -65,7 +65,7 @@ def _hermetic_ambient_credentials(monkeypatch):
     真要这些值的用例自行 `monkeypatch.setenv(...)` 覆盖——与本文件其他夹具同一约定。
     """
     for name in ("OPENAI_API_KEY", "VORTOCODE_API_TOKEN",
-                 "VORTOCODE_ENABLE_SHELL", "VORTOCODE_ENABLE_BROWSER"):
+                 "VORTOCODE_ENABLE_SHELL", "VORTOCODE_ENABLE_BROWSER", "VORTOCODE_IM_BINDINGS_FILE"):
         monkeypatch.setenv(name, "")
 
 

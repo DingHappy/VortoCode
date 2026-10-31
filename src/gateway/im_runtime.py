@@ -14,21 +14,25 @@ from collections.abc import Awaitable, Callable
 OwnerNotifier = Callable[[str], Awaitable[object]]
 
 _OWNER_NOTIFIER: OwnerNotifier | None = None
+_NOTIFIER_GENERATION = object()
 
 
 def set_owner_notifier(notifier: OwnerNotifier | None) -> None:
     """Register/unregister the current best-effort owner notification sink."""
-    global _OWNER_NOTIFIER
+    global _OWNER_NOTIFIER, _NOTIFIER_GENERATION
     _OWNER_NOTIFIER = notifier
+    _NOTIFIER_GENERATION = object()
 
 
 _OWNER_MEDIA_SENDER = None          # 与 _OWNER_NOTIFIER 同构：桥起来时注册，停时注销
+_MEDIA_GENERATION = object()
 
 
 def set_owner_media_sender(sender) -> None:
     """注册"给 owner 发媒体"的出口（签名 async (path, caption, kind) -> bool）。"""
-    global _OWNER_MEDIA_SENDER
+    global _OWNER_MEDIA_SENDER, _MEDIA_GENERATION
     _OWNER_MEDIA_SENDER = sender
+    _MEDIA_GENERATION = object()
     from src.agents.tools.media import set_owner_media_sender as register_sender
     register_sender(send_owner_media if sender is not None else None)
 
@@ -89,12 +93,32 @@ async def notify_owner(text: str, *, relay: bool = True, timed: bool = False) ->
 
 
 _OWNER_CONFIRM_SENDER = None       # 桥起来时注册 adapter.send_confirm：发带「批准 / 拒绝」按钮的消息
+_CONFIRM_GENERATION = object()
 
 
 def set_owner_confirm_sender(sender) -> None:
     """Register/unregister the bridge's button sender (same lifecycle as the owner notifier)."""
-    global _OWNER_CONFIRM_SENDER
+    global _OWNER_CONFIRM_SENDER, _CONFIRM_GENERATION
     _OWNER_CONFIRM_SENDER = sender
+    _CONFIRM_GENERATION = object()
+
+
+def register_owner_routes(notifier, confirm, media):
+    """Identity-scoped cleanup: an old owner cannot clear a newer registration."""
+    set_owner_notifier(notifier)
+    set_owner_confirm_sender(confirm)
+    set_owner_media_sender(media)
+    generations = (_NOTIFIER_GENERATION, _CONFIRM_GENERATION, _MEDIA_GENERATION)
+
+    def release():
+        if _NOTIFIER_GENERATION is generations[0]:
+            set_owner_notifier(None)
+        if _CONFIRM_GENERATION is generations[1]:
+            set_owner_confirm_sender(None)
+        if _MEDIA_GENERATION is generations[2]:
+            set_owner_media_sender(None)
+
+    return release
 
 
 async def notify_owner_confirm(text: str, confirm_id: str, *, relay: bool = True) -> bool:

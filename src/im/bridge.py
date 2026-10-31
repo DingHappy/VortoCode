@@ -152,7 +152,7 @@ class IMBridge:
                  with_dev: bool = True, persona: str = "",
                  allow_from: Optional[Iterable] = None, workspace_scope=None,
                  notification_only: bool = False, conversation: str = "primary",
-                 session_role: str = "standard"):
+                 session_role: str = "standard", claim_turn=None, bot_identity=None):
         if not isinstance(conversation, str) or conversation not in {"primary", "isolated"}:
             raise ValueError("IM conversation must be primary or isolated")
         if not isinstance(channel, str) or re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", channel) is None:
@@ -163,6 +163,10 @@ class IMBridge:
         if session_role == "research_read" and (conversation != "isolated" or notification_only):
             raise ValueError("research_read requires an isolated interactive conversation")
         self.session_role = session_role
+        self._claim_turn = claim_turn
+        if bot_identity is not None and (not isinstance(bot_identity, str) or
+                                         re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", bot_identity) is None):
+            raise ValueError("Invalid logical bot identity")
         from src.gateway.workspace_scope import current_workspace_scope, normalize_workspace_scope
         self.workspace_scope = (current_workspace_scope() if workspace_scope is None
                                 else normalize_workspace_scope(workspace_scope, default="general"))
@@ -192,6 +196,8 @@ class IMBridge:
                 from src.agents.research_read import policy_fingerprint
                 key = json.dumps([channel, identity, self.owner_id, conversation,
                                   session_role, policy_fingerprint()], ensure_ascii=False)
+            if bot_identity is not None:
+                key = json.dumps([key, bot_identity], ensure_ascii=False)
             self._sid = f"sid-{channel}-{hashlib.sha256(key.encode()).hexdigest()[:40]}"
         elif conversation == "isolated":
             raise ValueError("An isolated bot needs a stable adapter account identity")
@@ -204,6 +210,9 @@ class IMBridge:
         # （真机 2026-07-27）。有界是为了防刷屏堆积：满了才如实说满了。
         self._pending_msgs: list = []
         self._queue_cap = 3
+        if claim_turn is not None:
+            # No durable queue claim before the input-receipt/actor migration.
+            self._queue_cap = 0
         self._ignored = 0                                # 白名单外的入站计数
         self._ignored_no_mention = 0                     # 群聊里没 @ 到本机器人的入站计数
         # confirm/progress/工具生命周期每回合重绑到当前聊天（动态里的工具数/图标靠 tool_event）
@@ -415,6 +424,8 @@ class IMBridge:
         if warn or self._should_say_hello():
             hello = (f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
                      f"发任务给我跑隔离流水线；/help 看用法。")
+            if self.session_role == "research_read":
+                hello = "🔎 只读项目助手已就绪；可读取和检索所选项目。开发与审批请回 Desktop 或原总助手处理。"
             if self.notification_only:
                 hello = "🔔 VortoCode 通知已就绪；任务完成、失败或需要确认时提醒你，请在 Desktop 处理任务与确认。"
             if warn:
@@ -625,6 +636,9 @@ class IMBridge:
                     await self._safe_send(self.persona_prompt())
                 return
             if self._turn_task is not None and not self._turn_task.done():
+                if self._queue_cap == 0:
+                    await self._safe_send("当前 bot 正在执行或清理，这条消息未受理；请稍后重试。")
+                    return
                 if len(self._pending_msgs) >= self._queue_cap:
                     await self._safe_send(
                         f"⏳ 前面还有 {len(self._pending_msgs)} 条排着，这条没收下——"
@@ -635,27 +649,54 @@ class IMBridge:
                     f"📥 已排队（前面 {len(self._pending_msgs) - 1} 条 + 1 个在跑）"
                     f"，跑完自动接着处理。/stop 可中断当前任务。")
                 return
-            self._start_turn(text, imgs, atts)
+            if not self._start_turn(text, imgs, atts):
+                await self._safe_send("托管 IM 的模型额度已满，这条消息未受理；请稍后重试。")
 
-    def _start_turn(self, text: str, images: list, files: list) -> None:
+    def _start_turn(self, text: str, images: list, files: list) -> bool:
         """起一个回合，收尾时自动取下一条排队消息——队列在这里前进，不靠外部驱动。"""
+        claim = getattr(self, "_claim_turn", None)
+        release = claim() if claim is not None else (lambda: None)
+        if release is None:
+            return False
         async def _runner():
             try:
                 await self._run_turn(text, images=images, files=files)
             finally:
+                release()
                 if self._pending_msgs:
                     nxt_text, nxt_imgs, nxt_files = self._pending_msgs.pop(0)
                     left = len(self._pending_msgs)
                     await self._safe_send(f"▶️ 接着处理排队的消息"
                                           + (f"（还剩 {left} 条）" if left else "") + "：")
                     self._start_turn(nxt_text, nxt_imgs, nxt_files)
-        self._turn_task = asyncio.create_task(_runner())
+        try:
+            self._turn_task = asyncio.create_task(_runner())
+        except BaseException:
+            release()
+            raise
+        self._turn_task.add_done_callback(lambda _task: release())
+        return True
+
+    async def shutdown(self) -> None:
+        """Wait for this binding's turns before releasing its adapter/registration."""
+        from src.utils.async_ops import cancel_requested, request_cancel
+        self._pending_msgs.clear()
+        tasks = [task for task in (self._turn_task, self._heartbeat_task, *self._pr_jobs.values())
+                 if task is not None and task is not asyncio.current_task() and not task.done()]
+        for task in tasks:
+            if not cancel_requested(task):
+                request_cancel(task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _handle_command(self, text: str) -> None:
         raw_cmd = text.split()[0]
         cmd = _norm_cmd(raw_cmd)
         if self.conversation == "isolated" and cmd not in {"/help", "/status", "/stop", "/new", "/persona"}:
-            await self._safe_send("这是独立 bot 会话；任务下发和跨 bot 审批请回总助手处理。")
+            if getattr(self, "_claim_turn", None) is not None:
+                await self._safe_send("这是托管的只读项目入口；开发与审批请回 Desktop 或原总助手处理。")
+            else:
+                await self._safe_send("这是独立 bot 会话；任务下发和跨 bot 审批请回总助手处理。")
             return
         if self.workspace_scope != "project" and (
                 cmd in {"/task", "/tasks"} or cmd in _PIPE_LIST or cmd in _PIPE_GO
@@ -709,12 +750,15 @@ class IMBridge:
                 await self._safe_send(("当前人设：\n" + cur) if cur
                                       else "还没设人设。\n" + self.persona_prompt())
         elif cmd == "/stop":
+            from src.utils.async_ops import cancel_requested, request_cancel
             t = self._turn_task
             n = len(self._pending_msgs)
             self._pending_msgs.clear()             # 中断=连排队的一起清，否则"停"了还会继续冒
             if t is not None and not t.done():
-                t.cancel()
-                await self._safe_send(f"⏹ 已中断当前任务"
+                if not cancel_requested(t):
+                    request_cancel(t)
+                message = "⏹ 已请求停止，正在核对执行退出" if getattr(self, "_claim_turn", None) is not None else "⏹ 已中断当前任务"
+                await self._safe_send(message
                                       + (f"，并清掉 {n} 条排队消息。" if n else "。"))
             else:
                 await self._safe_send("当前没有在跑的任务。" + (f"（清掉了 {n} 条排队）" if n else ""))
@@ -1440,6 +1484,13 @@ class IMBridge:
                     if pid is not None and self._edits:       # 收尾把进度刷到最终态（仅支持编辑的通道）
                         await self.adapter.edit_text(pid, "✅ " + "\n".join(lines[-12:]))
                     await self._safe_send(str(payload) or "（无输出）")
+        except BaseException:
+            # Cancellation while consuming the queue doesn't automatically stop
+            # the separately spawned model task. Keep ownership until it exits.
+            from src.utils.async_ops import cancel_requested, request_cancel
+            if not cancel_requested(inner):
+                request_cancel(inner)
+            raise
         finally:
             self._bindings.unbind("confirm", "progress", "tool_event")
             try:
