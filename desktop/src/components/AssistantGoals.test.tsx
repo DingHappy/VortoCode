@@ -12,10 +12,20 @@ const goal: PersonalGoal = { id: "personal-example", kind: "personal", revision:
   progress: { passed: 0, failed: 0, total: 1 },
 };
 
+it("shows saved scope in the original goal card and explains how deferrals persist", () => {
+  const scoped = { ...goal, scope_revision: 1, constraints: ["本阶段只写文档"], non_goals: ["代码修改留到下一轮"] };
+  const html = renderToStaticMarkup(<PersonalGoalCard goal={scoped} disabled={false} onSave={async () => {}} onConfirm={async () => {}} />);
+  expect(html).toContain("范围版本 1");
+  expect(html).toContain("本阶段只写文档");
+  expect(html).toContain("代码修改留到下一轮");
+  expect(html).toContain("保存后跨轮保留");
+  expect(html).not.toContain("确认并保存范围与进展");
+});
+
 it("shows honest progress, followup flags, next step and explicit acceptance controls", () => {
   const html = renderToStaticMarkup(<PersonalGoalCard goal={goal} disabled={false} onSave={async () => {}} onConfirm={async () => {}} />);
   for (const text of ["有阻塞", "0/1", "已过期限", "到了跟进时间", "等待回复", "查询日期", "待核对", "验收依据", "确认达标", "记录未通过"]) expect(html).toContain(text);
-  expect(html).not.toContain("开始执行");
+  expect(html).not.toMatch(/<button[^>]*>开始执行<\/button>/);
 });
 
 it("keeps acceptance evidence visible after achievement and allows recording a failed recheck", () => {

@@ -31,6 +31,9 @@ it.each([
   ["invalid reminder time", { ...goal, follow_up: { accepted_at: "broken" } }],
   ["wrong kind", { ...goal, kind: "project" }],
   ["unsafe revision", { ...goal, revision: Number.MAX_SAFE_INTEGER + 1 }],
+  ["future scope revision", { ...goal, scope_revision: 3 }],
+  ["boolean scope revision", { ...goal, scope_revision: true }],
+  ["negative scope revision", { ...goal, scope_revision: -1 }],
 ])("rejects unsafe snapshot fields: %s", (_label, value) => {
   expect(() => readPersonalGoalSnapshot([value])).toThrow("个人目标数据格式异常");
 });

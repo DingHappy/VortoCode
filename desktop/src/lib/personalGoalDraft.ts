@@ -1,4 +1,4 @@
-type GoalDraftFields = { objective: string; criteria: string; next: string; due: string; followUp: string };
+type GoalDraftFields = { objective: string; criteria: string; next: string; due: string; followUp: string; constraints: string; nonGoals: string };
 
 export type PersonalGoalDraft = GoalDraftFields & {
   requestId: string;
@@ -13,7 +13,7 @@ type GoalDraftAction =
   | { type: "reset"; requestId: string };
 
 export function emptyPersonalGoalDraft(requestId: string): PersonalGoalDraft {
-  return { requestId, objective: "", criteria: "", next: "", due: "", followUp: "",
+  return { requestId, objective: "", criteria: "", next: "", due: "", followUp: "", constraints: "", nonGoals: "",
     submittedRequestId: null, foundGoalId: null };
 }
 

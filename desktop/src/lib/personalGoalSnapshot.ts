@@ -30,6 +30,7 @@ function goal(value: unknown): value is PersonalGoal {
   if (!record(value) || !text(value.id) || !/^personal-[A-Za-z0-9_-]{1,64}$/.test(value.id)
       || value.kind !== "personal" || !count(value.revision) || value.revision < 1
       || !identifier(value.objective) || !identifier(value.status)
+      || !optional(value, ["scope_revision"], item => count(item) && Number(item) <= Number(value.revision))
       || ![value.constraints, value.non_goals, value.task_ids].every(strings)
       || !stamp(value.due_at) || !stamp(value.follow_up_at)
       || typeof value.overdue !== "boolean" || typeof value.follow_up_due !== "boolean"

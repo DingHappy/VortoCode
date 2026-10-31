@@ -17,6 +17,7 @@ import type {
   AssistantProfile,
   PersonalGoal,
   PersonalGoalInput,
+  PersonalGoalUpdate,
   AssistantScheduleItem,
   MemoryProposal,
   PhoneChat,
@@ -516,7 +517,7 @@ export class GatewayClient {
     return this.request("/api/assistant/goals", { method: "POST", body: JSON.stringify(input) });
   }
 
-  async updatePersonalGoal(goal: PersonalGoal, input: Partial<Pick<PersonalGoal, "next_action" | "blocker" | "due_at" | "follow_up_at">>): Promise<PersonalGoal> {
+  async updatePersonalGoal(goal: PersonalGoal, input: PersonalGoalUpdate): Promise<PersonalGoal> {
     return this.request(`/api/assistant/goals/${encodeURIComponent(goal.id)}`, {
       method: "PATCH", body: JSON.stringify({ ...input, revision: goal.revision }),
     });

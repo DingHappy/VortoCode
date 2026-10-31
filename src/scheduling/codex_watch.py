@@ -1049,7 +1049,10 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
                 goal = codex_goal.binding(root, args["goal_id"], args.get("goal_revision"),
                                          args.get("review_limit", codex_goal.DEFAULT_REVIEWS),
                                          args.get("criterion_ids"))
-                objective = codex_goal.snapshot(root, goal["id"])["objective"]
+                scope = codex_goal.snapshot(root, goal["id"])
+                objective = scope["objective"]
+                if scope["revision"] != goal["revision"] or scope["contract"] != goal["contract"]:
+                    raise ValueError("目标范围已变化，请刷新后再交接")
             except (KeyError, TypeError, ValueError, OSError) as error:
                 return f"没有交接目标：{error}"
         question = (f"把 Codex 会话{label}交给助理盯？\n交接后助理会替它拟下一步、补充要求或叫停，"
@@ -1060,6 +1063,11 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
                          f"本次仅推进验收项：{', '.join(goal['criterion_ids'])}；其余留待下一次交接。"
                          f"该目标累计最多 {goal['review_limit']} 次推进判断，包含失败；重交接不清零。"
                          "相同缺口连续两轮无新验收证据会暂停；目标完成仍需逐项用户验收。")
+            question += (f"\n保存的范围版本：{scope['scope_revision']}。约束与非目标跨轮保留，不能由摘要或下一步建议取消。"
+                         "\n约束：\n" + "\n".join(f"· {text}" for text in scope["constraints"])
+                         + ("（未填写；不代表额外授权）" if not scope["constraints"] else "")
+                         + "\n非目标／留待以后：\n" + "\n".join(f"· {text}" for text in scope["non_goals"])
+                         + ("（未填写）" if not scope["non_goals"] else ""))
         if confirm is None or not await confirm(question):
             return f"主人没同意交接 {label}，仍然只看不插手。"
         try:
