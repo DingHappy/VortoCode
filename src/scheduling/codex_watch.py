@@ -346,9 +346,9 @@ def _record_report(root: str, payload: Any, threads: List[dict], previous: dict,
     _save_state(root, state)
     try:
         expire_stale_actions(root, threads)
-    except CodexActionBusy:
-        pass  # Progress is already saved; approval/claim recheck before execution.
-    notices += [action_result_notice(action) for action in settle_unconfirmed_actions(root, now)]
+        notices += [action_result_notice(action) for action in settle_unconfirmed_actions(root, now)]
+    except (CodexActionBusy, CodexActionStorageError):
+        pass  # Progress is independent; action reads/approval/claim remain unavailable.
     return notices
 
 
@@ -526,7 +526,10 @@ def build_codex_tools(root: str) -> list:
     from src.agents.tool import Tool
 
     async def _status(_args: dict) -> str:
-        actions = action_overview(root)
+        try:
+            actions = action_overview(root)
+        except CodexActionStorageError as error:
+            actions = str(error) + "；无法确认现有待批或发送结果。"
         return overview(root) + (f"\n\n{actions}" if actions else "")
 
     return [Tool("codex_status",
@@ -544,6 +547,8 @@ def build_codex_tools(root: str) -> list:
 
 _ACTION_TEXT_MAX = 2000
 _ACTIONS_KEEP = 100
+_ACTION_TERMINAL = {"sent", "failed", "cancelled", "expired"}
+_ACTION_STATES = _ACTION_TERMINAL | {"proposed", "approved", "sending", "unknown"}
 
 
 def _actions_path(root: str) -> Path:
@@ -553,18 +558,57 @@ def _actions_path(root: str) -> Path:
 def load_actions(root: str) -> List[dict]:
     try:
         data = json.loads(_actions_path(root).read_text(encoding="utf-8"))
-        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return []
+    except (OSError, ValueError):
+        raise CodexActionStorageError("Codex 动作记录不可读，已保留原文件；未重建或重发，请核对存储") from None
+    _validate_actions(data)
+    return data
+
+
+def _validate_actions(items: Any) -> None:
+    if not isinstance(items, list):
+        raise CodexActionStorageError("Codex 动作记录格式无效，已保留原文件；未重建或重发，请核对存储")
+    seen = set()
+    for item in items:
+        if (not isinstance(item, dict)
+                or any(not isinstance(item.get(k), str) or not item[k].strip() or len(item[k]) > 80 or "\x00" in item[k]
+                       for k in ("id", "thread_id"))
+                or not isinstance(item.get("kind"), str) or item["kind"] not in {"message", "interrupt"}
+                or not isinstance(item.get("status"), str) or item["status"] not in _ACTION_STATES
+                or not isinstance(item.get("text", ""), str) or len(item.get("text", "")) > _ACTION_TEXT_MAX
+                or (item["kind"] == "message" and not item.get("text", "").strip())
+                or any(k in item and (not isinstance(item[k], str) or _parse(item[k]) is None) for k in ("created_at", "updated_at"))):
+            raise CodexActionStorageError("Codex 动作记录格式无效，已保留原文件；未重建或重发，请核对存储")
+        if item["id"] in seen:
+            raise CodexActionStorageError("Codex 动作身份重复，已保留原文件；未重建或重发，请核对存储")
+        seen.add(item["id"])
 
 
 def _save_actions(root: str, items: List[dict]) -> None:
+    _validate_actions(items)
+    excess = max(0, len(items) - _ACTIONS_KEEP)
+    retired = {i for i, item in enumerate(items) if item["status"] in _ACTION_TERMINAL}
+    if len(retired) < excess:
+        raise CodexActionError("Codex 未解决动作记录已达上限，请先核对现有动作；未保存新提议，也未删除旧记录")
+    remove = set(sorted(retired)[:excess])
+    kept = [item for i, item in enumerate(items) if i not in remove]
     path = _actions_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        json.dump(items[-_ACTIONS_KEEP:], handle, ensure_ascii=False)
-        temp = Path(handle.name)
-    temp.replace(path)
+    temp = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            temp = Path(handle.name)
+            json.dump(kept, handle, ensure_ascii=False)
+        temp.replace(path)
+    except OSError:
+        raise CodexActionStorageError("Codex 动作记录未能保存，未确认状态变更；请核对存储") from None
+    finally:
+        if temp is not None:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 class CodexActionError(ValueError):
@@ -573,6 +617,10 @@ class CodexActionError(ValueError):
 
 class CodexActionBusy(CodexActionError):
     """Another action mutation owns the original ledger; no write was made."""
+
+
+class CodexActionStorageError(CodexActionError):
+    """Unavailable action facts; never an empty ledger or a definite RPC rejection."""
 
 
 @contextmanager
@@ -950,6 +998,8 @@ def finish_action(root: str, action_id: str, *, ok: bool, error: str = "", uncer
     """failed 只表示确定没发出去（被拒绝、会话不对、没开始过）。可能已送达却核对不了回执的记成 unknown：
     真机 2026-10-28，被 Codex 明确拒绝的一条也显示成「未能确认送达」，读起来像发没发都不一定。
     旧版观察员不带 uncertain，按它报的原因里「无法确认」认出来。"""
+    if type(ok) is not bool or type(uncertain) is not bool:
+        raise CodexActionError("动作回执的 ok 和 uncertain 必须是布尔值；未修改记录")
     with _actions_lock(root):
         return _finish_action(root, action_id, ok=ok, error=error, uncertain=uncertain)
 

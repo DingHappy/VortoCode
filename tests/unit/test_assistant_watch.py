@@ -453,8 +453,8 @@ def test_report_tells_what_became_of_codex_drafts_mentioned_in_chat(tmp_path, mo
     path = tmp_path / ".vortocode" / "codex" / "actions.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps([
-        {"id": "cdx-99facbd71d", "status": "sent", "kind": "message", "updated_at": now.isoformat()},
-        {"id": "cdx-882fbc8437", "status": "expired", "kind": "interrupt", "updated_at": now.isoformat()},
+        {"id": "cdx-99facbd71d", "thread_id": "synthetic-thread", "text": "合成消息", "status": "sent", "kind": "message", "updated_at": now.isoformat()},
+        {"id": "cdx-882fbc8437", "thread_id": "synthetic-thread", "status": "expired", "kind": "interrupt", "updated_at": now.isoformat()},
     ]))
     monkeypatch.setattr(turn_digest, "recent_turns", lambda *_a: [
         {"title": "拟指令待批准", "outcome": "拟好 cdx-99facbd71d，待批准后发送", "at": now.isoformat()},
