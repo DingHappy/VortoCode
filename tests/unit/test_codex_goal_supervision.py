@@ -210,7 +210,7 @@ async def test_only_real_goal_acceptance_finishes_tracking_without_another_model
     assert service.get(goal["id"])["status"] == "achieved"
 
 
-@pytest.mark.parametrize("corruption", ["used", "grant_limit", "repeats", "map", "handover"])
+@pytest.mark.parametrize("corruption", ["used", "grant_limit", "repeats", "map", "handover", "waiting"])
 async def test_corrupt_allowance_or_binding_never_resets_or_spends(setup, corruption):
     root, _, goal, notes = setup
     await first_review(setup, Model(verdict="ask"))
@@ -221,7 +221,9 @@ async def test_corrupt_allowance_or_binding_never_resets_or_spends(setup, corrup
     else:
         path = sup._path(root)
         raw = json.loads(path.read_text())
-        if corruption == "map":
+        if corruption == "waiting":
+            raw["marks"]["thread-000001"]["goal_waiting"] = []
+        elif corruption == "map":
             raw["goal_reviews"] = []
         else:
             raw["goal_reviews"][goal["id"]][corruption] = -1
@@ -401,3 +403,111 @@ async def test_paused_goals_do_not_starve_other_sessions_of_the_two_review_slots
     await sup.supervise_once(root, at(30), notify=notes, llm=model)
     assert model.calls == 1
     assert sup._load(root)["marks"]["thread-000003"]["review_status"] == "succeeded"
+
+
+async def test_concurrent_approval_cannot_restore_an_already_claimed_action(setup, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    root, _, _, _ = setup
+    await first_review(setup, Model())
+    first = watch.load_actions(root)[0]
+    watch.decide_action(root, first["id"], True)
+    second = watch.propose_action(root, thread="thread-000001", kind="message", text="核对当前验收范围")
+    entered, release = threading.Event(), threading.Event()
+    save = watch._save_actions
+
+    def pause_approval(root, items):
+        if threading.current_thread().name.startswith("approval"):
+            entered.set()
+            assert release.wait(5), "approval was never released"
+        return save(root, items)
+
+    monkeypatch.setattr(watch, "_save_actions", pause_approval)
+    rejected = False
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="approval") as pool:
+        approval = pool.submit(watch.decide_action, root, second["id"], True)
+        try:
+            assert entered.wait(3)
+            try:
+                watch.claim_action(root, first["id"])
+            except watch.CodexActionError:
+                rejected = True
+        finally:
+            release.set()
+            approval.result(timeout=5)
+    if rejected:
+        watch.claim_action(root, first["id"])
+    assert watch.load_actions(root)[0]["status"] == "sending"
+    with pytest.raises(watch.CodexActionError):
+        watch.claim_action(root, first["id"])
+
+
+async def test_model_done_reason_remains_visible_after_a_fresh_status_read(setup):
+    root, _, _, _ = setup
+    await first_review(setup, Model(verdict="done"))
+    view = watch.progress_snapshot(root)["goal_supervision"][0]
+    assert view["state"] == "awaiting_user"
+    assert "验收" in view["reason"] and "本轮" in view["reason"]
+
+
+@pytest.mark.parametrize("change", ["revision", "turn", "rebind", "revoke"])
+async def test_waiting_reason_is_only_for_its_original_goal_turn_and_handover(setup, change):
+    root, service, goal, _ = setup
+    await first_review(setup, Model(verdict="done"))
+    if change == "revision":
+        service.update(goal["id"], {"revision": 1, "next_action": "用户已调整下一步"})
+    elif change == "turn":
+        report(root, 30, turn="t2")
+    elif change == "rebind":
+        watch.hand_over(root, watch.load_state(root)["threads"][0], now=at(30),
+                        goal=policy.binding(root, goal["id"], 1))
+    else:
+        watch.take_back(root, "thread-000001")
+    projected = watch.progress_snapshot(root)["goal_supervision"]
+    assert not projected if change == "revoke" else projected[0]["state"] == "active"
+
+
+@pytest.mark.parametrize("operation", ["propose", "approve", "cancel", "claim", "finish", "expire", "settle"])
+async def test_all_action_writers_share_the_same_ledger_lock(setup, operation):
+    root, _, _, _ = setup
+    await first_review(setup, Model())
+    first = watch.load_actions(root)[0]
+    watch.decide_action(root, first["id"], True)
+    watch.claim_action(root, first["id"])
+    second = watch.propose_action(root, thread="thread-000001", kind="message", text="核对验收")
+    third = watch.propose_action(root, thread="thread-000001", kind="message", text="补充验证材料")
+    watch.decide_action(root, third["id"], True)
+    path = watch._actions_path(root)
+    before = path.read_bytes()
+    operations = {
+        "propose": lambda: watch.propose_action(root, thread="thread-000001", kind="message", text="不能覆盖状态"),
+        "approve": lambda: watch.decide_action(root, second["id"], True),
+        "cancel": lambda: watch.decide_action(root, second["id"], False),
+        "claim": lambda: watch.claim_action(root, third["id"]),
+        "finish": lambda: watch.finish_action(root, first["id"], ok=True),
+        "expire": lambda: watch.expire_stale_actions(root),
+        "settle": lambda: watch.settle_unconfirmed_actions(root, now=at(60)),
+    }
+    from src.workflow.pipeline.pipeline_storage import pipeline_lock
+    with pipeline_lock(root, "codex-actions", kind="state"):
+        if operation == "settle":
+            assert operations[operation]() == []
+        else:
+            with pytest.raises(watch.CodexActionBusy):
+                operations[operation]()
+    assert path.read_bytes() == before
+
+
+async def test_report_can_commit_while_action_writes_are_busy_but_claim_rechecks_the_new_turn(setup):
+    root, _, _, _ = setup
+    await first_review(setup, Model())
+    action = watch.load_actions(root)[0]
+    watch.decide_action(root, action["id"], True)
+    from src.workflow.pipeline.pipeline_storage import pipeline_lock
+    with pipeline_lock(root, "codex-actions", kind="state"):
+        report(root, 30, turn="t2")
+    assert watch.load_actions(root)[0]["status"] == "approved"
+    with pytest.raises(watch.CodexActionError, match="新的一轮"):
+        watch.claim_action(root, action["id"])
+    assert watch.load_actions(root)[0]["status"] == "expired"

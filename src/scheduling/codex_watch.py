@@ -342,7 +342,10 @@ def _record_report(root: str, payload: Any, threads: List[dict], previous: dict,
         if (payload or {}).get("presence_reports") is True:
             state["presence_reports"] = True        # 观察员会在主人到/离 Mac 时补报（v0.2.13 起）
     _save_state(root, state)
-    expire_stale_actions(root, threads)
+    try:
+        expire_stale_actions(root, threads)
+    except CodexActionBusy:
+        pass  # Progress is already saved; approval/claim recheck before execution.
     notices += [action_result_notice(action) for action in settle_unconfirmed_actions(root, now)]
     return notices
 
@@ -376,13 +379,13 @@ def goal_supervision(root: str, *, now: Optional[datetime] = None) -> list[dict]
 
 
 def _goal_supervision(root: str, state: dict, records: dict, stamp: datetime) -> list[dict]:
-    from src.scheduling.codex_supervisor import goal_review_state
+    from src.scheduling.codex_supervisor import goal_review_context
     handed = {tid: record for tid, record in records.items() if "goal" in record}
     if not handed:
         return []
     out = []
     try:
-        rows = goal_review_state(root)
+        rows, marks = goal_review_context(root)
     except OSError:
         return [{"thread_id": tid, "goal_id": record["goal"]["id"], "state": "unknown",
                  "reason": "推进判断记录不可读，未重置额度，请人工核对"} for tid, record in handed.items()]
@@ -401,6 +404,12 @@ def _goal_supervision(root: str, state: dict, records: dict, stamp: datetime) ->
             reason = codex_goal.stopped(rows, goal, link)
             item.update(state="confirmed" if goal["confirmed"] else "paused" if reason else "active",
                         reason=reason or "按已授权验收项跟进，下一步仍需批准")
+            waiting = marks.get(tid, {}).get("goal_waiting", {})
+            turn = thread.get("turn") or {}
+            if (not reason and waiting.get("token") == record["token"] and waiting.get("goal_id") == goal["id"]
+                    and waiting.get("revision") == goal["revision"] and waiting.get("turn_id") == turn.get("id")
+                    and thread.get("status") == "idle" and turn.get("status") == "completed"):
+                item.update(state="awaiting_user", reason=waiting["reason"])
         except (KeyError, TypeError, ValueError, OSError, StopIteration) as error:
             item.update(state="unknown", reason=f"目标状态待核对：{error}")
         out.append(item)
@@ -556,6 +565,19 @@ def _save_actions(root: str, items: List[dict]) -> None:
 
 class CodexActionError(ValueError):
     """动作不合法，或当前状态不允许这个操作。"""
+
+
+class CodexActionBusy(CodexActionError):
+    """Another action mutation owns the original ledger; no write was made."""
+
+
+@contextmanager
+def _actions_lock(root: str):
+    try:
+        with pipeline_lock(root, "codex-actions", kind="state"):
+            yield
+    except PipelineBusy:
+        raise CodexActionBusy("Codex 动作正在更新，请稍后核对") from None
 
 
 def thread_label(thread: dict) -> str:
@@ -726,6 +748,16 @@ def owner_driving(root: str, thread: dict) -> bool:
 def propose_action(root: str, *, thread: str, kind: str, text: str = "", session: str = "",
                    tainted: bool = False, expected_turn_id: Optional[str] = None,
                    expected_handover_token: Optional[str] = None, expected_goal_revision: Optional[int] = None) -> dict:
+    # Fixed order: handover -> actions. No model/RPC/notification under either lock.
+    with _handover_lock(root), _actions_lock(root):
+        return _propose_action(root, thread=thread, kind=kind, text=text, session=session, tainted=tainted,
+                               expected_turn_id=expected_turn_id, expected_handover_token=expected_handover_token,
+                               expected_goal_revision=expected_goal_revision)
+
+
+def _propose_action(root: str, *, thread: str, kind: str, text: str, session: str, tainted: bool,
+                    expected_turn_id: Optional[str], expected_handover_token: Optional[str],
+                    expected_goal_revision: Optional[int]) -> dict:
     target = _find_thread(root, thread)
     if not is_handed_over(root, target["id"]):
         raise CodexActionError(f"{thread_label(target)}没交给助理：默认只看不插手。要替它拟话或叫停，"
@@ -769,6 +801,7 @@ def propose_action(root: str, *, thread: str, kind: str, text: str = "", session
 
 
 def _change(root: str, action_id: str, allowed: set, **updates) -> dict:
+    """Caller owns _actions_lock for the whole read/modify/save transaction."""
     items = load_actions(root)
     for item in items:
         if item.get("id") == action_id:
@@ -806,6 +839,11 @@ def stale_reason(action: dict, threads: List[dict]) -> str:
 
 def expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> List[dict]:
     """把过时的待批动作标成 expired（原因写进 error）；返回这次作废的。监管据此不再被旧草稿挡住。"""
+    with _actions_lock(root):
+        return _expire_stale_actions(root, threads)
+
+
+def _expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> List[dict]:
     threads = (load_state(root).get("threads") or []) if threads is None else threads
     items = load_actions(root)
     expired = []
@@ -828,7 +866,13 @@ def expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> Lis
 
 def _goal_action_current(root: str, action_id: str) -> None:
     action = next((a for a in load_actions(root) if a.get("id") == action_id), {})
+    if action:
+        reason = stale_reason(action, load_state(root).get("threads") or [])
+        if reason:
+            raise CodexActionError(f"动作已过时：{reason}")
     record = load_handovers(root).get(action.get("thread_id"), {})
+    if action and not record:
+        raise CodexActionError("这个会话的交接已收回，请核对后重新交接")
     if not action.get("handover_token"):
         if record.get("goal"):
             raise CodexActionError("旧动作未绑定当前目标，请重新拟话")
@@ -850,14 +894,15 @@ def _goal_action_current(root: str, action_id: str) -> None:
 
 
 def decide_action(root: str, action_id: str, approved: bool) -> dict:
-    if approved:
-        expire_stale_actions(root)       # 批准前按最新进度再核一次：过时的不放行
-        _goal_action_current(root, action_id)
-    return _change(root, action_id, {"proposed"}, status="approved" if approved else "cancelled")
+    with _handover_lock(root), _actions_lock(root):
+        if approved:
+            _expire_stale_actions(root)       # 批准前按最新进度再核一次：过时的不放行
+            _goal_action_current(root, action_id)
+        return _change(root, action_id, {"proposed"}, status="approved" if approved else "cancelled")
 
 
 def claim_action(root: str, action_id: str) -> dict:
-    with _handover_lock(root):
+    with _handover_lock(root), _actions_lock(root):
         try:
             _goal_action_current(root, action_id)
         except CodexActionError as error:
@@ -870,6 +915,11 @@ def finish_action(root: str, action_id: str, *, ok: bool, error: str = "", uncer
     """failed 只表示确定没发出去（被拒绝、会话不对、没开始过）。可能已送达却核对不了回执的记成 unknown：
     真机 2026-10-28，被 Codex 明确拒绝的一条也显示成「未能确认送达」，读起来像发没发都不一定。
     旧版观察员不带 uncertain，按它报的原因里「无法确认」认出来。"""
+    with _actions_lock(root):
+        return _finish_action(root, action_id, ok=ok, error=error, uncertain=uncertain)
+
+
+def _finish_action(root: str, action_id: str, *, ok: bool, error: str, uncertain: bool) -> dict:
     # unknown 也收：Mac 恢复后补报的迟到回执比「无法确认」更准
     error = str(error or "")[:300]
     if not ok and (uncertain or "无法确认" in error):
@@ -887,6 +937,14 @@ def settle_unconfirmed_actions(root: str, now: Optional[datetime] = None) -> Lis
 
     不当成功也不当失败，更不重发：认领后 Mac 可能已经交给 Codex 才断的线。以前它们会永远停在
     sending，监管把这个会话当成「还有动作没办完」，再也不给它拟下一步。"""
+    try:
+        with _actions_lock(root):
+            return _settle_unconfirmed_actions(root, now)
+    except CodexActionBusy:
+        return []  # Defer local reconciliation; never replay the external action.
+
+
+def _settle_unconfirmed_actions(root: str, now: Optional[datetime]) -> List[dict]:
     now = now or _now()
     items = load_actions(root)
     settled = []

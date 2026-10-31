@@ -95,6 +95,14 @@ def _valid_record(data: Any) -> bool:
             if (not mark.get("reviewed_turn") or not isinstance(status, str)
                     or status not in {"running", "succeeded", "failed", "superseded"}):
                 return False
+        if "goal_waiting" in mark:
+            waiting = mark["goal_waiting"]
+            if (not isinstance(waiting, dict)
+                    or set(waiting) != {"token", "goal_id", "revision", "turn_id", "reason"}
+                    or type(waiting["revision"]) is not int or waiting["revision"] < 1
+                    or not all(isinstance(waiting[k], str) and 0 < len(waiting[k]) <= maximum
+                               for k, maximum in (("token", 200), ("goal_id", 100), ("turn_id", 100), ("reason", 400)))):
+                return False
     return True
 
 
@@ -144,7 +152,13 @@ def load_config(root: str) -> Dict[str, Any]:
 
 def goal_review_state(root: str) -> dict:
     """Read-only cumulative allowances, retained when sessions or handovers end."""
-    return _load(root).get("goal_reviews", {})
+    return goal_review_context(root)[0]
+
+
+def goal_review_context(root: str) -> tuple[dict, dict]:
+    """One original supervisor observation for allowances and waiting reasons."""
+    data = _load(root)
+    return data.get("goal_reviews", {}), data.get("marks", {})
 
 
 def ensure_goal_allowance(root: str, goal_id: str, limit: int, *, already_bound: bool) -> None:
@@ -565,6 +579,7 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
             mark["review_status"] = "running"
             mark["review_failure_notified"] = False
             mark.pop("review_error_code", None)
+            mark.pop("goal_waiting", None)
             marks[tid] = mark
             data["marks"] = marks
             _save_progress(root, data)
@@ -595,6 +610,9 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                 assessment = review["assessment"]
                 if goal is not None:
                     allowed, assessment = codex_goal.decide(review, goal, data["goal_reviews"])
+                    if not allowed:
+                        mark["goal_waiting"] = {"token": record["token"], "goal_id": goal["id"],
+                            "revision": goal["revision"], "turn_id": turn["id"], "reason": assessment}
                     # Persist stall state before even creating a proposed action.
                     _save_progress(root, data)
                     if not allowed:
