@@ -23,6 +23,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/agents/backends/execution.py` | 可扩展的执行身份/状态/进展/结果与证据投影、版本编解码；[执行合同](EXECUTION_CONTRACT.md) | 任务数据库、调度、授权、验收判定或自动插件加载 |
 | `src/agents/backends/recovery.py` | 可信执行观察上的失败/备用/人工核对纯决策，以及停止内层自动重试的信号；[恢复合同](EXECUTION_RECOVERY.md) | 进程启动、模型调用、持久调度、权限或跨回合预算授权 |
 | `src/agents/backends/observation_order.py` / `scheduling/codex_observer.py` / `codex_watch.py` | 整份快照的前序/代次/序号核对、不可变重传与原状态槽加锁替换；[观测顺序](OBSERVATION_ORDER.md) | 完整事件回放、多主机报告合并、自动抢回上报权或执行指令重试 |
+| `src/scheduling/codex_goal.py` / `codex_supervisor.py` | 原私人目标与 Codex 交接关联、当前验收材料、累计判断额度、重复缺口暂停；[跟进合同](CODEX_GOAL_SUPERVISION.md) | 目标验收写入、外部执行、自动批准、供应商金额硬预算或第二套任务库 |
 | `desktop/src/components/AssistantWorkday.tsx` / `lib/assistantWorkday.ts` / `assistantWorkdayReads.ts` | 现有目标、任务单、确认和 Codex 报告的今日投影、独立读取与来源失效；[统计合同](ASSISTANT_WORKDAY.md) | 第二套任务库、自动验收、代替用户审批或判定真实部署完成 |
 | `desktop/src/lib/personalGoalSnapshot.ts` | 今日工作与目标详情共用的读取结构校验、逐条及整体用户验收依据判断；未知状态保守显示 | 目标持久化、自动修复记录、执行或批准操作 |
 | `desktop/src/components/settings/CodexWatchCard.tsx` / `lib/codexObserverHealth.ts` | 本机 General 观察员运行诊断、来源复核、状态时效和刷新隔离；[观测合同](OBSERVATION_ORDER.md) | 启动或重启引擎、自动接管、保存凭据、使用远端状态冒充本机健康 |
