@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.scheduling import codex_review_context as context
 from src.scheduling import codex_supervisor as sup
 from src.scheduling import codex_watch as watch
 
@@ -37,7 +38,8 @@ def _m(minutes):
 def _thread(tid="th-test-000001", name="编写 add 函数", cwd="/tmp/codex-p1", status="active",
             turn_status="inProgress", turn="t1", started=None, request="在 calc.py 里写一个 add 函数"):
     return {"id": tid, "name": name, "cwd": cwd, "status": status, "flags": [],
-            "turn": {"id": turn, "status": turn_status, "request": request, "commands": 1,
+            "turn": {"id": turn, "status": turn_status, "request": request,
+                     "review_context": context.capture(turn, [{"type": "userMessage", "content": [{"type": "text", "text": request}]}]), "commands": 1,
                      "last_command": "pytest -q", "running_command": "pytest -q" if status == "active" else "",
                      "started_at": started, "reply": "写好了" if status == "idle" else ""}}
 

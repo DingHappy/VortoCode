@@ -32,6 +32,7 @@ from src.agents.backends.execution import (
     ExecutionProgress, ExecutionRef, ExecutionSnapshot, process_instance,
 )
 from src.agents.backends.observation_order import ObservationCursor, ObservationOrder
+from src.scheduling.codex_review_context import capture as capture_review_context
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +209,7 @@ def summarize_turn(turn: Optional[dict]) -> Optional[dict]:
         "completed_at": turn.get("completedAt"),
         "duration_ms": turn.get("durationMs"),
         "request": _clip(request, _TEXT["request"]),
+        "review_context": capture_review_context(str(turn.get("id") or ""), turn.get("items")),
         "reply": _clip(replies[-1] if replies else "", _TEXT["reply"], tail=True),
         "plan": _clip(plans[-1] if plans else "", _TEXT["plan"], tail=True),
         "commands": len(commands),

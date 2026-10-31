@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 from src.agents.backends.codex import codex_execution_state
 from src.agents.backends.execution import ExecutionProgress, ExecutionSnapshot
 from src.agents.backends.observation_order import ObservationConflict, ObservationCursor, ObservationOrder
-from src.scheduling import codex_goal
+from src.scheduling import codex_goal, codex_review_context
 from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
 
 WAIT_GRACE = timedelta(minutes=2)
@@ -135,6 +135,8 @@ def _clean_threads(payload: Any) -> List[dict]:
         })
         if "execution" in raw:
             out[-1]["execution"] = _clean_execution(raw["execution"], out[-1])
+        if turn is not None and "review_context" in turn:
+            out[-1]["turn"]["review_context"] = codex_review_context.decode(turn["review_context"], out[-1]["turn"]["id"])
     return out
 
 
@@ -402,6 +404,8 @@ def _goal_supervision(root: str, state: dict, records: dict, stamp: datetime) ->
                     or not execution_is_current(thread, stamp)):
                 raise ValueError("执行观测已过期，请刷新后核对")
             reason = codex_goal.stopped(rows, goal, link)
+            if not reason:
+                reason = codex_review_context.blocked_reason(thread.get("turn") or {})
             item.update(state="confirmed" if goal["confirmed"] else "paused" if reason else "active",
                         reason=reason or "按已授权验收项跟进，下一步仍需批准")
             waiting = marks.get(tid, {}).get("goal_waiting", {})
@@ -747,17 +751,18 @@ def owner_driving(root: str, thread: dict) -> bool:
 
 def propose_action(root: str, *, thread: str, kind: str, text: str = "", session: str = "",
                    tainted: bool = False, expected_turn_id: Optional[str] = None,
-                   expected_handover_token: Optional[str] = None, expected_goal_revision: Optional[int] = None) -> dict:
+                   expected_handover_token: Optional[str] = None, expected_goal_revision: Optional[int] = None,
+                   expected_context_fingerprint: Optional[str] = None) -> dict:
     # Fixed order: handover -> actions. No model/RPC/notification under either lock.
     with _handover_lock(root), _actions_lock(root):
         return _propose_action(root, thread=thread, kind=kind, text=text, session=session, tainted=tainted,
                                expected_turn_id=expected_turn_id, expected_handover_token=expected_handover_token,
-                               expected_goal_revision=expected_goal_revision)
+                               expected_goal_revision=expected_goal_revision, expected_context_fingerprint=expected_context_fingerprint)
 
 
 def _propose_action(root: str, *, thread: str, kind: str, text: str, session: str, tainted: bool,
                     expected_turn_id: Optional[str], expected_handover_token: Optional[str],
-                    expected_goal_revision: Optional[int]) -> dict:
+                    expected_goal_revision: Optional[int], expected_context_fingerprint: Optional[str]) -> dict:
     target = _find_thread(root, thread)
     if not is_handed_over(root, target["id"]):
         raise CodexActionError(f"{thread_label(target)}没交给助理：默认只看不插手。要替它拟话或叫停，"
@@ -776,12 +781,17 @@ def _propose_action(root: str, *, thread: str, kind: str, text: str, session: st
     if kind == "interrupt" and target.get("status") != "active":
         raise CodexActionError(f"「{target.get('name')}」现在没在做事，不需要叫停")
     import uuid
+    context = codex_review_context.read(target.get("turn") or {})
+    if expected_context_fingerprint is not None and (context.status != "complete" or context.fingerprint != expected_context_fingerprint):
+        raise CodexActionError("推进材料已变化或不完整，旧建议不再适用")
     now = _now().isoformat()
     action = {"id": f"cdx-{uuid.uuid4().hex[:10]}", "thread_id": target["id"], "thread_name": target.get("name") or "",
               "thread_cwd": target.get("cwd") or "",
               "kind": kind, "text": text[:_ACTION_TEXT_MAX], "status": "proposed", "tainted": bool(tainted),
               "session": str(session or "")[:80], "turn_id": (target.get("turn") or {}).get("id") or "",
               "created_at": now, "updated_at": now, "error": ""}
+    if expected_context_fingerprint is not None or (kind == "message" and not session):
+        action.update(context_fingerprint=context.fingerprint, requires_complete_context=expected_context_fingerprint is not None)
     record = load_handovers(root).get(target["id"], {})
     if expected_handover_token is not None and record.get("token") != expected_handover_token:
         raise CodexActionError("目标交接已更新，旧建议不再适用")
@@ -848,10 +858,12 @@ def _expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> Li
     items = load_actions(root)
     expired = []
     for item in items:
-        if item.get("status") != "proposed" and not (item.get("handover_token") and item.get("status") == "approved"):
+        context_bound = ("context_fingerprint" in item
+                         or (item.get("kind") == "message" and not item.get("session")))
+        if item.get("status") != "proposed" and not ((item.get("handover_token") or context_bound) and item.get("status") == "approved"):
             continue
         reason = stale_reason(item, threads)
-        if not reason and item.get("handover_token"):
+        if not reason and (item.get("handover_token") or context_bound):
             try:
                 _goal_action_current(root, item["id"])
             except CodexActionError as error:
@@ -870,6 +882,15 @@ def _goal_action_current(root: str, action_id: str) -> None:
         reason = stale_reason(action, load_state(root).get("threads") or [])
         if reason:
             raise CodexActionError(f"动作已过时：{reason}")
+        target = _find_thread(root, action["thread_id"])
+        context = codex_review_context.read(target.get("turn") or {})
+        if "context_fingerprint" in action:
+            if (context.fingerprint != action["context_fingerprint"]
+                    or type(action.get("requires_complete_context")) is not bool
+                    or (action["requires_complete_context"] and context.status != "complete")):
+                raise CodexActionError("推进材料已变化或无法核对，请重新拟话")
+        elif action.get("kind") == "message" and not action.get("session"):
+            raise CodexActionError("旧推进建议缺少材料版本，请核对后重新拟话")
     record = load_handovers(root).get(action.get("thread_id"), {})
     if action and not record:
         raise CodexActionError("这个会话的交接已收回，请核对后重新交接")

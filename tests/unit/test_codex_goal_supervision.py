@@ -10,6 +10,7 @@ import pytest
 
 from src.agents.backends.execution import ExecutionRef, ExecutionSnapshot, ExecutionState
 from src.scheduling import codex_goal as policy
+from src.scheduling import codex_review_context as context
 from src.scheduling import codex_supervisor as sup
 from src.scheduling import codex_watch as watch
 from src.workflow.workbench.personal_goals import PersonalGoals
@@ -24,7 +25,8 @@ def at(minutes):
 def report(root, minute, *, turn="t1", active=False, host="mac-1", tid="thread-000001", store=True):
     thread = {"id": tid, "name": "修复登录", "cwd": "/project/login", "status": "active" if active else "idle",
               "flags": [], "turn": {"id": turn, "status": "inProgress" if active else "completed",
-              "request": "本轮修复登录", "reply": "全部做好了", "commands": 1, "files": ["login.py"], "file_count": 1}}
+              "request": "本轮修复登录",
+              "review_context": context.capture(turn, [{"type": "userMessage", "content": [{"type": "text", "text": "本轮修复登录"}]}]), "reply": "全部做好了", "commands": 1, "files": ["login.py"], "file_count": 1}}
     thread["execution"] = ExecutionSnapshot(ExecutionRef("codex", host, turn, tid, turn, scope="runtime"),
                                            ExecutionState.RUNNING if active else ExecutionState.FINISHED,
                                            at(minute).timestamp()).to_dict()
