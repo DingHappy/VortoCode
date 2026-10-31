@@ -21,6 +21,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/agents/tool.py` / `tool_runtime.py` | Agent 无关的工具定义、声明适配、能力/权限检查、调度、Hook/审计与污点传播；[接入合同](TOOL_RUNTIME.md) | 模型调用、会话存储、外部 Agent 自带工具的执行权限 |
 | `src/agents/backends/control.py` / `backends/codex.py` | 现有会话的状态与轮次控制合同、Codex 协议适配；[核心控制合同](AGENT_BACKENDS.md) | 启动额外进程、工具执行、审批代决、会话存储或任意核心切换 |
 | `src/agents/backends/execution.py` | 可扩展的执行身份/状态/进展/结果与证据投影、版本编解码；[执行合同](EXECUTION_CONTRACT.md) | 任务数据库、调度、授权、验收判定或自动插件加载 |
+| `src/agents/backends/recovery.py` | 可信执行观察上的失败/备用/人工核对纯决策，以及停止内层自动重试的信号；[恢复合同](EXECUTION_RECOVERY.md) | 进程启动、模型调用、持久调度、权限或跨回合预算授权 |
 | `src/agents/backends/observation_order.py` / `scheduling/codex_observer.py` / `codex_watch.py` | 整份快照的前序/代次/序号核对、不可变重传与原状态槽加锁替换；[观测顺序](OBSERVATION_ORDER.md) | 完整事件回放、多主机报告合并、自动抢回上报权或执行指令重试 |
 | `desktop/src/components/AssistantWorkday.tsx` / `lib/assistantWorkday.ts` / `assistantWorkdayReads.ts` | 现有目标、任务单、确认和 Codex 报告的今日投影、独立读取与来源失效；[统计合同](ASSISTANT_WORKDAY.md) | 第二套任务库、自动验收、代替用户审批或判定真实部署完成 |
 | `desktop/src/lib/personalGoalSnapshot.ts` | 今日工作与目标详情共用的读取结构校验、逐条及整体用户验收依据判断；未知状态保守显示 | 目标持久化、自动修复记录、执行或批准操作 |
