@@ -156,28 +156,49 @@ def _parse_rules(data: dict, key: str) -> List[Tuple[str, Optional[str]]]:
     return rules
 
 
-def load_permissions(repo_root) -> Permissions:
-    """读 `repo_root/.vortocode/permissions.yaml` 的权限规则；缺失/损坏 → 空。"""
+def load_permissions(repo_root, *, strict: bool = False) -> Permissions:
+    """Read project rules; restrictive roles opt into rejecting invalid configuration."""
     p = Path(repo_root) / ".vortocode" / "permissions.yaml"
     if not p.is_file():
+        if strict and p.exists():
+            raise ValueError("项目权限配置不是普通文件；未放行读取")
         return Permissions([])
     try:
         import yaml
-        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001 —— 配置坏了不该让 agent 崩，按"无规则"处理
+        parsed = yaml.safe_load(p.read_text(encoding="utf-8"))
+        data = ({} if parsed is None else parsed) if strict else (parsed or {})
+    except Exception:  # noqa: BLE001 —— legacy sessions retain their existing fallback
+        if strict:
+            raise ValueError("项目权限配置不可读或损坏；未放行读取") from None
         return Permissions([])
     if not isinstance(data, dict):
+        if strict:
+            raise ValueError("项目权限配置必须为映射；未放行读取")
         return Permissions([])
+
+    def validate_rules(rules):
+        if strict:
+            for key in ("deny", "allow"):
+                if key in rules and (not isinstance(rules[key], list) or
+                                     any(_parse_rule(item) is None for item in rules[key])):
+                    raise ValueError("项目权限规则格式无效；未放行读取")
+
+    validate_rules(data)
     deny = _parse_rules(data, "deny")
     allow = _parse_rules(data, "allow")
     profile = str(data.get("profile") or data.get("active_profile") or "").strip()
     profile_found = True
-    profiles = data.get("profiles") or {}
+    profiles = data.get("profiles", {}) if strict else (data.get("profiles") or {})
+    if strict and not isinstance(profiles, dict):
+        raise ValueError("项目权限 profiles 格式无效；未放行读取")
     if profile:
         selected = profiles.get(profile) if isinstance(profiles, dict) else None
         if isinstance(selected, dict):
+            validate_rules(selected)
             deny += _parse_rules(selected, "deny")
             allow += _parse_rules(selected, "allow")
         else:
+            if strict:
+                raise ValueError("项目权限 profile 不存在；未放行读取")
             profile_found = False
     return Permissions(deny, allow, profile=profile or None, profile_found=profile_found)

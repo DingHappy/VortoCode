@@ -91,6 +91,19 @@ def load_conversation() -> str:
     return conversation
 
 
+def load_session_role() -> str:
+    """Trusted host opt-in, shared by standalone and embedded IM."""
+    role = os.getenv("VORTOCODE_IM_POLICY", "standard").strip().lower()
+    if role not in {"standard", "research_read"}:
+        raise IMConfigError("VORTOCODE_IM_POLICY must be standard or research_read")
+    if role == "research_read" and (load_conversation() != "isolated" or
+                                   os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower() != "interactive"):
+        raise IMConfigError("research_read requires isolated interactive IM")
+    if role == "research_read" and os.getenv("VORTOCODE_WORKSPACE_SCOPE", "").strip().lower() != "project":
+        raise IMConfigError("research_read requires explicit VORTOCODE_WORKSPACE_SCOPE=project")
+    return role
+
+
 def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
                    adapter=None, owner: Optional[str] = None, runner=None, register_worker=None):
     """在 serve 进程内起 bridge：构造（或注入，测试用）adapter → 建 bridge（共享 runner）→
@@ -101,6 +114,7 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     if role not in {"interactive", "notify"}:
         raise IMConfigError("VORTOCODE_IM_ROLE must be interactive or notify")
     conversation = load_conversation()
+    session_role = load_session_role()
     if role == "notify" and conversation == "isolated":
         raise IMConfigError("An isolated bot cannot own the primary notification route")
     if _ACTIVE["bridge"] is not None:
@@ -113,7 +127,7 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
         adapter.notification_only = True
     bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner,
                       allow_from=load_allow_from(channel), notification_only=role == "notify",
-                      conversation=conversation)
+                      conversation=conversation, session_role=session_role)
     claim = getattr(adapter, "claim_polling", None)
     if claim is not None:
         claim()
