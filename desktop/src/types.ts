@@ -972,6 +972,7 @@ export interface CreateGoalInput {
 export interface PersonalGoal extends GoalItem {
   kind: "personal";
   revision: number;
+  scope_revision?: number;
   due_at: string;
   follow_up_at: string;
   overdue: boolean;
@@ -1001,7 +1002,11 @@ export interface PersonalGoalInput {
   next_action: string;
   due_at?: string;
   follow_up_at?: string;
+  constraints?: string[];
+  non_goals?: string[];
 }
+
+export type PersonalGoalUpdate = Partial<Pick<PersonalGoal, "next_action" | "blocker" | "due_at" | "follow_up_at" | "constraints" | "non_goals">> & { scope_confirmed?: boolean };
 
 /** 家里其它机器的定时活（备份、恢复演练、中转站…）的报到状态；只读，见 /api/ops/heartbeats。 */
 export interface OpsHeartbeat {

@@ -45,6 +45,17 @@ def _fields(body: dict, allowed: set[str]) -> None:
         raise ValueError("请求包含不支持的字段")
 
 
+def personal_goal_scope(constraints: object, non_goals: object) -> tuple[list[str], list[str]]:
+    result = []
+    for raw in (constraints, non_goals):
+        if not isinstance(raw, list) or len(raw) > 20:
+            raise ValueError("约束和非目标各最多 20 条")
+        result.append([_text(item, 1000, required=True) for item in raw])
+    if sum(len(item) for group in result for item in group) > 8000:
+        raise ValueError("约束和非目标合计不能超过 8000 字符")
+    return result[0], result[1]
+
+
 def follow_up_preview(goal: Goal) -> str:
     """Exact bounded notification body, shown before approval and saved unchanged."""
     lines = ["📌 目标跟进提醒", goal.objective[:200], f"跟进时间：{goal.follow_up_at}",
@@ -100,6 +111,10 @@ class PersonalGoals:
             raise KeyError(goal_id)
         if not isinstance(goal.follow_up, dict) or not isinstance(goal.follow_up_history, list):
             raise ValueError("提醒记录格式无效")
+        personal_goal_scope(goal.constraints, goal.non_goals)
+        if (type(goal.scope_revision) is not int or type(goal.revision) is not int
+                or goal.revision < 1 or not 0 <= goal.scope_revision <= goal.revision <= 2**53 - 1):
+            raise ValueError("目标范围版本记录无效")
         return goal
 
     @staticmethod
@@ -142,7 +157,7 @@ class PersonalGoals:
         return self._view(goal)
 
     def create(self, body: dict) -> dict:
-        _fields(body, {"request_id", "objective", "acceptance_criteria", "next_action", "due_at", "follow_up_at"})
+        _fields(body, {"request_id", "objective", "acceptance_criteria", "next_action", "due_at", "follow_up_at", "constraints", "non_goals"})
         request_id = body.get("request_id")
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id):
             raise ValueError("需要有效的 request_id")
@@ -153,9 +168,12 @@ class PersonalGoals:
         criteria = [_text(item, 500, required=True) for item in raw]
         next_action = _text(body.get("next_action", ""), 1000, required=True)
         due, follow_up = _date(body.get("due_at", "")), _date(body.get("follow_up_at", ""))
-        fingerprint = hashlib.sha256(json.dumps(
-            [objective, criteria, next_action, due, follow_up], ensure_ascii=False,
-        ).encode()).hexdigest()
+        constraints, non_goals = personal_goal_scope(body.get("constraints", []), body.get("non_goals", []))
+        fingerprint_data = [objective, criteria, next_action, due, follow_up]
+        # Preserve existing empty-scope request identities across upgrades.
+        if constraints or non_goals:
+            fingerprint_data.extend([constraints, non_goals])
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_data, ensure_ascii=False).encode()).hexdigest()
         goal_id = f"personal-{request_id}"
         with self._lock(goal_id):
             path = self.ledger._path(goal_id)
@@ -165,8 +183,9 @@ class PersonalGoals:
                     raise ValueError("创建请求已用于其他目标，请刷新核对")
                 # Retried creation never overwrites later progress or evidence.
                 return self._view(old)
-            goal = Goal.new(objective, criteria, goal_id=goal_id)
+            goal = Goal.new(objective, criteria, goal_id=goal_id, constraints=constraints, non_goals=non_goals)
             goal.kind, goal.status, goal.revision = "personal", "active", 1
+            goal.scope_revision = 1 if constraints or non_goals else 0
             goal.request_fingerprint = fingerprint
             goal.next_action, goal.due_at, goal.follow_up_at = next_action, due, follow_up
             return self._save(goal)
@@ -228,12 +247,28 @@ class PersonalGoals:
             return self._save(goal)
 
     def update(self, goal_id: str, body: dict) -> dict:
-        _fields(body, {"revision", "next_action", "blocker", "due_at", "follow_up_at"})
+        _fields(body, {"revision", "next_action", "blocker", "due_at", "follow_up_at", "constraints", "non_goals", "scope_confirmed"})
         with self._lock(goal_id):
             goal = self._load(goal_id)
             self._revision(goal, body)
             if goal.status == "achieved":
                 raise ValueError("已达成的目标不能修改进展；复验未通过会重新打开目标")
+            if "constraints" in body or "non_goals" in body:
+                constraints, non_goals = personal_goal_scope(body.get("constraints", goal.constraints), body.get("non_goals", goal.non_goals))
+                if constraints != goal.constraints or non_goals != goal.non_goals:
+                    if body.get("scope_confirmed") is not True:
+                        raise ValueError("修改范围需要用户确认；旧验收依据需复核，Codex 交接需重新确认")
+                    goal.constraints, goal.non_goals = constraints, non_goals
+                    goal.scope_revision = goal.revision + 1
+                    for evidence in goal.evidence:
+                        if not evidence.stale_reason:
+                            evidence.stale_reason = "目标约束或非目标已更新，需按新范围复验"
+                    for criterion in goal.acceptance_criteria:
+                        criterion.status = "pending"
+                    if goal.blocker.startswith("验收未通过：") or goal.blocker == "仍有验收标准未通过，请复验":
+                        goal.blocker = ""
+            elif "scope_confirmed" in body:
+                raise ValueError("范围确认需要提供约束或非目标")
             for key in ("next_action", "blocker"):
                 if key in body:
                     setattr(goal, key, _text(body[key], 1000, required=key == "next_action"))

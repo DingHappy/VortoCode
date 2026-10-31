@@ -853,6 +853,17 @@
   outline-offset: 2px;
 }
 
+.assistant-goals .personal-goal-scope-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vc-space-2);
+}
+.assistant-goals .personal-goal-scope-confirm input {
+  width: auto;
+  flex: none;
+  margin-top: var(--vc-space-1);
+}
+
 .vc-panel .assistant-goals-overview {
   margin-top: var(--vc-space-2);
 }

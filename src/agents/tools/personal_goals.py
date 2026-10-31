@@ -26,6 +26,8 @@ def build_personal_goal_tools(root: str) -> list[Tool]:
             state = goal.get("follow_up") or {}
             item["follow_up"] = {key: state[key] for key in ("status", "attempts", "accepted_at", "attempted_at", "user_acknowledged_at") if key in state}
             if goal_id:
+                # Scope must be read in full before proposing a goal handover.
+                item.update(constraints=goal["constraints"], non_goals=goal["non_goals"], scope_revision=goal["scope_revision"])
                 evidence = {entry["id"]: entry for entry in goal["evidence"]}
                 item["criteria"] = []
                 for criterion in goal["acceptance_criteria"][:20]:
@@ -50,5 +52,5 @@ def build_personal_goal_tools(root: str) -> list[Tool]:
         except (OSError, KeyError, ValueError, TypeError):
             return "私人目标暂时无法读取，请刷新目标卡核对；不能据此推断没有目标。"
 
-    return [Tool("personal_goals", "只读查看当前助理的个人目标、下一步、阻塞与验收状态；不传 ID 列出最近五个未达成目标，传 ID 查看逐条依据。不能创建或执行。",
+    return [Tool("personal_goals", "只读查看当前助理的个人目标、下一步、阻塞与验收状态；不传 ID 列出最近五个未达成目标，传 ID 查看完整约束、非目标和逐条依据。关联交接前应按 ID 核对范围，不能从概览推断没有限制。不能创建或执行。",
                  {"goal_id": "可选，personal- 开头的目标 ID"}, handler, read_only=True, untrusted_source=True)]

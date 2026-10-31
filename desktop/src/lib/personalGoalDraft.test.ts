@@ -22,7 +22,7 @@ it("clears all submitted fields once, including after a lost receipt or failed r
   expect(personalGoalDraft(found, { type: "read", goalIds: ["personal-sent"], requestId: "unused" })).toBe(found);
 });
 
-it.each(["objective", "criteria", "next", "due", "followUp"] as const)("preserves newer %s input when an old submitted record appears", field => {
+it.each(["objective", "criteria", "next", "due", "followUp", "constraints", "nonGoals"] as const)("preserves newer %s input when an old submitted record appears", field => {
   const edited = personalGoalDraft(submitted(), { type: "edit", field, value: "新内容", requestId: "new" });
   expect(personalGoalDraft(edited, { type: "read", goalIds: ["personal-sent"], requestId: "unused" })).toBe(edited);
   expect(edited.submittedRequestId).toBeNull();

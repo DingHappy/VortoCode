@@ -135,6 +135,7 @@ class Goal:
     due_at: str = ""
     follow_up_at: str = ""
     revision: int = 0
+    scope_revision: int = 0  # Personal-goal scope changes; zero for legacy/development records.
     request_fingerprint: str = ""
     follow_up: Dict[str, Any] = field(default_factory=dict)
     follow_up_history: List[Dict[str, Any]] = field(default_factory=list)

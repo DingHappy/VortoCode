@@ -70,8 +70,10 @@ def snapshot(root: str, goal_id: str) -> dict:
             pending.append(c["id"])
     goal["pending"] = pending
     goal["confirmed"] = goal["status"] == "achieved" and not pending
-    goal["contract"] = digest([goal["objective"], [(c["id"], c["text"]) for c in criteria],
-                               goal["constraints"], goal["non_goals"]])
+    contract = [goal["objective"], [(c["id"], c["text"]) for c in criteria], goal["constraints"], goal["non_goals"]]
+    if goal["scope_revision"]:
+        contract.append(goal["scope_revision"])
+    goal["contract"] = digest(contract)
     goal["evidence_version"] = digest([criteria, evidence])
     return goal
 
@@ -171,7 +173,7 @@ def material(goal: dict) -> str:
                  "summary": e["summary"][:240]} for e in goal["evidence"] if e["id"] in latest]
     criteria = [{k: c[k] for k in ("id", "text", "status")} for c in goal["acceptance_criteria"]]
     result = {key: goal[key] for key in ("id", "revision", "objective", "pending", "allowed_pending",
-                                        "constraints", "non_goals", "blocker", "next_action")}
+                                        "constraints", "non_goals", "scope_revision", "blocker", "next_action")}
     result.update(acceptance_criteria=criteria, evidence=evidence)
     text = json.dumps(result, ensure_ascii=False)
     if len(text) > 32000:

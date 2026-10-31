@@ -511,3 +511,75 @@ async def test_report_can_commit_while_action_writes_are_busy_but_claim_rechecks
     with pytest.raises(watch.CodexActionError, match="新的一轮"):
         watch.claim_action(root, action["id"])
     assert watch.load_actions(root)[0]["status"] == "expired"
+
+
+async def test_saved_scope_is_read_again_after_restart_and_another_codex_turn(setup):
+    root, service, goal, notes = setup
+    saved = service.update(goal["id"], {"revision": 1, "constraints": ["本阶段只写文档，不改代码"],
+                                       "non_goals": ["测试与发布留到下一轮"], "scope_confirmed": True})
+    watch.hand_over(root, watch.load_state(root)["threads"][0], now=T0, goal=policy.binding(root, goal["id"], saved["revision"]))
+    model = Model(verdict="ask")
+    await first_review(setup, model)
+    first_material = model.messages[1]["content"]
+    assert saved["constraints"][0] in first_material and saved["non_goals"][0] in first_material
+    report(root, 35, turn="t2", active=True)
+    report(root, 40, turn="t2")
+    await sup.supervise_once(root, at(60), notify=notes, llm=model)
+    assert model.calls == 2
+    assert saved["constraints"][0] in model.messages[1]["content"] and saved["non_goals"][0] in model.messages[1]["content"]
+    assert PersonalGoals(root).get(goal["id"])["scope_revision"] == saved["scope_revision"]
+
+
+@pytest.mark.parametrize("approved", [False, True])
+async def test_saved_scope_change_revokes_old_advice_and_rehandover_keeps_used_quota(setup, approved):
+    root, service, goal, _ = setup
+    await first_review(setup, Model())
+    action = watch.load_actions(root)[0]
+    if approved:
+        watch.decide_action(root, action["id"], True)
+    updated = service.update(goal["id"], {"revision": 1, "non_goals": ["下一步留待人工确认"], "scope_confirmed": True})
+    with pytest.raises(watch.CodexActionError, match="变化|交接|过时"):
+        (watch.claim_action(root, action["id"]) if approved else watch.decide_action(root, action["id"], True))
+    assert watch.load_actions(root)[0]["status"] == "expired"
+    assert sup.goal_review_state(root)[goal["id"]]["used"] == 1
+    watch.hand_over(root, watch.load_state(root)["threads"][0], now=at(30), goal=policy.binding(root, goal["id"], updated["revision"]))
+    assert sup.goal_review_state(root)[goal["id"]]["used"] == 1
+
+
+async def test_scope_change_during_model_review_discards_result_without_a_refund(setup):
+    root, service, goal, _ = setup
+    model = Model(callback=lambda: service.update(goal["id"], {"revision": 1, "constraints": ["仅检查，不执行修改"], "scope_confirmed": True}))
+    await first_review(setup, model)
+    assert model.calls == 1 and not watch.load_actions(root)
+    assert sup._load(root)["marks"]["thread-000001"]["review_status"] == "superseded"
+    assert sup.goal_review_state(root)[goal["id"]]["used"] == 1
+
+
+async def test_restoring_scope_text_cannot_restore_its_old_handover(setup):
+    root, service, goal, notes = setup
+    service.update(goal["id"], {"revision": 1, "constraints": ["只写文档"], "scope_confirmed": True})
+    service.update(goal["id"], {"revision": 2, "constraints": [], "scope_confirmed": True})
+    model = Model()
+    await first_review(setup, model)
+    assert model.calls == 0 and not watch.load_actions(root)
+    assert sup.goal_review_state(root)[goal["id"]]["used"] == 0
+    assert watch.goal_supervision(root)[0]["state"] == "unknown"
+    assert any("重新交接" in text for text, _ in notes.items)
+
+
+async def test_handover_confirmation_shows_full_scope_and_detects_scope_change_while_waiting(setup):
+    root, service, goal, _ = setup
+    saved = service.update(goal["id"], {"revision": 1, "constraints": ["背景。" * 150 + "禁止修改代码"],
+                                       "non_goals": ["部署留到下一轮"], "scope_confirmed": True})
+    watch.take_back(root, "thread-000001")
+    questions = []
+
+    async def confirm(text):
+        questions.append(text)
+        service.update(goal["id"], {"revision": 2, "non_goals": ["本周暂停"], "scope_confirmed": True})
+        return True
+
+    tool = next(t for t in watch.build_codex_action_tools(root, confirm=confirm) if t.name == "codex_handover")
+    result = await tool.handler({"thread": "thread-000001", "goal_id": goal["id"], "goal_revision": saved["revision"]})
+    assert saved["constraints"][0] in questions[0] and saved["non_goals"][0] in questions[0]
+    assert "没有交接" in result and not watch.load_handovers(root)

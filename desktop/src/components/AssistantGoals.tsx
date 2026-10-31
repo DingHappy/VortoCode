@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { goalDate, goalFollowUpLabel, localGoalDate, personalGoalActions, type PersonalGoalClient, type PersonalGoalOperation } from "../lib/personalGoals";
-import type { PersonalGoal } from "../types";
+import type { PersonalGoal, PersonalGoalUpdate } from "../types";
 import type { ReactNode, Ref } from "react";
 import { hasConfirmedPersonalCriterion, hasConfirmedPersonalGoal } from "../lib/personalGoalSnapshot";
 import { emptyPersonalGoalDraft, personalGoalDraft } from "../lib/personalGoalDraft";
 import { freshAt } from "../lib/readFreshness";
 import { startWorkdayClock } from "../lib/assistantWorkdayReads";
+import { personalGoalScopeInput } from "../lib/personalGoalScope";
 
 export function AssistantGoals({ client, connected, focusId, onClearFocus, onFocusGoal, overview }: {
   client: PersonalGoalClient | null; connected: boolean; focusId?: string; onClearFocus?: () => void;
@@ -26,8 +27,9 @@ export function AssistantGoals({ client, connected, focusId, onClearFocus, onFoc
   const focusedCard = useRef<HTMLElement | null>(null);
   const lastFocus = useRef(focusId);
   const [draft, dispatchDraft] = useReducer(personalGoalDraft, undefined, () => emptyPersonalGoalDraft(crypto.randomUUID()));
-  const { requestId, objective, criteria, next, due, followUp } = draft;
-  function editDraft(field: "objective" | "criteria" | "next" | "due" | "followUp", value: string) {
+  const { requestId, objective, criteria, next, due, followUp, constraints, nonGoals } = draft;
+  const scopeInput = personalGoalScopeInput(constraints, nonGoals);
+  function editDraft(field: "objective" | "criteria" | "next" | "due" | "followUp" | "constraints" | "nonGoals", value: string) {
     dispatchDraft({ type: "edit", field, value, requestId: crypto.randomUUID() });
   }
   const actionsRef = useRef<ReturnType<typeof personalGoalActions> | null>(null);
@@ -80,12 +82,13 @@ export function AssistantGoals({ client, connected, focusId, onClearFocus, onFoc
   }
   async function create() {
     const actions = actionsRef.current;
-    if (disabled || !client || !actions) return;
+    if (disabled || !client || !actions || scopeInput.error) return;
     await writeGoal(() => {
       dispatchDraft({ type: "submit", requestId });
       return client.createPersonalGoal({ request_id: requestId, objective,
         acceptance_criteria: criteria.split("\n").map(s => s.trim()).filter(Boolean), next_action: next,
         due_at: goalDate(due), follow_up_at: goalDate(followUp),
+        constraints: scopeInput.constraints, non_goals: scopeInput.non_goals,
       });
     }, `personal-${requestId}`);
   }
@@ -116,9 +119,14 @@ export function AssistantGoals({ client, connected, focusId, onClearFocus, onFoc
         <label>想达成什么<input required maxLength={500} value={objective} onChange={event => editDraft("objective", event.target.value)} /></label>
         <label>达标条件（每行一条）<textarea required value={criteria} maxLength={10000} onChange={event => editDraft("criteria", event.target.value)} /></label>
         <label>下一步<input required maxLength={1000} value={next} onChange={event => editDraft("next", event.target.value)} /></label>
+        <details><summary>约束与非目标／留待以后</summary>
+          <GoalScopeFields constraints={constraints} nonGoals={nonGoals}
+            onConstraints={text => editDraft("constraints", text)} onNonGoals={text => editDraft("nonGoals", text)} />
+          {scopeInput.error && <p role="alert">{scopeInput.error}</p>}
+        </details>
         <label>期限<input type="datetime-local" value={due} onChange={event => editDraft("due", event.target.value)} /></label>
         <label>下次跟进<input type="datetime-local" value={followUp} onChange={event => editDraft("followUp", event.target.value)} /></label>
-        <button type="submit">保存目标</button>
+        <button type="submit" disabled={Boolean(scopeInput.error)}>保存目标</button>
       </fieldset>
     </form></details>
     {!focusId && connected && hasSnapshot && !checking && !error && !goals.length && <p>还没有个人目标。</p>}
@@ -149,7 +157,7 @@ export function GoalOperationNotice({ operation, goal, onInspect, disabled = fal
 
 export function PersonalGoalCard({ goal, disabled, onSave, onConfirm, onFollowUp, onAcknowledge, cardRef, focused }: {
   goal: PersonalGoal; disabled: boolean;
-  onSave: (changes: Pick<PersonalGoal, "next_action" | "blocker" | "due_at" | "follow_up_at">) => Promise<void>;
+  onSave: (changes: PersonalGoalUpdate) => Promise<void>;
   onConfirm: (criterionId: string, summary: string, passed: boolean) => Promise<void>;
   onFollowUp?: (enabled: boolean, acknowledgeUncertain: boolean) => Promise<void>;
   onAcknowledge?: () => Promise<void>;
@@ -160,6 +168,11 @@ export function PersonalGoalCard({ goal, disabled, onSave, onConfirm, onFollowUp
   const [due, setDue] = useState(localGoalDate(goal.due_at));
   const [followUp, setFollowUp] = useState(localGoalDate(goal.follow_up_at));
   const [evidence, setEvidence] = useState<Record<string, string>>({});
+  const [constraints, setConstraints] = useState(goal.constraints.join("\n"));
+  const [nonGoals, setNonGoals] = useState(goal.non_goals.join("\n"));
+  const [scopeConfirmed, setScopeConfirmed] = useState(false);
+  const scopeInput = personalGoalScopeInput(constraints, nonGoals);
+  const scopeDirty = constraints !== goal.constraints.join("\n") || nonGoals !== goal.non_goals.join("\n");
   const achieved = goal.status === "achieved";
   const unknown = !["draft", "active", "blocked", "achieved", "failed"].includes(goal.status)
     || goal.acceptance_criteria.some(item => !["pending", "passed", "failed"].includes(item.status));
@@ -167,7 +180,7 @@ export function PersonalGoalCard({ goal, disabled, onSave, onConfirm, onFollowUp
   const status = unknown ? "状态待核对" : achieved ? !disabled && hasConfirmedPersonalGoal(goal) ? "已达成" : "达成记录待核对"
     : goal.status === "blocked" ? "有阻塞" : goal.status === "failed" ? "未达成" : goal.status === "draft" ? "待明确" : "推进中";
   const confirmed = goal.acceptance_criteria.filter(criterion => hasConfirmedPersonalCriterion(goal, criterion)).length;
-  const dirty = next !== (goal.next_action ?? "") || blocker !== (goal.blocker ?? "")
+  const dirty = scopeDirty || next !== (goal.next_action ?? "") || blocker !== (goal.blocker ?? "")
     || due !== localGoalDate(goal.due_at) || followUp !== localGoalDate(goal.follow_up_at);
   return <article ref={cardRef} tabIndex={focused ? -1 : undefined} data-personal-goal-id={goal.id}
     className="assistant-goal-card" aria-label={`个人目标：${goal.objective}`}>
@@ -180,7 +193,19 @@ export function PersonalGoalCard({ goal, disabled, onSave, onConfirm, onFollowUp
       <label>阻塞<input value={blocker} maxLength={1000} onChange={e => setBlocker(e.target.value)} /></label>
       <label>期限<input type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></label>
       <label>下次跟进<input type="datetime-local" value={followUp} onChange={e => setFollowUp(e.target.value)} /></label>
-      <button disabled={!next.trim()} onClick={() => void onSave({ next_action: next, blocker, due_at: goalDate(due), follow_up_at: goalDate(followUp) })}>保存进展</button>
+      <details><summary>约束与非目标／留待以后 · 范围版本 {goal.scope_revision ?? 0}</summary>
+        <GoalScopeFields constraints={constraints} nonGoals={nonGoals}
+          onConstraints={text => { setConstraints(text); setScopeConfirmed(false); }}
+          onNonGoals={text => { setNonGoals(text); setScopeConfirmed(false); }} />
+        {scopeInput.error && <p role="alert">{scopeInput.error}</p>}
+        {scopeDirty && <label className="personal-goal-scope-confirm"><input type="checkbox" checked={scopeConfirmed} onChange={e => setScopeConfirmed(e.target.checked)} />
+          我已核对新范围；旧验收依据需复核，关联的 Codex 交接需重新确认。
+        </label>}
+      </details>
+      <button disabled={!next.trim() || Boolean(scopeInput.error) || (scopeDirty && !scopeConfirmed)} onClick={() => void onSave({
+        next_action: next, blocker, due_at: goalDate(due), follow_up_at: goalDate(followUp),
+        ...(scopeDirty ? { constraints: scopeInput.constraints, non_goals: scopeInput.non_goals, scope_confirmed: scopeConfirmed } : {}),
+      })}>{scopeDirty ? "确认并保存范围与进展" : "保存进展"}</button>
     </fieldset>
     <GoalFollowUp goal={goal} disabled={readOnly || !onFollowUp} dirty={dirty} onChange={onFollowUp} onAcknowledge={onAcknowledge} />
     {goal.acceptance_criteria.map(criterion => {
@@ -189,13 +214,24 @@ export function PersonalGoalCard({ goal, disabled, onSave, onConfirm, onFollowUp
       return <details key={criterion.id}><summary>{criterion.text} · {criterion.status === "passed"
         ? !disabled && hasConfirmedPersonalCriterion(goal, criterion) ? "已达标" : "通过记录待核对" : criterion.status === "failed" ? "未通过" : "待核对"}</summary>
         {latest && <p>最近记录：{latest.summary}</p>}
-        <label>验收依据<textarea disabled={readOnly} maxLength={2000} value={evidence[criterion.id] ?? ""}
+        {latest?.stale_reason && <p role="status">依据待复核：{latest.stale_reason}</p>}
+        <label>验收依据<textarea disabled={readOnly || scopeDirty} maxLength={2000} value={evidence[criterion.id] ?? ""}
           onChange={e => setEvidence({ ...evidence, [criterion.id]: e.target.value })} /></label>
-        <button disabled={readOnly || !evidence[criterion.id]?.trim()} onClick={() => void onConfirm(criterion.id, evidence[criterion.id], true)}>确认达标</button>
-        <button disabled={readOnly || !evidence[criterion.id]?.trim()} onClick={() => void onConfirm(criterion.id, evidence[criterion.id], false)}>记录未通过</button>
+        <button disabled={readOnly || scopeDirty || !evidence[criterion.id]?.trim()} onClick={() => void onConfirm(criterion.id, evidence[criterion.id], true)}>确认达标</button>
+        <button disabled={readOnly || scopeDirty || !evidence[criterion.id]?.trim()} onClick={() => void onConfirm(criterion.id, evidence[criterion.id], false)}>记录未通过</button>
       </details>;
     })}
   </article>;
+}
+
+function GoalScopeFields({ constraints, nonGoals, onConstraints, onNonGoals }: {
+  constraints: string; nonGoals: string; onConstraints: (value: string) => void; onNonGoals: (value: string) => void;
+}) {
+  return <>
+    <p>每行一条，保存后跨轮保留。暂缓事项写入非目标；恢复推进前请修改范围并重新交接。保存范围不会开始执行。</p>
+    <label>约束条件<textarea maxLength={20000} value={constraints} onChange={e => onConstraints(e.target.value)} /></label>
+    <label>非目标／留待以后<textarea maxLength={20000} value={nonGoals} onChange={e => onNonGoals(e.target.value)} /></label>
+  </>;
 }
 
 export function GoalFollowUp({ goal, disabled, dirty, onChange, onAcknowledge }: {
