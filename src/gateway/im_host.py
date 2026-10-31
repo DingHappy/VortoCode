@@ -227,11 +227,15 @@ class IMHost:
             raise RuntimeError("Some IM bindings did not finish cleanup; registrations retained")
 
 
-async def start_host(root, *, runner, register_worker, adapter_factory=None):
+async def start_host(root, *, runner, register_worker, adapter_factory=None, actors=None):
     config = load_host_config(root)
     if im_registry.entries():
         raise IMConfigError("An IM host or legacy bridge already owns this Runtime")
     host = IMHost(config)
+    from src.gateway.session_actor import SessionActors
+    from src.gateway.im_input import ManagedInputs
+    if actors is None:
+        actors = SessionActors(clean_item=lambda raw: raw if isinstance(raw, dict) and raw.get("id") else None)
     adapters = []
     try:
         for spec in config.bindings:
@@ -247,6 +251,7 @@ async def start_host(root, *, runner, register_worker, adapter_factory=None):
                 session_role=spec.policy, notification_only=False,
                 claim_turn=lambda bot_id=spec.bot_id, coordinator=coordinator: host.admission.claim(bot_id, coordinator))
             host.bindings[spec.id] = next(item for item in im_registry.entries() if item.bridge is bridge)
+            ManagedInputs(bridge, actors)  # Account lease is already held; poll has not started.
         for binding in host.bindings.values():
             binding.task = asyncio.create_task(host._run(binding))
         return host

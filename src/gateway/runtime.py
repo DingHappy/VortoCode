@@ -49,7 +49,7 @@ def scheduling_scope_error() -> str:
 
 @asynccontextmanager
 async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
-                           make_run_manager, make_terminal_manager, register_im_worker):
+                           make_run_manager, make_terminal_manager, register_im_worker, session_actors=None):
     """Recover before serving; startup failures release all owned resources."""
     lease = ProcessLease(Path(root) / ".vortocode" / "runtime.lock")
     import asyncio
@@ -98,7 +98,7 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         im_channel = os.getenv("VORTOCODE_IM", "").strip().lower()
         if os.getenv("VORTOCODE_IM_BINDINGS_FILE", "").strip():
             from src.gateway.im_host import start_host
-            im_host = await start_host(root, runner=runner, register_worker=register_im_worker)
+            im_host = await start_host(root, runner=runner, register_worker=register_im_worker, actors=session_actors)
         elif im_channel:
             from src.gateway import im_service
             bridge, im_adapter = im_service.start_embedded(
