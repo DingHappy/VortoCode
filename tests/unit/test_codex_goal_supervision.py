@@ -453,6 +453,45 @@ async def test_model_done_reason_remains_visible_after_a_fresh_status_read(setup
     assert "验收" in view["reason"] and "本轮" in view["reason"]
 
 
+@pytest.mark.parametrize("verdict", ["continue", "ask", "done"])
+async def test_finished_owner_command_during_goal_review_keeps_quota_but_discards_conclusion(setup, verdict):
+    root, _, goal, notes = setup
+
+    def command():
+        action = watch.propose_action(root, thread="thread-000001", kind="message", text="先暂停核对", session="owner")
+        watch.decide_action(root, action["id"], True)
+        watch.claim_action(root, action["id"])
+        watch.finish_action(root, action["id"], ok=True)
+
+    model = Model(verdict=verdict, callback=command)
+    await first_review(setup, model)
+    mark = sup._load(root)["marks"]["thread-000001"]
+    assert mark["review_status"] == "superseded" and "goal_waiting" not in mark
+    assert sup.goal_review_state(root)[goal["id"]]["used"] == 1
+    assert [a["status"] for a in watch.load_actions(root)] == ["sent"]
+    assert all("仍缺测试证据" not in text for text, _ in notes.items)
+    report(root, 60)
+    await sup.supervise_once(root, at(60), notify=notes, llm=model)
+    assert model.calls == 1 and sup.goal_review_state(root)[goal["id"]]["used"] == 1
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_saved_goal_reason_requires_its_original_action_version(setup, legacy):
+    root, _, _, _ = setup
+    await first_review(setup, Model(verdict="done"))
+    if legacy:
+        data = sup._load(root)
+        data["marks"]["thread-000001"]["goal_waiting"].pop("action_version")
+        sup._save(root, data)
+    else:
+        action = watch.propose_action(root, thread="thread-000001", kind="message", text="新增要求", session="owner")
+        watch.decide_action(root, action["id"], True)
+        watch.claim_action(root, action["id"])
+        watch.finish_action(root, action["id"], ok=True)
+    projected = watch.progress_snapshot(root)["goal_supervision"][0]
+    assert projected["state"] == "paused" and "动作版本" in projected["reason"]
+
+
 @pytest.mark.parametrize("change", ["revision", "turn", "rebind", "revoke"])
 async def test_waiting_reason_is_only_for_its_original_goal_turn_and_handover(setup, change):
     root, service, goal, _ = setup

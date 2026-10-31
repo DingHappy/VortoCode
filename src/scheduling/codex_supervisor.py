@@ -98,7 +98,9 @@ def _valid_record(data: Any) -> bool:
         if "goal_waiting" in mark:
             waiting = mark["goal_waiting"]
             if (not isinstance(waiting, dict)
-                    or set(waiting) != {"token", "goal_id", "revision", "turn_id", "reason"}
+                    or set(waiting) not in ({"token", "goal_id", "revision", "turn_id", "reason"},
+                                           {"token", "goal_id", "revision", "turn_id", "reason", "action_version"})
+                    or ("action_version" in waiting and not codex_watch.valid_action_version(waiting["action_version"]))
                     or type(waiting["revision"]) is not int or waiting["revision"] < 1
                     or not all(isinstance(waiting[k], str) and 0 < len(waiting[k]) <= maximum
                                for k, maximum in (("token", 200), ("goal_id", 100), ("turn_id", 100), ("reason", 400)))):
@@ -257,7 +259,8 @@ def _review_material(thread: dict) -> str:
             f"Codex 最后说：{turn.get('reply') or '（无）'}")
 
 
-def _review_current(root: str, thread: dict, now: datetime, *, handover_fingerprint: Optional[str] = None) -> bool:
+def _review_current(root: str, thread: dict, now: datetime, *, handover_fingerprint: Optional[str] = None,
+                    action_version: Optional[dict] = None) -> bool:
     """模型等待期间的心跳可以更新；轮次、实际审阅内容或授权变化后不采用旧结论。"""
     state = codex_watch.load_state(root)
     received = codex_watch._parse(state.get("received_at"))
@@ -271,6 +274,7 @@ def _review_current(root: str, thread: dict, now: datetime, *, handover_fingerpr
             and codex_review_context.read(thread.get("turn") or {}).status == "complete"
             and bool(record)
             and (handover_fingerprint is None or codex_goal.digest(record) == handover_fingerprint)
+            and (action_version is None or codex_watch.action_version(root, thread["id"]) == action_version)
             and not _pending_action(root, thread["id"])
             and not codex_watch.owner_driving(root, current)
             and (current.get("execution") or {}).get("ref") == (thread.get("execution") or {}).get("ref")
@@ -516,6 +520,7 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
         assessment = ""
         record = codex_watch.load_handovers(root).get(tid, {})
         handover_fingerprint = codex_goal.digest(record)
+        action_version = codex_watch.action_version(root, tid)
 
         if not codex_watch.execution_is_current(thread, now):
             marks[tid] = mark
@@ -553,7 +558,8 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
             if codex_watch.is_handed_over(root, tid) and not _pending_action(root, tid):
                 try:
                     action = codex_watch.propose_action(root, thread=tid, kind="interrupt", expected_turn_id=turn.get("id") or "",
-                                                        expected_handover_fingerprint=handover_fingerprint, automatic=True)
+                                                        expected_handover_fingerprint=handover_fingerprint, automatic=True,
+                                                        expected_action_version=action_version)
                     drafts.append((text + "\n要叫停这一轮就点「批准」，让它继续跑就点「拒绝」。", action))
                 except codex_watch.CodexActionError:
                     needs_you.append(text[2:])
@@ -603,7 +609,7 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
         if (tid in review_rank and reviews < MAX_REVIEWS_PER_CHECK and remaining > 0
                 and goal_allowed
                 and _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started),
-                                    handover_fingerprint=handover_fingerprint)):
+                                    handover_fingerprint=handover_fingerprint, action_version=action_version)):
             reviews += 1
             if goal is not None:
                 codex_goal.reserve(data.setdefault("goal_reviews", {}), goal, record["goal"])
@@ -633,7 +639,7 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                 except (KeyError, TypeError, ValueError, OSError, StopIteration):
                     goal_current = False
             if not goal_current or not _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started),
-                                                      handover_fingerprint=handover_fingerprint):
+                                                      handover_fingerprint=handover_fingerprint, action_version=action_version):
                 logger.info("Codex 推进判断已过期，不采用旧结论")
                 mark["review_status"] = "superseded"
                 review = None
@@ -645,7 +651,8 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                     allowed, assessment = codex_goal.decide(review, goal, data["goal_reviews"])
                     if not allowed:
                         mark["goal_waiting"] = {"token": record["token"], "goal_id": goal["id"],
-                            "revision": goal["revision"], "turn_id": turn["id"], "reason": assessment}
+                            "revision": goal["revision"], "turn_id": turn["id"], "reason": assessment,
+                            "action_version": action_version}
                     # Persist stall state before even creating a proposed action.
                     _save_progress(root, data)
                     if not allowed:
@@ -659,7 +666,8 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                                                             expected_handover_token=record.get("token"),
                                                             expected_goal_revision=goal["revision"] if goal else None,
                                                             expected_context_fingerprint=context.fingerprint,
-                                                            expected_handover_fingerprint=handover_fingerprint, automatic=True)
+                                                            expected_handover_fingerprint=handover_fingerprint, automatic=True,
+                                                            expected_action_version=action_version)
                         drafts.append((f"🧭 Codex{label}做完了一轮。{assessment}\n\n" + codex_watch.action_notice(action),
                                        action))
                     except (codex_watch.CodexActionError, OSError) as error:
@@ -670,7 +678,8 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                 elif review["verdict"] == "ask":
                     needs_you.append(f"{label}要你定方向：{assessment}")
                 elif review["verdict"] == "done":
-                    if codex_watch.take_back(root, tid, expected_fingerprint=handover_fingerprint):
+                    if codex_watch.take_back(root, tid, expected_fingerprint=handover_fingerprint,
+                                             expected_action_version=action_version):
                         assessment += "（看起来做完了，交接已收回；要继续盯就再交给我）"
                     else:
                         mark["review_status"] = "superseded"
