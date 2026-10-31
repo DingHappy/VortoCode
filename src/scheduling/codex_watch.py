@@ -633,6 +633,8 @@ def load_handovers(root: str) -> Dict[str, dict]:
     if not isinstance(data, dict) or any(not isinstance(v, dict) for v in data.values()):
         raise CodexActionError("交接记录格式无效，请核对原文件")
     for record in data.values():
+        if "token" in record and (not isinstance(record["token"], str) or not record["token"] or len(record["token"]) > 80):
+            raise CodexActionError("交接版本记录无效，请核对原文件")
         if "goal" in record:
             link = record["goal"]
             if (not isinstance(link, dict) or set(link) != {"id", "contract", "revision", "review_limit", "criterion_ids"}
@@ -672,9 +674,10 @@ def hand_over(root: str, thread: dict, *, now: Optional[datetime] = None, goal: 
 
 
 def _hand_over(root: str, thread: dict, *, now: Optional[datetime], goal: Optional[dict]) -> dict:
+    import uuid
     items = load_handovers(root)
     record = {"name": str(thread.get("name") or "")[:80], "cwd": str(thread.get("cwd") or "")[:200],
-              "since": (now or _now()).timestamp()}
+              "since": (now or _now()).timestamp(), "token": uuid.uuid4().hex}
     if goal is not None:
         latest = _find_thread(root, str(thread["id"]))
         if latest != thread or not execution_is_current(thread, now or _now()) or not thread.get("execution"):
@@ -683,8 +686,7 @@ def _hand_over(root: str, thread: dict, *, now: Optional[datetime], goal: Option
             link = codex_goal.binding(root, goal["id"], goal["revision"], goal["review_limit"], goal["criterion_ids"])
         except (KeyError, TypeError, ValueError, OSError) as error:
             raise CodexActionError(f"目标不能交接：{error}") from error
-        import uuid
-        record.update(goal=link, instance_id=thread["execution"]["ref"]["instance_id"], token=uuid.uuid4().hex)
+        record.update(goal=link, instance_id=thread["execution"]["ref"]["instance_id"])
         if any(key != thread["id"] and value.get("goal", {}).get("id") == link["id"] for key, value in items.items()):
             raise CodexActionError("这个目标已交给另一个会话，请先收回原交接")
         from src.scheduling.codex_supervisor import ensure_goal_allowance
@@ -697,13 +699,16 @@ def _hand_over(root: str, thread: dict, *, now: Optional[datetime], goal: Option
     return record
 
 
-def take_back(root: str, thread_id: str, *, expected_token: Optional[str] = None) -> bool:
+def take_back(root: str, thread_id: str, *, expected_token: Optional[str] = None,
+              expected_fingerprint: Optional[str] = None) -> bool:
     with _handover_lock(root):
-        return _take_back(root, thread_id, expected_token=expected_token)
+        return _take_back(root, thread_id, expected_token=expected_token, expected_fingerprint=expected_fingerprint)
 
 
-def _take_back(root: str, thread_id: str, *, expected_token: Optional[str]) -> bool:
+def _take_back(root: str, thread_id: str, *, expected_token: Optional[str], expected_fingerprint: Optional[str]) -> bool:
     items = load_handovers(root)
+    if expected_fingerprint is not None and codex_goal.digest(items.get(thread_id, {})) != expected_fingerprint:
+        return False
     if expected_token is not None and items.get(thread_id, {}).get("token") != expected_token:
         return False
     if items.pop(thread_id, None) is None:
@@ -752,17 +757,20 @@ def owner_driving(root: str, thread: dict) -> bool:
 def propose_action(root: str, *, thread: str, kind: str, text: str = "", session: str = "",
                    tainted: bool = False, expected_turn_id: Optional[str] = None,
                    expected_handover_token: Optional[str] = None, expected_goal_revision: Optional[int] = None,
-                   expected_context_fingerprint: Optional[str] = None) -> dict:
+                   expected_context_fingerprint: Optional[str] = None,
+                   expected_handover_fingerprint: Optional[str] = None) -> dict:
     # Fixed order: handover -> actions. No model/RPC/notification under either lock.
     with _handover_lock(root), _actions_lock(root):
         return _propose_action(root, thread=thread, kind=kind, text=text, session=session, tainted=tainted,
                                expected_turn_id=expected_turn_id, expected_handover_token=expected_handover_token,
-                               expected_goal_revision=expected_goal_revision, expected_context_fingerprint=expected_context_fingerprint)
+                               expected_goal_revision=expected_goal_revision, expected_context_fingerprint=expected_context_fingerprint,
+                               expected_handover_fingerprint=expected_handover_fingerprint)
 
 
 def _propose_action(root: str, *, thread: str, kind: str, text: str, session: str, tainted: bool,
                     expected_turn_id: Optional[str], expected_handover_token: Optional[str],
-                    expected_goal_revision: Optional[int], expected_context_fingerprint: Optional[str]) -> dict:
+                    expected_goal_revision: Optional[int], expected_context_fingerprint: Optional[str],
+                    expected_handover_fingerprint: Optional[str]) -> dict:
     target = _find_thread(root, thread)
     if not is_handed_over(root, target["id"]):
         raise CodexActionError(f"{thread_label(target)}没交给助理：默认只看不插手。要替它拟话或叫停，"
@@ -793,6 +801,9 @@ def _propose_action(root: str, *, thread: str, kind: str, text: str, session: st
     if expected_context_fingerprint is not None or (kind == "message" and not session):
         action.update(context_fingerprint=context.fingerprint, requires_complete_context=expected_context_fingerprint is not None)
     record = load_handovers(root).get(target["id"], {})
+    if not record or (expected_handover_fingerprint is not None and codex_goal.digest(record) != expected_handover_fingerprint):
+        raise CodexActionError("交接已收回或更新，旧建议不再适用")
+    action["handover_fingerprint"] = codex_goal.digest(record)
     if expected_handover_token is not None and record.get("token") != expected_handover_token:
         raise CodexActionError("目标交接已更新，旧建议不再适用")
     if "goal" in record:
@@ -858,12 +869,10 @@ def _expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> Li
     items = load_actions(root)
     expired = []
     for item in items:
-        context_bound = ("context_fingerprint" in item
-                         or (item.get("kind") == "message" and not item.get("session")))
-        if item.get("status") != "proposed" and not ((item.get("handover_token") or context_bound) and item.get("status") == "approved"):
+        if item.get("status") not in {"proposed", "approved"}:
             continue
         reason = stale_reason(item, threads)
-        if not reason and (item.get("handover_token") or context_bound):
+        if not reason:
             try:
                 _goal_action_current(root, item["id"])
             except CodexActionError as error:
@@ -894,6 +903,11 @@ def _goal_action_current(root: str, action_id: str) -> None:
     record = load_handovers(root).get(action.get("thread_id"), {})
     if action and not record:
         raise CodexActionError("这个会话的交接已收回，请核对后重新交接")
+    if action and "handover_fingerprint" in action:
+        if action["handover_fingerprint"] != codex_goal.digest(record):
+            raise CodexActionError("交接已收回或更新，请核对后重新拟话")
+    elif action and not action.get("handover_token"):
+        raise CodexActionError("旧动作缺少交接版本，请核对后重新拟话")
     if not action.get("handover_token"):
         if record.get("goal"):
             raise CodexActionError("旧动作未绑定当前目标，请重新拟话")
