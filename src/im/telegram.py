@@ -128,6 +128,10 @@ class TelegramAdapter(ChannelAdapter):
         return await self._request_fn(method, payload)
 
     # ------------------------------------------------------------ ChannelAdapter 实现
+    def conversation_identity(self) -> str:
+        account, separator, _secret = self._token.partition(":")
+        return account if separator and account.isdecimal() else ""
+
     def claim_polling(self):
         """Same-host Bot ownership across workspaces and token rotations."""
         if self._polling_lease is None:
