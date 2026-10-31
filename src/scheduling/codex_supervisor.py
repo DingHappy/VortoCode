@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.scheduling import codex_goal, codex_watch
+from src.scheduling import codex_goal, codex_review_context, codex_watch
 from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
 
 logger = logging.getLogger("vortocode.codex")
@@ -218,7 +218,7 @@ def _signature(thread: dict) -> str:
     turn = thread.get("turn") or {}
     parts = [thread.get("status"), turn.get("id"), turn.get("status"), turn.get("commands"), turn.get("file_count"),
              turn.get("last_command"), turn.get("running_command"), turn.get("plan"), turn.get("reply"),
-             ",".join(thread.get("flags") or [])]
+             ",".join(thread.get("flags") or []), codex_review_context.read(turn).fingerprint]
     return hashlib.sha1(json.dumps(parts, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
 
 
@@ -236,6 +236,7 @@ _REVIEW_SYSTEM = (
     "出了错可以修，且仍在主人本次授权范围内）；"
     "ask = 需要主人拿主意（方向选择、要权限、要钱、要删东西、Codex 在问问题）。"
     "主人明确说只做 A、B 留到下一轮时，不得继续 B；延期、暂停和范围限制优先于补全计划。"
+    "本轮用户消息按原顺序提供，后续补充或缩小范围优先；短摘要仅供定位，不能覆盖原消息。"
     "未关联目标时只判断当前要求；关联目标时 done 也只表示本轮结束，不代表目标验收通过。"
     "拿不准时选 ask，不要替主人做决定；不要让 Codex 推送到 main、删除数据或做不可逆的事。\n"
     "注意：「用补丁改了几个文件」只统计补丁方式的改动，用命令写的文件只能从「可能写了文件的命令」粗略看出，"
@@ -248,7 +249,8 @@ def _review_material(thread: dict) -> str:
     turn = thread.get("turn") or {}
     files = "、".join(turn.get("files") or []) or "（无）"
     return (f"会话：{thread.get('name')}（目录 {thread.get('cwd')}）\n"
-            f"要求：{turn.get('request') or '（无）'}\n计划：{turn.get('plan') or '（无）'}\n"
+            f"本轮可见用户消息（按原顺序；仅限本轮，不能替代先前授权）：{codex_review_context.material(turn)}\n"
+            f"要求摘要（有损，仅供定位）：{turn.get('request') or '（无）'}\n计划：{turn.get('plan') or '（无）'}\n"
             f"跑了 {turn.get('commands') or 0} 条命令；用补丁改了 {turn.get('file_count') or 0} 个文件：{files}\n"
             f"另有 {turn.get('shell_writes') or 0} 条命令可能写了文件"
             + (f"：{'、'.join(turn.get('shell_write_paths') or [])}" if turn.get("shell_write_paths") else "") + "\n"
@@ -264,6 +266,8 @@ def _review_current(root: str, thread: dict, now: datetime) -> bool:
         return False
     current = next((item for item in state.get("threads") or [] if item.get("id") == thread["id"]), None)
     return (current is not None and codex_watch.execution_is_current(current, now)
+            and codex_review_context.read(current.get("turn") or {}).status == "complete"
+            and codex_review_context.read(thread.get("turn") or {}).status == "complete"
             and codex_watch.is_handed_over(root, thread["id"])
             and not codex_watch.owner_driving(root, current)
             and (current.get("execution") or {}).get("ref") == (thread.get("execution") or {}).get("ref")
@@ -298,6 +302,8 @@ def _parse_review(text: str) -> Optional[dict]:
 
 
 async def review_turn(thread: dict, *, llm: Any = None, goal: Optional[dict] = None) -> Optional[dict]:
+    if codex_review_context.read(thread.get("turn") or {}).status != "complete":
+        return None
     if llm is None:
         from src.llm.client import LLMClient
         llm = LLMClient()
@@ -333,6 +339,7 @@ def _review_order(root: str, state: dict, marks: dict, now: datetime, *, goal_re
         if (tid not in handed or codex_watch.owner_driving(root, thread)
                 or thread.get("status") != "idle" or turn.get("status") != "completed" or not turn.get("id")
                 or not codex_watch.execution_is_current(thread, now)
+                or codex_review_context.read(turn).status != "complete"
                 or codex_watch._waiting(thread) or tid in pending
                 or (marks.get(tid) or {}).get("reviewed_turn") == turn["id"]):
             continue
@@ -569,6 +576,15 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                     if mark.get("goal_notice") != notice_key:
                         needs_you.append(f"{label}{reason}")
                         mark["goal_notice"] = notice_key
+        context = codex_review_context.read(turn)
+        if (config["nudge"] and record and goal_allowed and thread.get("status") == "idle"
+                and turn.get("status") == "completed" and not codex_watch.owner_driving(root, thread)
+                and context.status != "complete"):
+            assessment = codex_review_context.blocked_reason(turn)
+            notice_key = codex_goal.digest([record.get("token"), context.fingerprint])
+            if mark.get("context_notice") != notice_key:
+                needs_you.append(f"{label}{assessment}")
+                mark["context_notice"] = notice_key
         if (tid in review_rank and reviews < MAX_REVIEWS_PER_CHECK and remaining > 0
                 and goal_allowed
                 and _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started))):
@@ -624,7 +640,8 @@ async def _supervise_once(root: str, now: datetime, *, notify, llm: Any = None) 
                         action = codex_watch.propose_action(root, thread=tid, kind="message", text=review["next"],
                                                             tainted=True, expected_turn_id=turn["id"],
                                                             expected_handover_token=record.get("token"),
-                                                            expected_goal_revision=goal["revision"] if goal else None)
+                                                            expected_goal_revision=goal["revision"] if goal else None,
+                                                            expected_context_fingerprint=context.fingerprint)
                         drafts.append((f"🧭 Codex{label}做完了一轮。{assessment}\n\n" + codex_watch.action_notice(action),
                                        action))
                     except (codex_watch.CodexActionError, OSError) as error:
