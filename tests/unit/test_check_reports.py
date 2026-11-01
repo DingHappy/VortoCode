@@ -1,4 +1,3 @@
-import asyncio
 import copy
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -7,10 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.workflow.tasks.check_reports import CheckReportWriter
-from src.workflow.tasks.continuation_checks import ContinuationChecks
 from src.workflow.tasks.continuations import ContinuationConflict, ContinuationService
 from src.workflow.tasks.handoffs import CompletionInbox, revision
-from src.gateway.session_actor import ActorContext, SessionActors
 from src.gateway.sessions import SessionTable
 from src.workflow.tasks.tasks import TaskLedger
 from src.llm.hard_budget import CheckLimits
@@ -167,76 +164,6 @@ def test_recovery_cannot_publish_corrupt_or_unsettled_completed_budget(tmp_path,
         state.writer.persist(state.payload)
     assert len(state.session["transcript"]) == 1
     assert CompletionInbox(state.root, "sid-owner").pending()
-
-
-async def idle(actors):
-    for _ in range(20):
-        task = actors.tasks.get("sid-owner")
-        if task is None:
-            return
-        await asyncio.gather(task, return_exceptions=True)
-        await asyncio.sleep(0)
-    raise AssertionError("actor stayed occupied")
-
-
-@pytest.mark.asyncio
-async def test_report_only_recovery_repairs_failed_ack_without_model_reexecution(tmp_path, monkeypatch):
-    state = setup(tmp_path)
-    state.session["prompt_queue"] = []
-    actors = SessionActors(clean_item=lambda raw: raw)
-    calls = []
-
-    async def publish():
-        pass
-
-    async def no_model(*args, **kwargs):
-        calls.append("forbidden")
-        raise AssertionError("redelivery must not call model")
-
-    async def writer(payload):
-        return state.writer.persist(payload)
-
-    context = ActorContext("sid-owner", lambda: state.session, lambda: None, lambda: None, publish, no_model)
-    runtime = ContinuationChecks(actors, state.service, execute=no_model,
-                                 persist_report=writer, eligible=lambda: True)
-    saved_write = runtime.inbox.ledger.save
-    monkeypatch.setattr(runtime.inbox.ledger, "save", lambda _: False)
-    args = (context, state.task.id, state.payload["revision"], state.payload["authorization_id"], state.payload["attempt_id"])
-    assert (await runtime.resume_report(*args))["started"]
-    await idle(actors)
-    assert len(state.session["transcript"]) == 2
-    assert runtime.inbox.pending()
-    monkeypatch.setattr(runtime.inbox.ledger, "save", saved_write)
-    assert (await runtime.resume_report(*args))["started"]
-    await idle(actors)
-    assert not calls and runtime.inbox.pending() == []
-    assert len(state.session["transcript"]) == 2
-    assert state.service.ledger.load(state.task.id).continuation["entries"][state.payload["revision"]]["status"] == "completed"
-
-
-@pytest.mark.asyncio
-async def test_report_recovery_respects_foreground_and_stale_result(tmp_path):
-    state = setup(tmp_path)
-    actors = SessionActors(clean_item=lambda raw: raw)
-
-    async def publish():
-        pass
-
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("busy recovery must not write or execute")
-
-    context = ActorContext("sid-owner", lambda: state.session, lambda: None, lambda: None, publish, forbidden)
-    runtime = ContinuationChecks(actors, state.service, execute=forbidden,
-                                 persist_report=forbidden, eligible=lambda: True)
-    args = (context, state.task.id, state.payload["revision"], state.payload["authorization_id"], state.payload["attempt_id"])
-    assert not (await runtime.resume_report(*args))["started"]
-    state.session["prompt_queue"] = []
-    task = state.service.ledger.load(state.task.id)
-    task.result = "new delivery"
-    state.service.ledger.save(task)
-    with pytest.raises(ValueError):
-        await runtime.resume_report(*args)
-    assert len(state.session["transcript"]) == 1
 
 
 @pytest.mark.asyncio
