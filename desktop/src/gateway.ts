@@ -20,6 +20,8 @@ import type {
   AssistantProfile,
   PersonalGoal,
   PersonalGoalInput,
+  AssistantChange,
+  AssistantUndoResult,
   AssistantScheduleItem,
   MemoryProposal,
   PhoneChat,
@@ -511,6 +513,15 @@ export class GatewayClient {
   /** 常驻助理的名字与「关于你」（两端共用）。 */
   async getAssistantProfile(): Promise<AssistantProfile> {
     return this.request("/api/assistant/profile");
+  }
+
+  async listAssistantChanges(): Promise<AssistantChange[]> {
+    const result = await this.request<{ ops: AssistantChange[] }>("/api/assistant/undo");
+    return result.ops;
+  }
+
+  async undoAssistantChange(id: string): Promise<AssistantUndoResult> {
+    return this.request(`/api/assistant/undo/${encodeURIComponent(id)}`, { method: "POST" });
   }
 
   async listPersonalGoals(): Promise<PersonalGoal[]> {

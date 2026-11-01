@@ -40,6 +40,20 @@ def _date(value: object) -> str:
         raise ValueError("时间需要包含时区的 ISO 日期") from None
 
 
+def _origin(value: object) -> str:
+    return "owner" if value == "owner" else "external"
+
+
+def has_external_text(goal: dict) -> bool:
+    """这条目标里有没有在读过外部内容的回合里写下的文字（来源缺省视为主人，见 Goal.origins）。"""
+    origins = goal.get("origins")
+    if origins is None:
+        origins = {}
+    if not isinstance(origins, dict):
+        return True
+    return any(origins.get(key, "owner") != "owner" for key in ("objective", "acceptance_criteria", "next_action", "blocker"))
+
+
 def _fields(body: dict, allowed: set[str]) -> None:
     if set(body) - allowed:
         raise ValueError("请求包含不支持的字段")
@@ -100,6 +114,8 @@ class PersonalGoals:
             raise KeyError(goal_id)
         if not isinstance(goal.follow_up, dict) or not isinstance(goal.follow_up_history, list):
             raise ValueError("提醒记录格式无效")
+        if not isinstance(goal.origins, dict):
+            raise ValueError("目标来源记录格式无效")
         return goal
 
     @staticmethod
@@ -141,7 +157,7 @@ class PersonalGoals:
             raise OSError("目标未保存，请刷新确认后重试")
         return self._view(goal)
 
-    def create(self, body: dict) -> dict:
+    def create(self, body: dict, *, origin: str = "owner") -> dict:
         _fields(body, {"request_id", "objective", "acceptance_criteria", "next_action", "due_at", "follow_up_at"})
         request_id = body.get("request_id")
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id):
@@ -169,6 +185,7 @@ class PersonalGoals:
             goal.kind, goal.status, goal.revision = "personal", "active", 1
             goal.request_fingerprint = fingerprint
             goal.next_action, goal.due_at, goal.follow_up_at = next_action, due, follow_up
+            goal.origins = {key: _origin(origin) for key in ("objective", "acceptance_criteria", "next_action")}
             return self._save(goal)
 
     @staticmethod
@@ -227,26 +244,56 @@ class PersonalGoals:
             goal.revision += 1
             return self._save(goal)
 
-    def update(self, goal_id: str, body: dict) -> dict:
+    def update(self, goal_id: str, body: dict, *, origin: str = "owner") -> dict:
         _fields(body, {"revision", "next_action", "blocker", "due_at", "follow_up_at"})
         with self._lock(goal_id):
             goal = self._load(goal_id)
             self._revision(goal, body)
-            if goal.status == "achieved":
-                raise ValueError("已达成的目标不能修改进展；复验未通过会重新打开目标")
-            for key in ("next_action", "blocker"):
-                if key in body:
-                    setattr(goal, key, _text(body[key], 1000, required=key == "next_action"))
-            for key in ("due_at", "follow_up_at"):
-                if key in body:
-                    setattr(goal, key, _date(body[key]))
-            failed = any(c.status == "failed" for c in goal.acceptance_criteria)
-            goal.status = "blocked" if goal.blocker or failed else "active"
-            if failed and not goal.blocker:
-                goal.blocker = "仍有验收标准未通过，请复验"
-            self._invalidate_follow_up(goal)
-            goal.revision += 1
-            return self._save(goal)
+            return self._apply_progress(goal, body, {key: origin for key in ("next_action", "blocker") if key in body})
+
+    def _apply_progress(self, goal: Goal, body: dict, origins: dict) -> dict:
+        if goal.status == "achieved":
+            raise ValueError("已达成的目标不能修改进展；复验未通过会重新打开目标")
+        for key in ("next_action", "blocker"):
+            if key in body:
+                setattr(goal, key, _text(body[key], 1000, required=key == "next_action"))
+        for key in ("due_at", "follow_up_at"):
+            if key in body:
+                setattr(goal, key, _date(body[key]))
+        failed = any(c.status == "failed" for c in goal.acceptance_criteria)
+        goal.status = "blocked" if goal.blocker or failed else "active"
+        if failed and not goal.blocker:
+            goal.blocker = "仍有验收标准未通过，请复验"
+        goal.origins = {**goal.origins, **{key: _origin(value) for key, value in origins.items()}}
+        self._invalidate_follow_up(goal)
+        goal.revision += 1
+        return self._save(goal)
+
+    def restore(self, goal_id: str, revision: int, fields: dict, origins: dict | None = None) -> dict:
+        """撤销助理改的进展：只在那之后没人再动过（版本仍是改完时的）才把这几个字段放回原值。
+
+        之后又改过就拒绝——撤销不能盖掉你后来的进展。被那次修改取消的提醒批准不会恢复，
+        恢复本身同样会取消尚未发送的批准（与任何进展修改一致），需要你重新批准。"""
+        _fields(fields, {"next_action", "blocker", "due_at", "follow_up_at"})
+        with self._lock(goal_id):
+            goal = self._load(goal_id)
+            if goal.revision != revision:
+                raise ValueError("这个目标之后又改过，撤销会盖掉新的进展；请在目标卡上处理")
+            restored = {key: (origins or {}).get(key, "owner") for key in ("next_action", "blocker") if key in fields}
+            return self._apply_progress(goal, fields, restored)
+
+    def withdraw(self, goal_id: str, revision: int) -> None:
+        """撤销助理新建的目标：只在建好后没人动过时移出列表（移到 .withdrawn/，不删除）。"""
+        with self._lock(goal_id):
+            goal = self._load(goal_id)
+            if goal.revision != revision or goal.evidence or goal.follow_up.get("status"):
+                raise ValueError("这个目标建好后又改过（进展、验收或提醒），请在目标卡上处理")
+            path = self.ledger._path(goal_id)
+            target = path.parent / ".withdrawn" / path.name
+            if target.parent.is_symlink():
+                raise OSError("目标存储位置不可用")
+            target.parent.mkdir(exist_ok=True)
+            os.replace(path, target)
 
     def evidence(self, goal_id: str, criterion_id: str, body: dict) -> dict:
         _fields(body, {"revision", "summary", "passed", "confirmed"})
