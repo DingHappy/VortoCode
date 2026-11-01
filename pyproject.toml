@@ -64,7 +64,7 @@ dev = [
     "types-PyYAML>=6.0",   # yaml 是核心依赖且有官方 stub：装上而不是 ignore 掉
 ]
 all = [
-    "vortocode[llm,mcp,parsing,browser,dev]",
+    "vortocode[llm,mcp,parsing,browser,dev,mobile]",
 ]
 
 [project.scripts]
