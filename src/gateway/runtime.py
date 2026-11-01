@@ -115,6 +115,9 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         # Every cleanup runs even if another manager raises during shutdown.
         async with AsyncExitStack() as cleanup:
             cleanup.callback(lease.release)
+            if owned:
+                from src.agents.tools.website_browser import shutdown_browsers
+                cleanup.push_async_callback(shutdown_browsers)
             if terminal_manager is not None:
                 cleanup.callback(terminal_manager.shutdown)
             if run_manager is not None:

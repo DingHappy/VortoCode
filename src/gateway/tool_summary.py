@@ -2,6 +2,8 @@
 import re
 from typing import Any, Dict
 
+from src.browser.connections import safe_url
+
 
 def tool_summary(name: str, args: Dict[str, Any]) -> str:
     """把工具调用压成一句"用户看得懂的动作"；敏感值不进入标题。
@@ -75,7 +77,13 @@ def tool_summary(name: str, args: Dict[str, Any]) -> str:
         "web_fetch": "读取网页",
         "screenshot_page": "给网页截图",
         # —— 浏览器操控（输入内容可能敏感，只显示元素编号，不进标题）——
-        "browser_open": _with("浏览器打开", str(args.get("url") or "").strip(), 80),
+        "browser_open": _with("浏览器打开", safe_url(str(args["url"])) if args.get("url") else "", 80),
+        "browser_connections": "查看网站连接",
+        "browser_connect": "登记网站连接",
+        "browser_login": "请主人核对网站登录并确认恢复",
+        "browser_scroll": "滚动浏览器页面",
+        "browser_disconnect": "撤销网站连接",
+        "browser_close": "关闭专用浏览器",
         "browser_snapshot": "读取浏览器页面",
         "browser_screenshot": "给浏览器页面截图",
         "browser_click": _with("浏览器点击元素", str(args.get("ref") or "").strip()),

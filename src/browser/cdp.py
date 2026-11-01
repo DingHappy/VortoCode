@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -54,7 +55,13 @@ def find_browser() -> Optional[str]:
 class CdpBrowser:
     """一个独立浏览器实例 + 一个受控标签页（flatten 会话）。"""
 
-    def __init__(self, executable: str, profile_dir: Path = PROFILE_DIR):
+    def __init__(self, executable: str, profile_dir: Path = PROFILE_DIR, *, device_mode: str = "desktop"):
+        if device_mode not in {"desktop", "mobile"}:
+            raise ValueError("Unknown browser device mode")
+        self.device_mode = device_mode
+        self._lifecycle = asyncio.Lock()
+        self._fds = set()
+        self._transport = None
         self.executable = executable
         self.profile_dir = profile_dir
         self._proc: Optional[asyncio.subprocess.Process] = None
@@ -71,11 +78,24 @@ class CdpBrowser:
         return self._proc is not None and self._proc.returncode is None
 
     async def start(self) -> None:
+        async with self._lifecycle:
+            try:
+                await self._start()
+            except BaseException:
+                await self._close()
+                raise
+
+    async def _start(self) -> None:
+        from src.sandbox.policy import child_env
         if self.running:
             return
         self.profile_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         to_child_r, to_child_w = os.pipe()     # 我们写 → 浏览器从 fd 3 读
+        self._fds.update((to_child_r, to_child_w))
         from_child_r, from_child_w = os.pipe()  # 浏览器写 fd 4 → 我们读
+
+        self._fds.update((from_child_r, from_child_w))
+        self._writer_fd = to_child_w
 
         def _wire_fds() -> None:  # 子进程里把两端放到 Chrome 约定的 3/4 号描述符
             import fcntl
@@ -84,6 +104,8 @@ class CdpBrowser:
             write_end = fcntl.fcntl(from_child_w, fcntl.F_DUPFD, 10)
             os.dup2(read_end, 3)
             os.dup2(write_end, 4)
+            os.close(read_end)
+            os.close(write_end)
 
         args = [
             self.executable,
@@ -102,17 +124,21 @@ class CdpBrowser:
                 # 不能用 pass_fds：子进程会在 preexec_fn **之后**关掉名单外的描述符，刚 dup 到
                 # 3/4 的两端也一起被关（Chrome 报 "pipe file descriptors are not open"）。
                 # Python 打开的描述符默认不可继承，close_fds=False 不会把别的句柄漏给浏览器。
-                close_fds=False, preexec_fn=_wire_fds)
+                close_fds=False, preexec_fn=_wire_fds, env=child_env())
         finally:
             os.close(to_child_r)
             os.close(from_child_w)
+            self._fds.difference_update((to_child_r, from_child_w))
         self._writer_fd = to_child_w
         loop = asyncio.get_running_loop()
         self._reader = asyncio.StreamReader(limit=64 * 1024 * 1024)
-        await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(self._reader),
+        self._transport, _ = await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(self._reader),
                                      os.fdopen(from_child_r, "rb", buffering=0))
+        self._fds.discard(from_child_r)
         self._pump = asyncio.create_task(self._read_loop())
         await self._attach_page()
+        if self.device_mode == "mobile":
+            await self._mobile_mode()
 
     async def _read_loop(self) -> None:
         assert self._reader is not None
@@ -186,6 +212,10 @@ class CdpBrowser:
             await asyncio.sleep(0.3)
 
     async def click_at(self, x: float, y: float) -> None:
+        if self.device_mode == "mobile":
+            await self.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+            await self.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+            return
         for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
             await self.send("Input.dispatchMouseEvent", {
                 "type": kind, "x": x, "y": y, "button": "left", "clickCount": 1})
@@ -203,23 +233,54 @@ class CdpBrowser:
         result = await self.send("Page.captureScreenshot", {"format": "png"})
         return base64.b64decode(result.get("data") or "")
 
+    async def _mobile_mode(self):
+        version = await self.send("Browser.getVersion", page=False)
+        number = str(version.get("product") or "").partition("/")[2]
+        if not re.fullmatch(r"[0-9.]+", number):
+            raise BrowserError("无法核对浏览器版本，未启用手机网页模式")
+        await self.send("Emulation.setDeviceMetricsOverride", {
+            "width": 390, "height": 844, "deviceScaleFactor": 3, "mobile": True})
+        await self.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        await self.send("Emulation.setUserAgentOverride", {"userAgent":
+            f"Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{number} Mobile Safari/537.36",
+            "platform": "Android"})
+
+    async def scroll(self, amount: int):
+        await self.send("Input.synthesizeScrollGesture", {
+            "x": 195 if self.device_mode == "mobile" else 640,
+            "y": 500, "yDistance": -amount,
+            "gestureSourceType": "touch" if self.device_mode == "mobile" else "mouse"})
+
     async def close(self) -> None:
+        async with self._lifecycle:
+            await self._close()
+
+    async def _close(self):
         if self._proc is not None and self._proc.returncode is None:
             try:
                 await self.send("Browser.close", page=False, timeout=5)
-            except Exception:  # noqa: BLE001 —— 关不掉就直接结束进程
-                self._proc.terminate()
+            except Exception:
+                try:
+                    self._proc.terminate()
+                except ProcessLookupError:
+                    pass  # The browser may exit before the close response arrives.
             try:
                 await asyncio.wait_for(self._proc.wait(), 5)
             except asyncio.TimeoutError:
-                self._proc.kill()
+                try:
+                    self._proc.kill()
+                except ProcessLookupError:
+                    pass
+                await asyncio.wait_for(self._proc.wait(), 5)
         if self._pump is not None:
             self._pump.cancel()
-        if self._writer_fd is not None:
+            await asyncio.gather(self._pump, return_exceptions=True)
+        if self._transport is not None:
+            self._transport.close()
+        for descriptor in tuple(self._fds):
             try:
-                os.close(self._writer_fd)
+                os.close(descriptor)
             except OSError:
                 pass
-        self._proc = None
-        self._writer_fd = None
-        self._session = None
+            self._fds.discard(descriptor)
+        self._proc = self._writer_fd = self._session = self._pump = self._transport = None
