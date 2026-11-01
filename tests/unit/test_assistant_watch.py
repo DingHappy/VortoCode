@@ -50,7 +50,8 @@ async def test_first_run_records_without_replaying_then_notifies_changes(tmp_pat
     dispatch._update(root, new["id"], lambda item: item.update(status="done", branch="vorto/fix", result="已修好"))
     dispatch._update(root, old["id"], lambda item: item.update(status="running"))   # 在做：不推
     await watch.watch_once(root, noon, notify=inbox, refresh=_items(root), times=[])
-    assert len(inbox.messages) == 2 and "✅" in inbox.messages[1] and "vorto/fix" in inbox.messages[1]
+    assert len(inbox.messages) == 2 and "尚无当前提交的验证结果" in inbox.messages[1]
+    assert "修登录" in inbox.messages[1] and "详细结果与依据" in inbox.messages[1]
 
 
 async def _facts(root, now, label):
@@ -222,28 +223,46 @@ _DEV_REPORT = """已把任务分解为 1 个子任务：1 个独立(并行) + 0 
 ✅ 全部落到 vorto/auto-190d3e2b（1 独立 + 0 依赖）且**集成后全量测试通过**（未碰 main，git checkout vorto/auto-190d3e2b 查看）。（本次改动含 1 个测试文件）"""
 
 
-def test_done_notice_keeps_whole_paragraphs_from_the_end():
+def test_done_notice_uses_ledger_instead_of_raw_success_claims():
     from src.scheduling.assistant_watch import status_message
     text = status_message({"project": "VortoCode", "title": "short_hash", "status": "done",
                            "branch": "vorto/auto-190d3e2b", "result": _DEV_REPORT})
-    body = text.split("\n", 1)[1]
-    assert body.startswith("验收标准：")                       # 从整段开头起，不是半句话
-    assert "集成后全量测试通过" in body and "**" not in body    # 结论在，加粗符号去掉
-    assert "计划已存盘" not in body
-    assert "（完整结果在 Desktop 助理的「动态」里）" in body and "draft PR" in body
+    assert "尚无当前提交的验证结果" in text and "下一步：" in text
+    assert "集成后全量测试通过" not in text and "计划已存盘" not in text
+    assert "详细结果与依据在 Desktop 助理的「动态」里" in text and "draft PR" in text
 
 
-def test_short_result_is_sent_whole_without_pointer():
-    from src.scheduling.assistant_watch import result_digest
-    assert result_digest("改好了。\n\n测试全过。") == "改好了。\n\n测试全过。"
-    assert result_digest("") == ""
+@pytest.mark.parametrize("verification, expected, next_step", [
+    ("passed", "自动验证通过；待人工审查", "再决定是否验收"),
+    ("failed", "自动验证没通过", "先查看失败项"),
+    ("stale", "验证结果已过期", "先验证当前提交"),
+    ("unknown", "尚无当前提交的验证结果", "先取得当前提交的验证结果"),
+    ("future-status", "尚无当前提交的验证结果", "先取得当前提交的验证结果"),
+])
+def test_completion_separates_execution_verification_and_acceptance(verification, expected, next_step):
+    text = watch.status_message({"project": "P", "title": "修登录", "status": "done",
+                                 "result": "已验收且部署上线", "delivery_evidence": {"verification": verification}})
+    assert expected in text and next_step in text
+    assert "✅" not in text and "已验收且部署上线" not in text
+    assert "draft PR" not in text
 
 
-def test_single_overlong_paragraph_is_cut_at_a_sentence_end():
-    from src.scheduling.assistant_watch import result_digest
-    digest = result_digest("第一句话说明做了什么。" * 40)
-    first = digest.split("\n")[0]
-    assert len(first) <= 301 and first.endswith("。…")
+@pytest.mark.parametrize("fields, expected", [
+    ({"error": "测试失败"}, "仍有错误记录"),
+    ({"delivery_error": "连接超时"}, "交付证据暂时无法读取"),
+    ({"sync_state": "unreachable"}, "当前状态无法核实"),
+])
+def test_missing_or_conflicting_evidence_overrides_passed(fields, expected):
+    text = watch.status_message({"project": "P", "title": "t", "status": "done",
+                                 "delivery_evidence": {"verification": "passed"}, **fields})
+    assert expected in text.split("\n")[0]
+    assert "自动验证通过" not in text and "✅" not in text
+
+
+def test_waiting_options_are_not_presented_as_recommendations():
+    text = watch.status_message({"project": "P", "title": "t", "status": "waiting",
+                                 "question": {"question": "选哪个？", "options": ["A", "B"]}})
+    assert "选项：1. A\n2. B" in text and "建议：" not in text
 
 
 def test_failure_notice_is_not_cut_mid_sentence():
