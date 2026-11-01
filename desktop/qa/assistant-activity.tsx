@@ -17,10 +17,14 @@ const qaSchedule: AssistantScheduleItem[] = [
 import { AssistantWorkdayView } from "../src/components/AssistantWorkday";
 import { ComputerLauncherView, ComputerWorkspaceView } from "../src/components/ComputerWorkspace";
 import type { FeedItem } from "../src/lib/activityFeed";
-import { codexActionFeedItem, confirmationFeedItem, noticeFeedItems } from "../src/lib/activityFeed";
+import { codexActionFeedItem, confirmationFeedItem, dispatchFeedItem, noticeFeedItems } from "../src/lib/activityFeed";
 import type { CodexAction, NoticeItem, PendingConfirmation } from "../src/types";
 import type { AssistantWorkday } from "../src/lib/assistantWorkday";
 import { activityCoverage, type ActivitySource } from "../src/lib/activitySources";
+import { TaskPill } from "../src/components/TaskPill";
+import { SessionResources } from "../src/components/SessionResources";
+import { emptyResourceView } from "../src/lib/sessionResources";
+import { assistantAttention } from "../src/lib/assistantAttention";
 import "../src/styles/tokens.css";
 import "../src/styles/components.css";
 import "../src/App.css";
@@ -48,12 +52,14 @@ function Fixture() {
   const [tab, setTab] = useState<AssistantTab>("feed");
   const [connected, setConnected] = useState(true);
   const [selected, setSelected] = useState<FeedItem | null>(null);
-  const [closed, setClosed] = useState(false);
+  const [closed, setClosed] = useState(true);
   const [decisions, setDecisions] = useState(0);
   const [actionStatus, setActionStatus] = useState<CodexAction["status"]>("proposed");
   const [resolved, setResolved] = useState(false);
   const [longList, setLongList] = useState(false);
   const [newNotice, setNewNotice] = useState(false);
+  const [routineOnly, setRoutineOnly] = useState(false);
+  const [unreachableTask, setUnreachableTask] = useState(false);
   const [hasNotice, setHasNotice] = useState(true);
   const [source, setSource] = useState(0);
   const [sourceFailed, setSourceFailed] = useState(false);
@@ -66,11 +72,16 @@ function Fixture() {
     id: `qa-history-${index}`, title: `历史记录 ${index + 1}`, summary: "仅用于核对长列表滚动，不连接真实服务。",
     status: "done", at: at(120 + index), sourceLabel: "合成历史",
   })) : [];
-  const feed = [...items.map(item => resolved && item.status === "waiting"
+  const records = [...items.map(item => resolved && item.status === "waiting"
     ? { ...item, status: "done" as const, statusLabel: "已处理（合成）" } : item), ...history,
     ...noticeFeedItems([...(newNotice ? [{ ts: at(0), source: "assistant", text: "🗒 新增简报\n仅用于核对后台更新不打断阅读。" }] : []), ...(hasNotice ? [notice] : [])]),
-    codexActionFeedItem(action)!, ...(!resolved ? [confirmationFeedItem(confirmation)] : [])];
+    codexActionFeedItem(action)!, ...(!resolved ? [confirmationFeedItem(confirmation)] : []),
+    ...(unreachableTask ? [dispatchFeedItem({ id: "qa-lost", project: "演示项目", title: "原任务来源失联", goal: "核对交付",
+      criteria: [], status: "done", result: "上次执行结束，尚未验收", error: "", tainted: false, remote_task_id: "qa-old",
+      branch: "", created_at: at(60), updated_at: at(1), sync_state: "unreachable" })!] : [])];
+  const feed = routineOnly ? records.filter(item => item.status === "running" || item.id === "reply") : records;
   const waiting = feed.filter(item => item.status === "waiting").length;
+  const attention = assistantAttention(feed);
   const sources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const).map(name => ({
     name, checkedAt, status: sourceFailed && name === "dispatches" ? "unavailable" : "current",
   }));
@@ -83,6 +94,9 @@ function Fixture() {
       <button onClick={() => setResolved(value => !value)}>{resolved ? "恢复待处理示例" : "模拟待处理清空"}</button>
       <button onClick={() => setLongList(value => !value)}>{longList ? "还原短列表" : "载入长列表"}</button>
       <button onClick={() => setNewNotice(value => !value)}>{newNotice ? "撤回新增简报" : "模拟新简报"}</button>
+      <button onClick={() => window.setTimeout(() => setNewNotice(true), 8000)}>8秒后新增简报</button>
+      <button onClick={() => setRoutineOnly(value => !value)}>{routineOnly ? "恢复完整场景" : "仅普通进度"}</button>
+      <button onClick={() => setUnreachableTask(value => !value)}>{unreachableTask ? "还原任务来源" : "模拟任务失联"}</button>
       <button onClick={() => setHasNotice(value => !value)}>{hasNotice ? "移出原简报" : "恢复原简报"}</button>
       <button onClick={() => setSource(value => value + 1)}>切换合成来源</button>
       <button onClick={() => setSourceFailed(value => !value)}>{sourceFailed ? "恢复来源状态" : "模拟来源失败"}</button>
@@ -91,12 +105,15 @@ function Fixture() {
       <span>合成批准次数：{decisions}</span>
       {closed && <button onClick={() => setClosed(false)}>打开助理面板</button>}
     </header>
-    <main className={`activity-qa-layout vc-mode-assistant ${computer ? "computer-demo" : ""}`}>
-      <section className="conversation"><div className="conversation-header"><strong>主要聊天</strong></div>
+    <main className={`activity-qa-layout vc-mode-assistant ${computer ? "computer-demo" : ""} ${closed && !computer ? "summary-closed" : ""}`}>
+      <section className="conversation"><div className="conversation-header"><strong>主要聊天</strong><TaskPill waiting={waiting}
+        busy={attention.running} exceptions={attention.exceptions.length} uncertain={!complete} open={!closed} onOpen={() => setClosed(value => !value)} /></div>
         <div className="conversation-scroll"><article className="message user"><div className="message-body">帮我看看本周有哪些事需要跟进。</div></article>
-          <article className="message assistant"><div className="message-body">发布结果正在核对，下一次更新的范围还需要你确认。右侧动态保留每件事的进展与结果。</div></article></div>
-        {!resolved && <ConfirmCard confirm={confirmation} connected={connected} trust={null} trustBusy={false} onTrust={() => {}} onCheck={() => {}} onAnswer={() => setDecisions(value => value + 1)} />}
-        <p className="activity-qa-note">聊天和动态使用合成数据，不提交任务。电脑工作区连接专用远程桌面的只读画面。</p>
+          <article className="message assistant"><div className="message-body">发布结果正在核对，下一次更新的范围还需要你确认。过程记录已收起，需要时可以查看任务摘要和依据。</div></article></div>
+        {!resolved && !routineOnly && <ConfirmCard confirm={confirmation} connected={connected} trust={null} trustBusy={false} onTrust={() => {}} onCheck={() => {}} onAnswer={() => setDecisions(value => value + 1)} />}
+        <div className="activity-qa-note"><SessionResources view={emptyResourceView()} connected={connected} hostLabel="常驻电脑"
+          onRefresh={() => {}} onFocusConfirmation={() => {}} onManage={() => {}} />
+          聊天和动态均为合成数据，不提交任务或调用模型。</div>
       </section>
       {computer ? <ComputerWorkspaceView view={{target:"ssh:vorto-code",url:"http://127.0.0.1:16088/",id:203}} onClose={()=>setComputer(false)} onRetry={()=>setComputer(true)} onWindow={()=>{}} />
       : !closed && <AssistantPanel name="VortoCode" connected={connected} modelLabel="合成模型"
