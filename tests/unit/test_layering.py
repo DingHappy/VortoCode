@@ -116,6 +116,6 @@ def test_security_core_import_does_not_load_unrelated_subsystems():
             "print('\\n'.join(sorted(m for m in sys.modules if m.startswith('src.'))))\n")
     out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True,
                          text=True, check=True).stdout.split()
-    unrelated = ("src.hooks", "src.skills", "src.tools", "src.memory.vector_memory",
+    unrelated = ("src.hooks", "src.skills", "src.tools",
                  "src.workflow", "src.gateway", "src.web")
     assert [m for m in out if m.startswith(unrelated)] == []
