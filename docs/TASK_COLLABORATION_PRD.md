@@ -289,6 +289,8 @@ TaskRunner 启动时对 claimed 检查记 interrupted，不自动重试付费调
 
 ## 16. S2 actor 检查桥切片
 
+> 2026-11：`ContinuationChecks` 检查桥从未接入生产，已删除；本节保留为历史记录。
+
 已实现 ContinuationChecks 注入式检查桥，检查复用 SessionActors 的唯一槽位。
 前台队列、优先输入、活动回合和停止标记阻止认领；新用户输入抢占检查，停止保留队列。
 第一个执行时隙前取消也会清理槽位，停止/断开撤销尚未认领的持久授权。

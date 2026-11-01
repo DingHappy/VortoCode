@@ -27,10 +27,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-memory = [
-    "qdrant-client>=1.7.0",
-    "sentence-transformers>=2.2.0",
-]
 evals = [
     "tiktoken>=0.12,<1",
 ]
@@ -63,7 +59,7 @@ dev = [
     "types-PyYAML>=6.0",   # yaml 是核心依赖且有官方 stub：装上而不是 ignore 掉
 ]
 all = [
-    "vortocode[memory,llm,mcp,parsing,browser,dev]",
+    "vortocode[llm,mcp,parsing,browser,dev]",
 ]
 
 [project.scripts]
@@ -107,7 +103,7 @@ files = [
     "src/gateway/turn_bindings.py", # 各端回合回调换绑点：未绑定时确认必须拒绝
 ]
 follow_imports = "silent"
-ignore_missing_imports = true      # 可选依赖（openai/yaml/qdrant…）无 stub，不为此挂门禁
+ignore_missing_imports = true      # 可选依赖（openai/yaml…）无 stub，不为此挂门禁
 warn_unused_ignores = true
 no_implicit_optional = true
 
