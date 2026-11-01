@@ -83,6 +83,14 @@ def load_allow_from(channel: str):
     return None
 
 
+def load_conversation() -> str:
+    """One config path for embedded and standalone IM; a typo cannot join primary chat."""
+    conversation = os.getenv("VORTOCODE_IM_CONVERSATION", "primary").strip().lower()
+    if conversation not in {"primary", "isolated"}:
+        raise IMConfigError("VORTOCODE_IM_CONVERSATION must be primary or isolated")
+    return conversation
+
+
 def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
                    adapter=None, owner: Optional[str] = None, runner=None, register_worker=None):
     """在 serve 进程内起 bridge：构造（或注入，测试用）adapter → 建 bridge（共享 runner）→
@@ -92,6 +100,9 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     role = os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower()
     if role not in {"interactive", "notify"}:
         raise IMConfigError("VORTOCODE_IM_ROLE must be interactive or notify")
+    conversation = load_conversation()
+    if role == "notify" and conversation == "isolated":
+        raise IMConfigError("An isolated bot cannot own the primary notification route")
     if _ACTIVE["bridge"] is not None:
         raise IMConfigError("An IM bridge already owns this Runtime")
     if runner is None or register_worker is None:
@@ -101,16 +112,17 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     if role == "notify" and channel == "telegram":
         adapter.notification_only = True
     bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner,
-                      allow_from=load_allow_from(channel), notification_only=role == "notify")
+                      allow_from=load_allow_from(channel), notification_only=role == "notify",
+                      conversation=conversation)
     claim = getattr(adapter, "claim_polling", None)
     if claim is not None:
         claim()
     # IM 也收任务进度/终态（与 WS 同一订阅集）；unsubscribe 必须留着——stop 时不退订的话，
     # lifespan 重启/动态启停会把更新继续投给已停的 bridge/adapter（评审抓的订阅泄漏）
     try:
-        if role != "notify":
+        if role != "notify" and conversation == "primary":
             register_worker(bridge._task_worker)
-        _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update)
+        _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update) if conversation == "primary" else None
     except Exception:
         register_worker(None)
         release = getattr(adapter, "release_polling", None)
@@ -118,7 +130,10 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
             release()
         raise
     _ACTIVE["bridge"] = bridge
-    _ACTIVE["register_worker"] = register_worker
+    _ACTIVE["register_worker"] = register_worker if conversation == "primary" else None
+    _ACTIVE["owner_routes"] = conversation == "primary"
+    if conversation == "isolated":
+        return bridge, adapter
     from src.gateway import im_runtime
     # 注册**不吞异常**的 notify_send，而不是 _safe_send：通知投递路径必须让失败冒出来，
     # notify_owner 才能返回 False、投递器才能落"未送达"的账（2026-07-28 早上的教训）。
@@ -136,9 +151,10 @@ def stop_embedded() -> None:
     """注销内嵌 bridge（serve 关停时调；adapter 的关闭由调用方负责）：单例、kind 分发、订阅全清。"""
     _ACTIVE["bridge"] = None
     from src.gateway import im_runtime
-    im_runtime.set_owner_notifier(None)
-    im_runtime.set_owner_confirm_sender(None)
-    im_runtime.set_owner_media_sender(None)
+    if _ACTIVE.pop("owner_routes", False):
+        im_runtime.set_owner_notifier(None)
+        im_runtime.set_owner_confirm_sender(None)
+        im_runtime.set_owner_media_sender(None)
     unsub = _ACTIVE.pop("unsubscribe", None)
     _ACTIVE["unsubscribe"] = None
     if unsub is not None:

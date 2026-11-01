@@ -111,6 +111,9 @@ class DingTalkAdapter(ChannelAdapter):
         self._inbox_dir = str(Path(inbox_dir or Path.home() / ".vortocode" / "im_inbox"))
 
     # ------------------------------------------------------------ ChannelAdapter
+    def conversation_identity(self) -> str:
+        return self._cid
+
     def claim_polling(self):
         """One Stream consumer per application on this host."""
         if self._polling_lease is None:

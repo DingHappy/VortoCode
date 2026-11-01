@@ -8,6 +8,7 @@ poll 循环收到按钮点击时 set_result 解开——confirm 挂起期间照�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -143,11 +144,18 @@ def _shared_text(text: str, images: Optional[list], files: Optional[list]) -> st
 
 
 class IMBridge:
+    conversation = "primary"  # Default for legacy host integrations constructed before this field existed.
+
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
                  channel: str = "im", mode: str = "plan", llm=None, runner=None,
                  with_dev: bool = True, persona: str = "",
                  allow_from: Optional[Iterable] = None, workspace_scope=None,
-                 notification_only: bool = False):
+                 notification_only: bool = False, conversation: str = "primary"):
+        if not isinstance(conversation, str) or conversation not in {"primary", "isolated"}:
+            raise ValueError("IM conversation must be primary or isolated")
+        if not isinstance(channel, str) or re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", channel) is None:
+            raise ValueError("IM channel name is invalid")
+        self.conversation = conversation
         from src.gateway.workspace_scope import current_workspace_scope, normalize_workspace_scope
         self.workspace_scope = (current_workspace_scope() if workspace_scope is None
                                 else normalize_workspace_scope(workspace_scope, default="general"))
@@ -161,6 +169,15 @@ class IMBridge:
         self.mode = mode if mode in ("plan", "build") else "plan"
         self._llm = llm
         self._sid = f"sid-{channel}-{self.owner_id}"     # session_store 要求 sid- 前缀
+        identity_of = getattr(adapter, "conversation_identity", None)
+        identity = identity_of() if callable(identity_of) else ""
+        if not isinstance(identity, str) or len(identity) > 200 or "\x00" in identity:
+            raise ValueError("IM adapter account identity is invalid")
+        if identity:
+            key = json.dumps([channel, identity, self.owner_id, conversation], ensure_ascii=False)
+            self._sid = f"sid-{channel}-{hashlib.sha256(key.encode()).hexdigest()[:40]}"
+        elif conversation == "isolated":
+            raise ValueError("An isolated bot needs a stable adapter account identity")
         self._pending: dict = {}                         # cid -> Future（确认）
         self._pipeline_previews: dict[str, str] = {}       # 已成功展示的产出版本，审批后消费
         self._turn_task: Optional[asyncio.Task] = None
@@ -173,7 +190,7 @@ class IMBridge:
         self._ignored = 0                                # 白名单外的入站计数
         self._ignored_no_mention = 0                     # 群聊里没 @ 到本机器人的入站计数
         # confirm/progress/工具生命周期每回合重绑到当前聊天（动态里的工具数/图标靠 tool_event）
-        self._bindings = TurnBindings(session="im")
+        self._bindings = TurnBindings(session=self._sid)
         # 不支持编辑的通道（钉钉）进度只能发新消息 → 放慢节流免刷屏
         self._edits = getattr(adapter, "edits_supported", True)
         self._progress_interval = 2.0 if self._edits else 10.0
@@ -200,11 +217,20 @@ class IMBridge:
 
     # ------------------------------------------------------------ 人设（本人自述，不由管理员代填）
     def _persona_path(self):
+        if self.conversation == "isolated":
+            return Path(self.repo_root) / ".vortocode" / "im-bots" / self._sid / "persona.md"
         return _persona_path_for(self.repo_root)
 
     def _load_persona(self) -> str:
-        """读本助手的人设。**每个助手一个独立工作区**，所以人设天然按人隔离。"""
-        return self._persona or read_persona(self.repo_root)
+        """Primary uses the existing workspace persona; isolated bots use their own."""
+        if self._persona:
+            return self._persona
+        if self.conversation == "isolated":
+            try:
+                return self._persona_path().read_text(encoding="utf-8").strip()
+            except FileNotFoundError:
+                return ""
+        return read_persona(self.repo_root)
 
     def _save_persona(self, text: str) -> None:
         p = self._persona_path()
@@ -232,14 +258,16 @@ class IMBridge:
         # untrusted_input=True：IM 入站是彻头彻尾的外部不可信内容（转发的网页、群里别人贴的文本、
         # 冒充运维的指令），**每个回合一开始就打污点**——污点态下一切免确认授权失效，
         # 记忆写入也降级（指令性文本不进长期记忆）。这条对 IM 无例外，见 OPENCLAW_INTEGRATION 第 2 条。
-        persona = getattr(self, "_persona", "") or read_persona(self.repo_root)
-        if getattr(self, "workspace_scope", "") == "general":
+        isolated = getattr(self, "conversation", "primary") == "isolated"
+        persona = self._load_persona() if isolated else (getattr(self, "_persona", "") or read_persona(self.repo_root))
+        if getattr(self, "workspace_scope", "") == "general" and not isolated:
             persona = ""        # 通用范围（常驻助理）：服务对象随助理资料统一注入，这里不再重复
         agent = build_session(self.repo_root, kind="im", confirm=bindings.ask,
                               with_dev=getattr(self, "_with_dev", True),
                               extra_system=(f"【服务对象】{persona}" if persona else None),
                               on_progress=bindings.emit_progress,
                               on_tool_event=bindings.emit_tool_event, llm=self._llm,
+                              task_owner=(lambda: self._sid) if self.workspace_scope == "general" else None,
                               can_ask_human=True,
                               untrusted_input=True, workspace_scope=self.workspace_scope)
         self._restore_session(agent)
@@ -320,6 +348,8 @@ class IMBridge:
 
     # ------------------------------------------------------------ 开机横幅（去重）
     def _hello_stamp_path(self) -> Path:
+        if self.conversation == "isolated":
+            return Path(self.repo_root) / ".vortocode" / "im-bots" / self._sid / "hello.json"
         return Path(self.repo_root) / ".vortocode" / "logs" / "im_hello.json"
 
     def _should_say_hello(self) -> bool:
@@ -374,7 +404,7 @@ class IMBridge:
             await self._safe_send(hello)
             self._mark_hello_said()
         await self.flush_pending_notices()      # 上次断连/下线期间攒下的通知，开机就补
-        if self._heartbeat_every > 0 and self._heartbeat_task is None:
+        if self.conversation == "primary" and self._heartbeat_every > 0 and self._heartbeat_task is None:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         try:
             async for ev in self.adapter.poll():
@@ -403,6 +433,7 @@ class IMBridge:
         lv["channel"] = self._sid.split("-")[1] if "-" in self._sid else "im"
         lv["busy"] = self._turn_task is not None and not self._turn_task.done()
         lv["role"] = "notify" if self.notification_only else "interactive"
+        lv["conversation"] = self.conversation
         lv["queued"] = len(self._pending_msgs)
         # 入站闸的配置状态（只给类别，不给 id）：「机器人装死」时一眼看出是不是白名单把人挡在外面。
         # 只发通知的角色本来就不收入站，不报。真机 2026-10-11：交互角色继承了 .env 里 ''（全拒）。
@@ -418,6 +449,8 @@ class IMBridge:
 
     def _pending_undelivered(self) -> int:
         """补发队列里还剩几条。读不到当 0——补发是旁路，绝不能反过来拖垮心跳。"""
+        if self.conversation == "isolated":
+            return 0
         try:
             from src.scheduling.notices import pending_undelivered_count
             return int(pending_undelivered_count(self.repo_root) or 0)
@@ -430,6 +463,8 @@ class IMBridge:
         触发点有两个：桥启动（run 的开头）、心跳循环发现通道重连过。恢复了却要人自己去翻台账，
         等于"补发"永远是人手动干的活——2026-07-28 早上那次补发就是我手动跑脚本干的。
         """
+        if self.conversation == "isolated":
+            return {"sent": 0, "dropped": 0, "kept": 0}
         try:
             from src.scheduling.notices import flush_undelivered
             return await flush_undelivered(self.repo_root, self.notify_send)
@@ -521,6 +556,9 @@ class IMBridge:
             fut = self._pending.get(ev.callback_id)
             if fut is not None and not fut.done():
                 fut.set_result(bool(ev.approved))
+            elif fut is None and self.conversation == "isolated":
+                await self.adapter.ack_callback(ev)
+                return  # A specialist entry never consumes another bot's durable approval.
             elif fut is None and str(ev.callback_id).startswith("dsp-"):
                 await self.adapter.ack_callback(ev)
                 await self._decide_dispatch(str(ev.callback_id), bool(ev.approved))
@@ -597,6 +635,9 @@ class IMBridge:
     async def _handle_command(self, text: str) -> None:
         raw_cmd = text.split()[0]
         cmd = _norm_cmd(raw_cmd)
+        if self.conversation == "isolated" and cmd not in {"/help", "/status", "/stop", "/new", "/persona"}:
+            await self._safe_send("这是独立 bot 会话；任务下发和跨 bot 审批请回总助手处理。")
+            return
         if self.workspace_scope != "project" and (
                 cmd in {"/task", "/tasks"} or cmd in _PIPE_LIST or cmd in _PIPE_GO
                 or cmd in _PIPE_URL or cmd in _PIPE_VERDICTS):
@@ -670,6 +711,10 @@ class IMBridge:
                                     text.split(maxsplit=1)[1].strip()
                                     if len(text.split(maxsplit=1)) > 1 else "")
         elif cmd == "/help":
+            if self.conversation == "isolated":
+                await self._safe_send("这是独立 bot 会话。/status 看状态，/stop 中断，/new 清空本会话，"
+                                      "/persona 查看或修改本 bot 的职责说明。任务下发和跨 bot 审批请回总助手。")
+                return
             await self._safe_send(
                 "直接发任务 → 我跑隔离流水线（分解/实现/自测/落 vorto 分支）。\n"
                 "/task <描述> 后台跑（不占当前会话，进度自动推、完成发开 PR 按钮）· /tasks 看后台任务。\n"
@@ -1180,6 +1225,8 @@ class IMBridge:
 
     def _on_task_update(self, task) -> None:
         """runner 的状态回调（同步）：进度节流推送、终态发结论。调度到事件循环上异步发。"""
+        if self.conversation == "isolated":
+            return
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -1225,7 +1272,7 @@ class IMBridge:
     # ------------------------------------------------------------ 一个回合（queue+drain+Future）
     def _shares_main_chat(self) -> bool:
         """常驻助理（通用范围）且主要聊天已登记、宿主在本进程：手机上的话写进那一段。"""
-        if self.workspace_scope != "general":
+        if self.workspace_scope != "general" or self.conversation != "primary":
             return False
         from src.gateway.main_conversation import shared_turn_target
         return shared_turn_target(self.repo_root) is not None
@@ -1250,7 +1297,7 @@ class IMBridge:
     async def _digest(self, request: str, reply_entry: dict) -> None:
         """回合结束后在后台写一条「动态」摘要（常驻助理才写；失败只退回原文截取，不影响对话）。"""
         from src.gateway.turn_digest import digest_enabled, generate_digest
-        if self.workspace_scope != "general" or not digest_enabled():
+        if self.workspace_scope != "general" or self.conversation != "primary" or not digest_enabled():
             return
         client_of = getattr(self.agent, "_client", None)
         try:

@@ -45,6 +45,10 @@ class ChannelAdapter:
     # bridge 据此放慢进度节流、收尾不再多刷一条）。
     edits_supported: bool = True
 
+    def conversation_identity(self) -> str:
+        """Stable provider account ID, never a credential; empty for legacy adapters."""
+        return ""
+
     # ------------------------------------------------------------ 活性（谁都别自己发明一套）
     #
     # 2026-07-28 的事故是"**发不出去**"，它的镜像盲区是"**连接死了收不到**"：长连一旦彻底断掉，
