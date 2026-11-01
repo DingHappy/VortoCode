@@ -29,6 +29,18 @@ MAX_DEVICES = 256
 _MAX_BYTES = 1024 * 1024
 _ID = re.compile(r"[a-f0-9]{32}")
 _TOKEN = re.compile(r"vcm_[A-Za-z0-9_-]{43}")
+_KEY = re.compile(r"[A-Za-z0-9+/]{86}[A-Za-z0-9+/=]{2}")   # 65 字节的 base64
+_NONCE_KEEP = 900                                           # 秒；大于签名时间窗的两倍
+
+
+def _check_keys(keys: object) -> None:
+    """设备公钥（可选）：两把都在、都是 base64 的 65 字节点；绑定时已在曲线上校验过。"""
+    if keys is None:
+        return
+    if (not isinstance(keys, dict) or set(keys) != {"device", "approval", "bound_at"}
+            or type(keys["bound_at"]) is not int
+            or not all(isinstance(keys[kind], str) and _KEY.fullmatch(keys[kind]) for kind in ("device", "approval"))):
+        raise ValueError
 
 
 class MobileStoreError(RuntimeError):
@@ -112,6 +124,7 @@ class MobileDevices:
                 ):
                     raise ValueError
                 _name(item.get("name"))
+                _check_keys(item.get("keys"))
                 seen.add(item["id"])
             return data
         except FileNotFoundError:
@@ -223,6 +236,69 @@ class MobileDevices:
                         self._save(data)
                     return self.public(item)
             raise KeyError(device_id)
+
+    def bind_keys(self, device_id: str, device_key: str, approval_key: str) -> dict:
+        """给设备绑定签名公钥。只能绑一次：要换钥匙，先撤销这台设备再重新授权。"""
+        if not isinstance(device_id, str) or not _ID.fullmatch(device_id):
+            raise KeyError(device_id)
+        if device_key == approval_key:
+            raise ValueError("日常密钥和批准密钥必须是两把不同的钥匙")
+        with self._lock():
+            data = self._load()
+            for item in data["devices"] if data else []:
+                if item["id"] != device_id:
+                    continue
+                # 有效期刚由调用方（会话层，按它自己的时钟）核验过；这里只再核对没被撤销
+                if item["revoked_at"] is not None:
+                    raise KeyError(device_id)
+                current = item.get("keys")
+                wanted = {"device": device_key, "approval": approval_key}
+                if current is not None:
+                    if {kind: current[kind] for kind in wanted} == wanted:
+                        return {"bound_at": current["bound_at"]}      # 同一对钥匙重试：返回原回执
+                    raise ValueError("这台设备已经绑定过钥匙；要更换请先撤销设备再重新授权")
+                item["keys"] = {**wanted, "bound_at": int(self.clock())}
+                self._save(data)
+                return {"bound_at": item["keys"]["bound_at"]}
+            raise KeyError(device_id)
+
+    def signing_key(self, device_id: str, kind: str) -> str | None:
+        data = self._load()
+        for item in data["devices"] if data else []:
+            if item["id"] == device_id:
+                keys = item.get("keys")
+                return keys.get(kind) if keys else None
+        return None
+
+    def consume_nonce(self, device_id: str, nonce: str) -> None:
+        """记下这次签名用的 nonce；同一台设备时间窗内重复出现即重放，拒绝。"""
+        path = self.directory / "nonces.json"
+        with self._lock():
+            now = int(self.clock())
+            try:
+                _regular(path)
+                seen = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(seen, dict):
+                    raise ValueError
+            except FileNotFoundError:
+                seen = {}
+            except (OSError, ValueError) as error:
+                raise MobileStoreError("签名记录不可用") from error
+            mine = {key: stamp for key, stamp in (seen.get(device_id) or {}).items()
+                    if isinstance(stamp, int) and now - stamp < _NONCE_KEEP}
+            if nonce in mine:
+                raise ValueError("重复的请求")
+            mine[nonce] = now
+            seen = {key: value for key, value in seen.items() if key != device_id and isinstance(value, dict)
+                    and any(now - stamp < _NONCE_KEEP for stamp in value.values() if isinstance(stamp, int))}
+            seen[device_id] = mine
+            fd, temporary = tempfile.mkstemp(prefix=".nonces-", dir=self.directory)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(seen, handle)
+                os.replace(temporary, path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
 
     def authenticate(self, token: str) -> dict | None:
         if not isinstance(token, str) or not _TOKEN.fullmatch(token):

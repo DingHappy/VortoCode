@@ -28,6 +28,7 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_MOBILE_PUBLIC_ORIGIN` | — | 手机入口的完整 origin，包含实际公开端口，不含路径、查询或账号密码；精确用于来源检查和账号回调。不设时手机账号登录未就绪，独立网关拒绝启动。 | `gateway/mobile_browser.py`、`web/mobile_server.py`、`web/routers/account_access.py` |
 | `VORTOCODE_MOBILE_STATE_ROOT` | — | 独立手机网关必填的绝对状态根目录，必须与进程当前工作目录一致。读取原助手资料、主聊天登记和目标，不启动执行内核。 | `web/mobile_server.py` |
 | `VORTOCODE_MOBILE_RELEASE` | `dev` | 独立网关发布标识，限定小写字母、数字、点、下划线与连字符，用于健康检查核对；标识本身不证明源码、部署或验收完成。 | `web/mobile_server.py` |
+| `VORTOCODE_MOBILE_WRITES` | 关 | 设为 `1` 才开放原生 App 的写入（绑定钥匙、随手记、批准 / 拒绝 Codex 动作、撤销）。每个写请求还要设备签名，批准只认需要生物识别的钥匙。按 ADR-009 修订，要先完成 WireGuard 直连再开启。 | `web/routers/mobile_owner.py` |
 
 ## 模型与上下文
 

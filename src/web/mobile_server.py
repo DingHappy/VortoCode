@@ -35,8 +35,9 @@ def create_app() -> FastAPI:
     from src.web.routers.account_access import router as account
     from src.web.routers.mobile_browser import router as browser
     from src.web.routers.mobile_native import router as native
+    from src.web.routers.mobile_owner import router as owner
 
-    for router in (mobile, pages, account, browser, native):
+    for router in (mobile, pages, account, browser, native, owner):
         app.include_router(router)
 
     @app.get("/api/health/quick")
