@@ -38,6 +38,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>批准助理拟好的动作前，用 Face ID 确认是你本人。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接你配置的常驻助手，只访问你选择的助手地址。</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
@@ -51,5 +53,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>VCKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.vortocode.mobile.shared</string>
 </dict>
 </plist>

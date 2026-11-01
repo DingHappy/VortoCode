@@ -4,14 +4,24 @@ import MobileCore
 struct AssistantTabs: View {
     let entry: AssistantEntry
     let session: AssistantSession
+    @State private var owner = OwnerSession()
     var body: some View {
         TabView {
             NavigationStack { overview.navigationTitle("我的助手") }
                 .tabItem { Label("概览", systemImage: "square.grid.2x2") }
+            NavigationStack { DecisionsView(entry: entry, session: session, owner: owner) }
+                .tabItem { Label("等你决定", systemImage: "checkmark.seal") }
+                .badge(owner.decisions.count)
+            NavigationStack { CaptureView(entry: entry, session: session, owner: owner) }
+                .tabItem { Label("随手记", systemImage: "square.and.pencil") }
             NavigationStack { GoalListView(entry: entry, session: session) }
                 .tabItem { Label("目标", systemImage: "checklist") }
             NavigationStack { settings.navigationTitle("设置") }
                 .tabItem { Label("设置", systemImage: "gearshape") }
+        }
+        // 每次登录 / 恢复会话：读写入能力，必要时绑定钥匙、登记推送
+        .task(id: session.credential?.token) {
+            if let credential = session.credential { await owner.load(entry, credential) }
         }
     }
     private var overview: some View {
@@ -44,7 +54,8 @@ struct AssistantTabs: View {
                 if let chat = session.reading.mainChat.data {
                     LabeledContent("原记录", value: chat.sid != nil ? "已登记" : "尚未登记")
                 }
-                Text("手机当前只读，聊天正文、任务批准与电脑接管尚未接入。不会根据目标数量推断今天的任务完成情况。")
+                Text(owner.canWrite ? "可以在手机上随手记、批准 Codex 动作和撤销；聊天与电脑接管尚未接入。不会根据目标数量推断今天的任务完成情况。"
+                     : "手机当前只读，聊天正文、任务批准与电脑接管尚未接入。不会根据目标数量推断今天的任务完成情况。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }.refreshable { await session.refreshAndWait(entry) }.toolbar { refreshButton }
@@ -54,7 +65,7 @@ struct AssistantTabs: View {
             Section("这次连接") {
                 LabeledContent("助手", value: session.credential?.name ?? "待核对")
                 Text(entry.displayAddress).font(.footnote).textSelection(.enabled)
-                LabeledContent("权限", value: "只读助手概览与目标")
+                LabeledContent("权限", value: owner.canWrite ? "读取，随手记、批准与撤销" : "只读助手概览与目标")
                 if let until = session.credential?.expiresAt { Text("会话有效至 \(Date(timeIntervalSince1970: Double(until)).formatted())").font(.footnote).foregroundStyle(.secondary) }
             }
             Section("账号") {
@@ -74,7 +85,7 @@ struct AssistantTabs: View {
             Section("关于") {
                 LabeledContent("版本", value: "0.2.0")
                 Text("原生会话存于设备钥匙串；账号服务的访问和刷新令牌由常驻服务保管。")
-                Text("此版本没有手机后台任务、推送、语音或审批能力。")
+                Text("批准由这台手机安全芯片里需要 Face ID 的钥匙签名；推送正文加密，只有这台手机能解开。没有手机后台任务和语音。")
             }.font(.subheadline)
             if !session.pendingLogouts.isEmpty { Section { PendingLogoutView(session: session) } }
         }
