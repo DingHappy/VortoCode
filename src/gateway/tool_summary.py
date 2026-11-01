@@ -85,6 +85,7 @@ def tool_summary(name: str, args: Dict[str, Any]) -> str:
         "browser_disconnect": "撤销网站连接",
         "browser_close": "关闭专用浏览器",
         "browser_snapshot": "读取浏览器页面",
+        "browser_site_status": "核对网站账号与签到状态",
         "browser_screenshot": "给浏览器页面截图",
         "browser_click": _with("浏览器点击元素", str(args.get("ref") or "").strip()),
         "browser_type": _with("浏览器输入到元素", str(args.get("ref") or "").strip()),
