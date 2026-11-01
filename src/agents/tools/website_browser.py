@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -253,7 +253,7 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         if reason:
             await holder.browser.navigate("about:blank")
             return "已停止：当前页面不能操作。" + reason
-        if re.search(r"(?:^|/)(?:login|signin|sign-in|oauth|sso|mfa|2fa|two-factor|password|passwd|credentials|secrets|tokens?|api[_-]?keys?|security|billing|checkout|payment)(?:/|$)",
+        if re.search(r"(?:^|/)(?:login|signin|sign-in|oauth|sso|mfa|2fa|two-factor|password|passwd|credentials|secrets|tokens?|api[_-]?keys?|security|billing|checkout|payment)(?:\.(?:php|html?|aspx?))?(?:/|$)",
                      unquote(urlsplit(url).path).lower()):
             holder.human, holder.confirmed = True, False
             return _WAIT
@@ -385,6 +385,37 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
 
     async def get_snapshot(_args):
         return await guard() or await snapshot()
+
+    async def site_status(_args):
+        error = await guard()
+        if error:
+            return error
+        from src.browser import tangpt
+        before = await raw_url()
+        try:
+            supported = site_origin(before) == tangpt.ORIGIN
+        except ValueError:
+            supported = False
+        if not supported:
+            return json.dumps({"supported": False, "site": safe_url(before), "attendance": "unknown",
+                               "next_step": "当前只支持唐帕的可见页面核对，不猜测其他站点状态。"}, ensure_ascii=False)
+        browser, lease = holder.browser, holder.lease
+        raw = await browser.evaluate(tangpt.STATUS_JS)
+        error = await guard()
+        if error:
+            return error
+        if (holder.browser is not browser or holder.lease is not lease or not holder.current_grant()
+                or await raw_url() != before):
+            raise ValueError("网站状态核对期间页面或授权变化，未采用观察结果")
+        if isinstance(raw, dict) and raw.get("protected") is True:
+            holder.human, holder.confirmed = True, False
+            return _WAIT
+        result = tangpt.project_status(raw)
+        result.update(supported=True, observed_at=datetime.now(timezone.utc).isoformat(),
+                      pending_action=bool(pending_action()))
+        if result["pending_action"]:
+            result["next_step"] = "上次操作仍待人工核对；本次只读结果不会解除阻断或重放动作。"
+        return json.dumps(result, ensure_ascii=False)
 
     async def element(ref):
         try:
@@ -518,6 +549,7 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         ("browser_open", "打开网站；connection_id 指定已授权登录目录，省略沿用当前连接、尚无连接则临时匿名。带登录态每次导航须主人确认。", {"url": "http(s) 地址", "connection_id": "已登记连接 ID，可省略"}, open_page, True),
         ("browser_login", "交还真人登录、扫码/验证码并确认账号；结果不明时先人工核对原动作，再确认解除阻断，不会重放或代表业务成功。等待期间禁止页面读取/截图/点击；不要反复调用。", {}, login, True),
         ("browser_snapshot", "读取当前页面，不读取表单值；检测到登录/敏感字段会交还真人。", {}, get_snapshot, True),
+        ("browser_site_status", "只读核对当前唐帕页面的实际账号显示与签到入口证据。页面已显示奖励时不要再点签到；未知或矛盾时暂停核对。账号未独立认证、站点日期未验证，不代表业务验收或操作授权；不会清除待核对阻断。", {}, site_status, True),
         ("browser_screenshot", "截图当前页面；人工接管、敏感表单或嵌入内容时拒绝。", {}, screenshot, True),
         ("browser_click", "经逐次确认点击编号元素。", {"ref": "元素编号"}, lambda args: interact(args), False),
         ("browser_type", "经逐次确认填写普通表单；密码/验证码交还真人。", {"ref": "元素编号", "text": "普通文本", "submit": "是否回车"}, lambda args: interact(args, typing=True), False),
