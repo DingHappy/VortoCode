@@ -52,7 +52,6 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/agents/task_questions.py` | 绑定当前任务的提问工具与持久暂停信号 | 接受任意任务身份、回答或扩大权限 |
 | `src/workflow/tasks/handoffs.py` | 后台完成收件箱、结果版本与持久处理回执 | 模型调度、任务成功判定 |
 | `src/workflow/tasks/continuations.py` | 结果版本授权、一次认领、撤销和启动中断对账 | 模型调度、汇报送达、任务验收 |
-| `src/workflow/tasks/continuation_checks.py` | 注入式 actor 检查桥、预算记录、持久汇报回执后确认交接 | provider 选择、独立调度池、任务验收 |
 | `src/workflow/tasks/check_reports.py` | 校验台账结果、原会话持久汇报、尝试身份去重 | 模型调用、扩大授权、用户已读判定 |
 | `src/gateway/sessions.py` | 安全容量淘汰、会话生命周期、真实保存结果、先保存再追加展示消息 | 结果验收、自动启动检查 |
 | `src/workflow/tasks/dispatch.py` | 请求幂等、下派、查询与有界返工；复用后台并发池 | HTTP、LLM、角色权限装配 |
@@ -210,8 +209,8 @@ TUI 的委派工具已迁移到同一协作服务，终端只保留结果渲染�
 开发 worker 依据持久计划、所有块 landed 及审查阻塞状态判定 done；失败字符串不能充当
 成功证据。dev-resume 终态拥有独立完成回执；旧任务保留历史，有效恢复血缘从待处理
 计数中排除。原子文件替换与单进程锁不提供跨进程事务或 Git 提交/计划更新的原子保证。
-`test_continuations.py`、`test_completion_inbox.py`、`test_check_reports.py`、
-`test_continuation_checks.py` 和 `test_gateway_tasks.py` 覆盖这些边界以及旧合同兼容。
+`test_continuations.py`、`test_completion_inbox.py`、`test_check_reports.py`
+和 `test_gateway_tasks.py` 覆盖这些边界以及旧合同兼容。
 `test_task_recovery.py` 覆盖恢复重试、重启不执行、版本冲突、存储失败、冷取消/暂停、
 权威开发结果与恢复血缘的注意事项投影。
 `test_async_ops.py` 覆盖重复取消、晚到异常、Git 锁保留、创建/测试阶段清理顺序和暂停槽位。
