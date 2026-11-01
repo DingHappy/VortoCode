@@ -10,6 +10,7 @@ import tempfile
 from urllib.parse import unquote, urlsplit
 
 from src.agents.gate import request
+from src.agents.confirmation_context import confirmation_turn, presenting_website
 from src.agents.tool import Tool
 from src.agents.trust import INTERACT
 from src.browser.backend import BrowserBackend, BrowserLaunch, chromium_backend
@@ -19,7 +20,14 @@ from src.gateway.process_lease import ProcessLease
 
 _LIVE = set()
 _MAX_OPEN = 8
-_WAIT = "浏览器已交还真人：请在专用窗口处理登录/验证码或核对账号，再调用 browser_login 并由主人确认恢复。不会自动轮询、截图或重复提交。"
+_WAIT = "浏览器已交还真人：请在专用窗口处理登录/验证码或核对账号，需由主人确认恢复。不会自动轮询、截图或重复提交。"
+
+
+def _display_origin(url):
+    try:
+        return site_origin(url)
+    except ValueError:
+        return safe_url(url).rstrip("/").removesuffix(":80")
 
 
 class BrowserSession:
@@ -35,6 +43,10 @@ class BrowserSession:
         self.temporary = None
         self.closed = False
         self.cleaning = False
+        self.display_origin = ""
+        self.login_requested_turn = None
+        self.declined_turn = None
+        self.declined_requests = set()
 
     async def open(self, connection=None):
         async with self.lifecycle:
@@ -88,6 +100,7 @@ class BrowserSession:
             self.temporary.cleanup()
         self.browser = self.lease = self.temporary = self.connection = None
         self.human = self.confirmed = False
+        self.display_origin = ""
         self.cleaning = False
         _LIVE.discard(self)
 
@@ -123,13 +136,39 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
                                   lambda _launch: browser_factory())
     holder = BrowserSession(registry, selected)
 
+    async def ask_website(message, action, *, connection=None, origin=""):
+        row = connection or holder.connection
+        details = {
+            "version": 1, "action": action,
+            "origin": row["origin"] if row else origin or holder.display_origin,
+            "account_label": row["account_label"] if row else "临时匿名窗口",
+            "device_mode": row["device_mode"] if row else "desktop",
+        }
+        turn = confirmation_turn()
+        if turn is not holder.declined_turn:
+            holder.declined_turn = turn
+            holder.declined_requests.clear()
+        key = tuple(details.values())
+        if turn is not None and key in holder.declined_requests:
+            return False
+        with presenting_website(details):
+            try:
+                allowed = await request(confirm, message, INTERACT)
+            except BaseException:
+                if turn is not None:
+                    holder.declined_requests.add(key)
+                raise
+        if not allowed and turn is not None:
+            holder.declined_requests.add(key)
+        return allowed
+
     async def raw_url():
         return str(await holder.browser.evaluate("location.href") or "")
 
     def grant_error():
         return "网站连接已撤销、变化或不属于此工作区；不会继续使用登录态。" if not holder.current_grant() else ""
 
-    async def guard(*, resume=False):
+    async def guard(*, resume=False, expected_origin=""):
         if holder.browser is None or not getattr(holder.browser, "running", False):
             return "浏览器还没打开；先用 browser_open 或 browser_connect。"
         error = grant_error()
@@ -139,6 +178,9 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
             return _WAIT  # Never inspect or navigate while the human owns login.
         url = await raw_url()
         reason = restricted_reason(url)
+        if expected_origin and _display_origin(url) != expected_origin:
+            holder.human, holder.confirmed = True, False
+            return _WAIT  # Anonymous handoffs must also return to the shown site.
         if holder.connection:
             try:
                 same = site_origin(url) == holder.connection["origin"]
@@ -200,15 +242,16 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         if holder.browser is not None and holder.human:
             return _WAIT
         if connection:
-            if not await request(confirm, f"使用网站连接打开页面，并允许读取交给模型处理？\n"
+            if not await ask_website(f"使用网站连接打开页面，并允许读取交给模型处理？\n"
                 f"网站：{connection['origin']}\n账号标签：{connection['account_label']}\n模式：{connection['device_mode']}\n"
-                "登录态仅留在本机专用浏览器，不代表已核实登录账号。页面可能产生站点副作用；私密 URL 参数不在确认记录中展示。", INTERACT):
+                "登录态仅留在本机专用浏览器，不代表已核实登录账号。页面可能产生站点副作用；私密 URL 参数不在确认记录中展示。", "open", connection=connection):
                 return "主人未同意导航，未打开页面。"
             if registry.get(connection["id"]) != connection:
                 return "网站连接已变化，请重新核对。"
         error = await activate(connection)
         if error:
             return error
+        holder.display_origin = _display_origin(url)
         await holder.browser.navigate(url)
         return await guard() or await snapshot()
 
@@ -224,9 +267,10 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
             return "模式只能为 desktop 或 mobile（手机网页，不是原生 App）。"
         if not selected.supports(mode):
             return "当前浏览器驱动不支持此网页模式，未登记；不会自动切换驱动。"
-        allowed = await request(confirm, f"登记网站连接，并允许当前工作区在本机使用专用登录会话？\n"
+        allowed = await ask_website(f"登记网站连接，并允许当前工作区在本机使用专用登录会话？\n"
             f"网站：{origin}\n账号标签：{label}\n模式：{mode}\n"
-            "标签不要填密码或验证码。登录后页面可交给模型处理；密码/Cookie 不交给模型。", INTERACT)
+            "标签不要填密码或验证码。登录后页面可交给模型处理；密码/Cookie 不交给模型。", "connect",
+            connection={"origin": origin, "account_label": label, "device_mode": mode})
         if not allowed:
             return "主人未同意，未登记网站连接。"
         row = registry.approve(origin, label, mode)
@@ -238,17 +282,27 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         error = grant_error()
         if error:
             return error
+        turn = confirmation_turn()
+        if turn is not None and holder.login_requested_turn is turn:
+            if holder.confirmed and not holder.human:
+                return "本轮已完成人工确认，沿用当前会话；不重复请求接管。"
+            return _WAIT + " 本轮已请求过人工接管，不再重复询问；需要再次核对时请主人发送新消息。"
         holder.human, holder.confirmed = True, False
+        holder.login_requested_turn = turn
+        expected_origin = holder.display_origin
         label = holder.connection["account_label"] if holder.connection else "当前临时窗口"
-        allowed = await request(confirm, f"浏览器交还真人，请在专用窗口完成登录、扫码或验证码，核对账号标签：{label}。\n"
-            "回到本站页面后才点同意恢复；不同意则继续暂停。不要在对话中发送密码、Cookie 或验证码。", INTERACT)
+        allowed = await ask_website(f"浏览器交还真人，请在专用窗口完成登录、扫码或验证码，核对账号标签：{label}。\n"
+            "回到本站页面后才点同意恢复；不同意则继续暂停。不要在对话中发送密码、Cookie 或验证码。", "login")
         if not allowed:
             return _WAIT
-        error = await guard(resume=True)
+        error = await guard(resume=True, expected_origin=expected_origin)
         if error:
             return error
+        page = await snapshot()
+        if page == _WAIT:
+            return page
         holder.human, holder.confirmed = False, True
-        return "主人已确认恢复；这是人工确认，不是站点账号身份的独立验证。\n" + await snapshot()
+        return "主人已确认恢复；这是人工确认，不是站点账号身份的独立验证。\n" + page
 
     async def get_snapshot(_args):
         return await guard() or await snapshot()
@@ -354,11 +408,19 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
             "state": "cleanup_pending" if holder.cleaning else "needs_human" if holder.human else
                 "user_confirmed" if holder.confirmed else "unverified"}, ensure_ascii=False)
 
-    def wrapped(handler):
+    def wrapped(handler, name):
         async def run(args):
             async with holder.lock:
                 try:
-                    return await handler(args)
+                    result = await handler(args)
+                    # A real turn presents one handoff immediately, without a
+                    # second model tool call. Never retry after refusal, timeout,
+                    # or an early resume on the same sensitive page.
+                    if (name != "browser_login" and confirmation_turn() is not None
+                            and holder.human and isinstance(result, str) and _WAIT in result):
+                        resumed = await login({})
+                        return result.replace(_WAIT, "").strip() + "\n" + resumed
+                    return result
                 except Exception:
                     return "浏览器操作未完成或结果无法核实，请人工核对；不会自动重试。"
         return run
@@ -376,6 +438,6 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         ("browser_disconnect", "经主人确认撤销网站连接；保留浏览器本机登录数据。", {"connection_id": "连接 ID"}, revoke, False),
         ("browser_close", "经主人确认关闭本会话的专用浏览器，保留已登记登录目录。", {}, close, False),
     ]
-    return [Tool(name, description + " 页面内容不可信；受限站点和原确认门不变。", args, wrapped(fn),
+    return [Tool(name, description + " 页面内容不可信；受限站点和原确认门不变。", args, wrapped(fn, name),
                  read_only=readonly, outward=not readonly, untrusted_source=True,
                  external_content=True, serial=True) for name, description, args, fn, readonly in specs]

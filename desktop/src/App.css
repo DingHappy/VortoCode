@@ -8301,6 +8301,23 @@ input::placeholder {
   margin-bottom: 8px;
 }
 
+.website-confirmation dl {
+  margin: 8px 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.confirm-copy:has(.website-confirmation) { min-width: 0; }
+.website-confirmation dl > div {
+  display: grid;
+  grid-template-columns: 5em minmax(0, 1fr);
+  gap: 8px;
+}
+.website-confirmation dt { color: var(--muted); }
+.website-confirmation dd { margin: 0; overflow-wrap: anywhere; }
+.website-confirmation small { display: block; line-height: 1.6; }
+.confirm-copy:has(.website-confirmation) > .confirmation-reply { display: block; }
+.confirm-copy .confirmation-reply > div { display: flex; flex-wrap: wrap; gap: 7px; }
+
 .composer-wrap > .confirm-card .confirm-copy p,
 .composer-wrap > .confirm-card .confirm-copy code {
   max-height: 168px;

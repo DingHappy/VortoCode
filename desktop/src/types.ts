@@ -52,6 +52,7 @@ export interface ProtocolEvent {
   stop_execution?: boolean;
   sha256?: string;
   tainted?: boolean;
+  website?: unknown;
   scope?: WorkspaceScope;
   reason?: string;
   nonce?: string;
@@ -1249,6 +1250,7 @@ export interface PendingConfirmation {
   id: string;
   text: string;
   tainted: boolean;
+  website?: import("./lib/websiteConfirmation").WebsiteConfirmation;
 }
 
 export interface DiffPayload {

@@ -26,6 +26,7 @@ import { ComputerLauncher, ComputerWorkspacePanel } from "./components/ComputerW
 import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
 import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
+import { websiteConfirmation } from "./lib/websiteConfirmation";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
@@ -850,6 +851,7 @@ function App() {
               id: event.id,
               text: String(event.text ?? "需要确认"),
               tainted: event.tainted !== false,
+              website: websiteConfirmation(event.website),
             });
             void refreshDecisions();
             void refreshSessions();

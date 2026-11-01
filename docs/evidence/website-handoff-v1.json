@@ -1,0 +1,86 @@
+{
+  "date": "2026-11-01",
+  "base": "7f487f43ae89557f5cf8092938e622015bf52c2e",
+  "branch": "codex/task-browser-handoff",
+  "scope": "Source and synthetic acceptance only, not deployed or real website/model acceptance",
+  "checks": {
+    "ruff": "passed",
+    "mypy": "27 source files passed",
+    "python": {
+      "passed": 5695,
+      "skipped": 10
+    },
+    "e2e": {
+      "passed": 26
+    },
+    "typescript": "passed",
+    "vitest": {
+      "passed": 1250
+    },
+    "vite_build": "passed",
+    "cargo": "skipped: missing sidecar resources, not a pass"
+  },
+  "browser": {
+    "space": 242,
+    "kind": "component fixture only",
+    "current_facts": {
+      "viewport": 390,
+      "page": 390,
+      "replyLayout": "block",
+      "buttons": [
+        {
+          "text": "核对状态",
+          "disabled": false
+        },
+        {
+          "text": "保持暂停",
+          "disabled": true
+        },
+        {
+          "text": "我已完成，核对并继续",
+          "disabled": true
+        }
+      ],
+      "submissions": "批准 / 拒绝提交次数：1"
+    },
+    "accepted_screenshots": [
+      "04-narrow-fixed.png",
+      "08-tainted.png",
+      "10-connect-final.png",
+      "12-unknown-current.png"
+    ],
+    "rejected_or_superseded_screenshots": [
+      "03-narrow.png",
+      "05-unknown.png",
+      "09-connect-current.png",
+      "11-unknown-final.png"
+    ],
+    "directory": "/private/tmp/vortocode-task-browser-handoff-ui",
+    "limits": [
+      "Full Desktop still retains 720px minimum width",
+      "No live gateway, real website, browser profile or model in UI fixture",
+      "Unit and e2e use fake browser and scripted model; only temporary artifact writes are real"
+    ]
+  },
+  "logs": {
+    "final_gates": "/private/tmp/vortocode-task-browser-handoff-gates.log",
+    "build": "/private/tmp/vortocode-task-browser-handoff-build-final.log",
+    "initial_sandbox_failure": "/private/tmp/vortocode-task-browser-handoff-ci.log",
+    "corrected_e2e_gate_history": "/private/tmp/vortocode-task-browser-handoff-ci-final.log"
+  },
+  "source_sha256": {
+    "src/agents/confirmation_context.py": "961d9c42b3c3fb7e0b6841ce268562fb4fd7c375cb7ba5a49f5c7b6977398c57",
+    "src/agents/agent_loop.py": "7672954d57fec62c9c1aa88424ff27706de787b45f74438523f2d224da300206",
+    "src/agents/tools/website_browser.py": "3f293bb5795d5aa87b637acd8ffb97ee8ba3484f00b5b409df27e757eab27277",
+    "src/gateway/protocol.py": "3f0a1ed2a4f4dc1ac12d56272ae39e256ddda70948a5ce36bb2f9f32ed7f88a3",
+    "src/web/routers/realtime.py": "cd6ab20b52990bb53d8c1597b4945b560a53d28da217ca1e6f025930d0529489",
+    "desktop/src/App.tsx": "7ec4d2c4a18d5eb4a340e84389345553ac3448ec08e5ff305284a81682a434f3",
+    "desktop/src/App.css": "2ac82b91a18d91b294c152ed5504538b25f2aaa6ff641f829877afa719ef907d",
+    "desktop/src/types.ts": "f93de863bab2bf6c3d354451cadcd60c3e4b4d34a26b12fd3fdddd5a179206af",
+    "desktop/src/lib/websiteConfirmation.ts": "cdd196acbf72fc20953560e84ba6bdfd60d9cde8b22f830422c9a432ae64cc37",
+    "desktop/src/components/ComposerPanels.tsx": "89b7e6c071061b5ef1e49897f90b30c50936d9a39167924df94eec49195721af",
+    "desktop/src/components/ConfirmationReply.tsx": "11c399d517a0066880ca01bb2b7f7007da9a00e83f9df64f037c9b28f41f0023",
+    "tests/unit/test_browser_handoff.py": "c7f12164999a92ff77da4dadd4f6cb32ecf3da35267f29bf974bf0544004dcdf",
+    "tests/e2e/test_browser_handoff_delivery.py": "d72edb9a7b9f46f6d300df3f0f1855631691cbf2ca39894e8274ceee9516ea3b"
+  }
+}

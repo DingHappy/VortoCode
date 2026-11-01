@@ -1624,6 +1624,8 @@ class MainAgent:
         report_error: ExecutionFailure | None = None
         report_progress: ExecutionProgress | None = None
         start_turn()                  # 本回合的人类等待清零（见 wait_clock）
+        from src.agents.confirmation_context import start_confirmation_turn
+        start_confirmation_turn()
         self._repeat_calls.clear()    # 重复调用计数是回合作用域：新问题重读同一个文件是正当的
         self._web_tool_calls = 0
         self._web_budget_exhausted = False
