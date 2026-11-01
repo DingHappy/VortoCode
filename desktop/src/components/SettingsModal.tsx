@@ -637,7 +637,7 @@ export function SettingsModal({
             <div id="setting-version" className={anchorClass("version")} tabIndex={-1}>
               <UpdateCard /><details className="advanced-settings settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
             </div><div id="setting-diagnostics" tabIndex={-1}><h3 className="settings-subhead">诊断日志</h3><DiagnosticsPane /></div>
-            <div id="setting-files" className={anchorClass("files")} tabIndex={-1}><h3 className="settings-subhead">配置文件</h3><ConfigPane llmProfilePath={llmProfile?.configPath} /></div>
+            <div id="setting-files" className={anchorClass("files")} tabIndex={-1}><h3 className="settings-subhead">配置文件</h3><ConfigPane llmProfilePath={llmProfile?.configPath} llmProfileRevision={llmProfile?.revision} /></div>
           </div>}
         </div>
         <footer className={`settings-savebar${section === "model" && modelDirty ? " settings-savebar-model-dirty" : ""}`}><div className="settings-save-summary">

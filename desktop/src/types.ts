@@ -1539,7 +1539,7 @@ export interface DesktopLlmProfileStatus {
   account?: DesktopAccount;
   /** 用户自己添加的其他供应商（不含 Key）。 */
   providers?: DesktopLlmProviderStatus[];
-  /** 本机配置文件路径（llm-profile.json，权限 600）；可直接编辑，下次启动生效。 */
+  /** 本机配置路径，权限 600；新格式只保存凭证引用，Key 在原生设置中修改。 */
   configPath?: string;
 }
 

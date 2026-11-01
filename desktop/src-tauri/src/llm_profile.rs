@@ -130,7 +130,7 @@ pub(crate) struct DesktopLlmProfileStatus {
     pub(crate) account: Option<DesktopAccount>,
     pub(crate) models: Vec<String>,
     pub(crate) model_info: Vec<ModelInfo>,
-    /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
+    /// 本机元数据文件位置；设置页显示它，凭证引用由原生存储层维护。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) config_path: Option<String>,
 }
@@ -390,10 +390,14 @@ pub(crate) fn llm_provider(base_url: &str) -> &'static str {
     }
 }
 
-// 模型服务配置存在 Desktop 配置目录下的 JSON 文件里（与 projects.json 同目录，权限 600），
-// 不再放 macOS Keychain：自签名/开发构建每换一次二进制，Keychain 就要求重新授权一次。
-// 文件可直接手动编辑，下次启动生效；格式与设置页保存的一致（camelCase）。
-pub(crate) const LLM_PROFILE_FILE: &str = "llm-profile.json";
+// 元数据和凭证引用留在 Desktop 配置目录（600）；Key 由原生 Keychain 保管。
+// 旧明文配置只在明确确认后迁移。开发版独立文件/.dev 服务，避免触碰正式凭据；
+// 未签名重编译仍可能触发系统授权，不能把服务隔离当作签名验收。
+pub(crate) const LLM_PROFILE_FILE: &str = profile_file_for(cfg!(debug_assertions));
+
+pub(crate) const fn profile_file_for(debug: bool) -> &'static str {
+    if debug { "llm-profile.dev.json" } else { "llm-profile.json" }
+}
 
 pub(crate) fn llm_profile_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -403,28 +407,16 @@ pub(crate) fn llm_profile_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn read_llm_profile_file(path: &Path) -> Result<Option<DesktopLlmProfile>, String> {
-    let payload = match std::fs::read_to_string(path) {
-        Ok(payload) => payload,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("无法读取模型配置文件 {}：{error}", path.display())),
-    };
-    let profile: DesktopLlmProfile = serde_json::from_str(&payload).map_err(|_| {
-        format!("模型配置文件格式有误：{}；请在 Desktop 设置中重新保存", path.display())
-    })?;
-    normalize_llm_profile(profile).map(Some)
+    model_credentials::load(path)
 }
 
+#[cfg(test)]
 pub(crate) fn save_llm_profile_file(path: &Path, profile: &DesktopLlmProfile) -> Result<(), String> {
-    // 含 API Key：只允许当前账户读写。
-    save_json_atomic_with_mode(path, "llm-profile", profile, Some(0o600))
+    model_credentials::save(path, profile, true)
 }
 
 pub(crate) fn delete_llm_profile_file(path: &Path) -> Result<(), String> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("无法删除模型配置文件 {}：{error}", path.display())),
-    }
+    model_credentials::clear(path)
 }
 
 pub(crate) fn cached_desktop_llm_profile(

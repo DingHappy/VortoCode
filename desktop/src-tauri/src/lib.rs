@@ -14,6 +14,7 @@ use url::{Host, Url};
 
 mod account;
 mod account_runtime;
+mod model_credentials;
 mod profile_store;
 mod configuration_state;
 use configuration_state::*;
@@ -892,13 +893,24 @@ fn save_json_atomic_with_mode<T: Serialize>(
     }
     #[cfg(not(unix))]
     let _ = mode;
-    let mut file = options
-        .open(&temporary)
-        .map_err(|error| format!("无法创建 Desktop 状态临时文件：{error}"))?;
-    file.write_all(&payload)
-        .and_then(|_| file.sync_all())
-        .map_err(|error| format!("无法写入 Desktop 状态：{error}"))?;
-    rename(&temporary, path).map_err(|error| format!("无法原子更新 Desktop 状态：{error}"))
+    let mut created = false;
+    let result = (|| {
+        let mut file = options.open(&temporary)
+            .map_err(|error| format!("无法创建 Desktop 状态临时文件：{error}"))?;
+        created = true;
+        file.write_all(&payload).and_then(|_| file.sync_all())
+            .map_err(|error| format!("无法写入 Desktop 状态：{error}"))?;
+        drop(file);
+        rename(&temporary, path).map_err(|error| format!("无法原子更新 Desktop 状态：{error}"))
+    })();
+    if created && result.is_err() {
+        if let Err(error) = remove_file(&temporary) {
+            if error.kind() != ErrorKind::NotFound {
+                return Err(format!("{}；临时文件清理未确认", result.unwrap_err()));
+            }
+        }
+    }
+    result
 }
 
 fn save_project_registry(path: &Path, registry: &DesktopProjectRegistry) -> Result<(), String> {
@@ -1587,6 +1599,8 @@ pub fn run() {
             get_model_configuration_state,
             set_llm_profile,
             clear_llm_profile,
+            model_credentials::get_model_credential_storage,
+            model_credentials::update_model_credential_storage,
             confirm_action,
             test_llm_connection,
             get_llm_usage,
@@ -4372,7 +4386,7 @@ mod tests {
         let root = temp_workspace("llm-roundtrip");
         let path = root.join(LLM_PROFILE_FILE);
         // 先放一个权限更宽的旧文件：保存后必须收紧到 600。
-        write(&path, "{}").expect("seed old file");
+        write(&path, serde_json::to_string(&sample_llm_profile()).unwrap()).expect("seed old file");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -4385,7 +4399,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "profile file holds the API key and must be owner-only");
+            assert_eq!(mode, 0o600, "profile references must still be owner-only");
         }
         delete_llm_profile_file(&path).expect("delete");
         assert!(read_llm_profile_file(&path).expect("read after delete").is_none());
@@ -4399,6 +4413,18 @@ mod tests {
         write(&path, "{not json").expect("seed corrupt file");
         let error = read_llm_profile_file(&path).err().expect("corrupt file must fail");
         assert!(error.contains("格式有误") && error.contains(LLM_PROFILE_FILE), "{error}");
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_atomic_save_removes_only_its_own_secret_bearing_temporary_file() {
+        let root = temp_workspace("profile-temporary-cleanup");
+        let target = root.join("blocked-target"); create_dir_all(&target).unwrap();
+        let unrelated = root.join(".another-writer.tmp"); write(&unrelated, "keep").unwrap();
+        let value = serde_json::json!({"apiKey":"synthetic-private-value"});
+        assert!(save_json_atomic_with_mode(&target, "llm-profile", &value, Some(0o600)).is_err());
+        assert!(target.is_dir() && unrelated.is_file());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
         let _ = remove_dir_all(root);
     }
 
