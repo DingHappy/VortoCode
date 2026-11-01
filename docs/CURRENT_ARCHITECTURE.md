@@ -104,6 +104,10 @@ Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑
 
 用户已明确需要“总助手 + 专职 bot，按需独立 IM 入口”。[多 bot 方案](MULTI_BOT_COLLABORATION.md)
 记录 Grok 源码对照、现有缺口、会话隔离底座和分阶段联动；不等于已支持同 runtime 多 IM 桥或微信。
+身份、权限、消息/任务交接、预算、取消及生命周期的待评审合同见 [多 bot 工程设计 v1.3](MULTI_BOT_DESIGN.md)。
+其中职责分层、单次执行引用和源码迁移表属于拟实施结构，不能当作当前源码已经完成的重构。
+原稿的 [对抗审核与修订](MULTI_BOT_ADVERSARIAL_REVIEW.md) 保留反例、证据类型和未通过的实施门禁。
+[官方架构参考](MULTI_BOT_ARCHITECTURE_REFERENCES.md) 记录可借鉴的机制、不能推定的保证和第二轮取舍。
 
 - [今日工作](ASSISTANT_WORKDAY.md)：展示、完成统计、来源与失联合同。
 - [工具运行层](TOOL_RUNTIME.md)：VortoCode 工具的独立执行边界。
