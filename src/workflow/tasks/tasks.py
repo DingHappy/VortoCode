@@ -79,6 +79,7 @@ class BackgroundTask:
     development: dict = field(default_factory=dict)  # Bounded, plan/block-bound development questions.
     dependencies: dict = field(default_factory=dict)  # Explicit read-task requirements and consumed versions.
     chain_budget: dict = field(default_factory=dict)  # Root execution allowances or a member's fixed root identity.
+    goal_submission: dict = field(default_factory=dict)  # Snapshot-bound Goal submission; never replay enqueue.
     log: List[str] = field(default_factory=list)   # 进度尾部
     created: str = ""
     updated: str = ""
@@ -86,7 +87,8 @@ class BackgroundTask:
     @staticmethod
     def new(kind: str, prompt: str, *, tid: Optional[str] = None, goal_id: str = "",
             plan_id: str = "", parent_task_id: str = "", owner_session: str = "",
-            recovery: dict | None = None, development: dict | None = None) -> "BackgroundTask":
+            recovery: dict | None = None, development: dict | None = None,
+            goal_submission: dict | None = None) -> "BackgroundTask":
         now = _now()
         return BackgroundTask(id=tid or ("task-" + uuid.uuid4().hex[:10]), kind=kind,
                               prompt=prompt, owner_session=owner_session,
@@ -94,6 +96,7 @@ class BackgroundTask:
                               parent_task_id=parent_task_id,
                               recovery=dict(recovery or {}),
                               development=dict(development or {}),
+                              goal_submission=dict(goal_submission or {}),
                               created=now, updated=now)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -149,6 +152,7 @@ class TaskLedger:
         tid: str | None = None,
         recovery: dict | None = None,
         development: dict | None = None,
+        goal_submission: dict | None = None,
     ) -> BackgroundTask:
         task = BackgroundTask.new(
             kind,
@@ -159,6 +163,7 @@ class TaskLedger:
             owner_session=owner_session,
             tid=tid,
             recovery=recovery, development=development,
+            goal_submission=goal_submission,
         )
         with TASK_STATE_LOCK:
             if tid is not None and (_clean_id(tid) != tid or self._path(tid).exists()):
@@ -326,20 +331,23 @@ class TaskLedger:
     def recover_interrupted(self) -> List[BackgroundTask]:
         """启动时调用：把上次崩在半路（仍标 running）的任务改标 interrupted（可交 dev_resume 续跑）。"""
         from src.workflow.tasks.submissions import is_submission_task_id
+        from src.workflow.tasks.goal_submission import is_goal_submission_task_id
         recovered = []
         for t in self.list():
             dispatch = t.collaboration.get("dispatch", {}) if isinstance(t.collaboration, dict) else {}
             queued_submission = t.status == "queued" and t.kind == "dev" and is_submission_task_id(t.id)
+            queued_goal = t.status == "queued" and is_goal_submission_task_id(t.id)
             if t.status == "running" or (
                 t.status == "queued" and (
                     isinstance(dispatch, dict) and dispatch.get("source") == "api"
                     or queued_submission
+                    or queued_goal
                     or isinstance(t.recovery, dict) and t.recovery.get("source_task_id")
                     or isinstance(t.development, dict) and t.development.get("execution_revision")
                 )
             ):
                 t.status = "interrupted"
-                if queued_submission and not t.error:
+                if (queued_submission or queued_goal) and not t.error:
                     t.error = "运行时重启时发现未完成的排队提交；未自动重放，请核对原任务及持久计划。"
                 if t.development:
                     from src.workflow.tasks.task_questions import cancel_open_questions

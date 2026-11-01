@@ -7,8 +7,14 @@
 档位（有序，越往后越松）：
 
 - ``ASK``（默认）：每次写盘/执行都问。
-- ``READS``：只读操作（read_file/grep/只读命令）免确认；**写与执行照问**。
+- ``READS``：只读操作（read_file/grep/只读命令）免确认；主人自己的可撤销数据（``OWN_DATA``）
+  和只产生草稿的操作（``DRAFT``）也免确认；**写文件、执行与外发照问**。
 - ``FULL``：写与执行也免确认——"最高授权，不再确认"。
+
+``OWN_DATA`` / ``DRAFT`` 放进 READS 而不是另开一档（ADR-011）：Desktop 本机引擎里的通用助理按
+``external`` 档案装配，上限正是 READS；"帮我记一下"这类只改主人自己事项、并登记了撤销的操作，
+不该和写文件一样每次都问。``IRREVERSIBLE``（删除、付款、合并主分支）与 ``INTERACT`` 一样，
+任何档位都不免。
 
 **三条硬约束不受档位影响**（都在本模块或 gate 里收口，端改不了）：
 
@@ -41,12 +47,17 @@ WRITE = "write"        # 写盘、改文件、落分支
 EXECUTE = "execute"    # run_command 等执行面
 DELIVER = "deliver"    # 外发：开 PR、发图/发文件、发布制品
 INTERACT = "interact"  # 在浏览器里替用户点击/输入：**任何档位都不免确认**（不在下表任何一档里）
+OWN_DATA = "own_data"  # 主人自己的本地数据（事项、提醒、记忆提议），必须登记撤销（agents/undo_log.py）
+DRAFT = "draft"        # 只产生草稿、不离开本机（回复草稿、周报）
+IRREVERSIBLE = "irreversible"  # 删除、付款、合并主分支：**任何档位都不免确认**（同 INTERACT）
+
+KINDS = (READ, WRITE, EXECUTE, DELIVER, INTERACT, OWN_DATA, DRAFT, IRREVERSIBLE)
 
 # 每档免确认覆盖哪些类别。
 _AUTHORIZED = {
     ASK: frozenset(),
-    READS: frozenset({READ}),
-    FULL: frozenset({READ, WRITE, EXECUTE, DELIVER}),
+    READS: frozenset({READ, OWN_DATA, DRAFT}),
+    FULL: frozenset({READ, WRITE, EXECUTE, DELIVER, OWN_DATA, DRAFT}),
 }
 
 # 能力档案 → 该档案允许的最高授权级别。表里没有的档案按最严处理。
@@ -91,6 +102,6 @@ def pre_authorized(level: Optional[str], kind: Optional[str] = None) -> bool:
     `kind` 缺省（或不认识）时按 WRITE 算——最重的那一类：工具忘了申报类别时，宁可多问一次。
     """
     category = (kind or "").strip().lower()
-    if category not in (READ, WRITE, EXECUTE, DELIVER, INTERACT):
+    if category not in KINDS:
         category = WRITE
     return category in _AUTHORIZED[normalize(level)]

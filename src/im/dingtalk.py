@@ -111,6 +111,9 @@ class DingTalkAdapter(ChannelAdapter):
         self._inbox_dir = str(Path(inbox_dir or Path.home() / ".vortocode" / "im_inbox"))
 
     # ------------------------------------------------------------ ChannelAdapter
+    def conversation_identity(self) -> str:
+        return self._cid
+
     def claim_polling(self):
         """One Stream consumer per application on this host."""
         if self._polling_lease is None:
@@ -200,6 +203,8 @@ class DingTalkAdapter(ChannelAdapter):
                                 has_attachment=bool(imgs or files or bad))
             if ev is not None and ev.kind == "message":
                 ev.images, ev.files, ev.unsupported = imgs, files, bad
+                ev.source_event_id = data.get("msgId") if isinstance(data.get("msgId"), str) else ""
+                ev.source_conversation_id = data.get("conversationId") if isinstance(data.get("conversationId"), str) else ""
             if ev is not None:
                 # 回复路由**不在收帧阶段采纳**：sessionWebhook 只随事件申报（reply_to），
                 # 过了 bridge 三道闸才由 commit_reply_target 落成回复目标——否则白名单外的

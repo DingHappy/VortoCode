@@ -38,6 +38,17 @@ def _recorder(results=None):
 
 
 # ------------------------------------------------------------ 归一化
+def test_native_input_identity_requires_update_and_chat():
+    first = _to_event({"update_id": 9, "message": {"chat": {"id": -71}, "text": "hi", "from": {"id": 7}}})
+    assert (first.source_event_id, first.source_conversation_id) == ("9", "-71")
+    missing = _to_event({"message": {"text": "same text", "from": {"id": 7}}})
+    assert missing.source_event_id == missing.source_conversation_id == ""
+    for bad_id in (None, True, "7"):
+        invalid = _to_event({"update_id": True, "message": {
+            "chat": {"id": bad_id}, "text": "hi", "from": {"id": 7}}})
+        assert invalid.source_event_id == invalid.source_conversation_id == ""
+
+
 def test_to_event_message_and_callback():
     m = _to_event({"update_id": 1, "message": {"text": "hi", "from": {"id": 7}}})
     assert m.kind == "message" and m.text == "hi" and m.sender_id == "7"

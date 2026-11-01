@@ -1046,6 +1046,18 @@
     ]
   },
   {
+    "path": "/api/assistant/undo",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/undo/{op_id}",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/assistant/skills",
     "methods": [
       "GET"
@@ -1292,6 +1304,48 @@
     ]
   },
   {
+    "path": "/api/mobile/native/keys",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/decisions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/decide",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/capture",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/changes",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/undo",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/push",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/mobile/pairing-window",
     "methods": [
       "POST"
@@ -1361,6 +1415,30 @@
     "path": "/static/mobile/{asset:path}",
     "methods": [
       "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/skill-proposals",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}/proposal",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}/proposal",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}/proposal",
+    "methods": [
+      "PUT"
     ]
   }
 ]

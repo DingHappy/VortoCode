@@ -69,6 +69,11 @@ MOBILE_SELF_AUTHENTICATED = frozenset({
     ("GET", "/api/mobile/native/authorize"), ("POST", "/api/mobile/native/exchange"),
     ("GET", "/api/mobile/native/bootstrap"), ("GET", "/api/mobile/native/snapshot"),
     ("POST", "/api/mobile/native/logout"),
+    # 原生 App 作为主人终端的写入：原生会话 + 设备签名（批准另需生物识别钥匙），默认关闭
+    ("POST", "/api/mobile/native/keys"), ("GET", "/api/mobile/native/decisions"),
+    ("POST", "/api/mobile/native/decide"), ("POST", "/api/mobile/native/capture"),
+    ("GET", "/api/mobile/native/changes"), ("POST", "/api/mobile/native/undo"),
+    ("POST", "/api/mobile/native/push"),
 })
 
 

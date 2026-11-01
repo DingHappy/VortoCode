@@ -530,7 +530,7 @@ async fn set_browser_control(app: AppHandle, enabled: bool) -> Result<BrowserCon
         let dialog_app = app.clone();
         let confirmed = tauri::async_runtime::spawn_blocking(move || {
             with_main_window_parent(&dialog_app, dialog_app.dialog().message(
-                "启用后，Agent 可以在一个独立的浏览器窗口里打开网页、读取内容和截图；每次点击或输入都会先问你。\n\n这个窗口不含你日常浏览器的登录信息；支付、银行、邮箱、账号和云控制台等站点会被拦截。",
+                "启用后，Agent 可以在专用浏览器里打开网页、读取内容和截图；每次点击、输入或滚动都会先问你。\n\n网站和账号连接需另行确认，登录由你在专用窗口完成，确认恢复前暂停读取和截图。不会导入日常浏览器的 Cookie 或密码。支持手机网页模式，此开关不授予手机原生 App 控制权；支付、银行、邮箱、账号和云控制台等受限站点仍禁止 Agent 操作。",
             ))
             .title("启用浏览器操控")
             .kind(MessageDialogKind::Warning)

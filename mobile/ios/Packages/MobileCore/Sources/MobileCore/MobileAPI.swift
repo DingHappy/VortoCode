@@ -7,7 +7,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
 
 public final class MobileAPI: @unchecked Sendable {
     public let entry: AssistantEntry
-    private let session: URLSession
+    let session: URLSession
     public init(entry: AssistantEntry) {
         self.entry = entry
         let config = URLSessionConfiguration.ephemeral

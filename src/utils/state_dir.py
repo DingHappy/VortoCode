@@ -25,6 +25,7 @@ _STATE_ENTRIES = [
     "codex/",
     "task_scans/",
     "goals/",
+    "undo/",
     "runs/",
     "products/",
     "pipeline_runs/",
@@ -51,6 +52,7 @@ _STATE_ENTRIES = [
     "worktree_bindings.json",
     "task_reviews/",
     "im-pairings/",
+    "im-bots/",                # bot-scoped personas and hello state, private to the current instance
     "mobile-devices/",         # hashed mobile device grants; never part of task/session state
     "isolated_deliveries/",
     "runtime.lock",

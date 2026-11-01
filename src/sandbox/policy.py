@@ -15,9 +15,11 @@ separate trust-foundation batches.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from typing import Sequence
@@ -202,16 +204,49 @@ def sandboxed_argv(repo_root: str, cmd: str, *, backend: str = "") -> list[str]:
 # 两半合起来，一条投毒的 package.json script / Makefile target 就能把中转站 key 外带。
 # 剥掉「VortoCode 自己用的操作密钥」即切断这条链：任何被起的子命令都不需要它们。
 #
-# 精确名单，刻意不用 *KEY*/*TOKEN* 通配符——本仓 env 里就有会被误伤的假阳性：
+# 精确名单、VortoCode provider 命名空间与可信宿主登记的名称；不用 *KEY*/*TOKEN* 通配符：
 # VORTOCODE_CRON_TOKEN_BUDGET（数字预算）、VORTOCODE_MAX_CONTEXT_TOKENS、
 # TEXTUAL_DISABLE_KITTY_KEY（UI 开关）。GITHUB_TOKEN 是「任务令牌」（gh 子命令要用），
-# 故不在此列——它的穿透由下方 allowlist 决定。
+# 故不在此列；外部 CLI 的执行者另行剥掉交付令牌。
 _STRIPPED_ENV_KEYS = frozenset({
     "OPENAI_API_KEY",                                    # LLM 中转站钥匙
     "VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN",          # Web 永久 admin 主钥（含旧名）
     "VORTOCODE_RELAY_ADMIN_TOKEN",                       # 中转站 admin
+    "VORTOCODE_CODEX_REPORT_TOKEN",                      # 本机到常驻助理的控制凭证
+    "VORTOCODE_OPS_TOKEN", "VORTOCODE_VOICE_MCP_TOKEN",  # 常驻端的独立操作入口
     "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_TG_TOKEN",  # IM 桥接凭据
 })
+_SECRET_ENV_LOCK = threading.RLock()
+_REGISTERED_SECRET_ENV_NAMES: set[str] = set()
+
+
+def register_secret_env_names(names: Sequence[str]) -> None:
+    """Trusted host declares names only, before starting adapters or tools.
+
+    Protection is process-lifetime: stopping a binding does not remove its secret
+    from os.environ, so it must not make that secret inheritable again. This is
+    not a vault, credential reader or repository-controlled configuration loader.
+    """
+    if isinstance(names, (str, bytes)):
+        raise ValueError("Secret environment names require a sequence")
+    checked = tuple(names)
+    if any(not isinstance(name, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) is None
+           for name in checked):
+        raise ValueError("Invalid secret environment name")
+    with _SECRET_ENV_LOCK:
+        _REGISTERED_SECRET_ENV_NAMES.update(checked)
+
+
+def _operating_secret_names() -> frozenset[str]:
+    with _SECRET_ENV_LOCK:
+        return _STRIPPED_ENV_KEYS | frozenset(_REGISTERED_SECRET_ENV_NAMES)
+
+
+def _operating_secret(name: str, names: frozenset[str]) -> bool:
+    # An orphaned provider key is still a secret even without a corresponding BASE.
+    prefix, suffix = "VORTOCODE_PROVIDER_", "_KEY"
+    return name in names or (name.startswith(prefix) and name.endswith(suffix)
+                             and len(name) > len(prefix) + len(suffix))
 
 
 def _env_passthrough_allowlist() -> frozenset[str]:
@@ -228,7 +263,7 @@ def _env_passthrough_allowlist() -> frozenset[str]:
 
 def is_stripped_env(name: str) -> bool:
     """这个变量名会不会被子进程环境剥掉（同 child_env 的判定，供别处合并额外环境时复用）。"""
-    return name in _STRIPPED_ENV_KEYS and name not in _env_passthrough_allowlist()
+    return _operating_secret(name, _operating_secret_names()) and name not in _env_passthrough_allowlist()
 
 
 def child_env() -> dict[str, str]:
@@ -239,8 +274,9 @@ def child_env() -> dict[str, str]:
     口。PATH/HOME/代理/语言环境等一律保留，故 sandbox-exec/bwrap wrapper 与工具链不受影响。
     """
     allow = _env_passthrough_allowlist()
+    names = _operating_secret_names()
     return {k: v for k, v in os.environ.items()
-            if k not in _STRIPPED_ENV_KEYS or k in allow}
+            if not _operating_secret(k, names) or k in allow}
 
 
 def shell_enabled() -> bool:

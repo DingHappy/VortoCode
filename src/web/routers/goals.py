@@ -8,13 +8,29 @@ from __future__ import annotations
 
 import asyncio
 import os
+from functools import wraps
+from pathlib import Path
 from typing import Any, List
 
 from fastapi import APIRouter, HTTPException
 
 from src.workflow.workbench.goals import Goal, GoalLedger, evaluate_file_verifier, evidence_revision
+from src.workflow.pipeline.pipeline_storage import PipelineBusy
+from src.workflow.tasks.goal_submission import GoalSubmissionConflict, goal_contract, submit_goal
 
 router = APIRouter()
+
+
+def _storage_errors(method):
+    @wraps(method)
+    async def guarded(*args, **kwargs):
+        try:
+            return await method(*args, **kwargs)
+        except OSError:
+            raise HTTPException(status_code=503, detail="目标或任务状态未能保存；请先刷新核对现有记录，勿重复创建执行。") from None
+        except PipelineBusy:
+            raise HTTPException(status_code=409, detail="目标正在更新，请刷新后重试") from None
+    return guarded
 
 
 def _ledger() -> GoalLedger:
@@ -46,35 +62,23 @@ def _require_goal(goal_id: str) -> Goal:
     return goal
 
 
-async def _start_goal(goal: Goal, *, resume: bool = False):
+async def _start_goal(goal: Goal, *, resume: bool = False, previous_task_id: str = ""):
     from src.web.routers.tasks import get_runner
 
     runner = get_runner()
-    if any(runner.is_active(task_id) for task_id in goal.task_ids):
-        raise HTTPException(status_code=409, detail="目标已有后台任务在执行")
-    if goal.status == "achieved":
-        raise HTTPException(status_code=409, detail="目标已经 achieved，无需重复执行")
-    if resume and not goal.plan_id:
-        raise HTTPException(status_code=400, detail="目标还没有可续跑的 plan_id")
-
-    prompt = goal.contract_prompt()          # 清 blocker 前固化本轮合同，让修复任务看得见失败上下文
-    goal.status = "active"
-    goal.blocker = ""
-    goal.next_action = "后台开发任务正在执行"
-    _ledger().save(goal)
-    task = await runner.submit(
-        prompt,
-        kind="dev-resume" if resume else "dev",
-        goal_id=goal.id,
-        plan_id=goal.plan_id if resume else "",
-    )
-    if task.id not in goal.task_ids:
-        goal.task_ids.append(task.id)
-    _ledger().save(goal)
-    return task
+    if Path(runner.repo_root).resolve() != Path(os.getcwd()).resolve():
+        raise HTTPException(status_code=409, detail="目标与任务运行端不一致")
+    try:
+        return submit_goal(runner, goal.id, previous_task_id=previous_task_id, resume=resume,
+                           expected_contract=goal_contract(goal))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"无此目标 {goal.id}") from None
+    except GoalSubmissionConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
 
 
 @router.post("/api/goals")
+@_storage_errors
 async def create_goal(body: dict):
     payload = body or {}
     objective = str(payload.get("objective") or "").strip()
@@ -83,16 +87,26 @@ async def create_goal(body: dict):
         raise HTTPException(status_code=400, detail="缺少 objective（目标）")
     if not criteria:
         raise HTTPException(status_code=400, detail="至少需要一条 acceptance_criteria（验收标准）")
-    goal = _ledger().create(
-        objective,
-        criteria,
-        constraints=_list_field(payload.get("constraints")),
-        non_goals=_list_field(payload.get("non_goals")),
-    )
+    if payload.get("start") is True and not payload.get("request_id"):
+        raise HTTPException(status_code=400, detail="创建并执行需要固定 request_id；也可先保存目标再确认执行")
+    try:
+        goal = _ledger().create(
+            objective, criteria,
+            constraints=_list_field(payload.get("constraints")),
+            non_goals=_list_field(payload.get("non_goals")),
+            request_id=payload.get("request_id"),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
     task = None
     # 默认只保存草稿；执行必须由显式 start=true 或随后 /run 确认，避免一创建就擅自跑 LLM/代码。
     if payload.get("start", False) is True:
-        task = await _start_goal(goal)
+        if (goal.objective != objective or [item.text for item in goal.acceptance_criteria] != criteria
+                or goal.constraints != _list_field(payload.get("constraints"))
+                or goal.non_goals != _list_field(payload.get("non_goals"))
+                or any(item.verifier is not None for item in goal.acceptance_criteria)):
+            raise HTTPException(status_code=409, detail="目标合同已变化，请刷新目标后确认执行")
+        task, _replayed = await _start_goal(goal)
         goal = _require_goal(goal.id)
     result = _view(goal)
     if task is not None:
@@ -111,6 +125,7 @@ async def get_goal(goal_id: str):
 
 
 @router.patch("/api/goals/{goal_id}")
+@_storage_errors
 async def update_goal(goal_id: str, body: dict):
     current = _require_goal(goal_id)
     payload = body or {}
@@ -144,6 +159,7 @@ async def update_goal(goal_id: str, body: dict):
 
 
 @router.delete("/api/goals/{goal_id}")
+@_storage_errors
 async def delete_goal(goal_id: str):
     try:
         deleted = _ledger().delete_draft(goal_id)
@@ -157,15 +173,19 @@ async def delete_goal(goal_id: str):
 
 
 @router.post("/api/goals/{goal_id}/run")
+@_storage_errors
 async def run_goal(goal_id: str, body: dict | None = None):
     goal = _require_goal(goal_id)
     payload = body or {}
-    resume = bool(payload.get("resume") or payload.get("mode") == "resume")
-    task = await _start_goal(goal, resume=resume)
-    return {"goal": _view(_require_goal(goal_id)), "task": task.to_dict()}
+    if "resume" in payload and type(payload["resume"]) is not bool:
+        raise HTTPException(status_code=400, detail="resume 必须是 boolean")
+    resume = payload.get("resume", False) or payload.get("mode") == "resume"
+    task, replayed = await _start_goal(goal, resume=resume, previous_task_id=payload.get("expected_task_id", ""))
+    return {"goal": _view(_require_goal(goal_id)), "task": task.to_dict(), "replayed": replayed}
 
 
 @router.put("/api/goals/{goal_id}/criteria/{criterion_id}/verifier")
+@_storage_errors
 async def configure_goal_verifier(goal_id: str, criterion_id: str, body: dict):
     try:
         goal = _ledger().set_verifier(goal_id, criterion_id, body or None)
@@ -177,6 +197,7 @@ async def configure_goal_verifier(goal_id: str, criterion_id: str, body: dict):
 
 
 @router.post("/api/goals/{goal_id}/verify")
+@_storage_errors
 async def verify_goal(goal_id: str):
     from src.web.routers.runs import get_run_manager
     from src.web.routers.tasks import get_runner
@@ -247,8 +268,10 @@ async def verify_goal(goal_id: str):
 
     current = _require_goal(goal.id)
     if any(run.status in {"queued", "running"} for run in scheduled) and current.status == "active":
-        current.next_action = "自动验收正在隔离环境中执行"
-        _ledger().save(current)
+        with _ledger().transaction(current.id):
+            latest = _require_goal(current.id)
+            latest.next_action = "自动验收正在隔离环境中执行"
+            _ledger().save_required(latest)
     return {
         "goal": _view(_require_goal(goal.id)),
         "runs": [run.to_dict() for run in scheduled],
@@ -258,6 +281,7 @@ async def verify_goal(goal_id: str):
 
 
 @router.post("/api/goals/{goal_id}/criteria/{criterion_id}/evidence")
+@_storage_errors
 async def record_goal_evidence(goal_id: str, criterion_id: str, body: dict):
     payload = body or {}
     # Adopt stored evidence by identity, never stamp an old copied summary with

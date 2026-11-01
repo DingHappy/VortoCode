@@ -1,6 +1,6 @@
-# VortoCode iPhone 原生只读版 0.2.0
+# VortoCode iPhone 原生版
 
-同仓库 SwiftUI iOS 17+ 工程，支持 iPhone/iPad。已实现原生概览、目标列表/详情、设置、系统账号认证、钥匙串会话恢复和退出。没有 Android 工程；聊天、审批、推送、语音与手机远程接管仍未接入，不把当前只读版称为完整四页助手。
+同仓库 SwiftUI iOS 17+ 工程，支持 iPhone/iPad。已实现原生概览、目标列表/详情、设置、系统账号认证、钥匙串会话恢复和退出；服务端开启手机写入后，另有「等你决定」「随手记」、撤销和加密推送（见下文「主人终端」）。没有 Android 工程；聊天、语音与手机远程接管仍未接入。
 
 ## 使用
 
@@ -12,7 +12,7 @@
 
 App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/authenticationservices/authenticating-a-user-through-a-web-service)，不读取浏览器 Cookie、不注入 JS、不采集密码。返回 App 的只有 60 秒、一次性、再次绑定 PKCE 与 state 的交接票据；账号授权码和访问/刷新令牌均由 Gateway 处理。原生 `vcn_` 会话只访问手机原生读取/退出接口，保存为 WhenUnlockedThisDeviceOnly 的 Keychain 记录，不进入 UserDefaults。
 
-会话最长 8 小时，重开 App 可恢复；Gateway 重启、换归属、撤销或过期后需重新登录。原生入口地址还保存在 App 自己的 UserDefaults，隐私 API 原因清单见 PrivacyInfo.xcprivacy；不代替正式发行前的网站/账号隐私披露。
+会话最长 8 小时，重开 App 可恢复；Gateway 重启、换归属、撤销或过期后需重新登录。原生入口地址和「上次连上助手」的时间戳保存在 App 自己的 UserDefaults，隐私 API 原因清单见 PrivacyInfo.xcprivacy；不代替正式发行前的网站/账号隐私披露。
 
 历史读取只保留在本次进程内存中，不落盘。进程重开后从钥匙串恢复受限会话并重新读取，不能无网恢复目标；退出、授权失效或更换入口会清除读取视图。设置中的“来源核对”列出各来源状态与上次核对时间，可重试读取。安全存储失败与网络读取失败分别提示。
 
@@ -23,6 +23,35 @@ App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/
 目标详情支持直接刷新与下拉刷新。单条目标暂时不在最新读取结果里时，保留最后查看到的版本并标明历史；不能据缺席推断已删除或已完成。重新取得该目标后更新原状态、下一步与版本。详情页仍只读，不改写或验收目标。
 
 正式构建和真实手机仅允许 HTTPS。Debug 模拟器才允许 HTTP loopback；不接受 LAN HTTP、不跳过 TLS 校验。ATS 仅启用 local networking 支持隔离回环测试，没有全局 arbitrary-load 例外。
+
+## 主人终端：等你决定、随手记、撤销、推送（ADR-011）
+
+服务端开启手机写入（`VORTOCODE_MOBILE_WRITES=1`，要先完成 WireGuard 直连）后，App 登录时自动在 Secure Enclave 里生成钥匙并绑定，
+多出两个标签页；服务端没开时 App 保持只读，不显示可执行按钮。
+
+- **三把钥匙**，私钥都不出这台手机：日常钥匙签随手记、撤销、拒绝和推送登记；批准钥匙创建时要求生物识别，
+  所以「批准」必须过 Face ID（录入新的面容 / 指纹会让它失效，需要重新登录绑定）；推送钥匙只用来解密推送正文。
+- **等你决定**：列出助理拟好、等你批准的 Codex 动作。卡片上的对象和正文就是签进去的那一条，服务端按摘要核对，
+  内容变了就拒绝。读过外部内容后拟的动作会标出来。拒绝不需要 Face ID。
+- **随手记**：一句话记成你的一个目标（来源记为你本人），之后可以让助理整理；网络重试不会记两次。
+- **我替你做了什么**：助理和手机记下的改动，逐条可撤；撤不回的下游影响（例如提醒已经推过）照实列出。
+- **家里的助手连得上吗**：概览页最上面显示「刚刚连上」或「连不上（上次连上：X 前）」。只在打开 App 时核对，
+  不做后台心跳——iOS 不保证定时唤醒，靠心跳会在你没打开 App 时误报（对抗审查 R4 的取舍）。时间戳按入口地址存在 UserDefaults，不含内容。
+- **推送**：登录后申请通知权限并登记。推送正文加密，苹果只看到占位文字，由 `VortoCodeNotification` 扩展用推送钥匙解开；
+  解不开就保留占位文字。与 IM 双发一段时间后再切换。
+
+签名合同见 [手机客户端边界](../../docs/MOBILE_CLIENT_ARCHITECTURE.md) 的「主人终端写入」。验证到的程度：
+
+| 层面 | 状态 |
+| --- | --- |
+| 签名报文与服务端逐字节一致 | `RequestSigningTests` 用服务端生成的对照向量钉住 |
+| Swift 签名能被服务端验证 | 已用 CryptoKit 签名、服务端 `verify` 验证过 |
+| 服务端加密的推送能被 iOS 系统 API 解开 | 已用 `SecKeyCreateDecryptedData(.eciesEncryptionStandardX963SHA256AESGCM)` 在 macOS 上解开 |
+| 模拟器 Debug / Release 真机二进制编译 | 通过（未签名） |
+| Secure Enclave、Face ID、APNs、通知扩展共享钥匙串 | **需要真机签名安装验收**；模拟器没有 Secure Enclave，Debug 构建退回软件钥匙，仅供联调 |
+
+签名构建要在 Apple 开发者后台给 `com.vortocode.mobile` 开启推送，并登记扩展 `com.vortocode.mobile.notification`
+与钥匙串分组 `com.vortocode.mobile.shared`；`aps-environment` 当前为 development，正式分发前改为 production。
 
 ## 构建
 

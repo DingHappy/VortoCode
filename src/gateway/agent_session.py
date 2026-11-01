@@ -80,7 +80,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   reconcile_task_dependencies=None,
                   untrusted_input: bool = False, with_dev: bool = True,
                   extra_system: str | None = None, trust_level: str | None = None,
-                  allow_local_files: bool = False):
+                  allow_local_files: bool = False, session_role: str = "standard"):
     """装配一个主 agent（三端同一骨架）。
 
     kind ∈ {web, cli, im} 决定差异位（with_artifacts / hooks）；confirm/on_progress 由调用端提供。
@@ -96,6 +96,15 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     """
     if kind not in _KINDS:
         raise ValueError(f"未知装配端 kind={kind!r}（可选 {_KINDS}）")
+    if session_role not in {"standard", "research_read"}:
+        raise ValueError("未知会话角色；可选 standard / research_read")
+    if session_role == "research_read":
+        if workspace_scope != "project":
+            raise ValueError("只读研究角色需要显式选择 Project 工作区")
+        from src.agents.research_read import build_research_agent
+        return build_research_agent(repo_root, llm=llm, max_steps=max_steps,
+                                    on_tool=on_tool, on_tool_event=on_tool_event,
+                                    extra_system=extra_system)
     from src.agents.main_agent import (MainAgent, build_agent_tools, build_web_tools,
                                        make_confirm_gate, native_default, skill_catalog)
     from src.agents.capabilities import SessionCapabilities
@@ -202,7 +211,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             tools += [tool for tool in build_memory_tools(repo_root, gated_confirm, source=kind)
                       if tool.name != "remember_repo"]
             from src.agents.tools.personal_goals import build_personal_goal_tools
-            tools += build_personal_goal_tools(repo_root)
+            # 新建目标 / 改进展申报 OWN_DATA：READS 档免确认、可撤销；IM 回合恒带 channel 污点，照旧问人
+            tools += build_personal_goal_tools(repo_root, confirm=gated_confirm)
             from src.agents.tools.personal_skills import build_personal_skill_tools
             tools += build_personal_skill_tools(repo_root)
             # 交代定时的事（「每天早上帮我…」）：只在本进程真的会跑调度时给——Desktop 本机 sidecar
@@ -253,6 +263,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     if browser_control_enabled(kind):
         # 浏览器操控：Desktop 设置里显式打开才有；点击/输入在任何授权档位下都过人（interact 类）。
         tools += build_browser_tools(repo_root, gated_confirm)
+    from src.agents.tools.android import android_control_enabled, build_android_tools
+    if android_control_enabled(kind, profile=profile, can_ask_human=can_ask_human and confirm is not None,
+                               workspace_scope=workspace_scope):
+        tools += build_android_tools(repo_root, gated_confirm)
     from src.agents.tools.desktop import build_desktop_tools, desktop_control_enabled
     if desktop_control_enabled(kind, profile=capabilities.profile, can_ask_human=can_ask_human):
         # 桌面操作（实验功能，默认关闭）：有人值守的 Web/Desktop 会话、local 档位才有；
@@ -298,7 +312,9 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                      "暂停只影响后续排期，不代表已在执行的任务停止。没有保留记录时说无法核实，不推断从未执行。"
                      "不要声称后台工作已经开始、通知已经送达或任务已验收，除非工具提供对应证据。"
                      "错误记录只证明所记录的错误，不凭超时推断网络、数据源或代码根因；需要更多证据就明确说尚待核实。"
-                     "简单问答和状态汇报默认简短：给结论、必要证据、需要用户处理的下一步，通常150字以内；用户要求详细时再展开。"
+                     "简单问答和状态汇报默认简短：先给处理后的结论，再说明影响结论的证据缺口，最后只给必要的下一步，通常150字以内；用户要求详细时再展开。"
+                     "不要把工具日志或子任务输出原样转给用户自行归纳；保留完整记录的查阅入口。"
+                     "建议要有现有事实依据；备选方案只是选项，没有足够依据时不伪装成推荐。"
                      "不为简单结果罗列全部记录ID或重复时间，不在已答清楚时附加无关反问。"
                      "用户已给出明确对象和动作时，可直接使用带内部校验的动作工具；成功或拒绝回执足以核实该操作时，"
                      "不额外先查后查。证据不足时仍须继续读取或澄清，不能省掉确认和核验。"

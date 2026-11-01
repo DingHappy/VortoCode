@@ -11,14 +11,19 @@
 		1626BBC0485B564C99C6F62A /* AssistantServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2249537C527A9D101C9749A3 /* AssistantServices.swift */; };
 		16B67161C291FF59CF511F97 /* NativeFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B412F3F554FC472C1EDED98F /* NativeFlowUITests.swift */; };
 		223A5F3691C2D4300A3D8F67 /* VortoCodeMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4075440C0A6B411FA0DE3BBA /* VortoCodeMobileApp.swift */; };
+		2966E3DA980A6BD107BCCECE /* OwnerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE7514BEA1AAD4DEC2E25E3 /* OwnerViews.swift */; };
 		2BB80E7536A9029461C3F90D /* NativeAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8A7F5E95B4F1F07C5AFF93 /* NativeAuthentication.swift */; };
+		3672E0E8E501E23730FE5255 /* VortoCodeNotification.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 48D4FB18DAAA1BED1FB3EC63 /* VortoCodeNotification.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		43A52D33DA758DA64FEED9FF /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA5CB1939BF36840106DF36 /* HomeView.swift */; };
 		5024BC2D5CCE34DEB1008E89 /* AssistantSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = E59862E33085E5E53BBF5B0A /* AssistantSession.swift */; };
 		53EB19FD43C03A0EC7E10893 /* GoalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86C0108C1BDF94ED5657255 /* GoalViews.swift */; };
+		6B7E7D748828CAF1F416CB52 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8466DF1CB3B102FD253D9F /* NotificationService.swift */; };
 		7799569DE44BCD5A86C8EAC5 /* EntryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76E92810A89CA01863E62F84 /* EntryUITests.swift */; };
 		8E4CE712F816EE6816CD7D24 /* MobileCore in Frameworks */ = {isa = PBXBuildFile; productRef = CF354889F2FC92AA0AE9EF7D /* MobileCore */; };
 		94C12EA28AF9BF52B67ED44F /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B89328018B06374EAEC8B217 /* ConnectionView.swift */; };
+		A7A8B9ECA424034B52F9AA5F /* OwnerSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B473695B15D574C0915F7FC7 /* OwnerSession.swift */; };
 		B1753AC012F712ABF4C8340D /* AssistantSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4EA19EA103EB5031114A46 /* AssistantSessionTests.swift */; };
+		CD8F57F366E8D6DC7E795CA5 /* DeviceKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29B6CC58A0B00EC0641E6621 /* DeviceKeys.swift */; };
 		D6CAB7BFB8CCC5F29C98B6D7 /* SessionVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BF655D769150ADBD882F7C8 /* SessionVault.swift */; };
 		E3264189BCA4A4673CFDED02 /* EntryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F795C627616253A1BF93353 /* EntryPolicy.swift */; };
 		E466647D442B2600B9AE6285 /* AssistantTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 827C48F7E3DD70604AC2DCA9 /* AssistantTabs.swift */; };
@@ -34,6 +39,13 @@
 			remoteGlobalIDString = 55DFE418EE0F6CBBB100CB6B;
 			remoteInfo = VortoCodeMobile;
 		};
+		852156DC1600018753A0167A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D36F6BB1CC451EB23072AE70 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2F35B109CF381BDCFECEEC1D;
+			remoteInfo = VortoCodeNotification;
+		};
 		BE446DC309A5BEB4C6AE4841 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D36F6BB1CC451EB23072AE70 /* Project object */;
@@ -43,27 +55,48 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		6DC6993D8F83CD2699C99848 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				3672E0E8E501E23730FE5255 /* VortoCodeNotification.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		0D4EA19EA103EB5031114A46 /* AssistantSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSessionTests.swift; sourceTree = "<group>"; };
 		1B8A7F5E95B4F1F07C5AFF93 /* NativeAuthentication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAuthentication.swift; sourceTree = "<group>"; };
 		2149DC03112E2DF03E1EDD0D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2249537C527A9D101C9749A3 /* AssistantServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantServices.swift; sourceTree = "<group>"; };
+		29B6CC58A0B00EC0641E6621 /* DeviceKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeys.swift; sourceTree = "<group>"; };
 		2BD0625BA88673B05964D7FE /* VortoCodeMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = VortoCodeMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2BF655D769150ADBD882F7C8 /* SessionVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionVault.swift; sourceTree = "<group>"; };
+		2E8466DF1CB3B102FD253D9F /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		3EB792A0C534885E3B055106 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		4075440C0A6B411FA0DE3BBA /* VortoCodeMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VortoCodeMobileApp.swift; sourceTree = "<group>"; };
 		481B5B0A02A7DCF3FC4FF0BD /* VortoCodeMobileUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = VortoCodeMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		48D4FB18DAAA1BED1FB3EC63 /* VortoCodeNotification.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = VortoCodeNotification.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F795C627616253A1BF93353 /* EntryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntryPolicy.swift; sourceTree = "<group>"; };
+		68C98EDC68725132F3FC9F0B /* VortoCodeNotification.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VortoCodeNotification.entitlements; sourceTree = "<group>"; };
 		6F350C3C9645BBF1EAB61812 /* MobileCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MobileCore; path = Packages/MobileCore; sourceTree = SOURCE_ROOT; };
 		704EF6472F7F4D23B05FBC47 /* PendingLogoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingLogoutView.swift; sourceTree = "<group>"; };
 		76E92810A89CA01863E62F84 /* EntryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntryUITests.swift; sourceTree = "<group>"; };
 		827C48F7E3DD70604AC2DCA9 /* AssistantTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantTabs.swift; sourceTree = "<group>"; };
 		A86C0108C1BDF94ED5657255 /* GoalViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalViews.swift; sourceTree = "<group>"; };
+		AFE7514BEA1AAD4DEC2E25E3 /* OwnerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerViews.swift; sourceTree = "<group>"; };
 		B412F3F554FC472C1EDED98F /* NativeFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFlowUITests.swift; sourceTree = "<group>"; };
+		B473695B15D574C0915F7FC7 /* OwnerSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerSession.swift; sourceTree = "<group>"; };
 		B89328018B06374EAEC8B217 /* ConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
 		DCA5CB1939BF36840106DF36 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		DEDEE7D7C370373ABF11A706 /* VortoCodeMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = VortoCodeMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E59862E33085E5E53BBF5B0A /* AssistantSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSession.swift; sourceTree = "<group>"; };
+		FDA751C15A55BD89808D2211 /* VortoCodeMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VortoCodeMobile.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,6 +118,7 @@
 				50582D4C217D6F27F59EEFA8 /* VortoCodeMobile */,
 				AAC53DF7DCB9034F7C186057 /* VortoCodeMobileTests */,
 				1A197C96448861968C32FF79 /* VortoCodeMobileUITests */,
+				3AFAFE10334F5607C2788B8A /* VortoCodeNotification */,
 				C43FEEED5FCA41ED0F36B896 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -96,6 +130,15 @@
 				B412F3F554FC472C1EDED98F /* NativeFlowUITests.swift */,
 			);
 			path = VortoCodeMobileUITests;
+			sourceTree = "<group>";
+		};
+		3AFAFE10334F5607C2788B8A /* VortoCodeNotification */ = {
+			isa = PBXGroup;
+			children = (
+				2E8466DF1CB3B102FD253D9F /* NotificationService.swift */,
+				68C98EDC68725132F3FC9F0B /* VortoCodeNotification.entitlements */,
+			);
+			path = VortoCodeNotification;
 			sourceTree = "<group>";
 		};
 		4102BBBD32CC5C9983D86C4E /* Packages */ = {
@@ -114,13 +157,17 @@
 				E59862E33085E5E53BBF5B0A /* AssistantSession.swift */,
 				827C48F7E3DD70604AC2DCA9 /* AssistantTabs.swift */,
 				B89328018B06374EAEC8B217 /* ConnectionView.swift */,
+				29B6CC58A0B00EC0641E6621 /* DeviceKeys.swift */,
 				5F795C627616253A1BF93353 /* EntryPolicy.swift */,
 				A86C0108C1BDF94ED5657255 /* GoalViews.swift */,
 				DCA5CB1939BF36840106DF36 /* HomeView.swift */,
 				1B8A7F5E95B4F1F07C5AFF93 /* NativeAuthentication.swift */,
+				B473695B15D574C0915F7FC7 /* OwnerSession.swift */,
+				AFE7514BEA1AAD4DEC2E25E3 /* OwnerViews.swift */,
 				704EF6472F7F4D23B05FBC47 /* PendingLogoutView.swift */,
 				3EB792A0C534885E3B055106 /* PrivacyInfo.xcprivacy */,
 				2BF655D769150ADBD882F7C8 /* SessionVault.swift */,
+				FDA751C15A55BD89808D2211 /* VortoCodeMobile.entitlements */,
 				4075440C0A6B411FA0DE3BBA /* VortoCodeMobileApp.swift */,
 			);
 			path = VortoCodeMobile;
@@ -140,6 +187,7 @@
 				DEDEE7D7C370373ABF11A706 /* VortoCodeMobile.app */,
 				2BD0625BA88673B05964D7FE /* VortoCodeMobileTests.xctest */,
 				481B5B0A02A7DCF3FC4FF0BD /* VortoCodeMobileUITests.xctest */,
+				48D4FB18DAAA1BED1FB3EC63 /* VortoCodeNotification.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -147,6 +195,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		2F35B109CF381BDCFECEEC1D /* VortoCodeNotification */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6D5BCEF47E38B1B267EA04FB /* Build configuration list for PBXNativeTarget "VortoCodeNotification" */;
+			buildPhases = (
+				3145F1B43E713BB757EBDB57 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VortoCodeNotification;
+			packageProductDependencies = (
+			);
+			productName = VortoCodeNotification;
+			productReference = 48D4FB18DAAA1BED1FB3EC63 /* VortoCodeNotification.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		404C3EEBFA4F16233983E17D /* VortoCodeMobileTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F6CF00844056571C2B877673 /* Build configuration list for PBXNativeTarget "VortoCodeMobileTests" */;
@@ -172,10 +237,12 @@
 				F51C7849F715AC7ED0A6D880 /* Sources */,
 				E367BE3C6979AE4E061766E1 /* Resources */,
 				321D5EEF95DC104A5E79CC7B /* Frameworks */,
+				6DC6993D8F83CD2699C99848 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A3AD486BB5D3DDD051755B0B /* PBXTargetDependency */,
 			);
 			name = VortoCodeMobile;
 			packageProductDependencies = (
@@ -212,6 +279,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					2F35B109CF381BDCFECEEC1D = {
+						ProvisioningStyle = Automatic;
+					};
 					55DFE418EE0F6CBBB100CB6B = {
 						ProvisioningStyle = Automatic;
 					};
@@ -238,6 +308,7 @@
 			projectRoot = "";
 			targets = (
 				55DFE418EE0F6CBBB100CB6B /* VortoCodeMobile */,
+				2F35B109CF381BDCFECEEC1D /* VortoCodeNotification */,
 				404C3EEBFA4F16233983E17D /* VortoCodeMobileTests */,
 				F136E98EC8F001F0849F7FB0 /* VortoCodeMobileUITests */,
 			);
@@ -257,6 +328,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		3145F1B43E713BB757EBDB57 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6B7E7D748828CAF1F416CB52 /* NotificationService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A68C995987E5E76BC30DD8DF /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -282,10 +361,13 @@
 				5024BC2D5CCE34DEB1008E89 /* AssistantSession.swift in Sources */,
 				E466647D442B2600B9AE6285 /* AssistantTabs.swift in Sources */,
 				94C12EA28AF9BF52B67ED44F /* ConnectionView.swift in Sources */,
+				CD8F57F366E8D6DC7E795CA5 /* DeviceKeys.swift in Sources */,
 				E3264189BCA4A4673CFDED02 /* EntryPolicy.swift in Sources */,
 				53EB19FD43C03A0EC7E10893 /* GoalViews.swift in Sources */,
 				43A52D33DA758DA64FEED9FF /* HomeView.swift in Sources */,
 				2BB80E7536A9029461C3F90D /* NativeAuthentication.swift in Sources */,
+				A7A8B9ECA424034B52F9AA5F /* OwnerSession.swift in Sources */,
+				2966E3DA980A6BD107BCCECE /* OwnerViews.swift in Sources */,
 				E93746F818C72585711F409A /* PendingLogoutView.swift in Sources */,
 				D6CAB7BFB8CCC5F29C98B6D7 /* SessionVault.swift in Sources */,
 				223A5F3691C2D4300A3D8F67 /* VortoCodeMobileApp.swift in Sources */,
@@ -304,6 +386,11 @@
 			isa = PBXTargetDependency;
 			target = 55DFE418EE0F6CBBB100CB6B /* VortoCodeMobile */;
 			targetProxy = 37B7166E43AA0E74956F9A29 /* PBXContainerItemProxy */;
+		};
+		A3AD486BB5D3DDD051755B0B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2F35B109CF381BDCFECEEC1D /* VortoCodeNotification */;
+			targetProxy = 852156DC1600018753A0167A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -329,6 +416,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = VortoCodeMobile/VortoCodeMobile.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = VortoCodeMobile/Info.plist;
@@ -408,6 +496,23 @@
 			};
 			name = Debug;
 		};
+		8C777383E9AA63576927B203 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = VortoCodeNotification/VortoCodeNotification.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = VortoCodeNotification/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile.notification;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		938D0258FD43D46EE774E4AC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -467,6 +572,23 @@
 			};
 			name = Release;
 		};
+		9A3EC42069B32225F454AEAE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = VortoCodeNotification/VortoCodeNotification.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = VortoCodeNotification/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile.notification;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		E12BCE12F3A2F08E26C24869 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -522,6 +644,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = VortoCodeMobile/VortoCodeMobile.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = VortoCodeMobile/Info.plist;
@@ -543,6 +666,15 @@
 			buildConfigurations = (
 				FA173D0965C2F504EB781740 /* Debug */,
 				1A9FC9A19E9AF31017DEC678 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6D5BCEF47E38B1B267EA04FB /* Build configuration list for PBXNativeTarget "VortoCodeNotification" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8C777383E9AA63576927B203 /* Debug */,
+				9A3EC42069B32225F454AEAE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

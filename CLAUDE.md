@@ -9,7 +9,7 @@ VortoCode 是一个 Python 编写的 AI 编码 agent 框架：一个交互式主
 ```bash
 pip install -e '.[dev]'          # 开发依赖（ruff/mypy/black/pytest）。功能全开用 '.[all]'
 # 依赖锁：pyproject 是唯一来源，CI 用 -c constraints.txt 安装。改了依赖或要升级时刷新锁并单独提 PR：
-uv pip compile pyproject.toml --extra llm --extra dev --extra evals --universal --python-version 3.10 -o constraints.txt
+uv pip compile pyproject.toml --extra llm --extra dev --extra evals --extra mobile --universal --python-version 3.10 -o constraints.txt
 
 # 测试
 python -m pytest tests/ -q                          # 全量
@@ -82,7 +82,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 ## 约定与坑
 
 - **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）；手机端是只读伴侣，写入/审批/推送等 P1 稳定后再议（ADR-009）。**终端 TUI 与浏览器对话台（`/agent`、PWA、`/artifacts` 画廊）已于 2026-10-17 退役删除**；`src/web/` 保留的是 Desktop 用的 API 与 `/ws`，以及流水线审批台 `/review`（IM 通知里的审批链接指向它）和制品查看页 `/artifact/<id>`。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
-- **任务协作高级功能已冻结（2026-10-22，ADR-008）**：`workflow/tasks` 下的 `task_scan`、`task_dependents`、`task_dependencies`、`task_chain_budget`、`continuations`、`continuation_checks`、`check_reports`、`model_evidence`、`model_comparison`、`runtime_inbox`、`dashboard` 不加新功能，只修安全问题和明确的 bug。隔离开发流水线和助理派活照常维护。新需求先看能不能放进常驻助理或 Codex 监管。
+- **任务协作高级功能已冻结（2026-10-22，ADR-008）**：`workflow/tasks` 下的 `task_scan`、`task_dependents`、`task_dependencies`、`task_chain_budget`、`continuations`、`check_reports`、`model_evidence`、`model_comparison`、`runtime_inbox`、`dashboard` 不加新功能，只修安全问题和明确的 bug。隔离开发流水线和助理派活照常维护。新需求先看能不能放进常驻助理或 Codex 监管。
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
 - **多个 Agent 同时在本仓库工作（2026-10-27 定）**：每个 Agent 用自己的 `vorto/*` 或 `codex/*` 分支，只走 PR；不在别人的 PR 分支上叠提交，也不在别人未提交的工作区里改文件（需要时另开 worktree）。v0.2.21～0.2.23 曾在一个未合并的 PR 分支上叠提交并直接发版，main 因此落后好几天。

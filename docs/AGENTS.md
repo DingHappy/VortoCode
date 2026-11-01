@@ -12,15 +12,26 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
+| `workflow/workbench/skill_learning.py` / 原 PersonalSkills | 原派活证据绑定的手动技能草稿、差异审核与停用保存，沿用原锁和版本启用；[学习审核](SKILL_LEARNING.md) | 模型提炼、自动学习/启用/重试、新任务库、独立账号身份或权限委托 |
+| 原 Tool 的 `ToolResource` / `gateway/session_resources.py` | 当前 WS 会话已装配资源的有界只读投影，复用原连接代次；[资源总览](SESSION_RESOURCES.md) | 凭据读取、设备发现/连接、工具执行、批准、资源数据库或新注册表 |
+| `agents/confirmation_context.py` / 原网站 BrowserSession | 当前工具链的确认展示与真实回合标识，任务内网站接管及本回合拒绝去重；[接管合同](WEBSITE_HANDOFF.md) | 批准决定、任务库、新执行循环、通用凭据管理或后台自动恢复 |
+| `gateway/execution_identity.py` / `workflow/workbench/resident_projects.py` | 原持久实例的启动收据与宿主固定目标，原任务路由/派活核验；[身份合同](RESIDENT_EXECUTION_IDENTITY.md) | 受限授权凭证、跨宿主发现、任务库或新的执行循环 |
+| `devices/android.py` / `android_ui.py` / `android_state.py` / `agents/tools/android.py` | Android 已有会话传输、原生 UI 投影、设备独占和待核对占位、原确认门；[Android 插件](ANDROID_SESSION_PLUGIN.md) | 创建设备会话、安装/启动应用、任意 Appium 命令、跨主机凭证同步或另一套任务循环 |
+| `browser/backend.py` | 受信任宿主注入的浏览器驱动合同、版本与模式声明，原 CDP 默认实现；[可插拔能力](PLUGGABLE_CAPABILITIES.md) | 权限授予、插件安装/代码发现、原生设备协议、第二套工具注册表或任务循环 |
+| `browser/connections.py` / `browser/page_privacy.py` / `agents/tools/website_browser.py` | 本机工作区网站授权、专用目录租约、人工登录接管及原确认门；[网站与设备合同](WEBSITE_CONNECTIONS.md) | Cookie 同步、通用凭证保险箱、原生手机 App、第二套任务循环或自动重试网站提交 |
+| `gateway/im_service.py` / `im_registry.py` / `im_host.py` / `im_input.py` / `im_input_store.py` | 原单入口与 Project 的 N 入口只读托管、账号级原生事件记录、原 SessionStore/SessionActors 准入与清理、精确路由及共享 IM 模型槽；[托管合同](IM_MULTI_HOST.md) | 第二套任务库/执行池、General 项目授权、持久排队/公平性、未知回合重放、自动派活或原审批权迁移 |
 | `src/llm/providers.py` / `src/llm/client.py` | 原模型端点/角色路由、回环空 Key 占位符与本机代理隔离 | 自动启动/下载本机模型、借用其它供应商密钥或推断 provider 硬预算能力 |
 | `src/llm/hard_budget.py` | 严格适配器门、请求前预留、累计 token/请求/工具/时间预算 | 默认 provider 能力推断、持久认领和授权 |
 | `src/llm/streaming.py` | 执行中断信号、受检查回调与本地流清理 | 任务台账、失效判定、远端费用停止 |
 | `src/agents/bounded_check.py` | 单次只读检查装配与结构化预算结果 | 自动调度、回执或任务验收 |
+| `src/workflow/tasks/goal_submission.py` / `workbench/goals.py` | 原 Goal/Task 台账的确认快照、固定提交身份、持久关联与保存失败处理；[提交合同](GOAL_SUBMISSION.md) | 新执行池、自动重放、自动批准或以任务结束推导目标达成 |
 | `src/agents/agent_loop.py` | 模型回合、历史、上下文和媒体消息，接入共享工具运行层 | 客户端导航、任务持久化 |
 | `src/agents/tool.py` / `tool_runtime.py` | Agent 无关的工具定义、声明适配、能力/权限检查、调度、Hook/审计与污点传播；[接入合同](TOOL_RUNTIME.md) | 模型调用、会话存储、外部 Agent 自带工具的执行权限 |
 | `src/agents/backends/control.py` / `backends/codex.py` | 现有会话的状态与轮次控制合同、Codex 协议适配；[核心控制合同](AGENT_BACKENDS.md) | 启动额外进程、工具执行、审批代决、会话存储或任意核心切换 |
 | `src/agents/backends/execution.py` | 可扩展的执行身份/状态/进展/结果与证据投影、版本编解码；[执行合同](EXECUTION_CONTRACT.md) | 任务数据库、调度、授权、验收判定或自动插件加载 |
+| `src/agents/backends/recovery.py` | 可信执行观察上的失败/备用/人工核对纯决策，以及停止内层自动重试的信号；[恢复合同](EXECUTION_RECOVERY.md) | 进程启动、模型调用、持久调度、权限或跨回合预算授权 |
 | `src/agents/backends/observation_order.py` / `scheduling/codex_observer.py` / `codex_watch.py` | 整份快照的前序/代次/序号核对、不可变重传与原状态槽加锁替换；[观测顺序](OBSERVATION_ORDER.md) | 完整事件回放、多主机报告合并、自动抢回上报权或执行指令重试 |
+| `src/scheduling/codex_goal.py` / `codex_supervisor.py` | 原私人目标与 Codex 交接关联、当前验收材料、累计判断额度、重复缺口暂停；[跟进合同](CODEX_GOAL_SUPERVISION.md) | 目标验收写入、外部执行、自动批准、供应商金额硬预算或第二套任务库 |
 | `desktop/src/components/AssistantWorkday.tsx` / `lib/assistantWorkday.ts` / `assistantWorkdayReads.ts` | 现有目标、任务单、确认和 Codex 报告的今日投影、独立读取与来源失效；[统计合同](ASSISTANT_WORKDAY.md) | 第二套任务库、自动验收、代替用户审批或判定真实部署完成 |
 | `desktop/src/lib/personalGoalSnapshot.ts` | 今日工作与目标详情共用的读取结构校验、逐条及整体用户验收依据判断；未知状态保守显示 | 目标持久化、自动修复记录、执行或批准操作 |
 | `desktop/src/components/settings/CodexWatchCard.tsx` / `lib/codexObserverHealth.ts` | 本机 General 观察员运行诊断、来源复核、状态时效和刷新隔离；[观测合同](OBSERVATION_ORDER.md) | 启动或重启引擎、自动接管、保存凭据、使用远端状态冒充本机健康 |
@@ -41,7 +52,6 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/agents/task_questions.py` | 绑定当前任务的提问工具与持久暂停信号 | 接受任意任务身份、回答或扩大权限 |
 | `src/workflow/tasks/handoffs.py` | 后台完成收件箱、结果版本与持久处理回执 | 模型调度、任务成功判定 |
 | `src/workflow/tasks/continuations.py` | 结果版本授权、一次认领、撤销和启动中断对账 | 模型调度、汇报送达、任务验收 |
-| `src/workflow/tasks/continuation_checks.py` | 注入式 actor 检查桥、预算记录、持久汇报回执后确认交接 | provider 选择、独立调度池、任务验收 |
 | `src/workflow/tasks/check_reports.py` | 校验台账结果、原会话持久汇报、尝试身份去重 | 模型调用、扩大授权、用户已读判定 |
 | `src/gateway/sessions.py` | 安全容量淘汰、会话生命周期、真实保存结果、先保存再追加展示消息 | 结果验收、自动启动检查 |
 | `src/workflow/tasks/dispatch.py` | 请求幂等、下派、查询与有界返工；复用后台并发池 | HTTP、LLM、角色权限装配 |
@@ -100,6 +110,9 @@ Web/Desktop 发起身份由当前会话提供；没有稳定会话身份的入�
 **不替代测试、Git 提交证据或 Goal 的 achieved 闸门**。模型的文字结论也不是运行验证证据。
 
 ## 完成后的交互
+
+常驻助理派活结束后的通知遵循[结果沟通合同](./RESULT_COMMUNICATION.md)：先结论与证据缺口，
+再给必要的下一步，完整执行记录按需查看。执行结束、自动验证和人工验收保持分开。
 
 1. `task` 将合同先写入台账，再执行子 Agent；存储失败不得继续执行。
 2. 子 Agent 结束后，结构化工具结果带 task ID、轮次、执行状态、验收状态、结果与错误，
@@ -196,8 +209,8 @@ TUI 的委派工具已迁移到同一协作服务，终端只保留结果渲染�
 开发 worker 依据持久计划、所有块 landed 及审查阻塞状态判定 done；失败字符串不能充当
 成功证据。dev-resume 终态拥有独立完成回执；旧任务保留历史，有效恢复血缘从待处理
 计数中排除。原子文件替换与单进程锁不提供跨进程事务或 Git 提交/计划更新的原子保证。
-`test_continuations.py`、`test_completion_inbox.py`、`test_check_reports.py`、
-`test_continuation_checks.py` 和 `test_gateway_tasks.py` 覆盖这些边界以及旧合同兼容。
+`test_continuations.py`、`test_completion_inbox.py`、`test_check_reports.py`
+和 `test_gateway_tasks.py` 覆盖这些边界以及旧合同兼容。
 `test_task_recovery.py` 覆盖恢复重试、重启不执行、版本冲突、存储失败、冷取消/暂停、
 权威开发结果与恢复血缘的注意事项投影。
 `test_async_ops.py` 覆盖重复取消、晚到异常、Git 锁保留、创建/测试阶段清理顺序和暂停槽位。

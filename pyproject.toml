@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vortocode"
-version = "0.2.40"
+version = "0.2.41"
 description = "通用多 Agent 软件开发框架"
 readme = "README.md"
 license = {text = "MIT"}
@@ -27,10 +27,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-memory = [
-    "qdrant-client>=1.7.0",
-    "sentence-transformers>=2.2.0",
-]
 evals = [
     "tiktoken>=0.12,<1",
 ]
@@ -46,6 +42,11 @@ parsing = [
     "tree-sitter-python>=0.21.0",
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-typescript>=0.21.0",
+]
+mobile = [
+    # 手机网关：设备密钥签名校验（P-256，iOS Secure Enclave 只支持这条曲线）与 APNs 推送（只收 HTTP/2）
+    "cryptography>=42",
+    "httpx[http2]>=0.27",
 ]
 browser = [
     "playwright>=1.48.0",
@@ -63,7 +64,7 @@ dev = [
     "types-PyYAML>=6.0",   # yaml 是核心依赖且有官方 stub：装上而不是 ignore 掉
 ]
 all = [
-    "vortocode[memory,llm,mcp,parsing,browser,dev]",
+    "vortocode[llm,mcp,parsing,browser,dev,mobile]",
 ]
 
 [project.scripts]
@@ -100,13 +101,16 @@ files = [
     "src/agents/taint.py",         # 污点追踪：污点态下免确认授权失效，同属安全核心
     "src/sandbox/policy.py",       # 沙箱策略 + 宿主机命令开关（全仓唯一一份判定）
     "src/agents/trust.py",         # 授权档位：喂给确认门的 pre_authorized，同属内核
+    "src/agents/undo_log.py",      # 主人数据操作日志与撤销：OWN_DATA 免确认的前提
+    "src/gateway/mobile_signing.py", # 手机写请求的设备签名：主人终端的身份边界
+    "src/gateway/mobile_push.py",  # 给主人 App 的加密推送
     "src/agents/tool.py",          # Agent 无关的工具定义和 schema 适配
     "src/agents/tool_runtime.py",  # 各 Agent 共用的工具执行边界
     "src/agents/backends",         # Agent 核心控制合同与协议适配
     "src/gateway/turn_bindings.py", # 各端回合回调换绑点：未绑定时确认必须拒绝
 ]
 follow_imports = "silent"
-ignore_missing_imports = true      # 可选依赖（openai/yaml/qdrant…）无 stub，不为此挂门禁
+ignore_missing_imports = true      # 可选依赖（openai/yaml…）无 stub，不为此挂门禁
 warn_unused_ignores = true
 no_implicit_optional = true
 

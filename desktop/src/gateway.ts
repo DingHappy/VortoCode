@@ -13,10 +13,15 @@ import type {
   ConnectorDisconnectReceipt,
   PersonalSkill,
   PersonalSkillsSnapshot,
+  PersonalSkillDraft,
+  SkillLearningSnapshot,
+  SkillProposal,
   AssistantMemory,
   AssistantProfile,
   PersonalGoal,
   PersonalGoalInput,
+  AssistantChange,
+  AssistantUndoResult,
   AssistantScheduleItem,
   MemoryProposal,
   PhoneChat,
@@ -155,6 +160,9 @@ export class GatewayClient {
   private dropRemote: ((reason: string) => void) | null = null;
 
   constructor(private readonly settings: ConnectionSettings) {}
+
+  /** Reuse the existing transport/read epoch; observers cannot survive a reconnect. */
+  get connectionEpoch(): number { return this.snapshotEpoch; }
 
   matchesRemoteProject(projectId: string): boolean {
     return this.settings.remoteProjectId === projectId;
@@ -507,6 +515,15 @@ export class GatewayClient {
     return this.request("/api/assistant/profile");
   }
 
+  async listAssistantChanges(): Promise<AssistantChange[]> {
+    const result = await this.request<{ ops: AssistantChange[] }>("/api/assistant/undo");
+    return result.ops;
+  }
+
+  async undoAssistantChange(id: string): Promise<AssistantUndoResult> {
+    return this.request(`/api/assistant/undo/${encodeURIComponent(id)}`, { method: "POST" });
+  }
+
   async listPersonalGoals(): Promise<PersonalGoal[]> {
     const result = await this.readSnapshot<{ goals: PersonalGoal[] }>("/api/assistant/goals");
     return result.goals;
@@ -649,6 +666,26 @@ export class GatewayClient {
 
   async getPersonalSkills(): Promise<PersonalSkillsSnapshot> {
     return this.request("/api/assistant/skills");
+  }
+
+  async getSkillLearning(): Promise<SkillLearningSnapshot> {
+    return this.request("/api/assistant/skill-proposals");
+  }
+
+  async previewSkillProposal(id: string): Promise<SkillProposal> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(id)}/proposal`);
+  }
+
+  async proposePersonalSkill(id: string, source: { dispatch_id: string; revision: string }, draft: PersonalSkillDraft): Promise<SkillProposal> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(id)}/proposal`, {
+      method: "PUT", body: JSON.stringify({ dispatch_id: source.dispatch_id, source_revision: source.revision, draft }),
+    });
+  }
+
+  async decideSkillProposal(proposal: SkillProposal, action: "accept" | "reject" | "reconcile"): Promise<SkillProposal> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(proposal.skill_id)}/proposal`, {
+      method: "POST", body: JSON.stringify({ id: proposal.id, revision: proposal.revision, action }),
+    });
   }
 
   async previewPersonalSkill(id: string): Promise<PersonalSkill> {
@@ -969,10 +1006,10 @@ export class GatewayClient {
     await this.request(`/api/goals/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
-  async runGoal(id: string, resume = false): Promise<{ goal: GoalItem; task: TaskItem }> {
+  async runGoal(id: string, resume = false, previousTaskId = ""): Promise<{ goal: GoalItem; task: TaskItem; replayed: boolean }> {
     return this.request(`/api/goals/${encodeURIComponent(id)}/run`, {
       method: "POST",
-      body: JSON.stringify({ resume }),
+      body: JSON.stringify({ resume, expected_task_id: previousTaskId }),
     });
   }
 

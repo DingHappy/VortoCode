@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 from src.agents.agent_loop import MainAgent, DEV_SUBAGENT_ROLE, _clip_middle
 from src.agents.tools._common import _truthy
 from src.agents.tool import Tool
+from src.agents.backends.recovery import RecoveryRequired
 from src.agents.worktree import baseline_note, included_note, local_includes
 from src.agents.tools.files import build_read_tools, build_write_tools, build_test_tool
 from src.utils.exc_utils import _exc_text
@@ -137,6 +138,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not diff.strip():
             err = str(last.get("err") or "").strip()
             if err:
+                if last.get("failure_kind") == "recovery_required":
+                    return {"ok": False, "text": f"❌ 隔离实现需人工核对：{err}；已停止自动重试，未交付分支。"}
                 if last.get("failure_kind") == "model_capacity":
                     return {"ok": False, "text": (
                         f"❌ 隔离实现被阻塞：实现角色的模型超出服务端动态内存上限（尝试 {attempts} 次）。"
@@ -277,6 +280,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             try:
                 diff, conclusion, ver = await run_isolated_task(
                     repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
+            except RecoveryRequired as error:
+                return {"desc": desc, "diff": "", "ver": None, "attempts": attempt,
+                        "err": str(error), "failure_kind": "recovery_required",
+                        "retained_worktree": error.workspace, "followups": list(mk.followups)}
             except Exception as e:  # noqa: BLE001
                 # 带类型：真机上这条会直接进台账（"LLM 通道故障: …"）。裸 str(e) 遇上
                 # KeyError/TimeoutError 这类只剩一个键名或空串，人拿到等于没拿到。
@@ -364,7 +371,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 lines.append(f"· {r['desc']}：✅ 通过" + (f"（修复 {att - 1} 次后）" if att > 1 else ""))
                 greens.append(r)
             elif r.get("err"):
-                reason = ("实现模型容量不足，已停止同配置重试" if r.get("failure_kind") == "model_capacity"
+                reason = (f"需人工核对，已停止自动重试：{r['err']}" if r.get("failure_kind") == "recovery_required"
+                          else "实现模型容量不足，已停止同配置重试" if r.get("failure_kind") == "model_capacity"
                           else f"LLM 通道故障（{str(r['err'])[:80]}）")
                 lines.append(f"· {r['desc']}：❌ {reason}"
                              + (f"（试了 {att} 次）" if att > 1 else ""))
@@ -395,6 +403,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             r = await run_dependent_on_branch(repo_root, wid, branch, cur, mk(None), msg, test_cmd)
             r["attempts"] = attempt
             if r["ok"]:
+                return r
+            if r.get("failure_kind") == "recovery_required":
                 return r
             cur = _repair_prompt(base, (r.get("output") or "")[-1500:])
         return r
@@ -487,12 +497,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 path = _worktrees_dir(_repo_root) / ("wt-review-" + uuid.uuid4().hex[:8])
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if path.exists():
-                    remove_worktree(_repo_root, path)
+                    raise RuntimeError("审查工作区已存在，请先核对并显式清理")
                 add = _git(_repo_root, "worktree", "add", "--detach", str(path), _branch, check=False)
                 if add.returncode != 0:
                     raise RuntimeError("无法创建审查 worktree")
                 from src.agents.worktree import include_local_files
                 include_local_files(_repo_root, path)
+                retain = False
                 try:
                     diff = _review._branch_diff(_repo_root, _base, _branch)
                     if not diff.strip():
@@ -522,8 +533,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     with merge_nested_taint():
                         reply = await agent.run_turn(prompt, mode="build")
                     return _review.parse_findings(reply)
+                except RecoveryRequired as error:
+                    retain = True
+                    error.workspace = str(path)
+                    raise
                 finally:
-                    remove_worktree(_repo_root, path)
+                    if not retain:
+                        remove_worktree(_repo_root, path)
 
             return _review_branch
 

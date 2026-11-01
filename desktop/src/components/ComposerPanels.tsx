@@ -9,6 +9,7 @@ import { isPlanBudgetConfirmation, isPlanExecutionConfirmation } from "../lib/on
 import type { ContextItem, DesktopLlmProfileStatus, PendingConfirmation, PromptQueueItem, TrustLevel, TrustStatus } from "../types";
 import { ConfirmationReply } from "./ConfirmationReply";
 import { ConfirmationTrust } from "./ConfirmationTrust";
+import { WEBSITE_CONFIRMATION_COPY, websiteConfirmation } from "../lib/websiteConfirmation";
 
 /** Runtime 请求确认。钉在输入框上方、不随对话流滚动：长回合一滚就看不见，用户只看到转圈（2026-09-17）。 */
 export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onCheck, onAnswer }: {
@@ -23,6 +24,8 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
   // plan 阶段结束请求动手，与"删文件/跑命令"那类确认不是一回事：前者是本次任务继续往下走的一次性授权，
   // 后者是单个危险动作。文案分开，人才知道自己在批什么。**污点提示优先级最高**——那是安全提示，任何时候都不能被别的文案盖掉。
   const plan = !confirm.tainted && isPlanExecutionConfirmation(confirm.text);
+  const website = websiteConfirmation(confirm.website);
+  const websiteCopy = website && WEBSITE_CONFIRMATION_COPY[website.action];
   return (
     <section id="active-confirmation" tabIndex={-1} aria-label="操作确认" className={`confirm-card ${confirm.tainted ? "tainted" : ""}`}>
       <div className="confirm-icon">{plan ? "▶" : "!"}</div>
@@ -30,18 +33,32 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
         <strong>
           {confirm.tainted
             ? "外部内容回合需要人工确认"
+            : websiteCopy ? websiteCopy.title
             : isPlanExecutionConfirmation(confirm.text)
               ? isPlanBudgetConfirmation(confirm.text)
                 ? "规划未完成，授权后继续当前任务"
                 : "计划已就绪，授权后在隔离工作区继续"
-              : "Runtime 请求确认"}
+              : "这一步需要你确认"}
         </strong>
+        {website && <section className="website-confirmation" aria-label="本次网站操作">
+          {confirm.tainted && <strong>{websiteCopy?.title}</strong>}
+          <dl><div><dt>网站</dt><dd>{website.origin}</dd></div>
+            <div><dt>账号标签</dt><dd>{website.account_label}（需你核对实际账号）</dd></div>
+            <div><dt>执行位置</dt><dd>本次会话的浏览器所在电脑 · {website.device_mode === "mobile" ? "手机网页" : "桌面网页"}</dd></div>
+          </dl>
+          {website.action === "login" && <p>在已打开的专用浏览器中处理登录、扫码或验证，回到上述网站后再继续。等待期间助手暂停读取和操作；不要在聊天里填写密码或验证码。</p>}
+          {website.action === "connect" && <p>登记后，本工作区可持续使用该网站连接；登录仍由你在专用浏览器完成，需要时可撤销助手连接。</p>}
+          {website.action === "open" && <p>使用已登记的专用会话打开网站；需要核对登录时会暂停并交给你处理。</p>}
+          {website.action === "login" && <small>点击继续后会重新核对页面；不表示已经登录成功或任务完成。</small>}
+          {!connected && <p role="status">当前连接中断，网站状态尚未核实，无法提交确认。</p>}
+        </section>}
         <p>{confirm.text}</p>
-        <ConfirmationTrust key={confirm.id} trust={trust} busy={trustBusy}
+        {!website && <ConfirmationTrust key={confirm.id} trust={trust} busy={trustBusy}
           connected={connected} tainted={confirm.tainted}
-          onChange={onTrust} />
+          onChange={onTrust} />}
         <ConfirmationReply state={confirm.responseState} error={confirm.responseError} connected={connected}
-          allowLabel={plan ? "授权继续" : "允许一次"}
+          allowLabel={websiteCopy?.allow ?? (plan ? "授权继续" : "允许一次")}
+          denyLabel={websiteCopy?.deny}
           onCheck={onCheck} onAnswer={onAnswer} />
       </div>
     </section>
@@ -191,7 +208,7 @@ export function ContextChips({ items, onRemove }: { items: ContextItem[]; onRemo
 
 const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
   ask: "每次都问我",
-  reads: "只读自动",
+  reads: "读取与事项自动",
   full: "完全信任",
 };
 

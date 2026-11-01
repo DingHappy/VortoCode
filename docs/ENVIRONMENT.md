@@ -16,7 +16,7 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_ALLOW_INSECURE_BIND` | `0` | 没设 API 令牌却绑定非本机地址时，服务默认拒绝启动；设 `1` 显式放行（如前面有已鉴权的反向代理）。 | `web/server.py` |
 | `VORTOCODE_ENABLE_SHELL` | `0` | 宿主机命令执行的唯一总开关（`sandbox/policy.py:shell_enabled`）。Web 的 `require_shell`、cron 命令作业、终端都只认它。 | `sandbox/policy.py` 等 |
 | `VORTOCODE_SANDBOX` | `auto` | OS 沙箱（seatbelt / bwrap）策略。`off` 只应在可信环境里显式放开宿主机执行。 | `sandbox/policy.py`、`agents/shell.py` 等 |
-| `VORTOCODE_ENV_PASSTHROUGH` | — | 逗号分隔的变量名，准许穿透到子进程（默认会被剥掉的密钥类变量）。刻意只认进程环境、不认仓库文件，避免被投毒的仓库把密钥放行。 | `sandbox/policy.py` |
+| `VORTOCODE_ENV_PASSTHROUGH` | — | 逗号分隔的精确变量名，准许穿透到子进程；默认剥离运行端管理员/控制/IM 凭证、`VORTOCODE_PROVIDER_<NAME>_KEY` 及可信宿主登记的 bot 秘密变量。只认宿主进程环境、不认项目文件或通配符；关闭 bot 不撤销其变量名保护。它不提供文件/Keychain 隔离，详见 [凭证边界](PERSONAL_AGENT_BOUNDARIES.md)。 | `sandbox/policy.py` |
 | `VORTOCODE_OPS_TOKEN` | — | 运维报到端点的专用令牌。只在常驻助理（通用范围）开放，不设则端点不存在。 | `web/routers/ops_heartbeat.py` |
 | `VORTOCODE_VOICE_MCP_TOKEN` | — | 语音 MCP 端点的专用令牌。只在常驻助理开放，不设则端点不存在。 | `web/routers/voice.py` |
 
@@ -28,6 +28,11 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_MOBILE_PUBLIC_ORIGIN` | — | 手机入口的完整 origin，包含实际公开端口，不含路径、查询或账号密码；精确用于来源检查和账号回调。不设时手机账号登录未就绪，独立网关拒绝启动。 | `gateway/mobile_browser.py`、`web/mobile_server.py`、`web/routers/account_access.py` |
 | `VORTOCODE_MOBILE_STATE_ROOT` | — | 独立手机网关必填的绝对状态根目录，必须与进程当前工作目录一致。读取原助手资料、主聊天登记和目标，不启动执行内核。 | `web/mobile_server.py` |
 | `VORTOCODE_MOBILE_RELEASE` | `dev` | 独立网关发布标识，限定小写字母、数字、点、下划线与连字符，用于健康检查核对；标识本身不证明源码、部署或验收完成。 | `web/mobile_server.py` |
+| `VORTOCODE_MOBILE_WRITES` | 关 | 设为 `1` 才开放原生 App 的写入（绑定钥匙、随手记、批准 / 拒绝 Codex 动作、撤销）。每个写请求还要设备签名，批准只认需要生物识别的钥匙。按 ADR-009 修订，要先完成 WireGuard 直连再开启。 | `web/routers/mobile_owner.py` |
+| `VORTOCODE_APNS_KEY_FILE` | — | APNs 认证私钥（.p8）的路径。与下面三项都设了才给主人的 App 推送；只从文件读、不缓存私钥、不进日志。 | `gateway/mobile_push.py` |
+| `VORTOCODE_APNS_KEY_ID` | — | 这把 APNs 私钥的 Key ID。 | `gateway/mobile_push.py` |
+| `VORTOCODE_APNS_TEAM_ID` | — | Apple 开发者团队 ID。 | `gateway/mobile_push.py` |
+| `VORTOCODE_APNS_TOPIC` | — | 手机 App 的 bundle id（APNs topic）。 | `gateway/mobile_push.py` |
 
 ## 模型与上下文
 
@@ -87,9 +92,11 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 
 | 变量 | 默认 | 作用 | 读取位置 |
 | --- | --- | --- | --- |
-| `VORTOCODE_ENABLE_BROWSER_CONTROL` | 关 | 给 Agent 浏览器操作工具。只在 Desktop 托管的 Web 会话里生效，IM、CLI 和无人值守一律不给。 | `agents/tools/browser.py` |
+| `VORTOCODE_ENABLE_BROWSER_CONTROL` | 关 | 网站连接、人工登录接管与桌面/手机网页工具。只在 Desktop 托管的 Web 会话生效，IM、CLI 和无人值守一律不给；非原生手机 App。详见 [网站连接](WEBSITE_CONNECTIONS.md)。 | `agents/tools/browser.py` |
 | `VORTOCODE_BROWSER_PATH` | 自动查找 | 本机 Chromium 系浏览器的路径。 | `browser/cdp.py` |
 | `VORTOCODE_BROWSER_BLOCKED_DOMAINS` | — | 追加禁止操作的域名（逗号分隔）。只能追加，不能删减内置名单。 | `agents/tools/browser.py` |
+| `VORTOCODE_ENABLE_ANDROID_CONTROL` | 关 | 实验 Android 插件，只在有人确认的 Desktop local Project 会话装配；读取原生界面和确认点按，不创建会话或安装应用。见 [Android 插件](ANDROID_SESSION_PLUGIN.md)。 | `agents/tools/android.py` |
+| `VORTOCODE_ANDROID_SESSION_FILE` | — | 工作区外、本人所有的私有宿主 JSON，绑定一个已启动本机 Appium 会话、设备、应用、工作区与代次。 | `devices/android.py` |
 | `VORTOCODE_ENABLE_DESKTOP_CONTROL` | 关 | 允许控制一台桌面机器。只在有人值守的 Web/Desktop 项目会话里可用，见 `docs/DESKTOP_CONTROL.md`。 | `agents/tools/desktop.py` |
 | `VORTOCODE_DESKTOP_TARGET` | — | 被控桌面：`local` 或 `ssh:<user>@<host>`。 | `agents/tools/desktop.py`、`computer/status.py` |
 | `VORTOCODE_DESKTOP_APPS` | — | 被控桌面上允许启动的应用（逗号分隔）。 | `agents/tools/desktop.py` |
@@ -100,7 +107,10 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | 变量 | 默认 | 作用 | 读取位置 |
 | --- | --- | --- | --- |
 | `VORTOCODE_IM` | — | 在服务进程内启动的 IM 渠道：`telegram` 或 `dingtalk`。 | `web/server.py`、`gateway/runtime.py` 等 |
+| `VORTOCODE_IM_BINDINGS_FILE` | — | 显式启用 Project 的 N 入口只读托管，值为项目外宿主 JSON 的绝对路径。bot 定义、账号绑定、主通知入口和 IM 模型槽分开；不能与非空 `VORTOCODE_IM` 同用。配置与未覆盖门禁见 [N 入口托管](IM_MULTI_HOST.md)。 | `gateway/runtime.py`、`gateway/im_host.py` |
 | `VORTOCODE_IM_ROLE` | `interactive` | `interactive` 接收并执行消息；`notify` 只推送。 | `gateway/im_service.py` |
+| `VORTOCODE_IM_CONVERSATION` | `primary` | 单入口路径中，`isolated` 独立保存聊天与人设，不合入主聊天、不接主通知/跨 bot 审批；要求稳定账号身份，不能与 `notify` 同用。N 托管另由显式绑定配置控制。 | `gateway/im_service.py`、`cli.py` |
+| `VORTOCODE_IM_POLICY` | `standard` | `research_read` 为项目只读研究：仅 `read_file/list_files/grep`，无写入、命令、联网、MCP 或委派；必须显式配置 Project scope、isolated、interactive，只允许配对主人。独立策略历史不导入原普通会话。不是同 runtime 多桥开关。 | `gateway/im_service.py`、`cli.py`、`agents/research_read.py` |
 | `VORTOCODE_IM_ALLOW_FROM` | — | 允许对话的发送者 ID 白名单（逗号分隔，所有渠道通用）。 | `gateway/im_service.py`、`gateway/roster.py` 等 |
 | `VORTOCODE_TG_ALLOW_FROM` / `VORTOCODE_DD_ALLOW_FROM` | — | 按渠道单独设的白名单。 | `gateway/roster.py`、`gateway/im_service.py` |
 | `VORTOCODE_TG_TOKEN` | — | Telegram 机器人令牌。 | `gateway/im_service.py` 等 |

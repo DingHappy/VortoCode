@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -107,8 +107,6 @@ def _save_state(root: str, state: Dict[str, Any]) -> None:
 
 
 _DIGEST_LIMIT = 300
-# 开发流水线报告里的流程提示：对看通知的人没用
-_BOILERPLATE = ("已把任务分解为", "（计划已存盘")
 _SENTENCE_ENDS = "。！？；\n"
 
 
@@ -121,30 +119,6 @@ def _clip_head(text: str, limit: int) -> str:
     return (head[:cut + 1] if cut >= limit // 3 else head).rstrip() + "…"
 
 
-def result_digest(result: str, limit: int = _DIGEST_LIMIT) -> str:
-    """任务结果压成通知正文：从末尾往前取**整段**（结论和验收在后面），不在半句中间切。
-
-    以前取 ``result[-300:]``，开头会是「.py 新增…」这种半截话。省略了内容就提示去 Desktop 看全文。
-    """
-    text = result.replace("**", "").strip()
-    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
-    paragraphs = [part for part in paragraphs if not part.startswith(_BOILERPLATE)]
-    kept: List[str] = []
-    used = 0
-    for part in reversed(paragraphs):
-        cost = len(part) + (2 if kept else 0)
-        if used + cost > limit:
-            break
-        kept.insert(0, part)
-        used += cost
-    if not kept and paragraphs:                 # 最后一段本身就超长：取它的开头
-        kept = [_clip_head(paragraphs[-1], limit)]
-    digest = "\n\n".join(kept)
-    if digest and digest != "\n\n".join(paragraphs):
-        digest += "\n（完整结果在 Desktop 助理的「动态」里）"
-    return digest
-
-
 def dispatch_pr_ready(item: Dict[str, Any]) -> bool:
     return (item.get("status") == "done" and not item.get("error") and not item.get("pr_url")
             and str(item.get("branch") or "").startswith("vorto/"))
@@ -153,6 +127,10 @@ def dispatch_pr_ready(item: Dict[str, Any]) -> bool:
 def status_message(item: Dict[str, Any]) -> str:
     title = f"{item.get('project')}：{item.get('title')}"
     status = item.get("status")
+    review = item.get("outcome_review") if isinstance(item.get("outcome_review"), dict) else {}
+    outcome = assistant_dispatch.current_outcome(item)
+    review_note = ("\n助理复盘未完成，需人工核对；未自动重复调用模型。"
+                   if not outcome and review else "")
     if status == "proposed":
         if item.get("retry_note"):        # 助理复盘失败后起草的下一次：把换的做法摆出来，你看了再批
             title += f"（第 {item.get('attempt') or 2} 次）\n这次换个做法：{_clip_head(str(item['retry_note']), 400)}"
@@ -168,42 +146,71 @@ def status_message(item: Dict[str, Any]) -> str:
         options = question.get("options") or []
         text = f"❓ {title} 做到一半要问你：\n{_clip_head(str(question.get('question') or ''), 600)}"
         if options:
-            text += "\n建议：" + "\n".join(f"{index}. {option}" for index, option in enumerate(options, 1))
+            text += "\n选项：" + "\n".join(f"{index}. {option}" for index, option in enumerate(options, 1))
         return text + "\n直接回我答案（选项回编号也行），我转给它接着做；24 小时内有效。"
     if status == "done":
-        branch = f"，交付分支 {item['branch']}" if item.get("branch") else ""
-        digest = result_digest(str(item.get("result") or ""))
-        evidence = item.get("delivery_evidence") if isinstance(item.get("delivery_evidence"), dict) else {}
-        checked = {"passed": "自动验证通过", "failed": "⚠ 自动验证没通过", "stale": "验证结果已过期（之后又有提交）"}.get(
-            str(evidence.get("verification") or ""), "还没有这次提交的验证结果")
-        text = f"✅ {title} 做完了，等待审查{branch}；{checked}。" + (f"\n{digest}" if digest else "")
-        text += _acceptance_lines(item)
+        text = _completion_brief(item, title)
         if dispatch_pr_ready(item):
             text += "\n点「批准」开一个 draft PR 给你审（合并仍由你在 GitHub 上点），「拒绝」先放着。"
-        return text
+        return text + review_note
     if status == "submission_unknown":
         return f"⚠ {title} 提交结果待核对，请在 Desktop 的任务卡核对状态。"
     retry = ("\n要再试，回我「改一改再派」并说说想怎么改，我带上这次的错误重写任务单。"
              if int(item.get("attempt") or 1) < assistant_dispatch.MAX_ATTEMPTS else
              f"\n这件事已经试了 {assistant_dispatch.MAX_ATTEMPTS} 次，建议换个做法或拆小再派。")
-    outcome = item.get("outcome") if isinstance(item.get("outcome"), dict) else {}
     if outcome.get("kind") == "diagnosis":
         retry = f"\n我的判断：{_clip_head(str(outcome.get('diagnosis') or ''), 300)}"
         if outcome.get("draft_id"):
             retry += f"\n已拟好第 {int(item.get('attempt') or 1) + 1} 次的任务单（换个做法：{_clip_head(str(outcome.get('change') or ''), 200)}），马上推给你确认。"
         elif outcome.get("capped"):
             retry += f"\n这件事已经试了 {assistant_dispatch.MAX_ATTEMPTS} 次，建议换个做法或拆小再派。"
+        elif outcome.get("draft_error") or outcome.get("retry"):
+            retry += "\n后续任务单尚未确认生成，请先核对任务列表；未自动重复起草。"
         else:
             retry += "\n换个做法也难成，需要你拿主意：回我想怎么改，我重写任务单。"
-    return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}" + retry
+    return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}" + retry + review_note
+
+
+def _completion_brief(item: Dict[str, Any], title: str) -> str:
+    """从已有台账给结论与证据缺口；不把原始输出或模型总结升级为验证结论。"""
+    evidence = item.get("delivery_evidence") if isinstance(item.get("delivery_evidence"), dict) else {}
+    verification = evidence.get("verification")
+    if item.get("sync_state") == "unreachable":
+        conclusion = "上次记录为执行结束，当前状态无法核实"
+        next_step = "先在 Desktop 核对任务状态，再决定是否审查。"
+    elif item.get("error"):
+        conclusion = "执行已结束，但仍有错误记录"
+        next_step = "先核对错误，再决定是否返工。"
+    elif item.get("delivery_error"):
+        conclusion = "执行已结束，交付证据暂时无法读取"
+        next_step = "先在 Desktop 核对交付证据，再审查。"
+    elif verification == "failed":
+        conclusion = "执行已结束，但自动验证没通过"
+        next_step = "先查看失败项，再决定是否返工。"
+    elif verification == "stale":
+        conclusion = "执行已结束，验证结果已过期"
+        next_step = "先验证当前提交，再审查。"
+    elif verification == "passed":
+        conclusion = "执行已结束，当前提交自动验证通过；待人工审查"
+        next_step = "审查改动和验收标准后，再决定是否验收。"
+    else:
+        conclusion = "执行已结束，尚无当前提交的验证结果"
+        next_step = "先取得当前提交的验证结果，再审查。"
+    verified = verification == "passed" and not (
+        item.get("error") or item.get("delivery_error") or item.get("sync_state") == "unreachable")
+    text = f"{'📋' if verified else '⚠'} {title}：{conclusion}。"
+    if item.get("error"):
+        text += f"\n错误记录：{_clip_head(str(item['error']), 160)}"
+    text += _acceptance_lines(item)
+    text += f"\n下一步：{next_step}"
+    return text + "\n详细结果与依据在 Desktop 助理的「动态」里。"
 
 
 def goal_message(item: Dict[str, Any]) -> str:
     link = item.get("goal_link") or {}
     text = (f"🎯 「{item.get('title')}」是为目标「{_clip_head(str(link.get('objective') or ''), 80)}」做的，"
             f"对应验收标准：{_clip_head(str(link.get('criterion') or ''), 120)}")
-    outcome = item.get("outcome") if isinstance(item.get("outcome"), dict) else {}
-    rows = outcome.get("criteria") if outcome.get("kind") == "acceptance" else None
+    rows = _acceptance_rows(item)
     if rows:
         text += f"\n（助理对照任务验收标准：{sum(row.get('verdict') == 'met' for row in rows)}/{len(rows)} 条对上）"
     return text + "\n做完了算不算达成这一条？点「批准」记为通过（等于你亲自确认），「拒绝」先不算。"
@@ -212,17 +219,31 @@ def goal_message(item: Dict[str, Any]) -> str:
 _MARKS = {"met": "✓", "unmet": "✗", "unknown": "?"}
 
 
+def _acceptance_rows(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """按当前原始标准重验已有对照；只解析数据，不调用模型。"""
+    from src.scheduling.dispatch_review import parse_outcome
+
+    outcome = assistant_dispatch.current_outcome(item)
+    if outcome.get("kind") != "acceptance":
+        return []
+    # 旧记录也要按当前原始标准重新校验，不信任额外标准、重复行或无依据的 met。
+    checked = parse_outcome(json.dumps(outcome, ensure_ascii=False), item)
+    return checked["criteria"] if checked else []
+
+
 def _acceptance_lines(item: Dict[str, Any]) -> str:
-    """做完时助理对照验收标准的复盘：逐条标对上 / 没对上 / 看不出。没写验收标准或没复盘就不写。"""
-    outcome = item.get("outcome") if isinstance(item.get("outcome"), dict) else {}
-    rows = outcome.get("criteria") if outcome.get("kind") == "acceptance" else None
+    """先显示未对上与待核实项；有界展示不改变原标准顺序和完整台账。"""
+    rows = _acceptance_rows(item)
     if not rows:
-        return ""
+        return "\n验收对照：尚未取得有效复盘，需核对原始标准。" if item.get("criteria") else ""
     met = sum(row.get("verdict") == "met" for row in rows)
     lines = [f"\n验收对照（助理看输出判断，不代表人工验收）：{met}/{len(rows)} 条对上"]
-    for row in rows[:6]:
+    ordered = [row for row in rows if row.get("verdict") != "met"] + [row for row in rows if row.get("verdict") == "met"]
+    for row in ordered[:3]:
         evidence = f"——{_clip_head(str(row.get('evidence') or ''), 80)}" if row.get("evidence") else ""
         lines.append(f"{_MARKS.get(str(row.get('verdict')), '?')} {_clip_head(str(row.get('text') or ''), 80)}{evidence}")
+    if len(rows) > 3:
+        lines.append(f"另有 {len(rows) - 3} 条标准，完整对照见「动态」。")
     return "\n".join(lines)
 
 
@@ -376,6 +397,24 @@ def news_section(now: datetime) -> str:
         return ""
 
 
+def owner_changes_today(root: str, now: datetime) -> str:
+    """晚报的「今天我替你做了什么」：助理按 OWN_DATA 免确认做的改动（ADR-011）。
+
+    免确认的前提就是事后看得见、撤得掉，所以每一条都列出来，已撤销的照实标出。确定性文字，不进模型上下文。"""
+    from src.agents import undo_log
+    moment = now if now.tzinfo else now.astimezone()
+    start = moment.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+    try:
+        ops = undo_log.recent(root, limit=30, since=start)
+    except OSError:
+        return "🧾 今天替你做的改动暂时读不到，请在 Desktop 目标页核对。"
+    if not ops:
+        return ""
+    marks = {"undone": "（已撤销）", "failed": "（撤销没成功，请核对）", "undoing": "（正在撤销）"}
+    lines = [f"· {op['summary']}{marks.get(op.get('status'), '')}" for op in ops]
+    return "🧾 今天我替你做了什么（Desktop 目标页可逐条撤销）：\n" + "\n".join(lines)
+
+
 async def compose_report(root: str, now: datetime, label: str, *, llm: Any = None) -> str:
     """早报 / 晚报正文；早报末尾附上运维摘要（有运维心跳时）和新闻。
 
@@ -398,6 +437,9 @@ async def compose_report(root: str, now: datetime, label: str, *, llm: Any = Non
         codex_day = day_summary(root, now)
         if codex_day:
             body = f"{body or '🗒 晚报'}\n\n{codex_day}"
+        changes = owner_changes_today(root, now)
+        if changes:
+            body = f"{body or '🗒 晚报'}\n\n{changes}"
     if not body or label != "早报":
         return body
     from src.scheduling.ops_heartbeats import brief_line
@@ -592,6 +634,9 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
                 # 结束了先复盘：做完对照验收标准，失败诊断原因、值得再试就起草下一次（下发仍要你批）
                 from src.scheduling.dispatch_review import follow_up
                 item = await follow_up(root, item, review)
+                status = str(item.get("status") or "")
+                if seen.get(item["id"]) == status:
+                    continue
             # 等确认的任务单带「批准 / 拒绝」按钮（读过外部内容的不带，只能在 Desktop 确认）
             confirm_id = item["id"] if status == "proposed" and not item.get("tainted") else ""
             if status == "done" and dispatch_pr_ready(item):

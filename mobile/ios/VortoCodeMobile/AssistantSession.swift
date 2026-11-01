@@ -27,6 +27,13 @@ final class AssistantSession {
     }
     var credential: NativeCredential?
     var reading = MobileReadState()
+    /// 上次成功连上家里助手的时间（按入口地址存一个时间戳，不含任何内容）与这次刷新是否失败
+    private(set) var lastContact: Date?
+    private(set) var lastAttemptFailed = false
+    var contact: ContactStatus {
+        ContactStatus.evaluate(lastContact: lastContact, lastAttemptFailed: lastAttemptFailed, checking: phase == .reading)
+    }
+    private static func contactKey(_ entry: AssistantEntry) -> String { "vortocode.mobile.last-contact." + entry.displayAddress }
     private(set) var phase = Phase.idle
     var busy: Bool { phase != .idle }
     var note = ""
@@ -48,6 +55,9 @@ final class AssistantSession {
     }
     func restore(_ entry: AssistantEntry) {
         stop(); credential = nil; reading = MobileReadState(); note = ""
+        let saved = UserDefaults.standard.double(forKey: Self.contactKey(entry))
+        lastContact = saved > 0 ? Date(timeIntervalSince1970: saved) : nil
+        lastAttemptFailed = false
         do {
             if let saved = try services.load(), saved.origin == entry.displayAddress {
                 try saved.credential.validate()
@@ -90,11 +100,15 @@ final class AssistantSession {
                 let value = try await services.read(entry, credential)
                 guard owner == generation, !Task.isCancelled else { return }
                 try reading.accept(value, instance: credential.instanceId)
+                lastContact = Date(); lastAttemptFailed = false
+                UserDefaults.standard.set(lastContact!.timeIntervalSince1970, forKey: Self.contactKey(entry))
                 phase = .idle
             } catch {
                 guard owner == generation else { return }
                 phase = .idle
                 reading.markHistorical()
+                // 授权失效不算「家里的助手连不上」：那是登录问题，下面另有提示
+                if error as? MobileError != .unauthorized, !Task.isCancelled { lastAttemptFailed = true }
                 if error as? MobileError == .unauthorized {
                     self.credential = nil; reading = MobileReadState()
                     do { try services.clear() }

@@ -91,17 +91,23 @@ async def exchange(request: Request, body: Exchange):
         return failure(error)
 
 
+def native_session(request: Request):
+    """原生 App 的会话（Bearer），与读写路由共用；不回退到管理员令牌或 Cookie。"""
+    sessions = manager(request)
+    auth = request.headers.get("authorization", "")
+    session = sessions.find_native(auth[7:] if auth.startswith("Bearer ") else "")
+    if session.config.root != os.getcwd():
+        raise BrowserDenied()
+    # Captured origin permits logout even after an owner unbind.
+    from src.web.routers.mobile_browser import guard_origin
+
+    guard_origin(request, session.config)
+    return sessions, session
+
+
 async def native_read(request: Request, *, snapshot=False, logout=False):
     try:
-        sessions = manager(request)
-        auth = request.headers.get("authorization", "")
-        session = sessions.find_native(auth[7:] if auth.startswith("Bearer ") else "")
-        if session.config.root != os.getcwd():
-            raise BrowserDenied()
-        # Captured origin permits logout even after an owner unbind.
-        from src.web.routers.mobile_browser import guard_origin
-
-        guard_origin(request, session.config)
+        sessions, session = native_session(request)
         if logout:
             await sessions.logout(session)
             return JSONResponse({"ok": True}, headers=_PRIVATE)
@@ -114,7 +120,8 @@ async def native_read(request: Request, *, snapshot=False, logout=False):
                 "schema_version": 1,
                 "instance_id": grant["instance_id"],
                 "device": grant["device"],
-                "capabilities": {"reads": ["profile", "main_chat", "goals"], "writes": []},
+                "capabilities": {"reads": ["profile", "main_chat", "goals"],
+                                 "writes": native_writes(current.root, grant["device"]["id"])},
             }
         )
         sessions._check(session)
@@ -128,6 +135,16 @@ async def native_read(request: Request, *, snapshot=False, logout=False):
         ValueError,
     ) as error:
         return failure(error)
+
+
+def native_writes(root: str, device_id: str) -> list[str]:
+    """这台设备此刻能做的写入：要服务端开启手机写入，并且设备已绑定签名钥匙。"""
+    from src.web.routers.mobile_owner import writes_enabled
+    from src.gateway.mobile_devices import MobileDevices
+
+    if not writes_enabled() or not MobileDevices(root).signing_key(device_id, "device"):
+        return []
+    return ["capture", "decide", "undo"]
 
 
 @router.get("/api/mobile/native/bootstrap")

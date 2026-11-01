@@ -36,6 +36,8 @@ class ChannelEvent:
     files: list = field(default_factory=list)    # 随消息带来的**文件**本地路径
     unsupported: str = ""         # 通道认出了附件但取不到（下载失败/类型不支持）→ 如实告知用户，
                                   # 绝不静默丢弃（"发过去石沉大海"是最差的体验，2026-07-26 的老毛病）
+    source_event_id: str = ""      # Native message identity, not an internal binding/generation.
+    source_conversation_id: str = ""
 
 
 class ChannelAdapter:
@@ -44,6 +46,10 @@ class ChannelAdapter:
     # 通道是否支持"编辑已发消息"（Telegram 支持 → 进度原地滚动；钉钉不支持 → 进度只能发新消息，
     # bridge 据此放慢进度节流、收尾不再多刷一条）。
     edits_supported: bool = True
+
+    def conversation_identity(self) -> str:
+        """Stable provider account ID, never a credential; empty for legacy adapters."""
+        return ""
 
     # ------------------------------------------------------------ 活性（谁都别自己发明一套）
     #

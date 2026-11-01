@@ -87,3 +87,56 @@ snapshot 的 `sources` 分别报告来源：
 2026-10-26：同仓库建立 iOS 17+ 原生连接工程和无外部依赖的 MobileCore 地址合同包；Debug/Release 模拟器编译通过。系统浏览承接现有 Web，不复制账号或任务状态。当前产物仅为模拟器 App，真机签名、安装与实际登录仍需分别验收。详见 [iPhone 说明](../mobile/ios/README.md)。
 
 0.2.0：iOS 已改为原生系统认证、设备 Keychain、原生概览/目标/设置与 Swift API；`/api/mobile/native/*` 只接受独立受限会话，复用原浏览器会话管理器、归属与原读取投影。Web 与高级配对各自保留。App 的系统登录/目标详情/杀进程恢复/退出已用临时账号在模拟器实际通过。
+
+## 主人终端写入（2026-11，ADR-011 / ADR-009 修订）
+
+手机 App 从只读伴侣变成主人终端之一。写入只开给原生 App（`/api/mobile/native/*`），都是确定性的文件操作，
+手机网关进程里仍然没有 Agent、调度和 IM。
+
+**默认关闭**：服务端设置 `VORTOCODE_MOBILE_WRITES=1` 才开放。ADR-009 修订要求先完成 WireGuard 直连
+（手机网关只在 WireGuard 网段监听，不开放公网 HTTP 端口）再开启；部署代码不等于开放写入。
+`bootstrap` 的 `capabilities.writes` 只有在开启且这台设备已绑定钥匙时才列出 `capture`、`decide`、`undo`。
+
+| 方法与路径 | 身份 | 效果 |
+| --- | --- | --- |
+| `POST /api/mobile/native/keys` | 原生会话 | 绑定日常钥匙与批准钥匙（P-256 公钥）。同一会话的设备只能绑一次；重新登录得到新设备授权后再绑 |
+| `GET /api/mobile/native/decisions` | 原生会话 | 等你批准的 Codex 动作，每条带 `action_digest` |
+| `POST /api/mobile/native/decide` | 会话 + 签名 | `{action_id, approve, action_digest}`；批准只认批准钥匙，摘要必须与此刻的动作一致；拒绝用日常钥匙 |
+| `POST /api/mobile/native/capture` | 会话 + 日常钥匙签名 | `{request_id, text}`：记成一个个人目标（来源为主人），可撤销；同一 `request_id` 重试只建一次 |
+| `GET /api/mobile/native/changes` | 原生会话 | 「我替你做了什么」：最近 20 条可撤销的改动 |
+| `POST /api/mobile/native/undo` | 会话 + 日常钥匙签名 | `{op_id}`：撤销一条改动，撤不回的下游影响在 `not_recallable` 里 |
+
+**钥匙**：两把都在 Secure Enclave 里生成，私钥不出设备。批准钥匙创建时要求生物识别
+（`kSecAccessControlBiometryCurrentSet`），所以「批准必须过 Face ID」由密码学保证，服务端只认这把钥匙签的批准。
+公钥格式为 `SecKeyCopyExternalRepresentation` 的输出（65 字节未压缩点）的 base64。
+
+**签名**：每个写请求带三个头：`X-VC-Timestamp`（Unix 秒）、`X-VC-Nonce`（16–64 位 `[A-Za-z0-9_-]`）和
+`X-VC-Signature`（`.ecdsaSignatureMessageX962SHA256` 的 DER 签名，base64）。被签名的内容是下面七行用 `\n` 连接：
+
+```text
+vortocode-mobile-v1
+<METHOD 大写>
+<路径，如 /api/mobile/native/capture>
+<请求体字节的 SHA-256 十六进制>
+<X-VC-Timestamp>
+<X-VC-Nonce>
+<bootstrap 返回的 device.id>
+```
+
+时间偏差超过 300 秒、同一设备的 nonce 在 15 分钟内重复、签名验不过、用错钥匙，一律 401，不说明是哪一项。
+`action_digest` 是动作的 `id/kind/thread_id/thread_cwd/turn_id/text` 按键排序后 JSON 的 SHA-256，
+App 应在批准卡上展示同样的对象和正文，签的就是用户看到的那一条。
+
+### 推送（APNs，正文端到端加密）
+
+`POST /api/mobile/native/push`（日常钥匙签名）登记 `{apns_token, push_key, environment}`：APNs 设备令牌、
+Secure Enclave 里第三把专用于解密推送的 P-256 公钥、`production` 或 `sandbox`。App 每次启动都重新登记；
+30 天没登记或设备被撤销就不再推。推送目标不按 5 分钟的读取租约筛——App 在后台时租约本来就会过期。
+
+推送正文不明文交给苹果：`aps.alert.body` 固定为占位文字，`aps.mutable-content = 1`，真正的正文在自定义字段
+`enc` 里，格式与 `SecKeyCreateDecryptedData(key, .eciesEncryptionStandardX963SHA256AESGCM, data)` 一致
+（临时公钥 65 字节 ‖ 密文 ‖ 16 字节标签）。App 的 Notification Service Extension 解密后替换正文；解不开就保留占位文字。
+
+服务端在现有通知投递器里与 IM **双发**：两路互不影响，App 这一路不进 IM 的受理 / 补发记账。APNs 返回
+410 或 `BadDeviceToken` / `Unregistered` 时清掉这台设备的登记。安静时段攒下的汇总目前只走 IM。
+配置见 [环境变量](ENVIRONMENT.md) 的 `VORTOCODE_APNS_*`。

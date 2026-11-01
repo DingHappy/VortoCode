@@ -49,7 +49,7 @@ def scheduling_scope_error() -> str:
 
 @asynccontextmanager
 async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
-                           make_run_manager, make_terminal_manager, register_im_worker):
+                           make_run_manager, make_terminal_manager, register_im_worker, session_actors=None):
     """Recover before serving; startup failures release all owned resources."""
     lease = ProcessLease(Path(root) / ".vortocode" / "runtime.lock")
     import asyncio
@@ -59,9 +59,11 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
     stop_event = asyncio.Event()
     im_task = None
     im_adapter = None
+    im_host = None
     run_manager = None
     terminal_manager = None
     receipt_started = False
+    execution_identity = None
     try:
         ledger = getattr(runner, "ledger", None)
         if ledger is not None and Path(ledger.repo_root).resolve() != Path(root).resolve():
@@ -70,6 +72,8 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         owned = True
         from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(str(root))
+        from src.gateway.account_registration import AccountRegistration
+        instance_id = AccountRegistration(str(root)).ensure_instance()
         # 监护进程看门狗：Desktop 被强杀/崩溃时不留下孤儿 runtime（只在申报了监护 pid 时启动）。
         from src.gateway.supervisor_watchdog import start_watchdog
         watchdog_task = start_watchdog()
@@ -95,7 +99,10 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
             print(f"  ↻ 恢复 {len(recovered_runs)} 个中断的 Desktop 运行记录")
         terminal_manager = make_terminal_manager()
         im_channel = os.getenv("VORTOCODE_IM", "").strip().lower()
-        if im_channel:
+        if os.getenv("VORTOCODE_IM_BINDINGS_FILE", "").strip():
+            from src.gateway.im_host import start_host
+            im_host = await start_host(root, runner=runner, register_worker=register_im_worker, actors=session_actors)
+        elif im_channel:
             from src.gateway import im_service
             bridge, im_adapter = im_service.start_embedded(
                 im_channel, root, runner=runner, register_worker=register_im_worker)
@@ -103,18 +110,30 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         from src.gateway.configuration_receipt import begin_configuration_receipt
         begin_configuration_receipt()
         receipt_started = True
+        from src.gateway.execution_identity import begin_execution_identity
+        execution_identity = begin_execution_identity(root, instance_id)
         yield
     finally:
+        if execution_identity is not None:
+            from src.gateway.execution_identity import end_execution_identity
+            end_execution_identity(root, execution_identity)
         from src.gateway.configuration_receipt import end_configuration_receipt
         if receipt_started:
             end_configuration_receipt()
         # Every cleanup runs even if another manager raises during shutdown.
         async with AsyncExitStack() as cleanup:
             cleanup.callback(lease.release)
+            if owned:
+                from src.agents.tools.website_browser import shutdown_browsers
+                cleanup.push_async_callback(shutdown_browsers)
+                from src.agents.tools.android import shutdown_android_sessions
+                cleanup.push_async_callback(shutdown_android_sessions)
             if terminal_manager is not None:
                 cleanup.callback(terminal_manager.shutdown)
             if run_manager is not None:
                 cleanup.push_async_callback(run_manager.shutdown)
+            if im_host is not None:
+                cleanup.push_async_callback(im_host.close)
             if im_adapter is not None:
                 cleanup.push_async_callback(im_adapter.close)
             if im_task is not None:

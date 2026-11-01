@@ -95,6 +95,34 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(session.note, MobileError.unavailable.localizedDescription)
     }
 
+    func testContactStatusRemembersLastSuccessAndFlagsAFailedRefresh() async throws {
+        UserDefaults.standard.removeObject(forKey: "vortocode.mobile.last-contact." + entry.displayAddress)
+        let h = Harness()
+        h.saved = SavedSession(origin: entry.displayAddress, credential: try makeCredential())
+        let session = AssistantSession(services: h.services)
+        session.restore(entry); try await ready(session)
+        XCTAssertEqual(session.contact, .connected)
+        let reached = try XCTUnwrap(session.lastContact)
+        h.readError = .unavailable
+        await session.refreshAndWait(entry)
+        XCTAssertEqual(session.contact, .unreachable(since: reached))          // 连不上时说清上次连上是什么时候
+        let reopened = AssistantSession(services: h.services)
+        h.readError = nil
+        reopened.restore(entry)                                                // 重开 App：先拿到存下的时间
+        XCTAssertEqual(reopened.lastContact?.timeIntervalSince1970 ?? 0, reached.timeIntervalSince1970, accuracy: 0.001)
+        UserDefaults.standard.removeObject(forKey: "vortocode.mobile.last-contact." + entry.displayAddress)
+    }
+
+    func testExpiredLoginIsNotReportedAsTheAssistantBeingDown() async throws {
+        let h = Harness()
+        h.saved = SavedSession(origin: entry.displayAddress, credential: try makeCredential())
+        let session = AssistantSession(services: h.services)
+        session.restore(entry); try await ready(session)
+        h.readError = .unauthorized
+        await session.refreshAndWait(entry)
+        XCTAssertFalse(session.contact.isProblem)
+    }
+
     func testExpiredAndWrongOriginSavedSessionsNeverRead() async throws {
         let h = Harness()
         h.saved = SavedSession(origin: other.displayAddress, credential: try makeCredential())

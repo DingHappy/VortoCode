@@ -192,6 +192,6 @@ VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800      # 单次运行秒数，超时终止�
 - `vc doctor` 的 `workers` 一项会检查配置的执行者：命令有没有找到、有没有登录（`codex login status` / `claude auth status`），以及实际使用的模型和服务。
 - 子进程环境沿用 `sandbox/policy.child_env()` 的密钥剥离，并额外去掉 `GITHUB_TOKEN`、`GH_TOKEN`：push 和开 PR 只由 VortoCode 通过确认门完成。
 - 无人值守档位（cron/heartbeat）拒绝启动外部执行者。事件流里出现联网动作时，本回合会被标为污点。
-- **执行者不可用时自动切换**：没装、没登录或鉴权失败、订阅额度/限流（含 Claude 事件流里被拒绝的 `rate_limit_event`）时，当前块改由内置子 Agent 在同一个 worktree 里接手，并让该执行者冷却 `VORTOCODE_EXTERNAL_WORKER_COOLDOWN_MIN` 分钟（默认 30，`0` = 不冷却），冷却期内后面的块直接用内置子 Agent。进度里会写明切换原因。
-- 其他失败（超时、非零退出、事件报错等）不切换，按「通道故障」上报，沿用原有的重试和播报。外部执行者的执行过程（命令、改动的文件）会出现在 dev 进度里。
+- **确认未启动才自动接手**：未找到 CLI 等确认进程尚未启动的不可用情况，才可由已授权的内置 Agent 在同一 worktree 接手，并设置 `VORTOCODE_EXTERNAL_WORKER_COOLDOWN_MIN` 冷却（默认 30，`0` = 不冷却）。备用工厂不能再返回外部 CLI 适配器。进度会说明接手原因。
+- 已启动的 CLI 遇限流、登录/鉴权失败、非零退出等，不能只凭错误文本认定没有副作用：标为需人工核对，不自动切换，也停止当前开发/对应审查视角的自动重试。隔离工作区保留供核对，不自动覆盖同一工作区 ID。原执行报告和已确认的问题保留，执行者也不进入自动改用内置 Agent 的冷却路径。详细合同见[执行恢复](EXECUTION_RECOVERY.md)。
 - 开发任务里的实现执行者可以提问：缺少必要事实时，它会在最后一条回复里输出一行 `VORTO_QUESTION {"question": …, "options": […], "context": …}`，VortoCode 识别后调用同一个 `ask_task_question`，问题进入任务台账、推送给你、任务进入等待。回答之后，和内部子 Agent 一样在干净的 worktree 里带着问答上下文重做当前块，不续用外部 CLI 的会话。只有存在提问通道时（有所属会话的开发任务、未超过提问次数），才会把这条约定告诉执行者；没有通道时输出了这一行，按失败处理，不会当成结论。审查执行者不能提问。

@@ -212,11 +212,16 @@ async def test_assistant_can_read_current_goal_without_frozen_context_or_executi
     goal = goals.create(contract())
     agent = build_session(str(tmp_path), kind=kind, workspace_scope="general")
     tool = agent.tools["personal_goals"]
-    assert tool.read_only and tool.untrusted_source
+    # ADR-011：不再一律当外部来源——只有读到 external 字段才给回合打污点（见 test_personal_goal_writes）
+    assert tool.read_only and not tool.untrusted_source
     assert goal["objective"] not in agent._system("plan")
     taint.reset_taint()
     [(_, output)] = await agent._run_tools([("personal_goals", {})], "plan", lambda text: None)
-    assert goal["objective"] in output and taint.is_tainted()
+    assert goal["objective"] in output and not taint.is_tainted()      # 主人自己在目标卡上写的
+    goals.create(contract(request_id="from-mail", objective="照邮件要求付款"), origin="external")
+    taint.reset_taint()
+    await agent._run_tools([("personal_goals", {})], "plan", lambda text: None)
+    assert taint.is_tainted()
     goals.update(goal["id"], {"revision": 1, "next_action": "询问同行人"})
     output = await tool.handler({"goal_id": goal["id"]})
     assert "询问同行人" in output and "确认日期" in output

@@ -14,6 +14,19 @@ class ToolTurnYield(Exception):
     """A trusted tool durably suspended work; return control to its caller."""
 
 
+@dataclass(frozen=True)
+class ToolResource:
+    """Trusted, display-only local observation; never invokes a tool or connects.
+
+    Shared by tools from one adapter. The existing tool namespace owns discovery;
+    this is not an execution API, credential store or independent registry.
+    """
+    id: str
+    kind: str
+    title: str
+    observe: Callable[[], dict]
+
+
 @dataclass
 class Tool:
     """A trusted callable and its policy metadata, independent of an agent core."""
@@ -31,6 +44,7 @@ class Tool:
     yields_turn: bool = False  # Execute sequentially; later tools must not run after a suspension.
     input_schema: dict | None = None  # Full external JSON Schema; native/provided tools retain types and required fields.
     serial: bool = False  # Read-only tools that may ask for approval must not race confirmation cards.
+    resource: ToolResource | None = None
 
 
 def tool_definitions(tools: Iterable[Tool]) -> list[dict]:

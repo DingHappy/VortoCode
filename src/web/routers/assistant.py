@@ -28,6 +28,47 @@ def _skill_error(error):
     return HTTPException(400, "个人技能无法处理，请检查格式、长度、版本和存储权限")
 
 
+def _skill_learning():
+    from src.workflow.workbench.skill_learning import SkillLearning
+    return SkillLearning(_personal_skills())
+
+
+@router.get("/api/assistant/skill-proposals")
+async def skill_proposals_list():
+    learning = _skill_learning()
+    try:
+        return learning.list()
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
+@router.get("/api/assistant/skills/{skill_id}/proposal")
+async def skill_proposal_preview(skill_id: str):
+    learning = _skill_learning()
+    try:
+        return learning.preview(skill_id)
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
+@router.put("/api/assistant/skills/{skill_id}/proposal")
+async def skill_proposal_save(skill_id: str, body: dict):
+    learning = _skill_learning()
+    try:
+        return learning.propose(skill_id, body)
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
+@router.post("/api/assistant/skills/{skill_id}/proposal")
+async def skill_proposal_decide(skill_id: str, body: dict):
+    learning = _skill_learning()
+    try:
+        return learning.decide(skill_id, body)
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
 @router.get("/api/assistant/skills")
 async def personal_skills_list():
     skills = _personal_skills()

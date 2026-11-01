@@ -56,10 +56,11 @@ async def runtime_lifespan():
     from src.web.task_dispatch import get_dispatch_service
     from src.web.routers.runs import get_run_manager
     from src.web.routers.terminals import get_terminal_manager
+    from src.web.routers.realtime import session_actors
     async with host(os.getcwd(), runner=get_runner(), scheduler=scheduler_loop,
                     audit_dependencies=lambda: get_dispatch_service().audit_dependencies(),
                     make_run_manager=get_run_manager, make_terminal_manager=get_terminal_manager,
-                    register_im_worker=register_im_worker):
+                    register_im_worker=register_im_worker, session_actors=session_actors()):
         from src.gateway.workspace_scope import GENERAL, current_workspace_scope
         from src.scheduling.assistant_watch import watch_enabled, watch_loop
         watch, stop = None, asyncio.Event()

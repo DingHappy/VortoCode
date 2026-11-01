@@ -24,6 +24,10 @@ UNATTENDED_PROFILE = "unattended"
 # 但不碰主项目代码、不外发。凭据维度与 external 同样严（碰不到主机进程/认证远端/敏感文件），
 # 单独命名是为了**审计能一眼看出这是谁的会话**——与 unattended 单独命名同一个理由。
 RESEARCHER_PROFILE = "researcher"
+# Private-project research has a tool boundary in addition to credential isolation.
+# The older researcher profile intentionally permits scripts and is not this policy.
+RESEARCH_READ_PROFILE = "research_read"
+RESEARCH_READ_TOOLS = frozenset({"read_file", "list_files", "grep"})
 
 _CREDENTIAL_CAPABILITIES = frozenset(
     {HOST_PROCESS, AUTHENTICATED_OUTBOUND, SENSITIVE_FILES}
@@ -44,6 +48,7 @@ _PROFILE_CAPABILITIES = {
     # reach host credentials or secret-bearing files: same capability set as
     # external, named separately so audit trails identify whose session it was.
     RESEARCHER_PROFILE: frozenset({EXTERNAL_CONTENT}),
+    RESEARCH_READ_PROFILE: frozenset({EXTERNAL_CONTENT}),
 }
 
 _SAFE_ENV_TEMPLATES = {
@@ -164,8 +169,14 @@ class SessionCapabilities:
         required: Iterable[str] = (),
         *,
         external_content: bool = False,
+        read_only: bool = True,
+        outward: bool = False,
     ) -> str | None:
         """Return a stable denial reason, or ``None`` when the call is allowed."""
+        if self.profile == RESEARCH_READ_PROFILE and (
+            tool_name not in RESEARCH_READ_TOOLS or not read_only or outward
+        ):
+            return "只读研究策略仅允许项目内 read_file/list_files/grep；不能升级、出网、执行或派活"
         needed = set(required or ())
         sensitive = _sensitive_arg(tool_name, args, self.repo_root)
         if sensitive:
@@ -188,7 +199,9 @@ class SessionCapabilities:
 
     def system_notice(self) -> str:
         caps = ", ".join(sorted(self.allowed)) or "none"
-        if self.profile == LOCAL_PROFILE:
+        if self.profile == RESEARCH_READ_PROFILE:
+            rule = "仅允许项目内文件读取与检索；无写入、命令、联网、凭据、MCP 或委派权限。"
+        elif self.profile == LOCAL_PROFILE:
             rule = "可使用本机凭据能力，但禁止 Web/MCP 外部内容；外部调研请新建 external 会话。"
         else:
             rule = "可读取外部内容，但禁止宿主进程、认证远端和敏感文件能力。"

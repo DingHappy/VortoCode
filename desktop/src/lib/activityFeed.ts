@@ -12,6 +12,10 @@ export type FeedKind = "web" | "command" | "code" | "chat" | "task";
 
 export interface FeedItem {
   id: string;
+  /** Display classification from the source adapter, never an acceptance or authorization signal. */
+  presentation?: "result" | "history";
+  /** Current source cannot verify the retained state; keep visible independently of old task status. */
+  requiresAttention?: boolean;
   kind?: FeedKind;
   /** 对话回合标识；普通与手机只读对话均可定位原消息。 */
   rid?: string;
@@ -68,7 +72,7 @@ export function feedStatus(task: TaskItem): FeedStatus {
   if (openQuestion(task) || task.collaboration?.review === "pending") return "waiting";
   if (task.status === "queued" || task.status === "running") return "running";
   if (task.status === "done") return "done";
-  if (task.status === "paused" || task.status === "interrupted") return "stopped";
+  if (task.status === "paused" || task.status === "interrupted" || task.status === "cancelled") return "stopped";
   return "failed";
 }
 
@@ -79,18 +83,19 @@ export function taskFeedItem(task: TaskItem): FeedItem {
     : status === "waiting" ? "已交付，等你验收"
     : status === "running" ? firstSentence(task.log?.[task.log.length - 1], MAX_SUMMARY) || "正在执行"
     : status === "done" ? firstSentence(task.result, MAX_SUMMARY) || "执行结束，请查看结果"
-    : status === "stopped" ? (task.status === "paused" ? "已暂停，可以继续" : "意外中断，可以恢复")
+    : status === "stopped" ? (task.status === "cancelled" ? "已取消" : task.status === "paused" ? "已暂停，可以继续" : "意外中断，可以恢复")
     : firstSentence(task.error, MAX_SUMMARY) || (task.status === "cancelled" ? "已取消" : "执行失败");
   return {
     id: `task:${task.id}`,
     kind: "task",
     taskId: task.id,
+    presentation: task.status === "cancelled" ? "history" : undefined,
     title: firstSentence(task.prompt, MAX_TITLE) || "未命名任务",
     summary,
     detail: task.result || task.error || summary,
     status,
     sourceLabel: "后台任务",
-    statusLabel: status === "done" ? "执行结束" : status === "running" && task.status === "queued" ? "排队中" : undefined,
+    statusLabel: task.status === "cancelled" && status === "stopped" ? "已取消" : status === "done" ? "执行结束" : status === "running" && task.status === "queued" ? "排队中" : undefined,
     at: task.updated_at || task.created_at || "",
     session: task.owner_session || undefined,
   };
@@ -183,6 +188,7 @@ export function dispatchFeedItem(item: AssistantDispatch): FeedItem | null {
     id: `dispatch:${item.id}`,
     kind: "code",
     dispatchId: item.id,
+    requiresAttention: item.sync_state === "unreachable",
     title: item.title,
     summary,
     status: DISPATCH_STATUS[item.status] ?? "running",
@@ -217,6 +223,7 @@ export function codexActionFeedItem(action: CodexAction): FeedItem | null {
       : action.status === "sent" ? "请求已受理" : action.status === "expired" ? "已过时"
       : outcome === "failed" ? "没发出去" : "状态待核对",
     sourceLabel: "Codex 动作", at: action.updated_at || action.created_at,
+    presentation: action.status === "sent" || action.status === "expired" ? "history" : undefined,
   };
 }
 
@@ -251,7 +258,7 @@ export function noticeFeedItem(notice: NoticeItem): FeedItem | null {
       id, kind: "task", title: `⏰ ${name}`,
       summary: firstSentence(lines.slice(1).join("\n") || lines[0], MAX_SUMMARY) || (failed ? "没有跑成" : "跑完了"),
       status: failed ? "failed" : "done", at: notice.ts,
-      sourceLabel: "定时任务", statusLabel: failed ? "执行失败" : "执行结束", detail: text,
+      sourceLabel: "定时任务", statusLabel: failed ? "执行失败" : "执行结束", detail: text, presentation: "result",
     };
   }
   // 家里其它机器的运维报到（🔴 报失败 / 🔺 超时没报到 / ✅ 已恢复）和自动修复的结果：原来只推手机，动态里看不到
@@ -266,13 +273,14 @@ export function noticeFeedItem(notice: NoticeItem): FeedItem | null {
       status: failed ? "failed" : "done", sourceLabel: ops ? "运维报到" : "自动修复",
       statusLabel: failed ? (text.startsWith("🔺") ? "没报到" : ops ? "报失败" : "未成功") : recovered ? (ops ? "已恢复" : "已修复") : "消息",
       detail: text,
+      presentation: recovered ? "result" : "history",
     };
   }
   if (source === "assistant" && text.startsWith("🗒")) {
     return {
       id, kind: "chat", title: firstSentence(lines[0], MAX_TITLE),
       summary: firstSentence(lines.slice(1).join("\n"), MAX_SUMMARY) || "已发到手机", status: "done", at: notice.ts,
-      sourceLabel: "助理简报", statusLabel: "简报已生成", detail: text,
+      sourceLabel: "助理简报", statusLabel: "简报已生成", detail: text, presentation: "result",
     };
   }
   return null;

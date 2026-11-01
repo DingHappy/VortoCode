@@ -197,20 +197,11 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
     if retry_note:
         goal = goal + "\n\n这次换个做法：" + retry_note
     attempt = 1
-    if retry_of:
-        previous = next((item for item in _load(root) if item.get("id") == retry_of), None)
-        if previous is None:
-            raise DispatchError(f"没有任务单 {retry_of}")
-        if previous.get("status") not in {"failed", "stopped", "send_failed"}:
-            raise DispatchError("只能接着失败或没做完的任务单重派")
-        attempt = int(previous.get("attempt") or 1) + 1
-        if attempt > MAX_ATTEMPTS:
-            raise DispatchError(f"这件事已经试了 {MAX_ATTEMPTS} 次，再派多半还是失败：先跟用户商量换个做法或拆小")
-        goal = goal + "\n\n" + _retry_context(previous)
     goal = goal[:MAX_GOAL]
     entry = {
         "id": f"dsp-{uuid.uuid4().hex[:10]}",
         "project": target["name"],
+        "proposed_target": _target(target),
         "title": title,
         "goal": goal,
         "criteria": [str(item).strip()[:300] for item in (criteria or []) if str(item).strip()][:MAX_CRITERIA],
@@ -232,6 +223,27 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
     }
     with _transaction(root):
         items = _load(root)
+        if retry_of:
+            previous = next((item for item in items if item.get("id") == retry_of), None)
+            if previous is None:
+                raise DispatchError(f"没有任务单 {retry_of}")
+            if previous.get("status") not in {"failed", "stopped", "send_failed"}:
+                raise DispatchError("只能接着失败或没做完的任务单重派")
+            if previous.get("project") != target["name"]:
+                raise DispatchError("重试必须保留原任务单的项目")
+            child = previous.get("retry_dispatch_id") or next(
+                (item["id"] for item in items if item.get("retry_of") == retry_of), "")
+            if child:
+                raise DispatchError(f"这张任务单已有后续尝试 {child}，请核对该任务，不要从旧失败单重复派")
+            attempt = previous.get("attempt", 1)
+            if type(attempt) is not int or attempt < 1:
+                raise DispatchError("尝试次数记录无效，请先与用户核对")
+            if attempt >= MAX_ATTEMPTS:
+                raise DispatchError(f"这件事已经试了 {MAX_ATTEMPTS} 次，已达尝试上限：先跟用户商量换个做法或拆小")
+            entry["attempt"] = attempt + 1
+            entry["goal"] = (goal + "\n\n" + _retry_context(previous))[:MAX_GOAL]
+            # 与子单一起落盘，后续子单归档也不能从旧父单再分叉。
+            previous["retry_dispatch_id"] = entry["id"]
         if link and link.get("criterion_id") and not retry_of:
             busy = next((item for item in items if (item.get("goal_link") or {}).get("criterion_id") == link["criterion_id"]
                          and (item.get("goal_link") or {}).get("id") == link["id"]
@@ -306,6 +318,63 @@ def record_outcome(root: str, dispatch_id: str, outcome: Dict[str, Any]) -> Dict
     return _update(root, dispatch_id, lambda item: item.update(outcome={**outcome, "at": _now()}))
 
 
+def _review_source(item: Dict[str, Any]) -> str:
+    import hashlib
+    source = {key: item.get(key) for key in ("status", "project", "title", "goal", "brief", "criteria",
+                                           "result", "error", "branch", "goal_link", "tainted", "session",
+                                           "attempt", "remote_task_id", "request_id")}
+    evidence = item.get("delivery_evidence") or {}
+    source["verification"] = evidence.get("verification") if isinstance(evidence, dict) else None
+    if isinstance(evidence, dict) and ("head" in evidence or "verified_head" in evidence):
+        source["delivery_commit"] = [evidence.get("head"), evidence.get("verified_head")]
+    return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def current_outcome(item: Dict[str, Any]) -> Dict[str, Any]:
+    """只读复盘投影：认领后的判断必须仍对应当前材料；旧版未认领记录仍仅供参考。"""
+    outcome = item.get("outcome")
+    if not isinstance(outcome, dict):
+        return {}
+    claim = item.get("outcome_review")
+    if claim and (not isinstance(claim, dict) or claim.get("status") != "completed"
+                  or claim.get("source") != _review_source(item)):
+        return {}
+    return outcome
+
+
+def claim_dispatch_review(root: str, dispatch_id: str) -> tuple[Dict[str, Any], bool]:
+    """认领一次终态复盘；通知重试、并发巡检和进程恢复不能再次烧模型。"""
+    with _transaction(root):
+        items = _load(root)
+        item = next((value for value in items if value["id"] == dispatch_id), None)
+        if item is None:
+            raise DispatchError(f"没有这张任务单：{dispatch_id}")
+        if item.get("status") not in {"done", "failed"} or item.get("outcome") or item.get("outcome_review"):
+            return dict(item), False
+        item["outcome_review"] = {"id": uuid.uuid4().hex, "status": "running",
+                                  "source": _review_source(item), "at": _now()}
+        _save(root, items)
+        return dict(item), True
+
+
+def finish_dispatch_review(root: str, dispatch_id: str, review_id: str,
+                           outcome: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """只接收原认领的结果；状态/正文变化时不采用旧判断或起草下一次。"""
+    def finish(item: Dict[str, Any]) -> None:
+        claim = item.get("outcome_review") or {}
+        if claim.get("id") != review_id or claim.get("status") != "running":
+            raise DispatchError("复盘认领已变化，请核对当前任务")
+        if item.get("outcome") or claim.get("source") != _review_source(item):
+            claim["status"] = "superseded"
+        elif outcome:
+            claim["status"] = "completed"
+            item["outcome"] = {**outcome, "at": _now()}
+        else:
+            claim["status"] = "failed"
+        claim["finished_at"] = _now()
+    return _update(root, dispatch_id, finish)
+
+
 def list_dispatches(root: str) -> List[Dict[str, Any]]:
     """最新的在前。"""
     return list(reversed(_load(root)))
@@ -345,21 +414,65 @@ def _service_url(project: Dict[str, Any], path: str) -> str:
     return f"http://127.0.0.1:{int(project['port'])}{path}"
 
 
+def _target(project):
+    return {key: project[key] for key in ("port", "repo_root", "instance_id") if key in project}
+
+
+async def _identity_preflight(project, http):
+    """Read only public opaque identity before using the legacy admin credential."""
+    from src.gateway.execution_identity import validate_identity
+    response = await http("GET", _service_url(project, "/api/health/quick"))
+    identity = validate_identity(response.get("execution_identity"))
+    if identity["instance_id"] != project["instance_id"]:
+        raise DispatchError("项目运行端实例与宿主登记不符；未继续请求")
+    return identity
+
+
+def _with_identity(http, identity):
+    async def bound(method, url, payload=None):
+        return await http(method, url, payload, expected_identity=identity)
+    return bound
+
+
+async def _followup_http(entry, project, http):
+    if entry.get("submission_target") and entry["submission_target"] != _target(project):
+        raise DispatchError("原项目登记已变化，未发送后续操作")
+    if project.get("instance_id"):
+        identity = await _identity_preflight(project, http)
+        original = entry.get("submission_identity")
+        if not isinstance(original, dict) or original.get("instance_id") != identity["instance_id"]:
+            raise DispatchError("缺少原运行端实例依据，未发送后续操作")
+        return _with_identity(http, identity)
+    return http
+
+
 def _headers() -> Dict[str, str]:
     token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-async def _http(method: str, url: str, payload: Optional[dict] = None, *, seconds: float = 15) -> Dict[str, Any]:
+async def _http(method: str, url: str, payload: Optional[dict] = None, *, seconds: float = 15,
+                expected_identity=None) -> Dict[str, Any]:
     import aiohttp
 
     timeout = aiohttp.ClientTimeout(total=seconds)
+    from urllib.parse import urlsplit
+    public_identity = method == "GET" and urlsplit(url).path == "/api/health/quick"
+    headers = {} if public_identity else _headers()
+    if expected_identity is not None and not public_identity:
+        from src.gateway.execution_identity import validate_identity
+        headers["X-Vortocode-Execution-Identity"] = json.dumps(validate_identity(expected_identity), separators=(",", ":"))
     # trust_env=False：同机回环，不经代理
     async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as client:
-        async with client.request(method, url, json=payload, headers=_headers()) as response:
-            text = await response.text()
-            if response.status >= 400:
-                raise DispatchError(f"项目运行时返回 {response.status}：{text[:200]}")
+        async with client.request(method, url, json=payload, headers=headers, allow_redirects=False) as response:
+            if not 200 <= response.status < 300:
+                raise DispatchError(f"项目运行时返回 {response.status}；未跟随重定向或重试")
+            chunks = bytearray()
+            async for chunk in response.content.iter_chunked(16384):
+                chunks.extend(chunk)
+                if len(chunks) > 1024 * 1024:
+                    raise DispatchError("项目运行时响应超过容量")
+            text = chunks.decode("utf-8")
             try:
                 data = json.loads(text)
             except ValueError as error:
@@ -396,11 +509,21 @@ async def _send(root: str, dispatch_id: str, claim, http) -> Dict[str, Any]:
     attempted = bool(entry.get("submission_attempted"))
     try:
         project = _find_project(entry["project"])
-        target = {"port": project["port"], "repo_root": project["repo_root"]}
+        target = _target(project)
+        if entry.get("proposed_target") and entry["proposed_target"] != target:
+            raise DispatchError("任务提议之后项目登记已变化，请重新核对；未下发")
         if entry.get("submission_target") and entry["submission_target"] != target:
             raise DispatchError("任务单对应的项目登记已变化，请先核对原项目；未再次下发")
         if not entry.get("submission_target"):
             _update(root, dispatch_id, lambda item: item.update(submission_target=target))
+        identity = None
+        if project.get("instance_id"):
+            identity = await _identity_preflight(project, http)
+            if entry.get("submission_identity") and entry["submission_identity"] != identity:
+                raise DispatchError("原提交的启动代次已变化，请对账原请求；未重新提交")
+            if not entry.get("submission_identity"):
+                _update(root, dispatch_id, lambda item: item.update(submission_identity=identity))
+            http = _with_identity(http, identity)
         capability = await http("GET", _service_url(project, "/api/tasks"))
         if capability.get("submission_idempotency") != 1:
             raise DispatchError("项目运行时不支持幂等提交，请先升级；未再次下发")
@@ -408,11 +531,14 @@ async def _send(root: str, dispatch_id: str, claim, http) -> Dict[str, Any]:
         actual_root = scope.get("repo_root") if isinstance(scope, dict) else None
         if not isinstance(actual_root, str) or actual_root != str(Path(project["repo_root"]).resolve()):
             raise DispatchError("项目运行时目录未确认或与登记不匹配，请核对项目服务；未再次下发")
+        if identity is not None and (capability.get("execution_identity_version") != 1 or scope.get("execution_identity") != identity):
+            raise DispatchError("项目运行端未确认固定实例与启动代次；未下发")
         _update(root, dispatch_id, lambda item: item.update(submission_attempted=True, submission_runtime_root=actual_root))
         attempted = True
         created = await http("POST", _service_url(project, "/api/tasks"),
                              {"prompt": task_prompt(entry), "request_id": entry["request_id"],
                               "expected_repo_root": actual_root,
+                              **({"expected_execution_identity": identity} if identity is not None else {}),
                               **({"session": entry["remote_session"]} if entry.get("remote_session") else {})})
         task_id = str(created.get("id") or "")
         if task_id != entry["remote_task_id"]:
@@ -465,16 +591,19 @@ async def refresh(root: str, *, http=_http, dispatch_id: str | None = None) -> L
 async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool = False) -> None:
     try:
         project = _find_project(entry["project"])
-        if entry.get("submission_target") and entry["submission_target"] != {
-            "port": project["port"], "repo_root": project["repo_root"]
-        }:
+        if entry.get("submission_target") and entry["submission_target"] != _target(project):
             raise DispatchError("项目登记已变化，无法核实原任务；未读取其它项目")
+        identity = await _identity_preflight(project, http) if project.get("instance_id") else None
+        if identity is not None:
+            http = _with_identity(http, identity)
         task = await http("GET", _service_url(project, f"/api/tasks/{entry['remote_task_id']}"))
         scope = task.get("execution_scope")
         actual_root = scope.get("repo_root") if isinstance(scope, dict) else None
         if (task.get("id") != entry["remote_task_id"]
                 or actual_root != str(Path(project["repo_root"]).resolve())):
             raise DispatchError("项目运行时返回的任务身份或目录不匹配，无法核实原任务")
+        if identity is not None and scope.get("execution_identity") != identity:
+            raise DispatchError("任务返回的运行端执行身份不匹配，未采用状态")
         if task.get("status") not in _REMOTE_STATUS:
             raise DispatchError("项目未返回有效的任务状态")
     except Exception as error:  # noqa: BLE001 —— 项目运行时暂时不可达：下次再查
@@ -619,8 +748,9 @@ async def answer_question(root: str, dispatch_id: str, answer: str, *, http=None
     if not entry.get("remote_session"):
         raise DispatchError("这张任务单是旧方式下发的，只能在项目工作台里回答")
     project = _find_project(entry["project"])
+    send = await _followup_http(entry, project, http or _http)
     try:
-        await (http or _http)("POST", _service_url(project, f"/api/tasks/{entry['remote_task_id']}/answer"),
+        await send("POST", _service_url(project, f"/api/tasks/{entry['remote_task_id']}/answer"),
                               {"session": entry["remote_session"], "round": question.get("round"),
                                "question_id": question.get("id"), "answer": answer[:2000]})
     except DispatchError:
@@ -650,8 +780,9 @@ async def open_pr(root: str, dispatch_id: str, *, http=None) -> Dict[str, Any]:
     _check_pr_ready(entry)
     project = _find_project(entry["project"])
     if http is None:
-        async def http(method, url, payload=None):        # 推分支 + 开 PR 要走网络，给足时间
-            return await _http(method, url, payload, seconds=180)
+        async def http(method, url, payload=None, *, expected_identity=None):
+            return await _http(method, url, payload, seconds=180, expected_identity=expected_identity)
+    http = await _followup_http(entry, project, http)
     try:
         result = await http("POST", _service_url(project, f"/api/tasks/{entry['remote_task_id']}/open_pr"), {})
     except DispatchError:

@@ -12,7 +12,10 @@ export function autoFocusDecision(input: {
   open: boolean;
   current: InspectorTab;
   target: InspectorTab;
+  /** Background results in the assistant never open or replace the user's current view. */
+  quiet?: boolean;
 }): "open" | "ignore" | "mark" {
+  if (input.quiet) return input.open && input.current === input.target ? "ignore" : "mark";
   if (!input.open) return "open";
   if (input.current === input.target) return "ignore";
   return "mark";

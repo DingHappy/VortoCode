@@ -52,6 +52,15 @@ def test_confirmed_requires_severity_and_evidence():
     assert len(conf) == 2
 
 
+@pytest.mark.parametrize("evidence", [None, False, 1, [], {}])
+def test_non_text_evidence_is_incomplete_and_never_confirmed(evidence):
+    import json
+    finding = {"severity": "P0", "file": "a.py", "issue": "越界", "evidence": evidence}
+    assert review.confirmed_findings([finding]) == []
+    with pytest.raises(ValueError, match="evidence"):
+        review.parse_findings(json.dumps([finding]))
+
+
 def test_load_review_guidelines_from_agents_md(tmp_path):
     (tmp_path / "AGENTS.md").write_text(
         "# 项目\n## Review guidelines\n- 边界必查\n- 并发必查\n## 其它\n略", encoding="utf-8")
@@ -179,6 +188,46 @@ async def test_gate_multi_dedupes_same_finding(tmp_path):
         reviewers={"correctness": ra, "security": rb})
     assert not blocked and "1 条" in note
     assert got["n"] == 1 and got["desc"].count("越界") == 1
+
+
+@pytest.mark.parametrize("first_attempt_fails", [False, True])
+async def test_duplicate_reporter_must_complete_rereview_even_after_retry(tmp_path, first_attempt_fails):
+    correctness, _ = _reviewer([_P0], [])
+    calls = 0
+
+    async def security(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if first_attempt_fails and calls == 1:
+            raise RuntimeError("temporary outage")
+        if calls == (2 if first_attempt_fails else 1):
+            return [_P0]
+        raise RuntimeError("security rereview unavailable")
+
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": correctness, "security": security})
+    assert blocked and "复审未能完成" in note and "复审通过" not in note
+    assert got["n"] == 1 and got["desc"].count("越界") == 1
+    assert "correctness" in got["desc"] and "security" in got["desc"]
+
+
+async def test_invalid_injected_reviewer_evidence_does_not_start_repair(tmp_path):
+    reviewer, _ = _reviewer([{**_P0, "evidence": None}])
+    repair, got = _repair_recorder()
+    note, _ = await review.run_gate(str(tmp_path), "vorto/x", "main", repair=repair, reviewer=reviewer)
+    assert "未能完成" in note and "审查通过" not in note and got["n"] == 0
+
+
+async def test_unconfirmed_duplicate_cannot_hide_another_reviewers_evidence(tmp_path):
+    correctness, _ = _reviewer([{**_P0, "evidence": ""}], [])
+    security, _ = _reviewer([_P0], [])
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": correctness, "security": security})
+    assert not blocked and got["n"] == 1 and "已自修复并复审通过" in note
 
 
 @pytest.mark.asyncio

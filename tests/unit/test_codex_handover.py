@@ -11,6 +11,25 @@ from src.scheduling import codex_watch as watch
 T0 = datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize("verdict", ["continue", "ask", "done"])
+async def test_handover_revoked_while_reviewing_discards_the_result(tmp_path, verdict):
+    root, notes = str(tmp_path), Notes()
+
+    class Model:
+        async def chat(self, *_args, **_kwargs):
+            watch.take_back(root, "th-test-000001")
+            return {"content": '{"verdict":"' + verdict + '","assessment":"过期判断","next":"过期建议"}'}
+
+    _report(root, [_thread()], T0)
+    watch.hand_over(root, watch.load_state(root)["threads"][0], now=T0)
+    await sup.supervise_once(root, T0, notify=notes)
+    _report(root, [_done()], _m(5))
+    await sup.supervise_once(root, _m(30), notify=notes, llm=Model())
+    assert not watch.is_handed_over(root, "th-test-000001") and not watch.load_actions(root)
+    assert sup._load(root)["marks"]["th-test-000001"]["review_status"] == "superseded"
+    assert all("过期判断" not in text and "过期建议" not in text for text in notes.texts())
+
+
 def _m(minutes):
     return T0 + timedelta(minutes=minutes)
 

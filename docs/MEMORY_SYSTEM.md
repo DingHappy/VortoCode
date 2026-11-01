@@ -1,5 +1,7 @@
 # 记忆系统设计
 
+> ⚠️ **历史设计文档（早期蓝图，非当前实现）**。文中的短期/长期/专家三层结构、知识图谱和向量库后端均未按此实现，向量记忆模块已于 2026-11 删除。当前记忆实现见 `src/memory/`（`write_policy`、`assistant_profile`、`conversation_db`、`archive_search` 等）与 [当前架构与产品方向](CURRENT_ARCHITECTURE.md)。
+
 ## 概述
 
 记忆系统使 vortocode 能够跨会话积累知识，从历史任务中学习，并在新任务中应用经验。这是实现真正智能代理的关键组件。

@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab } from "./inspector";
 
 describe("autoFocusDecision", () => {
+  it("keeps assistant background arrivals quiet, including when the panel is closed", () => {
+    expect(autoFocusDecision({ open: false, current: "inbox", target: "diff", quiet: true })).toBe("mark");
+    expect(autoFocusDecision({ open: true, current: "files", target: "diff", quiet: true })).toBe("mark");
+    expect(autoFocusDecision({ open: true, current: "diff", target: "diff", quiet: true })).toBe("ignore");
+  });
   it("面板没开：后台动静可以把它打开", () => {
     expect(autoFocusDecision({ open: false, current: "inbox", target: "diff" })).toBe("open");
   });

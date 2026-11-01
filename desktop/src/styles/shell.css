@@ -371,51 +371,22 @@
 .vc-panel-card {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--vc-space-1);
-  padding: 40px var(--vc-space-4) var(--vc-space-5);
-  text-align: center;
+  align-items: stretch;
+  gap: var(--vc-space-2);
+  padding: var(--vc-space-10) var(--vc-space-5) var(--vc-space-3);
+  text-align: left;
 }
 
-.vc-panel-avatar {
-  position: relative;
-  margin-bottom: var(--vc-space-3);
-}
+.vc-panel-identity-row { display: flex; align-items: center; gap: var(--vc-space-3); min-width: 0; }
+.vc-panel-identity-row > div { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: var(--vc-space-1); }
+.vc-panel-identity-row .vc-panel-name { font-size: var(--vc-size-body); }
+.vc-panel-identity-row .vc-panel-status { line-height: 1.5; overflow-wrap: anywhere; }
+.vc-panel-context { font-size: var(--vc-size-small); color: var(--vc-muted); }
+.vc-panel-context > summary { cursor: pointer; padding: var(--vc-space-1) 0; }
+.vc-panel-context[open] { padding-bottom: var(--vc-space-2); }
+.vc-panel-context .vc-panel-model { display: block; margin-top: var(--vc-space-2); }
+.vc-panel-context > summary:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: var(--vc-space-1); }
 
-.vc-panel-avatar .assistant-avatar-image,
-.vc-panel-avatar .assistant-avatar-initial {
-  font-weight: var(--vc-weight-strong);
-  box-shadow: var(--vc-shadow-pop);
-}
-
-.vc-panel-avatar-edit {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--vc-radius-full);
-  background: var(--vc-surface);
-  color: var(--vc-text-secondary);
-  box-shadow: 0 0 0 3px var(--vc-bg), var(--vc-shadow-raised);
-  cursor: pointer;
-}
-
-.vc-panel-avatar-edit svg {
-  width: 14px;
-  height: 14px;
-}
-
-.vc-panel-avatar-edit:hover {
-  color: var(--vc-text);
-}
-
-.vc-panel-avatar-edit:focus-visible,
 .vc-panel-computer:focus-visible,
 .vc-panel-tab:focus-visible {
   outline: 2px solid var(--vc-focus-ring);
@@ -2393,3 +2364,14 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
   font-weight: var(--vc-weight-regular);
   overflow-wrap: anywhere;
 }
+
+/* Task-derived skill proposals reuse the existing personal skill editor. */
+.skill-learning { min-width: 0; display: grid; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--vc-divider, var(--border)); }
+.skill-learning h3, .skill-learning h4 { margin: 0; color: var(--vc-text, var(--text)); }
+.skill-learning .personal-skill-editor { display: grid; gap: 10px; min-width: 0; }
+.skill-learning label { display: grid; gap: 6px; min-width: 0; }
+.skill-learning input, .skill-learning select, .skill-learning textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; font: inherit; color: inherit; background: var(--vc-surface, var(--bg)); border: 1px solid var(--vc-border, var(--border)); border-radius: var(--vc-radius-control); }
+.skill-learning small { display: block; overflow-wrap: anywhere; }
+.skill-learning .personal-skill-review { display: grid; gap: 10px; min-width: 0; }
+.skill-learning pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border-radius: var(--vc-radius-inner); background: var(--vc-bg); font-size: var(--vc-size-caption); }
+.skill-learning button { max-width: 100%; height: auto !important; min-height: 32px; white-space: normal; overflow-wrap: anywhere; }

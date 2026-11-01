@@ -68,6 +68,64 @@ async def test_done_notice_checks_each_criterion(tmp_path):
     assert dispatch.list_dispatches(root)[0]["outcome"]["kind"] == "acceptance" and llm.calls == 1
 
 
+def test_completion_prioritizes_late_unresolved_criteria_without_losing_total():
+    criteria = [f"标准{i}" for i in range(8)]
+    outcome = {"kind": "acceptance", "summary": "已全部验收并上线", "criteria": [
+        {"text": text, "verdict": "met" if i < 6 else "unmet" if i == 6 else "unknown",
+         "evidence": f"依据{i}"} for i, text in enumerate(criteria)]}
+    item = {"project": "P", "title": "t", "status": "done", "criteria": criteria, "outcome": outcome}
+    text = watch.status_message(item)
+    assert "6/8 条对上" in text and "不代表人工验收" in text
+    assert "✗ 标准6" in text and "? 标准7" in text
+    assert text.index("✗ 标准6") < text.index("✓ 标准0")
+    assert "另有 5 条标准" in text and "✓ 标准1" not in text
+    assert "已全部验收并上线" not in text
+    assert item["criteria"] == criteria and len(item["outcome"]["criteria"]) == 8
+
+
+def test_legacy_review_is_rechecked_against_original_criteria():
+    item = {"project": "P", "title": "t", "status": "done", "criteria": ["只增加测试文件", "测试通过"],
+            "outcome": {"kind": "acceptance", "criteria": [
+                {"text": "任务已完成", "verdict": "met", "evidence": "完成"},
+                {"text": "测试通过", "verdict": "met", "evidence": ""}]}}
+    text = watch.status_message(item)
+    assert "0/2 条对上" in text and "? 只增加测试文件" in text and "? 测试通过" in text
+    assert "✓" not in text and "任务已完成" not in text
+    goal_text = watch.goal_message(item)
+    assert "0/2 条对上" in goal_text and "等于你亲自确认" in goal_text
+
+
+def test_missing_review_does_not_hide_acceptance_uncertainty():
+    text = watch.status_message({"project": "P", "title": "t", "status": "done", "criteria": ["测试通过"],
+                                 "delivery_evidence": {"verification": "passed"}})
+    assert "自动验证通过" in text and "尚未取得有效复盘" in text
+    assert "再决定是否验收" in text
+
+
+@pytest.mark.parametrize("changed", [
+    {"result": "新的执行输出"},
+    {"criteria": ["新的标准"]},
+    {"delivery_evidence": {"verification": "stale", "head": "a" * 40, "verified_head": "b" * 40}},
+    {"delivery_evidence": {"verification": "passed", "head": "b" * 40, "verified_head": "b" * 40}},
+])
+async def test_completed_review_is_not_reused_after_material_or_commit_changes(tmp_path, changed):
+    root = str(tmp_path)
+    ended = _ended(root, "done", result="超时为30并补了单测", delivery_evidence={
+        "verification": "passed", "head": "a" * 40, "verified_head": "a" * 40})
+    llm = FakeLLM(json.dumps({"criteria": [
+        {"text": text, "verdict": "met", "evidence": "原始输出"} for text in ended["criteria"]]}))
+    reviewed = await review.follow_up(root, ended, lambda item: review.review_outcome(item, llm=llm))
+    assert "2/2 条对上" in watch.status_message(reviewed)
+    dispatch._update(root, ended["id"], lambda item: item.update(**changed))
+    latest = dispatch.list_dispatches(root)[0]
+    before = json.dumps(latest, ensure_ascii=False, sort_keys=True)
+    text = watch.status_message(latest)
+    assert "条对上" not in text and "助理复盘未完成" in text
+    assert json.dumps(latest, ensure_ascii=False, sort_keys=True) == before
+    await review.follow_up(root, latest, lambda item: review.review_outcome(item, llm=llm))
+    assert llm.calls == 1  # 展示失效不会触发第二次模型复盘。
+
+
 async def test_failure_is_diagnosed_and_the_next_attempt_is_drafted_for_approval(tmp_path):
     root = str(tmp_path)
     failed = _ended(root, "failed", error="ImportError: starlette", result="集成测试红")
@@ -108,6 +166,215 @@ async def test_bad_or_broken_review_still_notifies_plainly(tmp_path):
     async def boom(_item):
         raise TimeoutError
     done = _ended(root, "done", branch="vorto/fix")
-    assert await review.follow_up(root, done, boom) is done
+    unfinished = await review.follow_up(root, done, boom)
+    assert unfinished["status"] == "done" and "outcome" not in unfinished
+    assert unfinished["outcome_review"]["status"] == "failed"
+    assert "助理复盘未完成" in watch.status_message(unfinished)
     unsure = review.parse_outcome(json.dumps({"criteria": [{"text": "x", "verdict": "probably"}]}), done)
     assert unsure is None                                                   # 读不懂的判定不当真
+
+
+def test_invented_acceptance_cannot_replace_original_criteria():
+    item = {"status": "done", "criteria": ["只增加测试文件", "全量测试通过"]}
+    outcome = review.parse_outcome(json.dumps({"criteria": [
+        {"text": "任务已经完成", "verdict": "met", "evidence": "完成了"}], "summary": "全部完成"}), item)
+    assert [row["text"] for row in outcome["criteria"]] == item["criteria"]
+    assert all(row["verdict"] == "unknown" for row in outcome["criteria"])
+    assert outcome["summary"] != "全部完成"
+    assert "0/2 条对上" in watch._acceptance_lines({**item, "outcome": outcome})
+
+
+def test_partial_acceptance_preserves_denominator_and_original_order():
+    item = {"status": "done", "criteria": ["标准一", "标准二", "标准三"]}
+    outcome = review.parse_outcome(json.dumps({"criteria": [
+        {"text": "标准三", "verdict": "met", "evidence": "验证三"},
+        {"text": "标准一", "verdict": "met", "evidence": "验证一"}]}), item)
+    assert [row["text"] for row in outcome["criteria"]] == item["criteria"]
+    assert [row["verdict"] for row in outcome["criteria"]] == ["met", "unknown", "met"]
+    assert "2/3 条对上" in watch._acceptance_lines({**item, "outcome": outcome})
+
+
+@pytest.mark.parametrize("original,rows", [
+    (["标准"], [{"text": "标准", "verdict": "met", "evidence": "通过"},
+                {"text": "标准", "verdict": "unmet", "evidence": "失败"}]),
+    (["标准", "标准"], [{"text": "标准", "verdict": "met", "evidence": "通过"}]),
+    (["标准"], [{"text": "标准", "verdict": "met", "evidence": "  "}]),
+])
+def test_ambiguous_or_unsupported_acceptance_is_unknown(original, rows):
+    outcome = review.parse_outcome(json.dumps({"criteria": rows}), {"status": "done", "criteria": original})
+    assert len(outcome["criteria"]) == len(original)
+    assert all(row["verdict"] == "unknown" for row in outcome["criteria"])
+
+
+@pytest.mark.parametrize("retry", ["false", "true", 0, 1, None, [], {}])
+def test_retry_requires_a_real_boolean(retry):
+    assert review.parse_outcome(json.dumps({"diagnosis": "需要核对", "retry": retry, "change": "再试一次"}),
+                                {"status": "failed"}) is None
+
+
+async def test_malformed_retry_does_not_create_a_task_draft(tmp_path):
+    root = str(tmp_path)
+    failed = _ended(root, "failed", error="需用户决定")
+    llm = FakeLLM(json.dumps({"diagnosis": "需用户决定", "retry": "false", "change": "再试一次"}))
+    result = await review.follow_up(root, failed, lambda item: review.review_outcome(item, llm=llm))
+    assert "outcome" not in result and len(dispatch.list_dispatches(root)) == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("diagnosis", {"reason": "failed"}), ("diagnosis", ["failed"]),
+    ("change", {"command": "retry"}), ("change", ["retry"]), ("change", False), ("change", None),
+])
+def test_retry_diagnosis_and_change_cannot_be_coerced_from_structured_data(field, value):
+    response = {"diagnosis": "原因待核对", "retry": True, "change": "补齐依赖后再试", field: value}
+    assert review.parse_outcome(json.dumps(response), {"status": "failed"}) is None
+
+
+@pytest.mark.parametrize("mode", ["exception", "invalid"])
+async def test_failed_review_is_attempted_once_even_with_stale_caller_snapshot(tmp_path, mode):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="测试失败")
+    calls = 0
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        if mode == "exception":
+            raise RuntimeError("temporary failure")
+        return None
+
+    for _ in range(3):
+        latest = await review.follow_up(root, item, reviewer)
+    assert calls == 1 and latest["outcome_review"]["status"] == "failed"
+    assert "outcome" not in latest and len(dispatch.list_dispatches(root)) == 1
+
+
+async def test_concurrent_reviews_only_call_one_worker(tmp_path):
+    import asyncio
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="测试失败")
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return {"kind": "diagnosis", "diagnosis": "等待外部修复", "retry": False, "change": ""}
+
+    first = asyncio.create_task(review.follow_up(root, item, reviewer))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        second = await review.follow_up(root, item, reviewer)
+        assert calls == 1 and second["outcome_review"]["status"] == "running"
+    finally:
+        release.set()
+        await first
+    assert dispatch.list_dispatches(root)[0]["outcome_review"]["status"] == "completed"
+
+
+async def test_interrupted_claim_is_not_replayed_after_recovery(tmp_path):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+    claimed, ok = dispatch.claim_dispatch_review(root, item["id"])
+    assert ok and claimed["outcome_review"]["status"] == "running"
+
+    async def forbidden(_item):
+        pytest.fail("Recovered claim cannot call the model again")
+
+    latest = await review.follow_up(root, item, forbidden)
+    assert latest["outcome_review"]["status"] == "running"
+    assert "助理复盘未完成" in watch.status_message(latest)
+
+
+@pytest.mark.parametrize("phase", ["claim", "finish"])
+async def test_failed_review_write_cannot_replay_the_model(tmp_path, monkeypatch, phase):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+    calls = 0
+    save = dispatch._save
+
+    def broken(root, items):
+        raise OSError("private path")
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        monkeypatch.setattr(dispatch, "_save", broken)
+        return {"kind": "diagnosis", "diagnosis": "需核对", "retry": True, "change": "换个做法"}
+
+    if phase == "claim":
+        monkeypatch.setattr(dispatch, "_save", broken)
+    latest = await review.follow_up(root, item, reviewer)
+    assert calls == (0 if phase == "claim" else 1) and "outcome" not in latest
+    assert len(dispatch.list_dispatches(root)) == 1
+    monkeypatch.setattr(dispatch, "_save", save)
+    if phase == "finish":
+        await review.follow_up(root, item, reviewer)
+        assert calls == 1
+
+
+@pytest.mark.parametrize("change,value", [
+    ("status", "running"), ("result", "新结果"), ("criteria", ["新标准"]), ("goal", "新目标"),
+    ("tainted", True), ("session", "new-owner"), ("attempt", 3), ("remote_task_id", "t2"),
+    ("delivery_evidence", {"verification": {"status": "failed"}}),
+])
+async def test_changed_review_source_cannot_create_a_retry(tmp_path, change, value):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+
+    async def reviewer(_item):
+        dispatch._update(root, item["id"], lambda current: current.update({change: value}))
+        return {"kind": "diagnosis", "diagnosis": "过期判断", "retry": True, "change": "旧做法"}
+
+    latest = await review.follow_up(root, item, reviewer)
+    assert latest["outcome_review"]["status"] == "superseded" and "outcome" not in latest
+    assert len(dispatch.list_dispatches(root)) == 1
+
+
+async def test_notification_retry_does_not_repeat_a_failed_review(tmp_path):
+    root = str(tmp_path)
+    item = dispatch.propose(root, project="VortoCode", title="修复", goal="目标")
+    calls, notices = 0, []
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError
+
+    async def refresh(_root):
+        return dispatch.list_dispatches(root)
+
+    async def notify(text, confirm_id=""):
+        notices.append(text)
+        return len(notices) > 1
+
+    await watch.watch_once(root, NOW, notify=notify, refresh=refresh, times=[], review=reviewer)
+    dispatch._update(root, item["id"], lambda row: row.update(status="failed"))
+    for _ in range(3):
+        await watch.watch_once(root, NOW, notify=notify, refresh=refresh, times=[], review=reviewer)
+    assert calls == 1 and len(notices) == 2
+    assert all("助理复盘未完成" in text for text in notices)
+    assert watch._load_state(root)["seen"][item["id"]] == "failed"
+
+
+async def test_retry_draft_save_failure_is_visible_and_never_replayed(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    item = _ended(root, "failed", error="失败")
+    calls = 0
+
+    async def reviewer(_item):
+        nonlocal calls
+        calls += 1
+        return {"kind": "diagnosis", "diagnosis": "换个办法", "retry": True, "change": "调整方案"}
+
+    def broken(*args, **kwargs):
+        raise OSError("private path")
+
+    monkeypatch.setattr(dispatch, "propose", broken)
+    latest = await review.follow_up(root, item, reviewer)
+    assert latest["outcome"]["retry"] is False
+    assert "尚未确认生成" in watch.status_message(latest)
+    assert "private path" not in watch.status_message(latest)
+    await review.follow_up(root, item, reviewer)
+    assert calls == 1 and len(dispatch.list_dispatches(root)) == 1

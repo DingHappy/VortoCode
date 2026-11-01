@@ -1,0 +1,102 @@
+{
+  "date": "2026-11-01",
+  "base": "61f5f9ab9dca552533b3a0f9f5a34099def1c091",
+  "base_pr": 688,
+  "branch": "codex/task-skill-proposals",
+  "scope": "Source, offline domain tests and synthetic production-component acceptance; not installed/deployed or real-account/model acceptance",
+  "checks": {
+    "python": {
+      "passed": 5740,
+      "skipped": 10
+    },
+    "e2e": {
+      "passed": 26
+    },
+    "ruff": "passed",
+    "mypy": "passed; existing 27-file scope",
+    "typescript": "passed; repeated after final uncertain-state read callback",
+    "vitest_final": {
+      "passed": 1285,
+      "files": 143
+    },
+    "vite_build": "passed; repeated after final callback; existing chunk-size warning",
+    "cargo": "skipped: missing sidecar resources, not a pass"
+  },
+  "initial_gate": {
+    "result": "failed on fixture replaceAll ES2020 compatibility and hard-coded design values",
+    "resolution": "fixed; final full gate and final frontend/build checks passed"
+  },
+  "browser": {
+    "space": 242,
+    "page": "p3",
+    "kind": "production PersonalSkillsCard and SkillLearningCard with synthetic in-memory transport",
+    "evidence_directory": "/private/tmp/vortocode-skill-learning-qa",
+    "screenshots": [
+      {
+        "file": "01-pending-diff.png",
+        "sha256": "1602b39a46497b5dbe86f10e9e1c4e952aacd41acb809050f4715e2d75720bbb"
+      },
+      {
+        "file": "02-saved-disabled.png",
+        "sha256": "0d704dc2ce71737fe02618f2235cf767304ff117a7de191bed8e554bd8ee008c"
+      },
+      {
+        "file": "04-uncertain-current-narrow.png",
+        "sha256": "4e814def731b6b5fea3326111fe4759a597ab32a3aa8fe4da4850458e0936ec9"
+      },
+      {
+        "file": "05-stale-source-narrow.png",
+        "sha256": "04fb4ae41a006d9c9e418e2c220e7a6aaf57da3a0a6021beb32537482268bccc"
+      },
+      {
+        "file": "06-other-runtime.png",
+        "sha256": "a5949c9f6070520017434e4a9479a667276afa896df528c4c47deefebbf500c4"
+      }
+    ],
+    "superseded": [
+      "00-layout.png",
+      "03-uncertain-narrow.png"
+    ],
+    "observed": {
+      "pending_keeps_old_enabled": true,
+      "accept_saves_disabled": true,
+      "enable_requires_separate_action": true,
+      "interruption_no_automatic_rewrite": true,
+      "uncertain_preview_reads_current_skill": true,
+      "explicit_reconciliation_leaves_target_disabled": true,
+      "stale_source_accept_disabled": true,
+      "reject_keeps_old_enabled": true,
+      "runtime_switch_clears_old_skills_and_proposals": true,
+      "narrow_viewport": 390,
+      "document_scroll_width": 382,
+      "idle_request_count_before": 2,
+      "idle_request_count_after": 2,
+      "idle_window_ms": 1500
+    },
+    "cleanup": "task.finish keep=[]; no agent-managed pages retained; dedicated local Vite stopped; no Ego upgrade"
+  },
+  "new_checks": {
+    "python": 34,
+    "frontend": 11
+  },
+  "logs": [
+    "/private/tmp/vortocode-skill-learning-final-gates.log",
+    "/private/tmp/vortocode-skill-learning-final-build.log"
+  ],
+  "not_verified": [
+    "installed native Desktop",
+    "real project end-to-end learning outcome",
+    "independent human identities or multi-bot shared approval",
+    "scoped credential delegation",
+    "Grok account/server behavior or any paid model inference"
+  ],
+  "boundaries": [
+    "General personal scope only",
+    "current proposal plus at most 20 compact prior records per skill",
+    "20 displayed dispatch sources and original 100-skill cap",
+    "no background proposals, model extraction, automatic activation or retries",
+    "recorded delivery evidence is not a live remote probe or goal acceptance",
+    "instance_operator identifies an authenticated instance caller, not an independently identified person",
+    "temporary screenshots/logs may not survive cleanup"
+  ]
+}

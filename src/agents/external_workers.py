@@ -50,6 +50,7 @@ from src.agents.backends.execution import (
     ExecutionFailure, ExecutionProgress, ExecutionRef, ExecutionResult, ExecutionSnapshot,
     ExecutionState, ExecutionUsage, new_run_id, process_instance,
 )
+from src.agents.backends.recovery import RecoveryRequired, decide_failure_recovery
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,10 @@ _TAIL = 2000
 
 class ExternalWorkerError(RuntimeError):
     """外部 CLI 没有给出可用结果（找不到命令、超时、非零退出、事件报错）。"""
+
+
+class ExternalWorkerRecoveryRequired(ExternalWorkerError, RecoveryRequired):
+    """An external attempt may have effects; its caller must not retry automatically."""
 
 
 @dataclass
@@ -735,12 +740,26 @@ class ExternalWorkerAgent:
         if run.used_network:
             mark_tainted()
         if not run.ok:
-            if self.fallback is not None and is_unavailable(run):
+            report = run.execution_report
+            self._execution_report = report
+            decision = decide_failure_recovery(report, expected_ref=execution_ref or report.ref,
+                                                unavailable=is_unavailable(run))
+            if decision.action == "inspect":
+                if report.error is not None:
+                    report = replace(report, error=replace(report.error, retryable=False))
+                self._execution_report = report
+                raise ExternalWorkerRecoveryRequired(
+                    f"{self.worker} 执行结果需核对，可能已产生副作用；未自动切换或重跑，请先核对原执行记录",
+                    report, self.cwd)
+            if self.fallback is not None and decision.action == "fallback":
+                candidate = self.fallback()
+                if isinstance(candidate, ExternalWorkerAgent) or not callable(getattr(candidate, "run_turn", None)):
+                    raise ExternalWorkerError("备用执行者配置无效，不能递归切换外部 CLI")
                 start_cooldown(self.worker)
                 if self.on_progress is not None:
                     self.on_progress(f"[{self.worker}] 不可用（{(run.error or '')[:60]}），本块改由内置子 Agent 接手；"
                                      f"{int(_cooldown_seconds() // 60)} 分钟内不再派给 {self.worker}")
-                self._effective_agent = self.fallback()
+                self._effective_agent = candidate
                 return await self._effective_agent.run_turn(message, mode=mode, emit=emit)
             raise ExternalWorkerError(run.error or f"{self.worker} 未给出结果")
         asked = parse_question(run.final_text)

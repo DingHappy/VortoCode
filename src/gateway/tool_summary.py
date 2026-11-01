@@ -2,6 +2,8 @@
 import re
 from typing import Any, Dict
 
+from src.browser.connections import safe_url
+
 
 def tool_summary(name: str, args: Dict[str, Any]) -> str:
     """把工具调用压成一句"用户看得懂的动作"；敏感值不进入标题。
@@ -75,11 +77,23 @@ def tool_summary(name: str, args: Dict[str, Any]) -> str:
         "web_fetch": "读取网页",
         "screenshot_page": "给网页截图",
         # —— 浏览器操控（输入内容可能敏感，只显示元素编号，不进标题）——
-        "browser_open": _with("浏览器打开", str(args.get("url") or "").strip(), 80),
+        "browser_open": _with("浏览器打开", safe_url(str(args["url"])) if args.get("url") else "", 80),
+        "browser_connections": "查看网站连接",
+        "browser_connect": "登记网站连接",
+        "browser_login": "请主人核对网站登录并确认恢复",
+        "browser_scroll": "滚动浏览器页面",
+        "browser_disconnect": "撤销网站连接",
+        "browser_close": "关闭专用浏览器",
         "browser_snapshot": "读取浏览器页面",
+        "browser_site_status": "核对网站账号与签到状态",
         "browser_screenshot": "给浏览器页面截图",
         "browser_click": _with("浏览器点击元素", str(args.get("ref") or "").strip()),
         "browser_type": _with("浏览器输入到元素", str(args.get("ref") or "").strip()),
+        "android_status": "查看 Android 插件状态",
+        "android_resume": "请主人核对并恢复 Android 插件",
+        "android_snapshot": "读取 Android 应用界面",
+        "android_tap": "点按 Android 应用元素",
+        "android_detach": "断开 Android 插件",
         "research_parallel": _with("并行调研：", task, 50),
         "task_status": _with("查看任务：", str(args.get("task_id") or ""), 50),
         "task_model_profiles": "查看模型任务表现",
