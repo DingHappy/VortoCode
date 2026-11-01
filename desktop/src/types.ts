@@ -231,6 +231,56 @@ export interface PersonalSkillsSnapshot {
   truncated: boolean;
 }
 
+export interface SkillLearningSource {
+  dispatch_id: string;
+  revision: string;
+  title: string;
+  project: string;
+  goal: string;
+  criteria: string[];
+  head: string;
+  checked_at: string;
+  verified_at: string;
+}
+
+export interface PersonalSkillDraft {
+  name: string;
+  description: string;
+  instructions: string;
+  revision: string | null;
+}
+
+export interface SkillProposalSummary {
+  skill_id: string;
+  id: string;
+  status: "pending" | "applying" | "accepted" | "rejected";
+  created_at: string;
+  source: SkillLearningSource;
+}
+
+export interface SkillProposal extends SkillProposalSummary {
+  revision: string;
+  draft: PersonalSkillDraft;
+  proposed_by: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  target_revision: string;
+  current_revision: string | null;
+  current_enabled: boolean;
+  stale: boolean;
+  source_stale: boolean;
+  diff: string;
+  diff_redacted: boolean;
+  history: { id: string; status: SkillProposalSummary["status"]; reviewed_at: string | null }[];
+}
+
+export interface SkillLearningSnapshot {
+  sources: SkillLearningSource[];
+  proposals: SkillProposalSummary[];
+  issues: string[];
+  truncated: boolean;
+}
+
 /** 助理头像：base64 位图（PNG/JPEG/WebP），没设过为 null。 */
 export interface AssistantAvatar {
   type: string;

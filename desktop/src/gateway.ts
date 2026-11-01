@@ -13,6 +13,9 @@ import type {
   ConnectorDisconnectReceipt,
   PersonalSkill,
   PersonalSkillsSnapshot,
+  PersonalSkillDraft,
+  SkillLearningSnapshot,
+  SkillProposal,
   AssistantMemory,
   AssistantProfile,
   PersonalGoal,
@@ -652,6 +655,26 @@ export class GatewayClient {
 
   async getPersonalSkills(): Promise<PersonalSkillsSnapshot> {
     return this.request("/api/assistant/skills");
+  }
+
+  async getSkillLearning(): Promise<SkillLearningSnapshot> {
+    return this.request("/api/assistant/skill-proposals");
+  }
+
+  async previewSkillProposal(id: string): Promise<SkillProposal> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(id)}/proposal`);
+  }
+
+  async proposePersonalSkill(id: string, source: { dispatch_id: string; revision: string }, draft: PersonalSkillDraft): Promise<SkillProposal> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(id)}/proposal`, {
+      method: "PUT", body: JSON.stringify({ dispatch_id: source.dispatch_id, source_revision: source.revision, draft }),
+    });
+  }
+
+  async decideSkillProposal(proposal: SkillProposal, action: "accept" | "reject" | "reconcile"): Promise<SkillProposal> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(proposal.skill_id)}/proposal`, {
+      method: "POST", body: JSON.stringify({ id: proposal.id, revision: proposal.revision, action }),
+    });
   }
 
   async previewPersonalSkill(id: string): Promise<PersonalSkill> {

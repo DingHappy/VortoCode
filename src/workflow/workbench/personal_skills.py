@@ -142,7 +142,8 @@ class PersonalSkills:
         return {"items": sorted(items, key=lambda item: item["id"]),
                 "issues": list(dict.fromkeys(issues)), "truncated": len(paths) > MAX_SKILLS}
 
-    def save(self, skill_id: str, body: dict) -> dict:
+    @staticmethod
+    def encode(body: dict) -> bytes:
         if set(body) - {"name", "description", "instructions", "revision"}:
             raise ValueError("不支持的技能字段")
         values = {}
@@ -157,19 +158,26 @@ class PersonalSkills:
         raw = f"---\n{header}---\n\n{values['instructions']}\n".encode("utf-8")
         if len(raw) > MAX_BYTES:
             raise ValueError("技能文件不能超过 64 KiB")
+        return raw
+
+    def _save_locked(self, skill_id: str, body: dict, raw: bytes) -> dict:
+        try:
+            current = hashlib.sha256(self._read(skill_id)).hexdigest()
+        except FileNotFoundError:
+            current = None
+        if body.get("revision") != current:
+            raise SkillConflict("技能已变化，请刷新并重新审阅")
+        if current is None and len(list(islice(self.base.iterdir(), MAX_SKILLS + 1))) > MAX_SKILLS:
+            raise ValueError("个人技能数量已达上限")
+        # Even saving identical content requires fresh approval; disable first.
+        self._write(skill_id, "approval.json", b'{"enabled": false}')
+        self._write(skill_id, "SKILL.md", raw)
+        return self.get(skill_id)
+
+    def save(self, skill_id: str, body: dict) -> dict:
+        raw = self.encode(body)
         with self._lock(skill_id):
-            try:
-                current = hashlib.sha256(self._read(skill_id)).hexdigest()
-            except FileNotFoundError:
-                current = None
-            if body.get("revision") != current:
-                raise SkillConflict("技能已变化，请刷新并重新审阅")
-            if current is None and len(list(islice(self.base.iterdir(), MAX_SKILLS + 1))) > MAX_SKILLS:
-                raise ValueError("个人技能数量已达上限")
-            # Even saving identical content requires fresh approval; disable first.
-            self._write(skill_id, "approval.json", b'{"enabled": false}')
-            self._write(skill_id, "SKILL.md", raw)
-            return self.get(skill_id)
+            return self._save_locked(skill_id, body, raw)
 
     def set_enabled(self, skill_id: str, *, enabled: bool, revision: str) -> dict:
         if type(enabled) is not bool or not isinstance(revision, str):

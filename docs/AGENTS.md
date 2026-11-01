@@ -12,6 +12,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
+| `workflow/workbench/skill_learning.py` / 原 PersonalSkills | 原派活证据绑定的手动技能草稿、差异审核与停用保存，沿用原锁和版本启用；[学习审核](SKILL_LEARNING.md) | 模型提炼、自动学习/启用/重试、新任务库、独立账号身份或权限委托 |
 | 原 Tool 的 `ToolResource` / `gateway/session_resources.py` | 当前 WS 会话已装配资源的有界只读投影，复用原连接代次；[资源总览](SESSION_RESOURCES.md) | 凭据读取、设备发现/连接、工具执行、批准、资源数据库或新注册表 |
 | `agents/confirmation_context.py` / 原网站 BrowserSession | 当前工具链的确认展示与真实回合标识，任务内网站接管及本回合拒绝去重；[接管合同](WEBSITE_HANDOFF.md) | 批准决定、任务库、新执行循环、通用凭据管理或后台自动恢复 |
 | `gateway/execution_identity.py` / `workflow/workbench/resident_projects.py` | 原持久实例的启动收据与宿主固定目标，原任务路由/派活核验；[身份合同](RESIDENT_EXECUTION_IDENTITY.md) | 受限授权凭证、跨宿主发现、任务库或新的执行循环 |
