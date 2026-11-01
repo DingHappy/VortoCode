@@ -168,6 +168,15 @@ class MobileDevices:
             key: item[key] for key in ("id", "name", "created_at", "expires_at", "revoked_at")
         } | {"scopes": [SCOPE]}
 
+    def ensure_instance(self) -> str:
+        """Create only an empty identity, never a device/account grant."""
+        with self._lock():
+            data = self._load()
+            if data is None:
+                data = {"schema_version": 1, "instance_id": uuid.uuid4().hex, "devices": []}
+                self._save(data)
+            return data["instance_id"]
+
     def issue(self, name: str, ttl_days: int = 30) -> dict:
         name = _name(name)
         if type(ttl_days) is not int or not 1 <= ttl_days <= 90:

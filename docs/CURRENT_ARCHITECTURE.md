@@ -53,6 +53,10 @@ Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑
 本轮补齐宿主秘密环境的子进程继承过滤，尚未迁移明文模型配置、收窄跨端管理员委托或
 替换按目录名配对项目的规则；不能把多 bot 托管当作这些边界已经完成。
 
+已增加 [常驻派活实例与启动代次](RESIDENT_EXECUTION_IDENTITY.md) 的首个切片：复用持久实例，
+可选固定目标、冻结提议快照并在原任务路由核对；不是管理员凭证委托或跨宿主项目配对已经完成。
+[Grok Bot 发布包复核](GROK_BOT_RELEASE_REVIEW.md) 记录静态证据限制及后续采用顺序，和 grok-build 分开。
+
 网站登录与模型 Key 是不同边界。[网站连接与手机操作](WEBSITE_CONNECTIONS.md) 已接入本机
 工作区授权、独立登录目录、人工登录接管和手机网页模式；Android/iPhone 原生 App 仍待设备适配。
 登录态留在资源宿主，不复制给云端或 IM；源码与离线测试尚不能证明真实网站或手机验收通过。

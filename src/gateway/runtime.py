@@ -63,6 +63,7 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
     run_manager = None
     terminal_manager = None
     receipt_started = False
+    execution_identity = None
     try:
         ledger = getattr(runner, "ledger", None)
         if ledger is not None and Path(ledger.repo_root).resolve() != Path(root).resolve():
@@ -71,6 +72,8 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         owned = True
         from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(str(root))
+        from src.gateway.account_registration import AccountRegistration
+        instance_id = AccountRegistration(str(root)).ensure_instance()
         # 监护进程看门狗：Desktop 被强杀/崩溃时不留下孤儿 runtime（只在申报了监护 pid 时启动）。
         from src.gateway.supervisor_watchdog import start_watchdog
         watchdog_task = start_watchdog()
@@ -107,8 +110,13 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         from src.gateway.configuration_receipt import begin_configuration_receipt
         begin_configuration_receipt()
         receipt_started = True
+        from src.gateway.execution_identity import begin_execution_identity
+        execution_identity = begin_execution_identity(root, instance_id)
         yield
     finally:
+        if execution_identity is not None:
+            from src.gateway.execution_identity import end_execution_identity
+            end_execution_identity(root, execution_identity)
         from src.gateway.configuration_receipt import end_configuration_receipt
         if receipt_started:
             end_configuration_receipt()

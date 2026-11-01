@@ -31,8 +31,11 @@ async def health_check():
 async def quick_health_check():
     """快速健康检查"""
     from src.gateway.configuration_receipt import configuration_receipt
+    from src.gateway.execution_identity import current_execution_identity
+    import os
     return {"status": "healthy", "timestamp": datetime.now().isoformat(),
-            "model_configuration": configuration_receipt()}
+            "model_configuration": configuration_receipt(),
+            "execution_identity": current_execution_identity(os.getcwd())}
 
 # 注：旧的 /api/tasks/queue 与 /api/tasks/list（基于从未接线的 src/core/task_queue 骨架）已退役。
 # 后台任务改由常驻运行时提供：见 src/web/routers/tasks.py（POST/GET /api/tasks…，gateway.TaskRunner）。

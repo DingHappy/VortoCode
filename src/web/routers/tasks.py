@@ -8,13 +8,30 @@
 import asyncio
 import os
 import re
+import json
 from pathlib import Path
+from fastapi import Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.web.deps import *  # noqa: F401,F403
 from src.web import task_events
 
-router = APIRouter()
+async def _check_execution_header(request: Request):
+    raw = request.headers.get("x-vortocode-execution-identity")
+    if raw is None or not request.url.path.startswith("/api/tasks"):
+        return
+    from src.gateway.execution_identity import validate_identity
+    try:
+        if len(raw) > 512:
+            raise ValueError()
+        expected = validate_identity(json.loads(raw))
+        if expected != _execution_scope()["execution_identity"]:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=409, detail="运行端实例或启动代次已变化；未处理请求") from None
+
+
+router = APIRouter(dependencies=[Depends(_check_execution_header)])
 
 # 进程内单例运行时（绑到 server 的 cwd）。lifespan 里 recover()；测试可覆盖 _RUNNER / _worker。
 _RUNNER = None
@@ -69,12 +86,28 @@ def _owner_session(body: dict) -> str:
     return f"sid-{value}"
 
 
+def _execution_scope():
+    from src.gateway.execution_identity import current_execution_identity
+    root = str(Path(get_runner().ledger.repo_root).resolve())
+    return {"repo_root": root, "execution_identity": current_execution_identity(root)}
+
+
 @router.post("/api/tasks")
 async def submit_task(body: dict):
     """提交一个后台 dev 任务（{prompt}）。立即返回任务 id，不阻塞。"""
     prompt = str((body or {}).get("prompt") or (body or {}).get("task") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="缺少 prompt（要后台跑的任务）")
+    if "expected_execution_identity" in body:
+        from src.gateway.execution_identity import validate_identity
+        try:
+            expected_identity = validate_identity(body["expected_execution_identity"])
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        actual_scope = _execution_scope()
+        if (expected_identity != actual_scope["execution_identity"]
+                or body.get("expected_repo_root") != actual_scope["repo_root"]):
+            raise HTTPException(status_code=409, detail="运行端实例、启动代次或目录已变化；未创建任务")
     if "expected_repo_root" in body:
         expected = body["expected_repo_root"]
         actual = str(Path(get_runner().ledger.repo_root).resolve())
@@ -124,7 +157,7 @@ async def start_followup(followup_id: str, body: dict | None = None):
 async def list_tasks_bg():
     """列出后台任务（按最近更新排序）。"""
     return {"tasks": _task_snapshot(), "submission_idempotency": 1,
-            "submission_scope": {"repo_root": str(Path(get_runner().ledger.repo_root).resolve())}}
+            "execution_identity_version": 1, "submission_scope": _execution_scope()}
 
 
 @router.get("/api/tasks/{tid}")
@@ -132,7 +165,7 @@ async def get_task_bg(tid: str):
     t = get_runner().get(tid)
     if t is None:
         raise HTTPException(status_code=404, detail=f"无此任务 {tid}")
-    return {**_task_view(t), "execution_scope": {"repo_root": str(Path(get_runner().ledger.repo_root).resolve())}}
+    return {**_task_view(t), "execution_scope": _execution_scope()}
 
 
 @router.get("/api/worktrees")
