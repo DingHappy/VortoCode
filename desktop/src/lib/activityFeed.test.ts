@@ -29,7 +29,7 @@ describe("feedStatus / taskFeedItem", () => {
 
   it("后端七种状态全部有归属", () => {
     expect(["queued", "running", "done", "failed", "cancelled", "paused", "interrupted"].map((status) => feedStatus(task({ status }))))
-      .toEqual(["running", "running", "done", "failed", "failed", "stopped", "stopped"]);
+      .toEqual(["running", "running", "done", "failed", "stopped", "stopped", "stopped"]);
   });
 
   it("标题取请求第一句，摘要按状态取结果/错误/问题的第一句", () => {

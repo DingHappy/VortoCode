@@ -15,8 +15,10 @@ export function SessionResources({ view, connected, hostLabel, pendingId, onRefr
 }) {
   const snapshot = view.snapshot;
   const stale = view.stale || !connected;
+  const attention = Boolean(view.error || snapshot?.items.some(item =>
+    ["needs_human", "needs_reconciliation", "cleanup_pending", "error"].includes(item.state)));
   return <details className="session-resources" onToggle={event => { if (event.currentTarget.open) onRefresh(); }}>
-    <summary>当前会话资源 <small>{!connected ? "连接中断" : view.busy ? "读取中" : stale ? "待核对" : "已读取"}</small></summary>
+    <summary>{hostLabel} · 连接与能力 <small>{!connected ? "连接中断" : attention ? "需要核对" : view.busy ? "读取中" : !snapshot ? "按需查看" : stale ? "记录待核对" : "查看详情"}</small></summary>
     <div className="session-resource-actions">
       <button disabled={!connected || view.busy} onClick={onRefresh}>{view.busy ? "读取中…" : "刷新状态"}</button>
       {pendingId && snapshot?.attention_id === pendingId && <button onClick={onFocusConfirmation}>查看当前确认</button>}

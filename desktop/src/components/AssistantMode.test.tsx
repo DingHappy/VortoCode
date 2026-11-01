@@ -40,10 +40,12 @@ it("左侧「最近」：主要聊天置顶在旁聊之前；没有旁聊时给�
   expect(empty).toContain("开个旁聊，不打扰主要聊天");
 });
 
-it("右侧名片：一行状态写连接和住在哪，模型单独一行；等你处理的件数挂在「动态」的圆点上", () => {
+it("compact identity keeps status visible while model and computer controls are collapsed", () => {
   const online = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected modelLabel="Qwen3.6" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}} waiting={2}><p>内容</p></AssistantPanel>);
   expect(online).toContain("已连接 · 在本机运行");
   expect(online).toContain('<small class="vc-panel-model">Qwen3.6</small>');
+  expect(online).toContain('<details class="vc-panel-context"><summary>运行信息与电脑</summary>');
+  expect(online).not.toContain('<details class="vc-panel-context" open');
   expect(online).toContain('aria-label="2 件等你处理"');
   const offline = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected={false} host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="audit" onTab={() => {}} onClose={() => {}}><p>内容</p></AssistantPanel>);
   expect(offline).toContain("连接中断");
