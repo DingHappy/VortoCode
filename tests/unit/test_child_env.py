@@ -12,6 +12,96 @@ import pytest
 from src.sandbox.policy import _STRIPPED_ENV_KEYS, child_env
 
 
+@pytest.mark.parametrize("name", ["VORTOCODE_CODEX_REPORT_TOKEN", "VORTOCODE_PROVIDER_RESEARCH_KEY",
+                                 "VORTOCODE_PROVIDER_RETIRED_KEY", "VORTOCODE_OPS_TOKEN",
+                                 "VORTOCODE_VOICE_MCP_TOKEN"])
+def test_runtime_control_and_named_model_credentials_do_not_escape(monkeypatch, name):
+    from src.sandbox.policy import is_stripped_env
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    monkeypatch.setenv(name, "synthetic-runtime-secret")
+    assert is_stripped_env(name) and name not in child_env()
+
+
+def test_host_declared_secret_names_are_filtered_and_explicit_passthrough_is_exact(monkeypatch):
+    from src.sandbox.policy import register_secret_env_names, is_stripped_env
+    register_secret_env_names(["BOUNDARY_TEST_BOT_TOKEN"])
+    monkeypatch.setenv("BOUNDARY_TEST_BOT_TOKEN", "synthetic-channel-secret")
+    monkeypatch.setenv("BOUNDARY_TEST_TOKEN_BUDGET", "12")
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    assert is_stripped_env("BOUNDARY_TEST_BOT_TOKEN")
+    assert "BOUNDARY_TEST_BOT_TOKEN" not in child_env()
+    assert child_env()["BOUNDARY_TEST_TOKEN_BUDGET"] == "12"
+    monkeypatch.setenv("VORTOCODE_ENV_PASSTHROUGH", "BOUNDARY_TEST_BOT_TOKEN_typo")
+    assert "BOUNDARY_TEST_BOT_TOKEN" not in child_env()
+    monkeypatch.setenv("VORTOCODE_ENV_PASSTHROUGH", "BOUNDARY_TEST_BOT_TOKEN")
+    assert child_env()["BOUNDARY_TEST_BOT_TOKEN"] == "synthetic-channel-secret"
+
+
+def test_secret_name_registration_is_validated_before_any_change(monkeypatch):
+    from src.sandbox.policy import register_secret_env_names, is_stripped_env
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    with pytest.raises(ValueError):
+        register_secret_env_names(["BOUNDARY_TEST_ATOMIC_TOKEN", "not an env name"])
+    assert not is_stripped_env("BOUNDARY_TEST_ATOMIC_TOKEN")
+    with pytest.raises(ValueError):
+        register_secret_env_names("BOUNDARY_TEST_STRING_TOKEN")
+
+
+def test_host_secret_cannot_be_reintroduced_by_external_cli_settings(tmp_path, monkeypatch):
+    import json
+    from src.agents.external_workers import user_config
+    from src.sandbox.policy import register_secret_env_names
+    register_secret_env_names(["BOUNDARY_TEST_REINJECTION_TOKEN"])
+    (tmp_path / "settings.json").write_text(json.dumps({"env": {
+        "BOUNDARY_TEST_REINJECTION_TOKEN": "synthetic-channel-secret",
+        "VORTOCODE_PROVIDER_PERSONAL_KEY": "synthetic-model-secret",
+        "VORTOCODE_CODEX_REPORT_TOKEN": "synthetic-control-secret",
+        "ANTHROPIC_AUTH_TOKEN": "synthetic-cli-owned-secret"}}))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    _, env = user_config("claude")
+    assert env == {"ANTHROPIC_AUTH_TOKEN": "synthetic-cli-owned-secret"}
+
+
+def test_actual_command_sees_no_runtime_secrets_and_keeps_task_environment(tmp_path, monkeypatch):
+    from src.agents.shell import run_command
+    from src.sandbox.policy import register_secret_env_names
+    register_secret_env_names(["BOUNDARY_TEST_COMMAND_TOKEN"])
+    for key in ("BOUNDARY_TEST_COMMAND_TOKEN", "VORTOCODE_PROVIDER_COMMAND_KEY", "VORTOCODE_CODEX_REPORT_TOKEN"):
+        monkeypatch.setenv(key, "synthetic-not-a-live-secret")
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
+    monkeypatch.setenv("VORTOCODE_CRON_TOKEN_BUDGET", "12")
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    result = run_command(str(tmp_path),
+        'if [ -n "$BOUNDARY_TEST_COMMAND_TOKEN$VORTOCODE_PROVIDER_COMMAND_KEY$VORTOCODE_CODEX_REPORT_TOKEN" ]; '
+        'then echo secret_present; else echo secret_absent; fi; echo budget=$VORTOCODE_CRON_TOKEN_BUDGET')
+    assert result["ok"] and "secret_absent" in result["output"] and "budget=12" in result["output"]
+    assert "synthetic-not-a-live-secret" not in result["output"]
+
+
+async def test_stdio_mcp_inherits_filtered_environment_with_its_own_explicit_settings(monkeypatch):
+    from types import SimpleNamespace
+    from src.tools import mcp_client
+    from src.sandbox.policy import register_secret_env_names
+    register_secret_env_names(["BOUNDARY_TEST_MCP_TOKEN"])
+    monkeypatch.setenv("BOUNDARY_TEST_MCP_TOKEN", "synthetic-host-secret")
+    monkeypatch.setenv("VORTOCODE_PROVIDER_MCP_KEY", "synthetic-model-secret")
+    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_TOKEN", "synthetic-control-secret")
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    captured = {}
+    async def spawn(*_args, **kwargs):
+        captured.update(kwargs["env"])
+        return SimpleNamespace()
+    async def rpc(*_args, **_kwargs):
+        return {"result": {}}
+    monkeypatch.setattr(mcp_client.asyncio, "create_subprocess_exec", spawn)
+    client = mcp_client.StdioMCPClient("fixture", "unused", env={"PLUGIN_SETTING": "explicit"})
+    monkeypatch.setattr(client, "_rpc", rpc)
+    assert await client.connect()
+    assert not {"BOUNDARY_TEST_MCP_TOKEN", "VORTOCODE_PROVIDER_MCP_KEY", "VORTOCODE_CODEX_REPORT_TOKEN"} & captured.keys()
+    assert captured["PLUGIN_SETTING"] == "explicit"
+
+
 # ── child_env dict 层 ────────────────────────────────────────────────
 
 def test_operating_secrets_stripped(monkeypatch):

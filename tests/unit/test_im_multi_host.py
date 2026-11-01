@@ -105,6 +105,36 @@ def clean_registry():
     assert not im_registry.entries()
 
 
+@pytest.mark.parametrize("fail", [False, True])
+async def test_host_protects_all_declared_secrets_before_start_and_after_cleanup(tmp_path, monkeypatch, fail):
+    from src.sandbox.policy import child_env, is_stripped_env
+    data = configuration()
+    data["bindings"][0]["env_prefix"] = "CREDENTIAL_CASE_TELEGRAM"
+    data["bindings"][1].update(channel="dingtalk", env_prefix="CREDENTIAL_CASE_DINGTALK")
+    root, _ = setup_config(tmp_path, monkeypatch, data)
+    inject_models(monkeypatch, {f"account-{index}": ScriptedLLM("unused") for index in range(2)})
+    names = {"CREDENTIAL_CASE_TELEGRAM_TOKEN", "CREDENTIAL_CASE_DINGTALK_CLIENT_SECRET"}
+    for name in names:
+        monkeypatch.setenv(name, "synthetic-host-secret")
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    def factory(spec):
+        assert names.isdisjoint(child_env())  # Includes bindings not yet constructed.
+        if fail and spec.id == "binding-1":
+            raise RuntimeError("offline startup failure")
+        return HostedAdapter(spec.account_id, spec.channel), "owner-1"
+    if fail:
+        with pytest.raises(RuntimeError, match="startup failure"):
+            await im_host.start_host(str(root), runner=FakeRunner(), register_worker=lambda _worker: None,
+                                     adapter_factory=factory)
+    else:
+        host = await im_host.start_host(str(root), runner=FakeRunner(), register_worker=lambda _worker: None,
+                                        adapter_factory=factory)
+        await host.close()
+    assert not im_registry.entries()
+    assert all(os.getenv(name) and is_stripped_env(name) for name in names)
+    assert names.isdisjoint(child_env())  # Parent values still exist after stop/rollback.
+
+
 @pytest.mark.parametrize("count", [1, 2, 4, 8])
 async def test_actual_host_runs_n_pollers_routes_replies_and_stops_one_only(tmp_path, monkeypatch, count):
     root, _ = setup_config(tmp_path, monkeypatch, configuration(count))

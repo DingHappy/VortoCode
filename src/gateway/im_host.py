@@ -231,6 +231,11 @@ async def start_host(root, *, runner, register_worker, adapter_factory=None, act
     config = load_host_config(root)
     if im_registry.entries():
         raise IMConfigError("An IM host or legacy bridge already owns this Runtime")
+    from src.sandbox.policy import register_secret_env_names
+    # Register every declared secret before any adapter can start. Keep protection
+    # after rollback/stop: the parent still has these environment values.
+    register_secret_env_names([f"{spec.env_prefix}_{'TOKEN' if spec.channel == 'telegram' else 'CLIENT_SECRET'}"
+                               for spec in config.bindings])
     host = IMHost(config)
     from src.gateway.session_actor import SessionActors
     from src.gateway.im_input import ManagedInputs

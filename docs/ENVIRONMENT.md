@@ -16,7 +16,7 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_ALLOW_INSECURE_BIND` | `0` | 没设 API 令牌却绑定非本机地址时，服务默认拒绝启动；设 `1` 显式放行（如前面有已鉴权的反向代理）。 | `web/server.py` |
 | `VORTOCODE_ENABLE_SHELL` | `0` | 宿主机命令执行的唯一总开关（`sandbox/policy.py:shell_enabled`）。Web 的 `require_shell`、cron 命令作业、终端都只认它。 | `sandbox/policy.py` 等 |
 | `VORTOCODE_SANDBOX` | `auto` | OS 沙箱（seatbelt / bwrap）策略。`off` 只应在可信环境里显式放开宿主机执行。 | `sandbox/policy.py`、`agents/shell.py` 等 |
-| `VORTOCODE_ENV_PASSTHROUGH` | — | 逗号分隔的变量名，准许穿透到子进程（默认会被剥掉的密钥类变量）。刻意只认进程环境、不认仓库文件，避免被投毒的仓库把密钥放行。 | `sandbox/policy.py` |
+| `VORTOCODE_ENV_PASSTHROUGH` | — | 逗号分隔的精确变量名，准许穿透到子进程；默认剥离运行端管理员/控制/IM 凭证、`VORTOCODE_PROVIDER_<NAME>_KEY` 及可信宿主登记的 bot 秘密变量。只认宿主进程环境、不认项目文件或通配符；关闭 bot 不撤销其变量名保护。它不提供文件/Keychain 隔离，详见 [凭证边界](PERSONAL_AGENT_BOUNDARIES.md)。 | `sandbox/policy.py` |
 | `VORTOCODE_OPS_TOKEN` | — | 运维报到端点的专用令牌。只在常驻助理（通用范围）开放，不设则端点不存在。 | `web/routers/ops_heartbeat.py` |
 | `VORTOCODE_VOICE_MCP_TOKEN` | — | 语音 MCP 端点的专用令牌。只在常驻助理开放，不设则端点不存在。 | `web/routers/voice.py` |
 
