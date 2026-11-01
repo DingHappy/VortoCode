@@ -12,6 +12,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
+| `gateway/im_service.py` / `im_registry.py` / `im_host.py` | 原单入口与 Project 的 N 入口只读托管、可信配置、精确路由/代次清理及共享 IM 模型槽；[托管合同](IM_MULTI_HOST.md) | 第二套任务库/执行池、General 项目授权、持久输入/去重、自动派活或原审批权迁移 |
 | `src/llm/providers.py` / `src/llm/client.py` | 原模型端点/角色路由、回环空 Key 占位符与本机代理隔离 | 自动启动/下载本机模型、借用其它供应商密钥或推断 provider 硬预算能力 |
 | `src/llm/hard_budget.py` | 严格适配器门、请求前预留、累计 token/请求/工具/时间预算 | 默认 provider 能力推断、持久认领和授权 |
 | `src/llm/streaming.py` | 执行中断信号、受检查回调与本地流清理 | 任务台账、失效判定、远端费用停止 |

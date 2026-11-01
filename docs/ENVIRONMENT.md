@@ -100,8 +100,9 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | 变量 | 默认 | 作用 | 读取位置 |
 | --- | --- | --- | --- |
 | `VORTOCODE_IM` | — | 在服务进程内启动的 IM 渠道：`telegram` 或 `dingtalk`。 | `web/server.py`、`gateway/runtime.py` 等 |
+| `VORTOCODE_IM_BINDINGS_FILE` | — | 显式启用 Project 的 N 入口只读托管，值为项目外宿主 JSON 的绝对路径。bot 定义、账号绑定、主通知入口和 IM 模型槽分开；不能与非空 `VORTOCODE_IM` 同用。配置与未覆盖门禁见 [N 入口托管](IM_MULTI_HOST.md)。 | `gateway/runtime.py`、`gateway/im_host.py` |
 | `VORTOCODE_IM_ROLE` | `interactive` | `interactive` 接收并执行消息；`notify` 只推送。 | `gateway/im_service.py` |
-| `VORTOCODE_IM_CONVERSATION` | `primary` | `isolated` 独立保存本 bot 的聊天与人设，不合入主聊天、不接主通知/跨 bot 审批；要求稳定账号身份，不能与 `notify` 同用。仍是一 runtime 一个内嵌桥，见 [多 bot 方案](MULTI_BOT_COLLABORATION.md)。 | `gateway/im_service.py`、`cli.py` |
+| `VORTOCODE_IM_CONVERSATION` | `primary` | 单入口路径中，`isolated` 独立保存聊天与人设，不合入主聊天、不接主通知/跨 bot 审批；要求稳定账号身份，不能与 `notify` 同用。N 托管另由显式绑定配置控制。 | `gateway/im_service.py`、`cli.py` |
 | `VORTOCODE_IM_POLICY` | `standard` | `research_read` 为项目只读研究：仅 `read_file/list_files/grep`，无写入、命令、联网、MCP 或委派；必须显式配置 Project scope、isolated、interactive，只允许配对主人。独立策略历史不导入原普通会话。不是同 runtime 多桥开关。 | `gateway/im_service.py`、`cli.py`、`agents/research_read.py` |
 | `VORTOCODE_IM_ALLOW_FROM` | — | 允许对话的发送者 ID 白名单（逗号分隔，所有渠道通用）。 | `gateway/im_service.py`、`gateway/roster.py` 等 |
 | `VORTOCODE_TG_ALLOW_FROM` / `VORTOCODE_DD_ALLOW_FROM` | — | 按渠道单独设的白名单。 | `gateway/roster.py`、`gateway/im_service.py` |

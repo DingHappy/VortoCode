@@ -59,6 +59,7 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
     stop_event = asyncio.Event()
     im_task = None
     im_adapter = None
+    im_host = None
     run_manager = None
     terminal_manager = None
     receipt_started = False
@@ -95,7 +96,10 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
             print(f"  ↻ 恢复 {len(recovered_runs)} 个中断的 Desktop 运行记录")
         terminal_manager = make_terminal_manager()
         im_channel = os.getenv("VORTOCODE_IM", "").strip().lower()
-        if im_channel:
+        if os.getenv("VORTOCODE_IM_BINDINGS_FILE", "").strip():
+            from src.gateway.im_host import start_host
+            im_host = await start_host(root, runner=runner, register_worker=register_im_worker)
+        elif im_channel:
             from src.gateway import im_service
             bridge, im_adapter = im_service.start_embedded(
                 im_channel, root, runner=runner, register_worker=register_im_worker)
@@ -115,6 +119,8 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
                 cleanup.callback(terminal_manager.shutdown)
             if run_manager is not None:
                 cleanup.push_async_callback(run_manager.shutdown)
+            if im_host is not None:
+                cleanup.push_async_callback(im_host.close)
             if im_adapter is not None:
                 cleanup.push_async_callback(im_adapter.close)
             if im_task is not None:
