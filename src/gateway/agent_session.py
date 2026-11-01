@@ -80,7 +80,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   reconcile_task_dependencies=None,
                   untrusted_input: bool = False, with_dev: bool = True,
                   extra_system: str | None = None, trust_level: str | None = None,
-                  allow_local_files: bool = False):
+                  allow_local_files: bool = False, session_role: str = "standard"):
     """装配一个主 agent（三端同一骨架）。
 
     kind ∈ {web, cli, im} 决定差异位（with_artifacts / hooks）；confirm/on_progress 由调用端提供。
@@ -96,6 +96,15 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     """
     if kind not in _KINDS:
         raise ValueError(f"未知装配端 kind={kind!r}（可选 {_KINDS}）")
+    if session_role not in {"standard", "research_read"}:
+        raise ValueError("未知会话角色；可选 standard / research_read")
+    if session_role == "research_read":
+        if workspace_scope != "project":
+            raise ValueError("只读研究角色需要显式选择 Project 工作区")
+        from src.agents.research_read import build_research_agent
+        return build_research_agent(repo_root, llm=llm, max_steps=max_steps,
+                                    on_tool=on_tool, on_tool_event=on_tool_event,
+                                    extra_system=extra_system)
     from src.agents.main_agent import (MainAgent, build_agent_tools, build_web_tools,
                                        make_confirm_gate, native_default, skill_catalog)
     from src.agents.capabilities import SessionCapabilities
