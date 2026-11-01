@@ -1304,6 +1304,42 @@
     ]
   },
   {
+    "path": "/api/mobile/native/keys",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/decisions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/decide",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/capture",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/changes",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/undo",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/mobile/pairing-window",
     "methods": [
       "POST"
