@@ -185,7 +185,7 @@ async def test_accepted_outbox_notification_is_not_queued_again_by_watcher(tmp_p
 
     result = await notices.flush_undelivered(root, recovered)
     await watch.watch_once(root, NOW, notify=notify, refresh=refresh, times=[])
-    assert result["sent"] == 1 and len(sent) == 1 and "等待审查" in sent[0]
+    assert result["sent"] == 1 and len(sent) == 1 and "尚无当前提交的验证结果" in sent[0]
     assert notices.pending_undelivered_count(root) == 0
 
 

@@ -68,6 +68,64 @@ async def test_done_notice_checks_each_criterion(tmp_path):
     assert dispatch.list_dispatches(root)[0]["outcome"]["kind"] == "acceptance" and llm.calls == 1
 
 
+def test_completion_prioritizes_late_unresolved_criteria_without_losing_total():
+    criteria = [f"标准{i}" for i in range(8)]
+    outcome = {"kind": "acceptance", "summary": "已全部验收并上线", "criteria": [
+        {"text": text, "verdict": "met" if i < 6 else "unmet" if i == 6 else "unknown",
+         "evidence": f"依据{i}"} for i, text in enumerate(criteria)]}
+    item = {"project": "P", "title": "t", "status": "done", "criteria": criteria, "outcome": outcome}
+    text = watch.status_message(item)
+    assert "6/8 条对上" in text and "不代表人工验收" in text
+    assert "✗ 标准6" in text and "? 标准7" in text
+    assert text.index("✗ 标准6") < text.index("✓ 标准0")
+    assert "另有 5 条标准" in text and "✓ 标准1" not in text
+    assert "已全部验收并上线" not in text
+    assert item["criteria"] == criteria and len(item["outcome"]["criteria"]) == 8
+
+
+def test_legacy_review_is_rechecked_against_original_criteria():
+    item = {"project": "P", "title": "t", "status": "done", "criteria": ["只增加测试文件", "测试通过"],
+            "outcome": {"kind": "acceptance", "criteria": [
+                {"text": "任务已完成", "verdict": "met", "evidence": "完成"},
+                {"text": "测试通过", "verdict": "met", "evidence": ""}]}}
+    text = watch.status_message(item)
+    assert "0/2 条对上" in text and "? 只增加测试文件" in text and "? 测试通过" in text
+    assert "✓" not in text and "任务已完成" not in text
+    goal_text = watch.goal_message(item)
+    assert "0/2 条对上" in goal_text and "等于你亲自确认" in goal_text
+
+
+def test_missing_review_does_not_hide_acceptance_uncertainty():
+    text = watch.status_message({"project": "P", "title": "t", "status": "done", "criteria": ["测试通过"],
+                                 "delivery_evidence": {"verification": "passed"}})
+    assert "自动验证通过" in text and "尚未取得有效复盘" in text
+    assert "再决定是否验收" in text
+
+
+@pytest.mark.parametrize("changed", [
+    {"result": "新的执行输出"},
+    {"criteria": ["新的标准"]},
+    {"delivery_evidence": {"verification": "stale", "head": "a" * 40, "verified_head": "b" * 40}},
+    {"delivery_evidence": {"verification": "passed", "head": "b" * 40, "verified_head": "b" * 40}},
+])
+async def test_completed_review_is_not_reused_after_material_or_commit_changes(tmp_path, changed):
+    root = str(tmp_path)
+    ended = _ended(root, "done", result="超时为30并补了单测", delivery_evidence={
+        "verification": "passed", "head": "a" * 40, "verified_head": "a" * 40})
+    llm = FakeLLM(json.dumps({"criteria": [
+        {"text": text, "verdict": "met", "evidence": "原始输出"} for text in ended["criteria"]]}))
+    reviewed = await review.follow_up(root, ended, lambda item: review.review_outcome(item, llm=llm))
+    assert "2/2 条对上" in watch.status_message(reviewed)
+    dispatch._update(root, ended["id"], lambda item: item.update(**changed))
+    latest = dispatch.list_dispatches(root)[0]
+    before = json.dumps(latest, ensure_ascii=False, sort_keys=True)
+    text = watch.status_message(latest)
+    assert "条对上" not in text and "助理复盘未完成" in text
+    assert json.dumps(latest, ensure_ascii=False, sort_keys=True) == before
+    await review.follow_up(root, latest, lambda item: review.review_outcome(item, llm=llm))
+    assert llm.calls == 1  # 展示失效不会触发第二次模型复盘。
+
+
 async def test_failure_is_diagnosed_and_the_next_attempt_is_drafted_for_approval(tmp_path):
     root = str(tmp_path)
     failed = _ended(root, "failed", error="ImportError: starlette", result="集成测试红")

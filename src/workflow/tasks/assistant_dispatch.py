@@ -325,7 +325,21 @@ def _review_source(item: Dict[str, Any]) -> str:
                                            "attempt", "remote_task_id", "request_id")}
     evidence = item.get("delivery_evidence") or {}
     source["verification"] = evidence.get("verification") if isinstance(evidence, dict) else None
+    if isinstance(evidence, dict) and ("head" in evidence or "verified_head" in evidence):
+        source["delivery_commit"] = [evidence.get("head"), evidence.get("verified_head")]
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def current_outcome(item: Dict[str, Any]) -> Dict[str, Any]:
+    """只读复盘投影：认领后的判断必须仍对应当前材料；旧版未认领记录仍仅供参考。"""
+    outcome = item.get("outcome")
+    if not isinstance(outcome, dict):
+        return {}
+    claim = item.get("outcome_review")
+    if claim and (not isinstance(claim, dict) or claim.get("status") != "completed"
+                  or claim.get("source") != _review_source(item)):
+        return {}
+    return outcome
 
 
 def claim_dispatch_review(root: str, dispatch_id: str) -> tuple[Dict[str, Any], bool]:
