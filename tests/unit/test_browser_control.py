@@ -4,6 +4,14 @@ import pytest
 from src.agents.gate import make_confirm_gate
 from src.agents.tools.browser import browser_control_enabled, build_browser_tools, restricted_reason
 from src.agents.trust import FULL, INTERACT, pre_authorized
+from src.browser.page_privacy import AUTH_STATE_JS
+
+
+@pytest.fixture(autouse=True)
+async def _close_browsers():
+    yield
+    from src.agents.tools.website_browser import shutdown_browsers
+    await shutdown_browsers()
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +64,9 @@ class _FakeBrowser:
     async def start(self):
         self.running = True
 
+    async def close(self):
+        self.running = False
+
     async def navigate(self, url):
         self.url = url
 
@@ -63,6 +74,8 @@ class _FakeBrowser:
         pass
 
     async def evaluate(self, expression):
+        if expression == AUTH_STATE_JS:
+            return {"protected": False, "frames": False}
         if expression == "location.href":
             return self.url
         if "data-vorto-ref=\"${ref}\"" in expression:
@@ -114,6 +127,7 @@ async def test_type_refuses_password_and_types_after_yes(tmp_path):
     assert "密码" in await tools["browser_type"].handler({"ref": 1, "text": "secret"})
     assert fake.typed == []
     fake.element = {**fake.element, "type": "text"}
+    await tools["browser_login"].handler({})
     assert "已输入" in await tools["browser_type"].handler({"ref": 1, "text": "hello"})
     assert fake.typed == ["hello"]
 
@@ -135,4 +149,5 @@ async def test_restricted_open_never_starts_browser_and_redirects_are_stopped(tm
 def test_page_reading_tools_taint_the_turn():
     tools = build_browser_tools("/tmp", None, browser_factory=_FakeBrowser)
     assert all(t.untrusted_source and t.external_content for t in tools)
-    assert {t.name for t in tools if not t.read_only} == {"browser_click", "browser_type"}
+    assert {t.name for t in tools if not t.read_only} == {
+        "browser_click", "browser_type", "browser_scroll", "browser_connect", "browser_disconnect", "browser_close"}

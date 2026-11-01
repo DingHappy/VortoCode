@@ -53,8 +53,9 @@ export function BrowserPane({ onRestartRuntime, onDraftStateChange }: { onRestar
         <SettingsReadFeedback label="浏览器设置" loading={setting.loading} error={setting.error} onRetry={setting.reload} />
         {!unavailable && <p className="settings-card-note">配置：{status?.enabled ? "已开启" : "已关闭"}。工具清单在本机引擎重启后更新。</p>}
         <ul className="settings-card-list">
-          <li>使用独立的浏览器配置，不含你日常浏览器的登录信息、Cookie 和密码；需要登录的网站请在那个窗口里自己登录。</li>
-          <li>每次点击或输入都会先问你，即使授权级别是「完全信任」；不会替你填写密码框。</li>
+          <li>网站与账号经你确认后，使用各自独立的本机登录目录；不会导入日常浏览器的 Cookie 或密码。撤销助手连接不会退出网站。</li>
+          <li>登录、扫码和验证码由你在专用窗口完成，确认恢复前助手暂停读取和截图。每次点击、输入或滚动仍会先问你，即使是「完全信任」。</li>
+          <li>可选手机网页模式，模拟页面尺寸和触摸操作；原生 App 控制需单独配置与授权，此开关只控制网页。</li>
           <li>支付、银行、邮箱、账号中心、密码管理和云控制台等站点，以及内网地址，会被拦截。</li>
           <li>只在 Desktop 会话中可用；IM 和自动化任务不会获得这项能力。</li>
         </ul>

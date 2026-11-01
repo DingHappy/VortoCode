@@ -8301,6 +8301,37 @@ input::placeholder {
   margin-bottom: 8px;
 }
 
+.website-confirmation dl {
+  margin: 8px 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.confirm-copy:has(.website-confirmation) { min-width: 0; }
+.website-confirmation dl > div {
+  display: grid;
+  grid-template-columns: 5em minmax(0, 1fr);
+  gap: 8px;
+}
+.website-confirmation dt { color: var(--muted); }
+.website-confirmation dd { margin: 0; overflow-wrap: anywhere; }
+.website-confirmation small { display: block; line-height: 1.6; }
+.session-resources { margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.session-resources > summary { cursor: pointer; padding: 5px 0; }
+.session-resources > summary small { margin-left: 8px; }
+.session-resources-body { border: 1px solid var(--line); border-radius: 8px; padding: 12px; max-height: 300px; overflow-y: auto; }
+.session-resources-body p { margin: 5px 0 9px; line-height: 1.6; overflow-wrap: anywhere; }
+.session-resources-body ul { list-style: none; margin: 0; padding: 0; }
+.session-resources-body li { border-top: 1px solid var(--line); padding: 10px 0; }
+.session-resource-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+.session-resource-title strong, .session-resources > summary { color: var(--n13); }
+.session-resources-body dl { display: grid; grid-template-columns: 5em minmax(0, 1fr); gap: 4px 8px; margin: 8px 0; line-height: 1.5; }
+.session-resources-body dd { margin: 0; overflow-wrap: anywhere; color: var(--n12); }
+.session-resource-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.session-resource-actions button { padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--n12); cursor: pointer; }
+.session-resource-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.confirm-copy:has(.website-confirmation) > .confirmation-reply { display: block; }
+.confirm-copy .confirmation-reply > div { display: flex; flex-wrap: wrap; gap: 7px; }
+
 .composer-wrap > .confirm-card .confirm-copy p,
 .composer-wrap > .confirm-card .confirm-copy code {
   max-height: 168px;

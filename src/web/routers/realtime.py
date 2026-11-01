@@ -97,11 +97,23 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
     elif msg_type == P.GET_STATUS:
         hydrate = bool(message.get("hydrate"))
         cursor = await _session_event_cursor(_session_key(websocket))
+        resources = None
+        nonce = message.get("resources")
+        if isinstance(nonce, str) and 1 <= len(nonce) <= 128 and all(c.isalnum() or c in "-_" for c in nonce):
+            from src.gateway.session_resources import snapshot as resource_snapshot
+            key = _session_key(websocket)
+            record = _SESSIONS.get(key)
+            from pathlib import Path
+            if record and (not record.get("repo_root") or Path(record["repo_root"]).resolve() != Path(os.getcwd()).resolve()):
+                record = None
+            resources = resource_snapshot(record.get("agent") if record else None,
+                session=key, nonce=nonce, pending=pending_confirmations(key))
         await websocket.send_json(P.make_event(
             P.STATUS,
             data=state.to_dict(),
             v=P.PROTOCOL_VERSION if hydrate else None,
             cursor=cursor if hydrate else None,
+            resources=resources,
         ))
         if hydrate:
             # 原生 WebSocket 客户端可能只能在 connect() 返回后挂监听，连接瞬间的 init/history
@@ -214,6 +226,7 @@ def pending_confirmations(session: str = "") -> list[dict]:
                 "tainted": bool(record.get("tainted")),
                 "session": str(record.get("session") or "")[:120],
                 "created": str(record.get("created") or "")[:80],
+                **({"website": dict(record["website"])} if record.get("website") else {}),
             })
     output.sort(key=lambda item: item["created"], reverse=True)
     return output
@@ -247,14 +260,17 @@ def _make_ws_confirm(websocket, q):
         # 靠客户端匹配警示文案是 fail-open 的（换版本/改措辞就失效）——这里给它确定的信号。
         from src.agents.taint import is_tainted
         tainted = bool(is_tainted())
+        from src.agents.confirmation_context import website_confirmation
+        website = website_confirmation()
         _PENDING_CONFIRMS[cid] = {
             "future": fut,
             "text": str(message)[:4000],
             "tainted": tainted,
             "session": _session_key(websocket),
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "website": website,
         }
-        q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message), tainted=tainted))
+        q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message), tainted=tainted, website=website))
         from src.gateway.im_runtime import start_confirmation_notice
         notice = start_confirmation_notice(message)
         reason = "answered"
@@ -825,7 +841,7 @@ async def _replay_history(websocket) -> None:
     if pending:
         item = pending[0]
         await websocket.send_json(P.make_event(
-            P.AGENT_CONFIRM, id=item["id"], text=item["text"], tainted=item["tainted"]))
+            P.AGENT_CONFIRM, id=item["id"], text=item["text"], tainted=item["tainted"], website=item.get("website")))
     await websocket.send_json(_prompt_queue_event(websocket))
 
 

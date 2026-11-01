@@ -48,6 +48,27 @@ flowchart LR
 
 Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑上的助理与 Mac 上的 Codex 可以处于不同进程、不同主机。共享代码与合同不等于所有工作运行在一个进程。
 
+个人助理的云端/本机边界与凭证现状见 [Personal agent 宿主与凭证](PERSONAL_AGENT_BOUNDARIES.md)。
+账号云、模型服务和常驻宿主分别承担身份、推理与跟进；本机执行端保留自己的资源权限。
+本轮补齐宿主秘密环境的子进程继承过滤，尚未迁移明文模型配置、收窄跨端管理员委托或
+替换按目录名配对项目的规则；不能把多 bot 托管当作这些边界已经完成。
+
+已增加 [常驻派活实例与启动代次](RESIDENT_EXECUTION_IDENTITY.md) 的首个切片：复用持久实例，
+可选固定目标、冻结提议快照并在原任务路由核对；不是管理员凭证委托或跨宿主项目配对已经完成。
+[Grok Bot 发布包复核](GROK_BOT_RELEASE_REVIEW.md) 记录静态证据限制及后续采用顺序，和 grok-build 分开。
+
+网站登录与模型 Key 是不同边界。[网站连接与手机操作](WEBSITE_CONNECTIONS.md) 已接入本机
+工作区授权、独立登录目录、人工登录接管和手机网页模式；Android/iPhone 原生 App 仍待设备适配。
+登录态留在资源宿主，不复制给云端或 IM；源码与离线测试尚不能证明真实网站或手机验收通过。
+
+[可插拔能力设计](PLUGGABLE_CAPABILITIES.md) 将能力适配器与核心授权/任务生命周期分开。
+已接浏览器驱动替换接口与 Android 已有会话首个切片；已有助理插件、MCP 和 Skill 继续使用
+原入口。完整设备管理、iOS 驱动、第三方安装与热加载尚未实现。
+
+Android 已开始 [首个已有会话插件切片](ANDROID_SESSION_PLUGIN.md)：默认关闭，仅有人确认的
+Desktop local Project 可绑定本机 Appium，观察原生界面及逐次确认点按；会话创建、安装、
+输入/滑动、真模拟器验收和 iOS 未实现。待核对动作留在原设备资源记录，不自动重放。
+
 设置的本机控制由独立 `useLocalRuntimeControls` 编排，复用原托管进程与执行所有者；停止前读取当前活动并核对精确启动身份，不新增任务库。配置内容未变时保留模型版本与引擎状态。合同与并发边界见[模型配置](MODEL_CONFIGURATION.md)和[本机引擎控制](LOCAL_RUNTIME_CONTROL.md)。
 
 ## 已接入的执行能力

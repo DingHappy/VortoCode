@@ -1,0 +1,72 @@
+{
+  "date": "2026-11-01",
+  "base": "a4e04b7a2a0b33b08f92311ab95f3ff4ab7ab270",
+  "branch": "codex/session-resource-overview",
+  "scope": "Source and synthetic acceptance, not installed/deployed or real account/device validation",
+  "checks": {
+    "python": {
+      "passed": 5706,
+      "skipped": 10
+    },
+    "e2e": {
+      "passed": 26
+    },
+    "ruff": "passed",
+    "mypy": "passed; 27 files",
+    "typescript": "passed",
+    "vitest_final": {
+      "passed": 1274
+    },
+    "vite_build": "passed",
+    "cargo": "skipped: missing sidecar resources, not a pass"
+  },
+  "browser": {
+    "space": 242,
+    "page": "p2",
+    "kind": "synthetic component and production read controller",
+    "accepted_screenshots": [
+      "02-current.png",
+      "03-late-reply.png",
+      "04-offline-narrow.png"
+    ],
+    "superseded": [
+      "01-resources-wide.png"
+    ],
+    "late_reply": {
+      "body": "当前连接：已登记的常驻运行端。这里的状态不代表已登录、已授权执行或任务完成。读取于 11/1/2026, 1:49:55 AM · 会话观察，未作在线账号检查网站浏览器已装配，尚未打开账号标签常驻电脑标签（实际账号待核对）执行位置已登记的常驻运行端动作授权交互动作每次确认仅当前会话记录，恢复前仍核对站点和连接。Android 设备尚未附加设备控制端已登记的常驻运行端动作授权交互动作每次确认没有附加设备，不会自动发现或连接。MCP 服务尚未连接执行位置对应 MCP 服务端，实际位置待核对动作授权按具体工具和原权限规则判断尚未连接；工具安装与账号授权分别管理。",
+      "reads": "状态读取次数：3"
+    },
+    "offline_narrow": {
+      "viewport": 390,
+      "page": 390,
+      "refreshDisabled": true,
+      "reads": "状态读取次数：3",
+      "body": "当前连接：已登记的常驻运行端。这里的状态不代表已登录、已授权执行或任务完成。读取于 11/1/2026, 1:49:55 AM · 保留上次记录，当前状态待核对连接中断，保留上次记录；当前状态未核实。网站浏览器上次记录：已装配，尚未打开账号标签常驻电脑标签（实际账号待核对）执行位置已登记的常驻运行端动作授权交互动作每次确认仅当前会话记录，恢复前仍核对站点和连接。Android 设备上次记录：尚未附加设备控制端已登记的常驻运行端动作授权交互动作每次确认没有附加设备，不会自动发现或连接。MCP 服务上次记录：尚未连接执行位置对应 MCP 服务端，实际位置待核对动作授权按具体工具和原权限规则判断尚未连接；工具安装与账号授权分别管理。"
+    },
+    "directory": "/private/tmp/vortocode-session-resource-overview-ui",
+    "limits": [
+      "Full application minimum width unchanged",
+      "No credentials, device discovery, MCP connection or model requests in fixture"
+    ]
+  },
+  "logs": {
+    "python_and_initial_desktop": "/private/tmp/vortocode-session-resource-overview-gates.log",
+    "desktop_final": "/private/tmp/vortocode-session-resource-overview-vitest-final.log",
+    "build_final": "/private/tmp/vortocode-session-resource-overview-build-final.log"
+  },
+  "source_sha256": {
+    "src/agents/tool.py": "cd95751dff4216c161c4ba140ecaec3e55058a05ac3bd1c2f05a5d2adaa9da31",
+    "src/gateway/session_resources.py": "9d4736a432d65642928c822228fb4757974d64e753e026ba2ef517a3a602310e",
+    "src/web/routers/realtime.py": "a964d6f87406adba7370f3f35149db5d024aead6b95ea04b70617cdeb110fe42",
+    "src/gateway/protocol.py": "f7bdeb0516c413e50f310d400626f38837277b0833d483898d9febe4dca1976c",
+    "src/agents/tools/website_browser.py": "9e85004741bdb4676b3452577ce00e53498b5290559dce4aeee1b283c5b3192b",
+    "src/agents/tools/android.py": "6aa7e45df7071c6c33094587c805773ac1465dccb02f5921bd2f76c67c78b7c9",
+    "src/plugins/__init__.py": "139c0a40874584619702a464fd98508c0a37e085115429d96d69aff29026aeb9",
+    "desktop/src/gateway.ts": "d0ce75c8ab0deeaf554c70c02075403db319c3e5717f7538ade872e6636be7b6",
+    "desktop/src/App.tsx": "158f222c4e3f69a0441313815cdd1c74e45b364dfd528315e37882a800f8732f",
+    "desktop/src/App.css": "749845859e0f165c4bf191b2fd4d08e70eaad54c3bebd3fab9ce11527ef17919",
+    "desktop/src/lib/sessionResources.ts": "6a20bace73fa640cd4e65a9486dcb78865900f31a299a3c9437282f52e991773",
+    "desktop/src/hooks/useSessionResources.ts": "ec4eb5781d90b88bdff0afc66af9016922cd98f192ad36e275ad7d3a4a849e26",
+    "desktop/src/components/SessionResources.tsx": "560e0ef46581721404ecaf1cd1db481c263b579f2279529670e8697d9ab075a2"
+  }
+}

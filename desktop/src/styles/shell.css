@@ -2393,3 +2393,14 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
   font-weight: var(--vc-weight-regular);
   overflow-wrap: anywhere;
 }
+
+/* Task-derived skill proposals reuse the existing personal skill editor. */
+.skill-learning { min-width: 0; display: grid; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--vc-divider, var(--border)); }
+.skill-learning h3, .skill-learning h4 { margin: 0; color: var(--vc-text, var(--text)); }
+.skill-learning .personal-skill-editor { display: grid; gap: 10px; min-width: 0; }
+.skill-learning label { display: grid; gap: 6px; min-width: 0; }
+.skill-learning input, .skill-learning select, .skill-learning textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; font: inherit; color: inherit; background: var(--vc-surface, var(--bg)); border: 1px solid var(--vc-border, var(--border)); border-radius: var(--vc-radius-control); }
+.skill-learning small { display: block; overflow-wrap: anywhere; }
+.skill-learning .personal-skill-review { display: grid; gap: 10px; min-width: 0; }
+.skill-learning pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border-radius: var(--vc-radius-inner); background: var(--vc-bg); font-size: var(--vc-size-caption); }
+.skill-learning button { max-width: 100%; height: auto !important; min-height: 32px; white-space: normal; overflow-wrap: anywhere; }

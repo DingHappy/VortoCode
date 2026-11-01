@@ -262,6 +262,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     if browser_control_enabled(kind):
         # 浏览器操控：Desktop 设置里显式打开才有；点击/输入在任何授权档位下都过人（interact 类）。
         tools += build_browser_tools(repo_root, gated_confirm)
+    from src.agents.tools.android import android_control_enabled, build_android_tools
+    if android_control_enabled(kind, profile=profile, can_ask_human=can_ask_human and confirm is not None,
+                               workspace_scope=workspace_scope):
+        tools += build_android_tools(repo_root, gated_confirm)
     from src.agents.tools.desktop import build_desktop_tools, desktop_control_enabled
     if desktop_control_enabled(kind, profile=capabilities.profile, can_ask_human=can_ask_human):
         # 桌面操作（实验功能，默认关闭）：有人值守的 Web/Desktop 会话、local 档位才有；

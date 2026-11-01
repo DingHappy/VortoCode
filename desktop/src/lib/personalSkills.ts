@@ -4,10 +4,17 @@ export class PersonalSkillRequests {
   private owner: object | null = null;
   private connected = false;
   private pending = false;
+  private transportEpoch = 0;
+
+  private generation(owner: object | null): number {
+    return owner && "connectionEpoch" in owner && typeof owner.connectionEpoch === "number" ? owner.connectionEpoch : 0;
+  }
 
   bind(owner: object | null, connected: boolean) {
-    if (owner !== this.owner || connected !== this.connected) {
+    const transportEpoch = this.generation(owner);
+    if (owner !== this.owner || connected !== this.connected || transportEpoch !== this.transportEpoch) {
       this.owner = owner; this.connected = connected; this.epoch++; this.pending = false;
+      this.transportEpoch = transportEpoch;
     }
     return this.epoch;
   }
@@ -17,7 +24,9 @@ export class PersonalSkillRequests {
   async run(operation: (current: () => boolean) => Promise<void>) {
     if (!this.owner || !this.connected || this.pending) return;
     const epoch = this.epoch;
-    const current = () => epoch === this.epoch && this.connected;
+    const transportEpoch = this.transportEpoch;
+    const current = () => epoch === this.epoch && this.connected && this.generation(this.owner) === transportEpoch;
+    if (!current()) return;
     this.pending = true;
     try { await operation(current); }
     finally { if (current()) this.pending = false; }

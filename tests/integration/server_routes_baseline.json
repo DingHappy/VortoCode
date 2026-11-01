@@ -1362,5 +1362,29 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/assistant/skill-proposals",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}/proposal",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}/proposal",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}/proposal",
+    "methods": [
+      "PUT"
+    ]
   }
 ]

@@ -82,7 +82,7 @@ _Spec = Tuple[Tuple[str, ...], Tuple[str, ...]]
 
 INBOUND: Dict[str, _Spec] = {
     PING: ((), ()),
-    GET_STATUS: ((), ("hydrate",)),
+    GET_STATUS: ((), ("hydrate", "resources")),
     AGENT: ((), ("text", "mode", "images", "audio", "context_files", "context_selections",
                     "rid", "want_reasoning", "model")),
     AGENT_CANCEL: ((), ()),
@@ -99,7 +99,7 @@ INBOUND: Dict[str, _Spec] = {
 OUTBOUND: Dict[str, _Spec] = {
     INIT: (("v", "data"), ()),               # v=PROTOCOL_VERSION：版本随连接握手下发
     PONG: ((), ()),
-    STATUS: (("data",), ("v", "cursor")),    # hydrate 应答带当前 cursor，快照可作为该序号基线
+    STATUS: (("data",), ("v", "cursor", "resources")),    # resources is a non-persisted, read-only observation.
     AGENT_HISTORY: (("items",), ()),
     AGENT_ACTIVITY_HISTORY: (("items",), ()),
     AGENT_PLAN: (("items",), ()),
@@ -119,7 +119,7 @@ OUTBOUND: Dict[str, _Spec] = {
     # attach 客户端跨进程拿不到 serve 侧的污点状态，若靠字符串匹配警示横幅来推断，
     # 就是 fail-open：serve 换个版本/改个措辞，客户端的 --yes 又会在污点回合放行。
     # 可选字段（老客户端忽略即可，不破冻结协议）；**客户端读不到它时必须按"可能有污点"处理**。
-    AGENT_CONFIRM: (("id", "text"), ("tainted",)),
+    AGENT_CONFIRM: (("id", "text"), ("tainted", "website")),  # Display only; no new approval semantics.
     AGENT_CONFIRM_STATE: (("id", "nonce", "pending"), ()),
     AGENT_CONFIRM_CLOSED: (("id",), ("reason",)),
     AGENT_DIFF: (("diff",), ("title",)),     # diff=unified diff 文本（serve 侧已截断）；title=一句话语境

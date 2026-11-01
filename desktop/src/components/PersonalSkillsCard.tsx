@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { GatewayClient } from "../gateway";
 import type { ConnectionState, PersonalSkill, PersonalSkillsSnapshot } from "../types";
 import { PersonalSkillRequests } from "../lib/personalSkills";
+import { SkillLearningCard } from "./SkillLearningCard";
 
 const blank = { id: "", name: "", description: "", instructions: "", revision: null as string | null };
 
@@ -34,7 +35,7 @@ export function PersonalSkillsCard({ client, connection }: { client: GatewayClie
     return () => requests.invalidate();
     // Each runtime/connection generation owns its data and in-flight operations.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, connection]);
+  }, [client, connection, client?.connectionEpoch]);
 
   async function preview(item: PersonalSkill) {
     await operate(async current => {
@@ -97,6 +98,17 @@ export function PersonalSkillsCard({ client, connection }: { client: GatewayClie
       <label>流程指令<textarea required maxLength={60000} rows={10} disabled={disabled} value={state.draft.instructions} onChange={event => update({ draft: { ...state.draft, instructions: event.target.value } })} /></label>
       <button type="submit" disabled={disabled}>保存为停用版本</button>{" "}<button type="button" disabled={disabled} onClick={() => update({ editing: false })}>取消</button>
     </form>}
+    <SkillLearningCard client={client} connection={connection} skills={state.snapshot?.items || []}
+      onInspectUncertain={() => operate(async current => {
+        await refresh(current);
+        if (current()) update({ preview: null, editing: false, notice: "已重新读取当前技能；请结合提案中的版本核对保存结果。" });
+      })}
+      onSaved={id => operate(async current => {
+        await refresh(current);
+        if (!client || !current()) return;
+        const verified = await client.previewPersonalSkill(id);
+        if (current()) update({ preview: verified, editing: false, notice: "提案已保存为停用版本，请审阅正文后单独启用。" });
+      })} />
     <p>加载记录见原对话的工具时间线与审计；“指令已加载”不代表任务完成。禁用不撤回旧对话内容或远端操作。</p>
   </section>;
 }

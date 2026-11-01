@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 
-import type { PromptQueueItem, TrustStatus } from "../types";
+import type { PendingConfirmation, PromptQueueItem, TrustStatus } from "../types";
 import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./ComposerPanels";
 
 const noop = () => {};
@@ -30,6 +30,25 @@ it("workspace request offers the matching switch", () => {
   const project = renderToStaticMarkup(<WorkspaceRequestCard request={{ scope: "project", reason: "要改代码", task: "修登录" }}
     onDecline={noop} onAccept={noop} />);
   expect(project).toContain("选择项目"); expect(project).toContain("<code>修登录</code>");
+});
+
+it("separates website connection, navigation and human login from generic approval", () => {
+  const website = { version: 1 as const, origin: "https://example.com", account_label: "工作", device_mode: "mobile" as const };
+  const render = (action: "login" | "connect" | "open", patch: Partial<PendingConfirmation> = {}, connected = true) => renderToStaticMarkup(
+    <ConfirmCard confirm={{ id: "web1", text: "运行端原始请求", tainted: false, website: { ...website, action }, ...patch }}
+      trust={null} trustBusy={false} connected={connected} onTrust={noop} onCheck={noop} onAnswer={noop} />);
+  const login = render("login");
+  expect(login).toContain("我已完成，核对并继续");
+  expect(login).toContain("保持暂停");
+  expect(login).toContain("https://example.com");
+  expect(login).toContain("工作（需你核对实际账号）");
+  expect(login).toContain("手机网页");
+  expect(login).toContain("不表示已经登录成功或任务完成");
+  expect(render("connect")).toContain("允许建立连接");
+  expect(render("open")).toContain("允许打开");
+  expect(render("login", { tainted: true })).toContain("外部内容回合需要人工确认");
+  expect(render("login", { responseState: "failed" })).toContain("核对状态");
+  expect(render("login", {}, false)).toContain('disabled=""');
 });
 
 it("queue shows four items and counts the rest", () => {

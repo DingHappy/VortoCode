@@ -12,6 +12,13 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
+| `workflow/workbench/skill_learning.py` / 原 PersonalSkills | 原派活证据绑定的手动技能草稿、差异审核与停用保存，沿用原锁和版本启用；[学习审核](SKILL_LEARNING.md) | 模型提炼、自动学习/启用/重试、新任务库、独立账号身份或权限委托 |
+| 原 Tool 的 `ToolResource` / `gateway/session_resources.py` | 当前 WS 会话已装配资源的有界只读投影，复用原连接代次；[资源总览](SESSION_RESOURCES.md) | 凭据读取、设备发现/连接、工具执行、批准、资源数据库或新注册表 |
+| `agents/confirmation_context.py` / 原网站 BrowserSession | 当前工具链的确认展示与真实回合标识，任务内网站接管及本回合拒绝去重；[接管合同](WEBSITE_HANDOFF.md) | 批准决定、任务库、新执行循环、通用凭据管理或后台自动恢复 |
+| `gateway/execution_identity.py` / `workflow/workbench/resident_projects.py` | 原持久实例的启动收据与宿主固定目标，原任务路由/派活核验；[身份合同](RESIDENT_EXECUTION_IDENTITY.md) | 受限授权凭证、跨宿主发现、任务库或新的执行循环 |
+| `devices/android.py` / `android_ui.py` / `android_state.py` / `agents/tools/android.py` | Android 已有会话传输、原生 UI 投影、设备独占和待核对占位、原确认门；[Android 插件](ANDROID_SESSION_PLUGIN.md) | 创建设备会话、安装/启动应用、任意 Appium 命令、跨主机凭证同步或另一套任务循环 |
+| `browser/backend.py` | 受信任宿主注入的浏览器驱动合同、版本与模式声明，原 CDP 默认实现；[可插拔能力](PLUGGABLE_CAPABILITIES.md) | 权限授予、插件安装/代码发现、原生设备协议、第二套工具注册表或任务循环 |
+| `browser/connections.py` / `browser/page_privacy.py` / `agents/tools/website_browser.py` | 本机工作区网站授权、专用目录租约、人工登录接管及原确认门；[网站与设备合同](WEBSITE_CONNECTIONS.md) | Cookie 同步、通用凭证保险箱、原生手机 App、第二套任务循环或自动重试网站提交 |
 | `gateway/im_service.py` / `im_registry.py` / `im_host.py` / `im_input.py` / `im_input_store.py` | 原单入口与 Project 的 N 入口只读托管、账号级原生事件记录、原 SessionStore/SessionActors 准入与清理、精确路由及共享 IM 模型槽；[托管合同](IM_MULTI_HOST.md) | 第二套任务库/执行池、General 项目授权、持久排队/公平性、未知回合重放、自动派活或原审批权迁移 |
 | `src/llm/providers.py` / `src/llm/client.py` | 原模型端点/角色路由、回环空 Key 占位符与本机代理隔离 | 自动启动/下载本机模型、借用其它供应商密钥或推断 provider 硬预算能力 |
 | `src/llm/hard_budget.py` | 严格适配器门、请求前预留、累计 token/请求/工具/时间预算 | 默认 provider 能力推断、持久认领和授权 |

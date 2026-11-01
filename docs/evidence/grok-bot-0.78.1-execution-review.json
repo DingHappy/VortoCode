@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "target": "Grok Bot 0.78.1 release; separate from xAI grok-build",
+  "reported_asar_sha256": "e8d5e10f94f8b52cd02f696599c8e6503420ad85ceed7b41a27bbff7bff22f4d",
+  "rea": {
+    "parent_evidence_id": "ev_ddd8b3a1051dcba4f37bd3b022b6a9abef49b896c67bfd4813de1213ee6e51f9",
+    "summary_evidence_id": "ev_2de83b0bccc3f9df93a37a96830467e62f6e2c7e0995c7776bab4723a0492ecf",
+    "summary_file_sha256": "ed527537717c9bcd625cd029c20d3048f6c2a365044d771203d87ed171f37996",
+    "coverage": "partial; original selected source set excludes main-app and local-exec-daemon; their observations below are manual inert-text review",
+    "native_integrity_contradictions": 11
+  },
+  "files": [
+    {
+      "path": "dist/electron-main/main-app.cjs",
+      "sha256": "9d77eb5049d50869f0a2e7ceb1552cce0450188fecc23c81ff385b35e7252514",
+      "bytes": 3470507,
+      "observations": [
+        {
+          "anchor": "executeSandMcpTool(new A.ExecuteSandMcpToolRequest",
+          "offset": 1839809,
+          "line": 352,
+          "excerpt_sha256": "5f183b0ae345147cad1ddfa518ab1170c90e6e6acde3cb485f195b880a58fb51"
+        },
+        {
+          "anchor": "Backend MCP execution for",
+          "offset": 1840426,
+          "line": 352,
+          "excerpt_sha256": "f0d78e05b1d3f3d4da679c60f272cfa0ec0d3e0c452071d4f66105fb6d312c23"
+        },
+        {
+          "anchor": "async getConfigForEdit",
+          "offset": 2133250,
+          "line": 365,
+          "excerpt_sha256": "46bd6d21a32b954c26ae9b8fe56827831b5e42ad0b5a12c8ce65baa81bd65138"
+        },
+        {
+          "anchor": "attachDelegatedCredential:async",
+          "offset": 2788350,
+          "line": 1098,
+          "excerpt_sha256": "ad89e0368e051a7c3c7f0a910cb9b8eb26fe80f3db0503b2e9ab5be66148a827"
+        },
+        {
+          "anchor": "MCP tools run on Grok Bot's computer",
+          "offset": 3140804,
+          "line": 1116,
+          "excerpt_sha256": "11da4e109c3f4fe1b90088d327ac0ac26abf769ccbc681adb9a14cdd6c37d6c0"
+        }
+      ]
+    },
+    {
+      "path": "dist/local-exec-daemon/main.cjs",
+      "sha256": "8139dc55961101351635ad854326ea9624009492e4e7bba1d8b4820b5b972612",
+      "bytes": 3945762,
+      "observations": [
+        {
+          "anchor": "function Eae(",
+          "offset": 2048624,
+          "line": 1159,
+          "excerpt_sha256": "baff912cdf487a67c362377310107dd892d6f24e625ec38a646644873763974c"
+        },
+        {
+          "anchor": "function EFt(",
+          "offset": 2049743,
+          "line": 1159,
+          "excerpt_sha256": "19a120effd6b599003c3457baa83bf1b8ace7d3dd7255418b05ff6c58ea1ceb9"
+        },
+        {
+          "anchor": "async function cLe(",
+          "offset": 2051351,
+          "line": 1159,
+          "excerpt_sha256": "9d43ef6fe8c13da655d25d0aae90740c5f4649f9ba9a127d9a21c65a87aa54bf"
+        },
+        {
+          "anchor": "function vFt(",
+          "offset": 2052085,
+          "line": 1159,
+          "excerpt_sha256": "dc413be07d3da66d17d9cce46476469e8e3ece3413b36b0fd1e4de40677601b5"
+        },
+        {
+          "anchor": "async function bae(",
+          "offset": 2052717,
+          "line": 1159,
+          "excerpt_sha256": "e3bd6eabe2f8014df958101e7694581b02ca12a5ea394c0870a0945b39ef8611"
+        },
+        {
+          "anchor": "async handleExecRequest(",
+          "offset": 3111981,
+          "line": 1289,
+          "excerpt_sha256": "5fa613f66a7e426f21fac7087c6549aa20fd64e1dcef7dc30fd25c0d1d24b4dd"
+        },
+        {
+          "anchor": "handleCancel(e)",
+          "offset": 3112834,
+          "line": 1289,
+          "excerpt_sha256": "e5b94d0e0d64399e8bd75c2810e13269176d8b9a6855b9806e20468cc93bf115"
+        },
+        {
+          "anchor": "this.channel!==e||!this.proven",
+          "offset": 3770405,
+          "line": 1302,
+          "excerpt_sha256": "76d9614db7762825d92244ae34b7ab3b31aff5e885b7bb44f8f752ad99e38071"
+        },
+        {
+          "anchor": "async awaitSettledOnClose(",
+          "offset": 3762498,
+          "line": 1302,
+          "excerpt_sha256": "1310033bd563adbdc20ccd3bd9f717d2d10b7fec29a32b5dad62c0ab3a160c52"
+        },
+        {
+          "anchor": "SAND_LOCAL_EXEC_ROOT",
+          "offset": 3041786,
+          "line": 1288,
+          "excerpt_sha256": "80f938ee6f1469b22b55f4368e6da3c36ed2bce1f223a53a2e201686a4ce76e3"
+        },
+        {
+          "anchor": "function yFt(",
+          "offset": 2049313,
+          "line": 1159,
+          "excerpt_sha256": "7db9fcddd0fbee196b953299f857f18c1a862a05129c76fe2edcb68887ab2352"
+        },
+        {
+          "anchor": "async function q9(",
+          "offset": 3042796,
+          "line": 1289,
+          "excerpt_sha256": "b14244a0af479ae38b8817f87f08e59576fd86fec016dbbe31e6778cd708474e"
+        }
+      ]
+    }
+  ],
+  "not_performed": [
+    "target execution",
+    "sign-in",
+    "network requests",
+    "private configuration or credential reads",
+    "new signature verification",
+    "new semantic analysis of daemon"
+  ],
+  "offset_basis": "zero-based Unicode code points in UTF-8 decoded text"
+}
