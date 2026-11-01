@@ -208,7 +208,7 @@ export function ContextChips({ items, onRemove }: { items: ContextItem[]; onRemo
 
 const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
   ask: "每次都问我",
-  reads: "只读自动",
+  reads: "读取与事项自动",
   full: "完全信任",
 };
 

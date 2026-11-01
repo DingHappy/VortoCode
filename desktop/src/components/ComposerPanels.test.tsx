@@ -91,7 +91,7 @@ it("context chips label line ranges", () => {
 it("trust chip hides with one level and shows the effective level when the chosen one is capped", () => {
   const trust = (patch: Partial<TrustStatus>) => ({ level: "full", effective: "reads", levels: ["ask", "reads"], ...patch }) as TrustStatus;
   const capped = renderToStaticMarkup(<TrustChip trust={trust({})} busy={false} onChange={noop} />);
-  expect(capped).toContain('<option value="reads" selected="">只读自动</option>');
+  expect(capped).toContain('<option value="reads" selected="">读取与事项自动</option>');
   expect(renderToStaticMarkup(<TrustChip trust={trust({ levels: ["ask"] })} busy={false} onChange={noop} />)).toBe("");
   expect(renderToStaticMarkup(<TrustChip trust={null} busy={false} onChange={noop} />)).toBe("");
 });

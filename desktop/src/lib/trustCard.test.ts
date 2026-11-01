@@ -31,7 +31,7 @@ describe("授权档位卡", () => {
     const card = trustCard(status({ level: "reads", effective: "reads" }));
     expect(card?.options.map((option) => option.level)).toEqual(["ask", "reads", "full"]);
     expect(card?.options.find((option) => option.active)?.level).toBe("reads");
-    expect(card?.title).toBe("只读免确认");
+    expect(card?.title).toBe("读取与事项免确认");
   });
 
   it("超过上限的档位禁用，并说清为什么", () => {
@@ -39,7 +39,7 @@ describe("授权档位卡", () => {
     const full = card?.options.find((option) => option.level === "full");
     expect(full?.blocked).toBe(true);
     expect(full?.blockedReason).toContain("external");
-    expect(full?.blockedReason).toContain("只读免确认");
+    expect(full?.blockedReason).toContain("读取与事项免确认");
     expect(card?.options.find((option) => option.level === "ask")?.blocked).toBe(false);
   });
 
