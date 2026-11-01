@@ -57,6 +57,10 @@ Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑
 工作区授权、独立登录目录、人工登录接管和手机网页模式；Android/iPhone 原生 App 仍待设备适配。
 登录态留在资源宿主，不复制给云端或 IM；源码与离线测试尚不能证明真实网站或手机验收通过。
 
+[可插拔能力设计](PLUGGABLE_CAPABILITIES.md) 将能力适配器与核心授权/任务生命周期分开。
+本轮已接浏览器驱动替换接口；已有助理插件、MCP 和 Skill 继续使用原入口，Android/iOS 驱动、
+统一管理、第三方安装与热加载尚未实现。
+
 设置的本机控制由独立 `useLocalRuntimeControls` 编排，复用原托管进程与执行所有者；停止前读取当前活动并核对精确启动身份，不新增任务库。配置内容未变时保留模型版本与引擎状态。合同与并发边界见[模型配置](MODEL_CONFIGURATION.md)和[本机引擎控制](LOCAL_RUNTIME_CONTROL.md)。
 
 ## 已接入的执行能力

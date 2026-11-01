@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import uuid
 
 from src.gateway.process_lease import ProcessLease
+from src.browser.backend import DEFAULT_BACKEND_ID, validate_backend_id
 
 MAX_CONNECTIONS = 64
 MAX_BYTES = 128 * 1024
@@ -161,10 +162,17 @@ class BrowserConnections:
                 self._write([row for row in rows if not (row["id"] == connection_id and row["scope"] == self.scope)])
             return own
 
-    def profile_path(self, connection_id):
+    def profile_path(self, connection_id, *, backend_id=DEFAULT_BACKEND_ID):
+        validate_backend_id(backend_id)
         if self.get(connection_id) is None:
             raise ValueError("网站连接不存在、已撤销或不属于此工作区")
-        self._private(self.root / "profiles", directory=True)
-        target = self.root / "profiles" / connection_id
+        # Keep the original CDP location. Other reviewed backends never inherit
+        # its cookies, even when the same website connection is selected.
+        base = self.root / ("profiles" if backend_id == DEFAULT_BACKEND_ID else "driver-profiles")
+        self._private(base, directory=True)
+        target = base / connection_id
         self._private(target, directory=True)
+        if backend_id != DEFAULT_BACKEND_ID:
+            target = target / backend_id
+            self._private(target, directory=True)
         return target

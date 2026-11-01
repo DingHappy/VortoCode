@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 from src.agents.gate import request
 from src.agents.tool import Tool
 from src.agents.trust import INTERACT
+from src.browser.backend import BrowserBackend, BrowserLaunch, chromium_backend
 from src.browser.connections import BrowserConnections, safe_url, site_origin
 from src.browser.page_privacy import AUTH_STATE_JS, ELEMENT_JS, SNAPSHOT_JS
 from src.gateway.process_lease import ProcessLease
@@ -22,8 +23,8 @@ _WAIT = "浏览器已交还真人：请在专用窗口处理登录/验证码或�
 
 
 class BrowserSession:
-    def __init__(self, registry, factory):
-        self.registry, self.factory = registry, factory
+    def __init__(self, registry: BrowserConnections, backend: BrowserBackend):
+        self.registry, self.backend = registry, backend
         self.browser = None
         self.connection = None
         self.human = False
@@ -41,6 +42,9 @@ class BrowserSession:
                 raise ValueError("浏览器正在关闭")
             if self.cleaning:
                 raise ValueError("浏览器清理未确认，请先重试关闭")
+            mode = connection["device_mode"] if connection else "desktop"
+            if not self.backend.supports(mode):
+                raise ValueError("当前浏览器驱动不支持此网页模式")
             if self.browser is not None and getattr(self.browser, "running", False):
                 if self.connection != connection:
                     raise ValueError("请先 browser_close 关闭当前连接，再切换网站或账号")
@@ -52,16 +56,18 @@ class BrowserSession:
             _LIVE.add(self)
             try:
                 if connection:
-                    path = self.registry.profile_path(connection["id"])
+                    owner_path = self.registry.profile_path(connection["id"])
+                    path = self.registry.profile_path(connection["id"], backend_id=self.backend.backend_id)
                 else:
                     # Never silently load the old shared browser-profile cookies.
                     self.temporary = tempfile.TemporaryDirectory(prefix="vortocode-anonymous-")
                     path = Path(self.temporary.name)
+                    owner_path = path
                 try:
-                    self.lease = ProcessLease(path / ".vortocode-owner.lock").acquire()
+                    self.lease = ProcessLease(owner_path / ".vortocode-owner.lock").acquire()
                 except RuntimeError:
                     raise ValueError("网站登录会话正被另一个执行者占用，请先完成或关闭它") from None
-                self.browser = self.factory(path, connection["device_mode"] if connection else "desktop")
+                self.browser = self.backend.create(BrowserLaunch(path, mode))
                 self.connection = connection
                 self.human, self.confirmed = bool(connection), False
                 await self.browser.start()
@@ -103,20 +109,19 @@ async def shutdown_browsers():
         raise RuntimeError("浏览器清理未确认，未释放其占位")
 
 
-def build_tools(repo_root, confirm, *, browser_factory=None, connections=None):
+def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, backend=None):
     from src.agents.tools.browser import restricted_reason
     registry = connections or BrowserConnections(repo_root)
 
-    def factory(path, mode):
-        if browser_factory is not None:
-            return browser_factory()
-        from src.browser.cdp import CdpBrowser, find_browser
-        executable = find_browser()
-        if not executable:
-            raise ValueError("未找到本机 Chromium 浏览器")
-        return CdpBrowser(executable, path, device_mode=mode)
-
-    holder = BrowserSession(registry, factory)
+    if browser_factory is not None and backend is not None:
+        raise ValueError("Use one trusted browser backend factory")
+    selected = backend if backend is not None else chromium_backend()
+    if not isinstance(selected, BrowserBackend):
+        raise ValueError("Browser backend must be supplied by trusted host assembly")
+    if browser_factory is not None:  # Compatibility for existing trusted tests.
+        selected = BrowserBackend(selected.backend_id, selected.api_version, selected.device_modes,
+                                  lambda _launch: browser_factory())
+    holder = BrowserSession(registry, selected)
 
     async def raw_url():
         return str(await holder.browser.evaluate("location.href") or "")
@@ -190,6 +195,8 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None):
                 return "网站连接不存在或不属于此工作区。"
         if connection and site_origin(url) != connection["origin"]:
             return "网址不属于此连接的精确站点，未打开。"
+        if not selected.supports(connection["device_mode"] if connection else "desktop"):
+            return "当前浏览器驱动不支持此网页模式，未打开；不会自动切换驱动。"
         if holder.browser is not None and holder.human:
             return _WAIT
         if connection:
@@ -215,6 +222,8 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None):
         mode = args.get("device_mode", "desktop")
         if mode not in {"desktop", "mobile"}:
             return "模式只能为 desktop 或 mobile（手机网页，不是原生 App）。"
+        if not selected.supports(mode):
+            return "当前浏览器驱动不支持此网页模式，未登记；不会自动切换驱动。"
         allowed = await request(confirm, f"登记网站连接，并允许当前工作区在本机使用专用登录会话？\n"
             f"网站：{origin}\n账号标签：{label}\n模式：{mode}\n"
             "标签不要填密码或验证码。登录后页面可交给模型处理；密码/Cookie 不交给模型。", INTERACT)
@@ -340,6 +349,8 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None):
 
     async def listing(_args):
         return json.dumps({"connections": registry.list(), "active": holder.connection,
+            "backend": {"id": selected.backend_id, "api_version": selected.api_version,
+                        "device_modes": sorted(selected.device_modes)},
             "state": "cleanup_pending" if holder.cleaning else "needs_human" if holder.human else
                 "user_confirmed" if holder.confirmed else "unverified"}, ensure_ascii=False)
 

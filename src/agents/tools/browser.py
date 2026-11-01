@@ -77,6 +77,6 @@ def restricted_reason(url: str) -> str:
     return f"{reason}（浏览器操控不访问内网）" if reason else ""
 
 
-def build_browser_tools(repo_root: str, confirm, *, browser_factory=None, connections=None) -> list[Tool]:
+def build_browser_tools(repo_root: str, confirm, *, browser_factory=None, connections=None, backend=None) -> list[Tool]:
     from src.agents.tools.website_browser import build_tools
-    return build_tools(repo_root, confirm, browser_factory=browser_factory, connections=connections)
+    return build_tools(repo_root, confirm, browser_factory=browser_factory, connections=connections, backend=backend)
