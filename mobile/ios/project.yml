@@ -35,6 +35,14 @@ targets:
         NSLocalNetworkUsageDescription: 连接你配置的常驻助手，只访问你选择的助手地址。
         UIApplicationSupportsIndirectInputEvents: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        NSFaceIDUsageDescription: 批准助理拟好的动作前，用 Face ID 确认是你本人。
+        # 与通知扩展共享的钥匙串分组；只有签名构建才会展开出团队前缀
+        VCKeychainGroup: $(AppIdentifierPrefix)com.vortocode.mobile.shared
+    entitlements:
+      path: VortoCodeMobile/VortoCodeMobile.entitlements
+      properties:
+        aps-environment: development
+        keychain-access-groups: [$(AppIdentifierPrefix)com.vortocode.mobile.shared]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vortocode.mobile
@@ -43,6 +51,32 @@ targets:
         CODE_SIGN_STYLE: Automatic
     dependencies:
       - package: MobileCore
+      - target: VortoCodeNotification
+  # 推送正文解密（Notification Service Extension）：服务端只给 APNs 占位文字，真正内容加密在 enc 里
+  VortoCodeNotification:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: VortoCodeNotification
+        excludes: [Info.plist]
+    info:
+      path: VortoCodeNotification/Info.plist
+      properties:
+        CFBundleDisplayName: VortoCode 通知
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        VCKeychainGroup: $(AppIdentifierPrefix)com.vortocode.mobile.shared
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    entitlements:
+      path: VortoCodeNotification/VortoCodeNotification.entitlements
+      properties:
+        keychain-access-groups: [$(AppIdentifierPrefix)com.vortocode.mobile.shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vortocode.mobile.notification
+        CODE_SIGN_STYLE: Automatic
   VortoCodeMobileTests:
     type: bundle.unit-test
     platform: iOS
