@@ -118,6 +118,8 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
             if owned:
                 from src.agents.tools.website_browser import shutdown_browsers
                 cleanup.push_async_callback(shutdown_browsers)
+                from src.agents.tools.android import shutdown_android_sessions
+                cleanup.push_async_callback(shutdown_android_sessions)
             if terminal_manager is not None:
                 cleanup.callback(terminal_manager.shutdown)
             if run_manager is not None:

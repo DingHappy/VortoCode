@@ -33,6 +33,7 @@ NOT_A_REPO_PATH = {
     "im_inbox",      # 在 ~/.vortocode 下（IM 收件箱跨仓库共用），不落目标仓库
     "browser-profile",  # 在 ~/.vortocode 下（浏览器操控的独立配置目录），不落目标仓库
     "website-connections",  # 本机网站授权及独立登录目录；构造器拒绝放进工作区
+    "android-control",  # 本机设备租约与单个待核对占位；拒绝放进工作区
     "resident_projects.json",  # 在 ~/.vortocode 下（常驻电脑的项目登记表，运维手写），不落目标仓库
     "connectors",    # 在 ~/.vortocode 下（连接器凭据，权限 600，主人手放），不落目标仓库
     "usage",         # 在 ~/.vortocode 下（每天按来源的模型用量台账，只有数字），不落目标仓库

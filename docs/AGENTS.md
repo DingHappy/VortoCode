@@ -12,6 +12,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
+| `devices/android.py` / `android_ui.py` / `android_state.py` / `agents/tools/android.py` | Android 已有会话传输、原生 UI 投影、设备独占和待核对占位、原确认门；[Android 插件](ANDROID_SESSION_PLUGIN.md) | 创建设备会话、安装/启动应用、任意 Appium 命令、跨主机凭证同步或另一套任务循环 |
 | `browser/backend.py` | 受信任宿主注入的浏览器驱动合同、版本与模式声明，原 CDP 默认实现；[可插拔能力](PLUGGABLE_CAPABILITIES.md) | 权限授予、插件安装/代码发现、原生设备协议、第二套工具注册表或任务循环 |
 | `browser/connections.py` / `browser/page_privacy.py` / `agents/tools/website_browser.py` | 本机工作区网站授权、专用目录租约、人工登录接管及原确认门；[网站与设备合同](WEBSITE_CONNECTIONS.md) | Cookie 同步、通用凭证保险箱、原生手机 App、第二套任务循环或自动重试网站提交 |
 | `gateway/im_service.py` / `im_registry.py` / `im_host.py` / `im_input.py` / `im_input_store.py` | 原单入口与 Project 的 N 入口只读托管、账号级原生事件记录、原 SessionStore/SessionActors 准入与清理、精确路由及共享 IM 模型槽；[托管合同](IM_MULTI_HOST.md) | 第二套任务库/执行池、General 项目授权、持久排队/公平性、未知回合重放、自动派活或原审批权迁移 |

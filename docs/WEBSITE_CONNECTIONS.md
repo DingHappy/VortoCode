@@ -17,7 +17,7 @@ Desktop Web 会话提供。IM、CLI、无人值守及远端 runtime 不因此取
 | --- | --- | --- |
 | 桌面网页 | 独立 Chromium 目录、网站连接、人工登录接管、页面读取及逐次确认的点击/输入/滚动 | 真实浏览器、网站登录和业务交付验收 |
 | 手机网页 | CDP 设置 390×844 视口、缩放、移动 UA、触摸点击与滚动 | 目前以假 CDP 传输验证命令；不是实际 Android、iPhone 或 Safari |
-| Android 原生 App | 路线：Android Emulator/真机 + Appium UiAutomator2 | 设备发现、适配器、设备租约、权限对话框、取消及真实 App 验收均未接入 |
+| Android 原生 App | [已有会话插件](ANDROID_SESSION_PLUGIN.md)：本机 Appium 绑定、原生 UI 与确认点按，默认关闭 | 发现/会话创建、输入/滑动和真实模拟器/App 验收待补；系统弹窗交还真人 |
 | iPhone 原生 App | 路线：Mac/Xcode + Appium XCUITest，分别支持 Simulator 与符合配置要求的真机 | 同上，真机还涉及签名与设备配置；没有承诺能操作所有 App |
 
 手机网页模拟不覆盖系统设置、应用安装、通知、短信或原生权限弹窗。模拟器也不能证明真机的

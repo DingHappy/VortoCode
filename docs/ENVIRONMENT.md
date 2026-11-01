@@ -90,6 +90,8 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_ENABLE_BROWSER_CONTROL` | 关 | 网站连接、人工登录接管与桌面/手机网页工具。只在 Desktop 托管的 Web 会话生效，IM、CLI 和无人值守一律不给；非原生手机 App。详见 [网站连接](WEBSITE_CONNECTIONS.md)。 | `agents/tools/browser.py` |
 | `VORTOCODE_BROWSER_PATH` | 自动查找 | 本机 Chromium 系浏览器的路径。 | `browser/cdp.py` |
 | `VORTOCODE_BROWSER_BLOCKED_DOMAINS` | — | 追加禁止操作的域名（逗号分隔）。只能追加，不能删减内置名单。 | `agents/tools/browser.py` |
+| `VORTOCODE_ENABLE_ANDROID_CONTROL` | 关 | 实验 Android 插件，只在有人确认的 Desktop local Project 会话装配；读取原生界面和确认点按，不创建会话或安装应用。见 [Android 插件](ANDROID_SESSION_PLUGIN.md)。 | `agents/tools/android.py` |
+| `VORTOCODE_ANDROID_SESSION_FILE` | — | 工作区外、本人所有的私有宿主 JSON，绑定一个已启动本机 Appium 会话、设备、应用、工作区与代次。 | `devices/android.py` |
 | `VORTOCODE_ENABLE_DESKTOP_CONTROL` | 关 | 允许控制一台桌面机器。只在有人值守的 Web/Desktop 项目会话里可用，见 `docs/DESKTOP_CONTROL.md`。 | `agents/tools/desktop.py` |
 | `VORTOCODE_DESKTOP_TARGET` | — | 被控桌面：`local` 或 `ssh:<user>@<host>`。 | `agents/tools/desktop.py`、`computer/status.py` |
 | `VORTOCODE_DESKTOP_APPS` | — | 被控桌面上允许启动的应用（逗号分隔）。 | `agents/tools/desktop.py` |

@@ -58,8 +58,12 @@ Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑
 登录态留在资源宿主，不复制给云端或 IM；源码与离线测试尚不能证明真实网站或手机验收通过。
 
 [可插拔能力设计](PLUGGABLE_CAPABILITIES.md) 将能力适配器与核心授权/任务生命周期分开。
-本轮已接浏览器驱动替换接口；已有助理插件、MCP 和 Skill 继续使用原入口，Android/iOS 驱动、
-统一管理、第三方安装与热加载尚未实现。
+已接浏览器驱动替换接口与 Android 已有会话首个切片；已有助理插件、MCP 和 Skill 继续使用
+原入口。完整设备管理、iOS 驱动、第三方安装与热加载尚未实现。
+
+Android 已开始 [首个已有会话插件切片](ANDROID_SESSION_PLUGIN.md)：默认关闭，仅有人确认的
+Desktop local Project 可绑定本机 Appium，观察原生界面及逐次确认点按；会话创建、安装、
+输入/滑动、真模拟器验收和 iOS 未实现。待核对动作留在原设备资源记录，不自动重放。
 
 设置的本机控制由独立 `useLocalRuntimeControls` 编排，复用原托管进程与执行所有者；停止前读取当前活动并核对精确启动身份，不新增任务库。配置内容未变时保留模型版本与引擎状态。合同与并发边界见[模型配置](MODEL_CONFIGURATION.md)和[本机引擎控制](LOCAL_RUNTIME_CONTROL.md)。
 
