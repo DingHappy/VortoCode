@@ -76,32 +76,9 @@ TaskRunner 启动恢复会将 claimed 检查记为 interrupted，通知沿用现
 协作、收件箱和接续领域事务共用进程内 RLock；这保障单个服务进程中的并发认领，不能
 作为多个进程共享同一工作区的分布式锁。台账沿用原子临时文件替换，不宣称断电 fsync 保证。
 
-## 会话 actor 检查桥
+## 会话 actor 检查桥（已删除）
 
-`workflow/tasks/continuation_checks.py` 注入已有 SessionActors、ContinuationService、有界执行器、
-工作区资格函数和持久汇报 writer。能力报告 `check_budget_support` 与 HardBudgetedLLM
-共用同一个资格门，默认 LLMClient 缺少严格声明与可靠输入计量；HTTP capabilities 显式
-返回 automatic_check.available=false，不凭兼容接口、环境变量或估算 usage 放行。
-当前不存在生产合格适配器工厂，检查桥只在确定性测试中使用声明能力的假适配器。
-
-检查占用已有 actor 的同一槽位，不建立另一套模型池。已有用户 FIFO、优先输入、活动回合
-或停止标记阻止启动。调度边界后再次检查工作区资格，认领先落盘；提示只包含有长度限制的
-交接数据，不复制前台 Agent 历史，结果保持 tainted。新前台输入取消检查并继续用户队列；
-显式停止保留队列。第一个执行时隙前取消也释放槽位，停止/断开在此窗口撤销持久授权，
-前台抢占则保留尚未认领的授权。撤销写盘失败记录错误且不调用模型，不声称授权已撤销。
-
-执行器用 on_budget 回调在成功、失败和取消时返回预算快照；已知 usage 和未知调用预留
-保存到认领记录。适配器或工具吞掉取消也不能将迟到返回转为成功汇报。结果更新后只关闭
-旧尝试，不提交旧检查报告；撤销后的已知用量仍可记录，撤销状态保持不变。
-
-成功顺序为保存检查结论/预算 → 注入 writer 持久保存汇报 → 校验 PersistedCheckReport
-的 task/revision/attempt → 确认原交接。WS 广播成功不能充当持久汇报回执；writer 接入方
-必须保证会话输出可恢复并把报告当作不可信内容。汇报保存、回执身份或交接写盘失败均
-保留未处理交接，不重新执行付费检查。检查 completed 不等于报告已送达或任务已验收。
-
-当前桥尚未接入生产完成事件，也未提供 HTTP/模型工具/Desktop 授权启动入口；
-会话 transcript 持久 writer 已实现，见下节；合格 provider 工厂、原生授权与停止界面仍待实施。无运行中的
-检查时停止的持久作用域，以及项目切换/离线恢复策略需在生产装配中与授权入口一起完成。
+`workflow/tasks/continuation_checks.py`（`ContinuationChecks`）于 2026-11 删除：它从未接入生产完成事件，也没有 HTTP / 模型工具 / Desktop 入口，只在确定性测试里配假适配器使用。生产自动检查本来就关闭，删除不改变任何运行行为。原设计见 git 历史。下节的 CheckReportWriter 与 Web 的 `_persist_check_report` 仍在用。
 
 ## 原会话持久汇报与只补发
 
@@ -119,11 +96,6 @@ report_id 由所属会话/任务/版本/尝试确定，重复提交和进程重�
 Web 的 _persist_check_report 适配保存后才广播 agent_emit；tainted/check_report 是协议的
 新增可选字段。广播失败不抹掉持久汇报，重启和重连通过已有 agent_history 回放；保存
 回执证明可恢复的会话输出，不证明用户已经阅读或认可。该适配不注册自动模型调度。
-
-ContinuationChecks.resume_report 是显式的只补发入口：只读取 completed 的原尝试，
-先持久保存同一报告，再确认交接，绝不创建/调用 provider，不重新授权或认领。汇报保存
-或交接回执失败后，可用它恢复发送；旧结果、错误身份和前台/停止状态继续阻止补发。
-它尚未暴露为 HTTP/Desktop 操作入口，也不在重启后自动执行。生产自动检查仍关闭。
 
 ## 会话生命周期保护
 
