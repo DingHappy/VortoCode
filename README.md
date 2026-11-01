@@ -96,7 +96,6 @@ Desktop 与无头 CLI `vc agent` 共用同一个**主 agent loop**：一个会�
 - **短期记忆**: 当前会话的工作记忆
 - **长期记忆**: 跨会话的知识积累
 - **专家记忆**: 领域专业知识库
-- **向量记忆**: 基于语义的长期记忆检索
 
 ### 技能系统
 
@@ -161,7 +160,7 @@ vortocode/
 │   ├── agents/          底层 agent_loop/安全策略 + 工具工厂（按需装配 workflow/scheduling 的公开能力）
 │   ├── llm/             LLM 客户端（One API 网关，异步 AsyncOpenAI）
 │   ├── web/             FastAPI 服务：server.py 装配 + routers/ 各域路由 + state/schemas/deps/auth
-│   ├── memory/          记忆系统（SQLite 会话 + JSON 长期记忆 + 向量数据库）
+│   ├── memory/          记忆系统（SQLite 会话 + JSON 长期记忆）
 │   ├── skills/          技能系统（技能发现 / 版本管理 / 自动加载）
 │   ├── hooks/           生命周期 Hook
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
@@ -184,11 +183,11 @@ vortocode/
 
 - **后端**: FastAPI + Python 3.10+（异步）
 - **前端**: Web 为原生 HTML/CSS/JavaScript（无构建步骤）；Desktop 为 Tauri 2 + React + TypeScript
-- **存储**: SQLite（会话）+ JSON 文件（长期记忆 / 项目）+ 向量数据库（语义检索）
+- **存储**: SQLite（会话）+ JSON 文件（长期记忆 / 项目）
 - **容器化**: Docker（代码沙箱，可选）
 - **LLM 网关**: 自建 One API（OpenAI 兼容接口）
 - **监控**: 自定义指标收集 + Desktop Agent 面板
-- **可选 / 规划中**: 向量数据库 Qdrant（`pip install '.[memory]'` 启用语义检索）；Redis / PostgreSQL 暂未接入
+- **未接入**: 向量数据库、Redis / PostgreSQL
 
 ## 快速开始
 
@@ -202,9 +201,6 @@ pip install -e .
 
 # 想要与 CI 完全一致的版本：加上锁文件约束
 pip install -c constraints.txt -e '.[llm,dev]'
-
-# 可选：安装向量数据库支持（用于语义记忆）
-pip install '.[memory]'
 
 # 可选：安装LLM支持
 pip install '.[llm]'
@@ -332,7 +328,7 @@ Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求
 - **Phase 0**: 基础架构升级 — 已落地
 - **Phase 1**: ~~自我编排引擎~~ — **已退役**（5 角色批处理/能力匹配/失败恢复删除）；仅保留任务分析/分解，并入隔离 dev 流水线
 - **Phase 2**: 工具集成层 — MCP 工具自动发现+注册可用
-- **Phase 3**: 记忆与学习系统 — 会话/长期/向量记忆可用；知识图谱已移除（未集成的孤儿模块）
+- **Phase 3**: 记忆与学习系统 — 会话/长期记忆可用；知识图谱与未接线的向量记忆已移除（孤儿模块）
 - **Phase 4**: 技能与子代理系统 — 技能/Hooks 与按需角色子代理已接入主运行链路
 - **Phase 5**: 高级特性与优化 — 监控/安全/沙箱可用；实时补全、内联编辑、多模型协商等仍为规划项
 
