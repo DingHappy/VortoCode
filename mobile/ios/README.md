@@ -12,7 +12,7 @@
 
 App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/authenticationservices/authenticating-a-user-through-a-web-service)，不读取浏览器 Cookie、不注入 JS、不采集密码。返回 App 的只有 60 秒、一次性、再次绑定 PKCE 与 state 的交接票据；账号授权码和访问/刷新令牌均由 Gateway 处理。原生 `vcn_` 会话只访问手机原生读取/退出接口，保存为 WhenUnlockedThisDeviceOnly 的 Keychain 记录，不进入 UserDefaults。
 
-会话最长 8 小时，重开 App 可恢复；Gateway 重启、换归属、撤销或过期后需重新登录。原生入口地址还保存在 App 自己的 UserDefaults，隐私 API 原因清单见 PrivacyInfo.xcprivacy；不代替正式发行前的网站/账号隐私披露。
+会话最长 8 小时，重开 App 可恢复；Gateway 重启、换归属、撤销或过期后需重新登录。原生入口地址和「上次连上助手」的时间戳保存在 App 自己的 UserDefaults，隐私 API 原因清单见 PrivacyInfo.xcprivacy；不代替正式发行前的网站/账号隐私披露。
 
 历史读取只保留在本次进程内存中，不落盘。进程重开后从钥匙串恢复受限会话并重新读取，不能无网恢复目标；退出、授权失效或更换入口会清除读取视图。设置中的“来源核对”列出各来源状态与上次核对时间，可重试读取。安全存储失败与网络读取失败分别提示。
 
@@ -35,6 +35,8 @@ App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/
   内容变了就拒绝。读过外部内容后拟的动作会标出来。拒绝不需要 Face ID。
 - **随手记**：一句话记成你的一个目标（来源记为你本人），之后可以让助理整理；网络重试不会记两次。
 - **我替你做了什么**：助理和手机记下的改动，逐条可撤；撤不回的下游影响（例如提醒已经推过）照实列出。
+- **家里的助手连得上吗**：概览页最上面显示「刚刚连上」或「连不上（上次连上：X 前）」。只在打开 App 时核对，
+  不做后台心跳——iOS 不保证定时唤醒，靠心跳会在你没打开 App 时误报（对抗审查 R4 的取舍）。时间戳按入口地址存在 UserDefaults，不含内容。
 - **推送**：登录后申请通知权限并登记。推送正文加密，苹果只看到占位文字，由 `VortoCodeNotification` 扩展用推送钥匙解开；
   解不开就保留占位文字。与 IM 双发一段时间后再切换。
 

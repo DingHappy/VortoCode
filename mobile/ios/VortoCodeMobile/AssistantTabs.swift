@@ -34,6 +34,10 @@ struct AssistantTabs: View {
                         Text(entry.host).font(.footnote).foregroundStyle(.secondary)
                     }
                 }.padding(.vertical, 8)
+                // 打开 App 时核对一次家里的助手连不连得上；不做后台心跳，所以不会在你没打开时误报
+                Label(session.contact.text(), systemImage: session.contact.isProblem ? "wifi.exclamationmark" : "house")
+                    .font(.subheadline).foregroundStyle(session.contact.isProblem ? Color.orange : Color.secondary)
+                    .accessibilityIdentifier("native-contact")
                 ReadingStatus(session: session)
             }
             if let goals = session.reading.goals.data {
