@@ -118,7 +118,8 @@ async def test_switching_backend_uses_new_cookies_but_cannot_steal_the_connectio
     await entries_a["browser_open"].handler(args)
     cookie_marker = a[0][0].profile_dir / "Cookies"
     cookie_marker.write_text("synthetic-profile-marker")
-    assert "无法核实" in await entries_b["browser_open"].handler(args)
+    reply = await entries_b["browser_open"].handler(args)
+    assert reply["ok"] is False and "无法核实" in reply["text"]
     assert not b
     await entries_a["browser_close"].handler({})
     assert "真人" in await entries_b["browser_open"].handler(args)
@@ -142,11 +143,13 @@ async def test_driver_failure_does_not_fall_back_or_silently_release_its_owner(r
     entries = tools(registry, provider, yes)
     args = {"url": "https://example.com", "connection_id": row["id"]}
     try:
-        assert "无法核实" in await entries["browser_open"].handler(args)
+        reply = await entries["browser_open"].handler(args)
+        assert reply["ok"] is False and "无法核实" in reply["text"]
         state = json.loads(await entries["browser_connections"].handler({}))
         assert state["state"] == "cleanup_pending"
         other, created = backend("another")
-        assert "无法核实" in await tools(registry, other, yes)["browser_open"].handler(args)
+        reply = await tools(registry, other, yes)["browser_open"].handler(args)
+        assert reply["ok"] is False and "无法核实" in reply["text"]
         assert not created
     finally:
         fake.cleanup_fails = False

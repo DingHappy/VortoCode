@@ -210,6 +210,7 @@ class CdpBrowser:
             except BrowserError:
                 pass
             await asyncio.sleep(0.3)
+        raise BrowserError("等待页面就绪超时；操作结果未知，请先核对，不要重复提交")
 
     async def click_at(self, x: float, y: float) -> None:
         if self.device_mode == "mobile":

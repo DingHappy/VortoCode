@@ -147,7 +147,7 @@ async def test_profile_has_one_owner_and_close_releases_it_after_browser_exit(re
         ProcessLease(registry.profile_path(row["id"]) / ".vortocode-owner.lock").acquire()
     second, other = tools(registry)
     reply = await second["browser_open"].handler({"url": "https://example.com", "connection_id": row["id"]})
-    assert "无法核实" in reply and not other.running
+    assert reply["ok"] is False and "无法核实" in reply["text"] and not other.running
     await first["browser_close"].handler({})
     assert not fake.running
     await second["browser_open"].handler({"url": "https://example.com", "connection_id": row["id"]})
@@ -165,7 +165,8 @@ async def test_cleanup_failure_keeps_profile_lease_until_explicit_retry(registry
     fake = Closing(); entries, _ = tools(registry, fake=fake)
     await entries["browser_open"].handler({"url": "https://example.com", "connection_id": row["id"]})
     try:
-        assert "无法核实" in await entries["browser_close"].handler({})
+        reply = await entries["browser_close"].handler({})
+        assert reply["ok"] is False and "无法核实" in reply["text"]
         with pytest.raises(RuntimeError):
             ProcessLease(registry.profile_path(row["id"]) / ".vortocode-owner.lock").acquire()
     finally:
