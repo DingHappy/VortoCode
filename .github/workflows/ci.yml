@@ -121,7 +121,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -c constraints.txt -e ".[llm,dev]"
+          .venv/bin/pip install -c constraints.txt -e ".[llm,dev,mobile]"
       - name: Mypy (范围见 pyproject [tool.mypy] 的 files；圈外存量问题不阻塞)
         run: .venv/bin/python -m mypy
 
@@ -154,7 +154,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -c constraints.txt -e ".[llm,dev]"
+          .venv/bin/pip install -c constraints.txt -e ".[llm,dev,mobile]"
 
       - name: Run tests (offline, deterministic)
         if: needs.changes.outputs.python == 'true'
