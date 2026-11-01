@@ -47,6 +47,11 @@ parsing = [
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-typescript>=0.21.0",
 ]
+mobile = [
+    # 手机网关：设备密钥签名校验（P-256，iOS Secure Enclave 只支持这条曲线）与 APNs 推送（只收 HTTP/2）
+    "cryptography>=42",
+    "httpx[http2]>=0.27",
+]
 browser = [
     "playwright>=1.48.0",
 ]
