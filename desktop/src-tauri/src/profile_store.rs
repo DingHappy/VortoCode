@@ -132,7 +132,7 @@ impl DesktopLlmProfileStore {
             // to running engines. Reading alone never rewrites that file.
             if next != cached.disk_profile {
                 if let Some(profile) = next.as_ref() {
-                    save_llm_profile_file(path, profile)?;
+                    model_credentials::save(path, profile, false)?;
                 }
                 cached.disk_profile = next;
             }
@@ -144,7 +144,7 @@ impl DesktopLlmProfileStore {
         let revision = new_profile_revision();
         if let Some(profile) = next.as_mut() {
             profile.revision = Some(revision.clone());
-            save_llm_profile_file(path, profile)?;
+            model_credentials::save(path, profile, false)?;
         } else {
             delete_llm_profile_file(path)?;
         }
@@ -156,6 +156,25 @@ impl DesktopLlmProfileStore {
             revision,
             profile: next,
         })
+    }
+
+    pub(crate) fn maintain_credentials(&self, path: &Path, expected: &str, migrate: bool) -> Result<(), String> {
+        let mut cached = self.0.lock().map_err(|_| "模型配置缓存锁已损坏")?;
+        if !cached.loaded || cached.revision != expected { return Err(CONFLICT.into()); }
+        if read_llm_profile_file(path)? != cached.disk_profile {
+            cached.loaded = false;
+            return Err(CONFLICT.into());
+        }
+        if migrate {
+            let profile = cached.profile.as_ref().ok_or("没有可迁移的模型配置")?;
+            model_credentials::save(path, profile, true)?;
+            // Storage changed, model configuration did not. Keep the running
+            // engines' existing revision and do not ask them to restart.
+            cached.disk_profile = cached.profile.clone();
+        } else {
+            model_credentials::retry_cleanup(path)?;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -197,6 +216,45 @@ pub(crate) fn profile_snapshot_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_credential_migration_preserves_model_revision_and_rejects_stale_snapshots() {
+        let (path, _, _) = fixture("credential-migration");
+        let store = DesktopLlmProfileStore::default();
+        create_dir_all(path.parent().unwrap()).unwrap();
+        let mut legacy = default_llm_profile(); legacy.api_key = "synthetic-migration-key".into();
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let initial = store.snapshot(|| read_llm_profile_file(&path)).unwrap();
+        let mut next = initial.profile.clone().unwrap(); next.model = "changed-model".into();
+        let changed = store.commit(&path, &initial.revision, Some(next)).unwrap();
+        assert!(store.maintain_credentials(&path, &initial.revision, true).is_err());
+        assert_eq!(model_credentials::status(&path).unwrap().mode, "legacy");
+        store.maintain_credentials(&path, &changed.revision, true).unwrap();
+        let after = store.snapshot(|| panic!("migration must retain cache")).unwrap();
+        assert_eq!(after.revision, changed.revision);
+        assert!(after.profile == changed.profile);
+        assert!(!read_to_string(&path).unwrap().contains("synthetic-migration-key"));
+        assert_eq!(model_credentials::status(&path).unwrap().mode, "keychain");
+        assert_eq!(read_llm_profile_file(&path).unwrap().unwrap().api_key, "synthetic-migration-key");
+        delete_llm_profile_file(&path).unwrap();
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn credential_migration_rechecks_external_edits_after_confirmation() {
+        let (path, _, _) = fixture("credential-external-edit");
+        let store = DesktopLlmProfileStore::default();
+        create_dir_all(path.parent().unwrap()).unwrap();
+        let mut legacy = default_llm_profile(); legacy.api_key = "synthetic-old-key".into();
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let snapshot = store.snapshot(|| read_llm_profile_file(&path)).unwrap();
+        legacy.api_key = "synthetic-external-key".into();
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(store.maintain_credentials(&path, &snapshot.revision, true).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 
     #[test]
     fn command_errors_have_a_stable_code_and_preserve_other_failures() {

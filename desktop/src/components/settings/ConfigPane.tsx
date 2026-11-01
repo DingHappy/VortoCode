@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 
 import { errorText } from "../../lib/errorText";
 import type { UserInstructions } from "../../types";
+import { ModelCredentialStorage } from "./ModelCredentialStorage";
 
 type ConfigFile = { kind: "llmProfile" | "userInstructions"; title: string; description: string; path?: string };
 
-export function ConfigPane({ llmProfilePath }: { llmProfilePath?: string }) {
+export function ConfigPane({ llmProfilePath, llmProfileRevision }: { llmProfilePath?: string; llmProfileRevision?: string }) {
   const [instructionsPath, setInstructionsPath] = useState<string>();
   const [status, setStatus] = useState("");
 
@@ -18,7 +19,7 @@ export function ConfigPane({ llmProfilePath }: { llmProfilePath?: string }) {
   }, []);
 
   const files: ConfigFile[] = [
-    { kind: "llmProfile", title: "模型服务配置", description: "地址、模型名与 API Key（权限 600，仅你的账户可读）", path: llmProfilePath },
+    { kind: "llmProfile", title: "模型服务配置", description: "地址与模型；新配置使用钥匙串引用，旧配置的存储方式见下方", path: llmProfilePath },
     { kind: "userInstructions", title: "全局指令 AGENTS.md", description: "对所有会话生效的说明；也可在「个性化」里编辑", path: instructionsPath },
   ];
 
@@ -57,6 +58,7 @@ export function ConfigPane({ llmProfilePath }: { llmProfilePath?: string }) {
         ))}
         {status && <p className="settings-card-note">{status}</p>}
       </section>
+      <ModelCredentialStorage revision={llmProfileRevision} />
       <p className="settings-intro">项目级指令放在仓库根目录的 AGENTS.md（或本地私有的 .vortocode/AGENTS.md），只在该项目里生效。</p>
     </div>
   );

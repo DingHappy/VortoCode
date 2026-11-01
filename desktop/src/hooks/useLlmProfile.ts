@@ -1,4 +1,4 @@
-// 模型服务配置（本机配置文件 llm-profile.json；沿用 useJournal 的 hook 模式与三条红线）。
+// 模型服务配置（原生配置与凭证引用；沿用 useJournal 的 hook 模式与三条红线）。
 //
 // 保存/清除后要重启当前 runtime——那是 runtime 域的事，经注入的 onRestartRuntime 调用
 // （返回是否真的重启了，决定提示文案）。
