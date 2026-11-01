@@ -138,6 +138,9 @@ class Goal:
     request_fingerprint: str = ""
     follow_up: Dict[str, Any] = field(default_factory=dict)
     follow_up_history: List[Dict[str, Any]] = field(default_factory=list)
+    # 私人目标文字字段的来源（owner = 主人写的；external = 在读过外部内容的回合里写的）。缺省视为 owner：
+    # 助理写入工具上线前只有主人能写私人目标。见 ADR-011 防线 1。
+    origins: Dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def new(

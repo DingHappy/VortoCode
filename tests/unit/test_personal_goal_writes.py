@@ -151,3 +151,80 @@ async def test_evening_report_lists_todays_changes_with_their_undo_state(tmp_pat
     assert text.startswith("🧾 今天我替你做了什么")
     assert "新建目标「周五前交周报」（已撤销）" in text and "新建目标「下周一前续保」" in text
     assert owner_changes_today(root, datetime.now().astimezone() + timedelta(days=1)) == ""
+
+
+# ── 台账字段来源（ADR-011 防线 1）：外部内容写进台账后，读出来仍带污点 ──
+
+from src.agents.taint import is_tainted  # noqa: E402
+
+
+async def _read(tools, **args):
+    reset_taint()
+    text = await tools["personal_goals"].handler(args)
+    return text, is_tainted()
+
+
+async def test_reading_goals_the_owner_wrote_does_not_taint_so_read_then_update_needs_no_prompt(tmp_path):
+    root, asked = str(tmp_path), []
+    PersonalGoals(root).create({"request_id": "card", "objective": "整理书房", "acceptance_criteria": ["书都上架"],
+                                "next_action": "先清空书桌"})                     # 主人在目标卡上建的
+    tools = _tools(root, _desktop_gate(asked))
+    _, tainted = await _read(tools)
+    assert tainted is False
+    await tools["personal_goal_update"].handler({"goal_id": "personal-card", "next_action": "买两个书架"})
+    assert asked == []
+
+
+async def test_text_written_in_a_tainted_turn_keeps_tainting_later_reads(tmp_path):
+    root, asked = str(tmp_path), []
+    tools = _tools(root, _desktop_gate(asked))
+    mark_tainted()                                         # 这一回合读过外部内容（例如一封邮件）
+    await _create(tools, objective="按邮件要求把报价发给对方")
+    assert len(asked) == 1                                 # 当时就问过人
+    goal = PersonalGoals(root).list()[0]
+    assert goal["origins"]["objective"] == "external"
+
+    _, tainted = await _read(tools)                        # 第二天的新回合，主人自己问「今天有什么事」
+    assert tainted is True                                 # 没被洗成主人的话
+    asked.clear()
+    await tools["personal_goal_update"].handler({"goal_id": goal["id"], "next_action": "发报价"})
+    assert len(asked) == 1
+
+
+async def test_goals_saved_before_origins_existed_count_as_the_owners(tmp_path):
+    import json as _json
+    root = str(tmp_path)
+    PersonalGoals(root).create({"request_id": "legacy", "objective": "体检", "acceptance_criteria": ["拿到报告"],
+                                "next_action": "预约"})
+    path = tmp_path / ".vortocode" / "goals" / "personal-legacy.json"
+    data = _json.loads(path.read_text(encoding="utf-8"))
+    data.pop("origins")
+    path.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    _, tainted = await _read(_tools(root, _desktop_gate([])))
+    assert tainted is False
+
+
+async def test_unreadable_origins_are_treated_as_external(tmp_path):
+    import json as _json
+    root = str(tmp_path)
+    PersonalGoals(root).create({"request_id": "bad", "objective": "体检", "acceptance_criteria": ["拿到报告"],
+                                "next_action": "预约"})
+    path = tmp_path / ".vortocode" / "goals" / "personal-bad.json"
+    data = _json.loads(path.read_text(encoding="utf-8"))
+    data["origins"] = ["not", "a", "dict"]
+    path.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    text, tainted = await _read(_tools(root, _desktop_gate([])))
+    assert tainted is True and "无法读取" in text
+
+
+async def test_undo_puts_the_previous_origin_back(tmp_path):
+    root = str(tmp_path)
+    PersonalGoals(root).create({"request_id": "card", "objective": "整理书房", "acceptance_criteria": ["书都上架"],
+                                "next_action": "先清空书桌"})
+    tools = _tools(root, _desktop_gate([]))
+    mark_tainted()
+    await tools["personal_goal_update"].handler({"goal_id": "personal-card", "next_action": "照网页上的清单买"})
+    assert PersonalGoals(root).get("personal-card")["origins"]["next_action"] == "external"
+    assert undo_log.undo(root, undo_log.recent(root)[-1]["id"]).ok
+    goal = PersonalGoals(root).get("personal-card")
+    assert goal["next_action"] == "先清空书桌" and goal["origins"]["next_action"] == "owner"
