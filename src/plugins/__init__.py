@@ -149,10 +149,17 @@ def enabled_plugins() -> List[Plugin]:
 def build_plugin_tools(plugins: Optional[List[Plugin]] = None, confirm: Any = None) -> list:
     """只读工具总是挂；写入工具只在会话给了确认门时挂（问不到人的场合就没有）。"""
     tools: list = []
+    from src.agents.tool import ToolResource
     for plugin in enabled_plugins() if plugins is None else plugins:
-        tools += plugin.build_tools()
+        entries = plugin.build_tools()
         if confirm is not None and plugin.build_write_tools is not None:
-            tools += plugin.build_write_tools(confirm)
+            entries += plugin.build_write_tools(confirm)
+        resource = ToolResource("service:" + plugin.name, "service", plugin.title,
+            lambda: {"state": "loaded", "approval": "tool_policy", "detail":
+                     "工具已装配；未读取凭证或联网核对账号，具体操作仍检查权限与当前凭证。"})
+        for tool in entries:
+            tool.resource = resource
+        tools += entries
     return tools
 
 

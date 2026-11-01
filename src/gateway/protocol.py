@@ -82,7 +82,7 @@ _Spec = Tuple[Tuple[str, ...], Tuple[str, ...]]
 
 INBOUND: Dict[str, _Spec] = {
     PING: ((), ()),
-    GET_STATUS: ((), ("hydrate",)),
+    GET_STATUS: ((), ("hydrate", "resources")),
     AGENT: ((), ("text", "mode", "images", "audio", "context_files", "context_selections",
                     "rid", "want_reasoning", "model")),
     AGENT_CANCEL: ((), ()),
@@ -99,7 +99,7 @@ INBOUND: Dict[str, _Spec] = {
 OUTBOUND: Dict[str, _Spec] = {
     INIT: (("v", "data"), ()),               # v=PROTOCOL_VERSION：版本随连接握手下发
     PONG: ((), ()),
-    STATUS: (("data",), ("v", "cursor")),    # hydrate 应答带当前 cursor，快照可作为该序号基线
+    STATUS: (("data",), ("v", "cursor", "resources")),    # resources is a non-persisted, read-only observation.
     AGENT_HISTORY: (("items",), ()),
     AGENT_ACTIVITY_HISTORY: (("items",), ()),
     AGENT_PLAN: (("items",), ()),

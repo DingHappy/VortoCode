@@ -53,6 +53,7 @@ export interface ProtocolEvent {
   sha256?: string;
   tainted?: boolean;
   website?: unknown;
+  resources?: unknown;
   scope?: WorkspaceScope;
   reason?: string;
   nonce?: string;

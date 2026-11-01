@@ -156,6 +156,9 @@ export class GatewayClient {
 
   constructor(private readonly settings: ConnectionSettings) {}
 
+  /** Reuse the existing transport/read epoch; observers cannot survive a reconnect. */
+  get connectionEpoch(): number { return this.snapshotEpoch; }
+
   matchesRemoteProject(projectId: string): boolean {
     return this.settings.remoteProjectId === projectId;
   }

@@ -27,6 +27,8 @@ import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
 import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
 import { websiteConfirmation } from "./lib/websiteConfirmation";
+import { useSessionResources } from "./hooks/useSessionResources";
+import { SessionResources } from "./components/SessionResources";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
@@ -278,6 +280,7 @@ function App() {
   const mode = "build" as const;
   const [prompt, setPrompt] = useState("");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
+  const sessionResources = useSessionResources(clientRef, activeSid, connection);
   const confirmationViewRef = useRef({client:clientRef.current,scope:activeSid,id:"",state:pendingConfirm?.responseState});
   confirmationViewRef.current = {client:clientRef.current,scope:activeSid,id:pendingConfirm?.id ?? "",state:pendingConfirm?.responseState};
   const confirmationReplyRef = useRef<ReturnType<typeof createConfirmationReply<GatewayClient>> | null>(null);
@@ -717,6 +720,7 @@ function App() {
           void refreshWorkspaceFiles(snapshot.workdir);
         }
       };
+      if (["agent_tool", "agent_confirm", "agent_confirm_closed", "agent_cancelled", "agent_done"].includes(event.type)) sessionResources.changed();
       switch (event.type) {
         case "runtime_disconnected":
           setConnection("error");
@@ -736,6 +740,7 @@ function App() {
           break;
         }
         case "status":
+          sessionResources.receive(event.resources);
           if (typeof event.v === "number") {
             setProtocolVersion(event.v);
             if (event.v !== DESKTOP_PROTOCOL_VERSION) {
@@ -960,7 +965,7 @@ function App() {
           break;
       }
     },
-    [acceptTaskEvent, activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, settleWorkspaceSave, snapshotTodayJournal, updateActiveTurnRid],
+    [acceptTaskEvent, activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, settleWorkspaceSave, snapshotTodayJournal, updateActiveTurnRid, sessionResources.receive, sessionResources.changed],
   );
 
   const disconnect = useCallback(async () => {
@@ -2776,6 +2781,12 @@ function App() {
 
           </div>
           <div className="composer-wrap">
+            <SessionResources view={sessionResources.view} connected={connection === "connected"}
+              hostLabel={remoteProjectRef.current ? `${projects.find(item => item.id === remoteProjectRef.current)?.name || "已登记运行端"}（${onAssistantHost() ? "常驻" : "远端"}）` : "本机运行端"}
+              pendingId={pendingConfirm?.id} onRefresh={sessionResources.refresh}
+              onFocusConfirmation={() => focusConfirmation(pendingConfirm?.id)}
+              onManage={() => setMainView(appMode === "assistant" ? "customize" : "plugins")}
+              onBrowserSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }} />
             {residentMissed && (
               <div className="composer-notice" role="status">
                 常驻电脑没连上，现在是这台电脑上的本机助理：派活、简报和合上笔记本后继续做，都要连上常驻电脑。

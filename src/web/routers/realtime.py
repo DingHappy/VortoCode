@@ -97,11 +97,23 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
     elif msg_type == P.GET_STATUS:
         hydrate = bool(message.get("hydrate"))
         cursor = await _session_event_cursor(_session_key(websocket))
+        resources = None
+        nonce = message.get("resources")
+        if isinstance(nonce, str) and 1 <= len(nonce) <= 128 and all(c.isalnum() or c in "-_" for c in nonce):
+            from src.gateway.session_resources import snapshot as resource_snapshot
+            key = _session_key(websocket)
+            record = _SESSIONS.get(key)
+            from pathlib import Path
+            if record and (not record.get("repo_root") or Path(record["repo_root"]).resolve() != Path(os.getcwd()).resolve()):
+                record = None
+            resources = resource_snapshot(record.get("agent") if record else None,
+                session=key, nonce=nonce, pending=pending_confirmations(key))
         await websocket.send_json(P.make_event(
             P.STATUS,
             data=state.to_dict(),
             v=P.PROTOCOL_VERSION if hydrate else None,
             cursor=cursor if hydrate else None,
+            resources=resources,
         ))
         if hydrate:
             # 原生 WebSocket 客户端可能只能在 connect() 返回后挂监听，连接瞬间的 init/history
