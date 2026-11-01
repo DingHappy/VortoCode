@@ -161,3 +161,18 @@ def test_rejecting_uses_the_everyday_key(owner):
     response = signed(client, headers, device_id, "/api/mobile/native/decide",
                       {"action_id": action["id"], "approve": False}, device)
     assert response.status_code == 200 and response.json()["status"] == "cancelled"
+
+
+def test_push_registration_is_signed_and_validated(owner):
+    from src.gateway.mobile_devices import MobileDevices
+    client, headers, device_id, root = owner
+    _, device, approval = bind(client, headers)
+    push_key = Key()
+    good = {"apns_token": "ab" * 32, "push_key": push_key.public, "environment": "sandbox"}
+    assert client.post("/api/mobile/native/push", headers=headers, json=good).status_code == 401      # 没签名
+    assert signed(client, headers, device_id, "/api/mobile/native/push", good, approval).status_code == 401
+    assert signed(client, headers, device_id, "/api/mobile/native/push", {**good, "environment": "x"},
+                  device).status_code == 400
+    assert signed(client, headers, device_id, "/api/mobile/native/push", good, device).status_code == 200
+    [(target, registration)] = MobileDevices(root).push_targets()
+    assert target == device_id and registration["token"] == "ab" * 32 and registration["key"] == push_key.public

@@ -80,7 +80,7 @@ _GENERAL_HTTP_PATTERNS = (
                r"|account/(login|callback|registration|connect)"
                r"|native/(authorize|exchange|bootstrap|snapshot|logout"
                # 主人终端写入：只动常驻助理自己的目标、撤销记录和 Codex 待批动作，不碰项目文件、Shell 或 Git
-               r"|keys|decisions|decide|capture|changes|undo))"),
+               r"|keys|decisions|decide|capture|changes|undo|push))"),
     re.compile(r"/api/runtime-activity"),  # 只读进程活动计数，不授予任务、文件或命令能力。
     re.compile(r"/api/cron/[^/]+/(enabled|history)"),
 )

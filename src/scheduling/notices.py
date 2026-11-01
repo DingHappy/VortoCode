@@ -374,6 +374,16 @@ def _mark_pushed(repo_root: str, key: str, now: float) -> None:
         pass
 
 
+async def _push_app(repo_root: str, text: str) -> None:
+    """④ 主人的手机 App（APNs，正文加密）。ADR-011 过渡期与 IM 双发：这一路的成败不进 IM 的受理 / 补发记账，
+    没配 APNs 或没有登记的设备就什么都不做。"""
+    try:
+        from src.gateway.mobile_push import push_owner
+        await push_owner(repo_root, text)
+    except Exception:  # noqa: BLE001 —— 附加通道，任何失败都不影响前三路
+        pass
+
+
 def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "", relay: bool = True):
     """造三路通知投递器：①持久台账 ②WS 广播 ③IM 推 owner。每路 best-effort，一路挂不拖另两路。
 
@@ -431,6 +441,7 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
                                                     **({"timed": True} if timed else {})))
         except Exception:  # noqa: BLE001
             pass
+        await _push_app(repo_root, str(text))
         if delivered and not urgent:
             _mark_pushed(repo_root, key, stamp)
         if not delivered:
