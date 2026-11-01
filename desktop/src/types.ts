@@ -1046,6 +1046,24 @@ export interface PersonalGoalFollowUp {
   user_acknowledged_at?: string;
 }
 
+/** 助理按「读取与事项免确认」替你做的改动（/api/assistant/undo），逐条可撤；见 ADR-011。 */
+export interface AssistantChange {
+  id: string;
+  ts: string;
+  action: string;
+  summary: string;
+  status: "done" | "undoing" | "undone" | "failed";
+  tainted: boolean;
+  undo_detail?: string;
+  not_recallable?: string[];
+}
+
+export interface AssistantUndoResult {
+  ok: boolean;
+  detail: string;
+  not_recallable: string[];
+}
+
 export interface PersonalGoalInput {
   request_id: string;
   objective: string;

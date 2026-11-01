@@ -25,6 +25,7 @@ _STATE_ENTRIES = [
     "codex/",
     "task_scans/",
     "goals/",
+    "undo/",
     "runs/",
     "products/",
     "pipeline_runs/",

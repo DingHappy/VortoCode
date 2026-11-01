@@ -101,6 +101,7 @@ files = [
     "src/agents/taint.py",         # 污点追踪：污点态下免确认授权失效，同属安全核心
     "src/sandbox/policy.py",       # 沙箱策略 + 宿主机命令开关（全仓唯一一份判定）
     "src/agents/trust.py",         # 授权档位：喂给确认门的 pre_authorized，同属内核
+    "src/agents/undo_log.py",      # 主人数据操作日志与撤销：OWN_DATA 免确认的前提
     "src/agents/tool.py",          # Agent 无关的工具定义和 schema 适配
     "src/agents/tool_runtime.py",  # 各 Agent 共用的工具执行边界
     "src/agents/backends",         # Agent 核心控制合同与协议适配

@@ -1046,6 +1046,18 @@
     ]
   },
   {
+    "path": "/api/assistant/undo",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/undo/{op_id}",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/assistant/skills",
     "methods": [
       "GET"
