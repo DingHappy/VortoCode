@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-from typing import Callable
+from typing import Callable, List, Tuple
 import uuid
 
 from src.utils.state_dir import ensure_state_gitignore
@@ -31,6 +31,7 @@ _ID = re.compile(r"[a-f0-9]{32}")
 _TOKEN = re.compile(r"vcm_[A-Za-z0-9_-]{43}")
 _KEY = re.compile(r"[A-Za-z0-9+/]{86}[A-Za-z0-9+/=]{2}")   # 65 字节的 base64
 _NONCE_KEEP = 900                                           # 秒；大于签名时间窗的两倍
+PUSH_STALE = 30 * 86400                                     # App 每次启动都会重新登记；30 天没登记就不再推
 
 
 def _check_keys(keys: object) -> None:
@@ -40,6 +41,16 @@ def _check_keys(keys: object) -> None:
     if (not isinstance(keys, dict) or set(keys) != {"device", "approval", "bound_at"}
             or type(keys["bound_at"]) is not int
             or not all(isinstance(keys[kind], str) and _KEY.fullmatch(keys[kind]) for kind in ("device", "approval"))):
+        raise ValueError
+
+
+def _check_push(push: object) -> None:
+    if push is None:
+        return
+    if (not isinstance(push, dict) or set(push) != {"token", "key", "environment", "refreshed_at"}
+            or not isinstance(push["token"], str) or not re.fullmatch(r"[0-9a-f]{64,200}", push["token"])
+            or not isinstance(push["key"], str) or not _KEY.fullmatch(push["key"])
+            or push["environment"] not in ("production", "sandbox") or type(push["refreshed_at"]) is not int):
         raise ValueError
 
 
@@ -125,6 +136,7 @@ class MobileDevices:
                     raise ValueError
                 _name(item.get("name"))
                 _check_keys(item.get("keys"))
+                _check_push(item.get("push"))
                 seen.add(item["id"])
             return data
         except FileNotFoundError:
@@ -269,6 +281,40 @@ class MobileDevices:
                 keys = item.get("keys")
                 return keys.get(kind) if keys else None
         return None
+
+    def register_push(self, device_id: str, registration: dict) -> None:
+        """登记或刷新这台设备的推送目标（APNs 令牌 + 解密推送用的公钥）。"""
+        if not isinstance(device_id, str) or not _ID.fullmatch(device_id):
+            raise KeyError(device_id)
+        with self._lock():
+            data = self._load()
+            for item in data["devices"] if data else []:
+                if item["id"] == device_id:
+                    if item["revoked_at"] is not None:
+                        raise KeyError(device_id)
+                    item["push"] = {**registration, "refreshed_at": int(self.clock())}
+                    self._save(data)
+                    return
+            raise KeyError(device_id)
+
+    def push_targets(self) -> List[Tuple[str, dict]]:
+        """可以推送的设备。不按读取租约的有效期筛（App 在后台时租约本来就会过期），
+        只排除已撤销的和 30 天没重新登记的；推送正文是加密的，过期登记最多泄露「有一条新消息」。"""
+        data = self._load()
+        now = self.clock()
+        return [(item["id"], item["push"]) for item in (data["devices"] if data else [])
+                if item.get("push") and item["revoked_at"] is None
+                and now - item["push"]["refreshed_at"] < PUSH_STALE]
+
+    def forget_push(self, device_id: str, token: str) -> None:
+        """APNs 说这个令牌已失效：清掉登记（只清同一个令牌，App 期间换了新令牌就不动）。"""
+        with self._lock():
+            data = self._load()
+            for item in data["devices"] if data else []:
+                if item["id"] == device_id and (item.get("push") or {}).get("token") == token:
+                    del item["push"]
+                    self._save(data)
+                    return
 
     def consume_nonce(self, device_id: str, nonce: str) -> None:
         """记下这次签名用的 nonce；同一台设备时间窗内重复出现即重放，拒绝。"""

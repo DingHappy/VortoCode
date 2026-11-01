@@ -1340,6 +1340,12 @@
     ]
   },
   {
+    "path": "/api/mobile/native/push",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/mobile/pairing-window",
     "methods": [
       "POST"

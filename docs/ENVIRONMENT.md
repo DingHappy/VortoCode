@@ -29,6 +29,10 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_MOBILE_STATE_ROOT` | — | 独立手机网关必填的绝对状态根目录，必须与进程当前工作目录一致。读取原助手资料、主聊天登记和目标，不启动执行内核。 | `web/mobile_server.py` |
 | `VORTOCODE_MOBILE_RELEASE` | `dev` | 独立网关发布标识，限定小写字母、数字、点、下划线与连字符，用于健康检查核对；标识本身不证明源码、部署或验收完成。 | `web/mobile_server.py` |
 | `VORTOCODE_MOBILE_WRITES` | 关 | 设为 `1` 才开放原生 App 的写入（绑定钥匙、随手记、批准 / 拒绝 Codex 动作、撤销）。每个写请求还要设备签名，批准只认需要生物识别的钥匙。按 ADR-009 修订，要先完成 WireGuard 直连再开启。 | `web/routers/mobile_owner.py` |
+| `VORTOCODE_APNS_KEY_FILE` | — | APNs 认证私钥（.p8）的路径。与下面三项都设了才给主人的 App 推送；只从文件读、不缓存私钥、不进日志。 | `gateway/mobile_push.py` |
+| `VORTOCODE_APNS_KEY_ID` | — | 这把 APNs 私钥的 Key ID。 | `gateway/mobile_push.py` |
+| `VORTOCODE_APNS_TEAM_ID` | — | Apple 开发者团队 ID。 | `gateway/mobile_push.py` |
+| `VORTOCODE_APNS_TOPIC` | — | 手机 App 的 bundle id（APNs topic）。 | `gateway/mobile_push.py` |
 
 ## 模型与上下文
 

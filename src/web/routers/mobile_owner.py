@@ -207,3 +207,20 @@ async def undo(request: Request):
             return _reply({"detail": str(error)}, 409)
         return _reply({"ok": result.ok, "detail": result.detail, "not_recallable": list(result.not_recallable)})
     return await _guarded(request, handle)
+
+
+@router.post("/api/mobile/native/push")
+async def register_push(request: Request):
+    """登记 / 刷新推送：APNs 设备令牌和解密推送正文用的公钥（Secure Enclave 里另一把钥匙）。App 每次启动都调。"""
+    async def handle(grant):
+        body = await _signed(request, grant, "device")
+        from src.gateway.mobile_push import normalize_registration
+        try:
+            registration = normalize_registration(body.get("apns_token"), body.get("push_key"), body.get("environment"))
+            await asyncio.to_thread(MobileDevices(os.getcwd()).register_push, grant["device"]["id"], registration)
+        except ValueError as error:
+            return _reply({"detail": str(error)[:200]}, 400)
+        except KeyError:
+            return _reply({"detail": "设备授权无效或已到期"}, 401)
+        return _reply({"ok": True})
+    return await _guarded(request, handle)

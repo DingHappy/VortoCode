@@ -73,6 +73,7 @@ MOBILE_SELF_AUTHENTICATED = frozenset({
     ("POST", "/api/mobile/native/keys"), ("GET", "/api/mobile/native/decisions"),
     ("POST", "/api/mobile/native/decide"), ("POST", "/api/mobile/native/capture"),
     ("GET", "/api/mobile/native/changes"), ("POST", "/api/mobile/native/undo"),
+    ("POST", "/api/mobile/native/push"),
 })
 
 

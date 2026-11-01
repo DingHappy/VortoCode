@@ -126,3 +126,17 @@ vortocode-mobile-v1
 时间偏差超过 300 秒、同一设备的 nonce 在 15 分钟内重复、签名验不过、用错钥匙，一律 401，不说明是哪一项。
 `action_digest` 是动作的 `id/kind/thread_id/thread_cwd/turn_id/text` 按键排序后 JSON 的 SHA-256，
 App 应在批准卡上展示同样的对象和正文，签的就是用户看到的那一条。
+
+### 推送（APNs，正文端到端加密）
+
+`POST /api/mobile/native/push`（日常钥匙签名）登记 `{apns_token, push_key, environment}`：APNs 设备令牌、
+Secure Enclave 里第三把专用于解密推送的 P-256 公钥、`production` 或 `sandbox`。App 每次启动都重新登记；
+30 天没登记或设备被撤销就不再推。推送目标不按 5 分钟的读取租约筛——App 在后台时租约本来就会过期。
+
+推送正文不明文交给苹果：`aps.alert.body` 固定为占位文字，`aps.mutable-content = 1`，真正的正文在自定义字段
+`enc` 里，格式与 `SecKeyCreateDecryptedData(key, .eciesEncryptionStandardX963SHA256AESGCM, data)` 一致
+（临时公钥 65 字节 ‖ 密文 ‖ 16 字节标签）。App 的 Notification Service Extension 解密后替换正文；解不开就保留占位文字。
+
+服务端在现有通知投递器里与 IM **双发**：两路互不影响，App 这一路不进 IM 的受理 / 补发记账。APNs 返回
+410 或 `BadDeviceToken` / `Unregistered` 时清掉这台设备的登记。安静时段攒下的汇总目前只走 IM。
+配置见 [环境变量](ENVIRONMENT.md) 的 `VORTOCODE_APNS_*`。
