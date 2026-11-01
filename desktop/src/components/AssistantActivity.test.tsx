@@ -11,7 +11,7 @@ const items: FeedItem[] = [
   { id: "waiting", title: "确认下一步", summary: "等你确认范围", status: "waiting", at: "2026-10-23T10:00:00Z" },
 ];
 
-it("lists waiting items first with their count, without an overview fold or filter row", () => {
+it("shows decisions and a progress summary without repeating routine process rows", () => {
   const open = vi.fn();
   const html = renderToStaticMarkup(<AssistantActivity items={items} sources={sources} connected onOpen={open}>
     <button>原有任务操作</button></AssistantActivity>);
@@ -21,7 +21,9 @@ it("lists waiting items first with their count, without an overview fold or filt
   expect(html).not.toContain("最近完整核对");
   expect(html).toContain("<h5>等你处理 · 1</h5>");
   expect(html.indexOf("原有任务操作")).toBeLessThan(html.indexOf("确认下一步"));
-  expect(html.indexOf("确认下一步")).toBeLessThan(html.indexOf("正在核对构建"));
+  expect(html).not.toContain("正在核对构建");
+  expect(html).toContain("已读取的进行中记录：1 条，过程已收起。");
+  expect(html).toContain("查看全部记录（2）");
   expect(open).not.toHaveBeenCalled();
 });
 
@@ -42,10 +44,33 @@ it("marks retained history with the time it was read while offline, without hidi
   const html = renderToStaticMarkup(<AssistantActivity items={items} connected={false}
     sources={[{ name: "turns", status: "current", checkedAt: read }]} onOpen={() => {}} />);
   expect(html).toContain("下面是 10:42 读到的动态，连上之后再核对现在的进度。");
-  expect(html).toContain("正在核对构建");
+  expect(html).toContain("已读取的进行中记录：1 条");
+  expect(html).toContain("确认下一步");
   expect(html).not.toContain("动态来源待核对");
   const unknown = renderToStaticMarkup(<AssistantActivity items={items} connected={false} onOpen={() => {}} />);
   expect(unknown).toContain("下面是上次读到的动态");
+});
+
+it("preserves failures and honest result labels in the default summary", () => {
+  const html = renderToStaticMarkup(<AssistantActivity connected sources={sources} onOpen={() => {}} items={[
+    { id: "failed", status: "failed", title: "需要核对来源", summary: "请求失败", at: "" },
+    { id: "result", status: "done", dispatchId: "d", title: "本轮改动", summary: "等待审查", statusLabel: "执行结束 · 待审查", at: "" },
+    { id: "chat", status: "done", title: "普通聊天标题", summary: "已回复", at: "" },
+  ]} />);
+  expect(html).toContain("需要核对来源");
+  expect(html).toContain("执行结束 · 待审查");
+  expect(html).not.toContain("普通聊天标题");
+  expect(html).not.toContain("已验收");
+});
+
+it("never paints an unreachable retained completion as a fresh success", () => {
+  const html = renderToStaticMarkup(<AssistantActivity connected sources={sources} onOpen={() => {}} items={[
+    { id: "old", status: "done", dispatchId: "d", requiresAttention: true, title: "上次执行结束", summary: "来源失联", statusLabel: "状态待核对", at: "" },
+  ]} />);
+  expect(html).toContain("需要核对 · 1");
+  expect(html).toContain('class="activity-feed-item stopped"');
+  expect(html).not.toContain('class="activity-feed-item done"');
+  expect(html).not.toContain("最近结果");
 });
 
 it("does not turn a failed empty read into a claim that there is no work", () => {

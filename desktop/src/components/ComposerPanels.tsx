@@ -38,7 +38,7 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
               ? isPlanBudgetConfirmation(confirm.text)
                 ? "规划未完成，授权后继续当前任务"
                 : "计划已就绪，授权后在隔离工作区继续"
-              : "Runtime 请求确认"}
+              : "这一步需要你确认"}
         </strong>
         {website && <section className="website-confirmation" aria-label="本次网站操作">
           {confirm.tainted && <strong>{websiteCopy?.title}</strong>}

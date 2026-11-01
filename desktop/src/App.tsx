@@ -8,6 +8,7 @@ import { CodexActionCard } from "./components/CodexActionCard";
 import { chatCodexActions } from "./lib/codexActionOutcome";
 import { AssistantWorkday } from "./components/AssistantWorkday";
 import { activityCoverage, type ActivitySource } from "./lib/activitySources";
+import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat } from "./lib/mainChat";
 import { ChatHistory } from "./components/ChatHistory";
@@ -292,10 +293,8 @@ function App() {
   const [workspaceRequest, setWorkspaceRequest] = useState<WorkspaceRequest | null>(null);
 
   const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("project");
-  // 助理模式右侧（助理身份 + 动态）默认打开；工作台默认收起。
-  const [inspectorOpen, setInspectorOpen] = useState(() => {
-    try { return localStorage.getItem(STORAGE_KEYS.appMode) === "assistant"; } catch { return false; }
-  });
+  // 先呈现对话结论；动态由任务入口按需打开，不在连接时抢占主区。
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   // 会话侧栏的标签栏：打开过的工具；launcher = 正在看工具列表（点了「＋」或标签全关了）。
   const [workbenchTabs, setWorkbenchTabs] = useState<InspectorTab[]>([]);
   const [workbenchLauncher, setWorkbenchLauncher] = useState(false);
@@ -304,6 +303,8 @@ function App() {
   const [appMode, setAppMode] = useState<AppMode>(() => {
     try { return localStorage.getItem(STORAGE_KEYS.appMode) === "assistant" ? "assistant" : "work"; } catch { return "work"; }
   });
+  const appModeRef = useRef(appMode);
+  appModeRef.current = appMode;
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
   const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
@@ -358,8 +359,8 @@ function App() {
       return next;
     });
   }, []);
-  // Agent 那边发生的事（新 diff、保存结果…）**不许抢走你正在看的标签**：面板没开就照常打开，
-  // 开着且你在看别的，就只在目标标签上点一个提示点，由你决定什么时候过去。
+  // 助理模式的后台结果只更新记录和提示；工作台保留按需打开工具的行为。
+  // 无论哪种模式，都不抢走已打开的其他标签。
   // 真机 2026-09-17：正在看「代码」，面板自己跳到了「收件箱」。
   const inspectorOpenRef = useRef(inspectorOpen);
   const inspectorTabRef = useRef<InspectorTab>("inbox");
@@ -368,6 +369,7 @@ function App() {
       open: inspectorOpenRef.current || mainViewRef.current !== "chat" || isManagementTab(tab),
       current: inspectorTabRef.current,
       target: tab,
+      quiet: appModeRef.current === "assistant",
     });
     if (decision === "open") {
       openInspector(tab);
@@ -1811,7 +1813,7 @@ function App() {
     });
     if (hostId) setResidentFailure(null);
     if (hostId === undefined) return;
-    setInspectorOpen(true);
+    setInspectorOpen(false);
     setAssistantTab("feed");
     await openMainChat(hostId);
   };
@@ -2376,8 +2378,9 @@ function App() {
   const feedWaiting = feedItems.filter(item => item.status === "waiting").length;
   const assistantFeedItems = assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
     confirmation: pendingConfirm });
-  const assistantWaiting = assistantFeedItems.filter(item => item.status === "waiting").length;
-  const assistantBusy = assistantFeedItems.filter(item => item.status === "running").length;
+  const assistantSummary = assistantAttention(assistantFeedItems);
+  const assistantWaiting = assistantSummary.decisions.length;
+  const assistantBusy = assistantSummary.running;
   const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
   const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
     .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
@@ -2715,7 +2718,7 @@ function App() {
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
             panelOpen={inspectorOpen} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
-            taskPill={appMode === "assistant" ? <TaskPill waiting={assistantWaiting} busy={assistantBusy} uncertain={!activityComplete}
+            taskPill={appMode === "assistant" ? <TaskPill waiting={assistantWaiting} busy={assistantBusy} exceptions={assistantSummary.exceptions.length} uncertain={!activityComplete}
               open={assistantPage === "tasks"} onOpen={() => openAssistantPage("tasks")} /> : undefined}
             // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
             status={connection !== "connected" && (

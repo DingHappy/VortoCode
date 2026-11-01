@@ -13,7 +13,7 @@ const card = (text: string, tainted = false) => renderToStaticMarkup(
     onTrust={noop} onCheck={noop} onAnswer={noop} />);
 
 it("names what is being approved, and the taint warning always wins", () => {
-  expect(card("删除 build/ 目录？")).toContain("Runtime 请求确认");
+  expect(card("删除 build/ 目录？")).toContain("这一步需要你确认");
   expect(card("删除 build/ 目录？")).toContain("允许一次");
   expect(card(`${PLAN_EXECUTION_CONFIRMATION_PREFIX} 改登录`)).toContain("计划已就绪，授权后在隔离工作区继续");
   expect(card(`${PLAN_EXECUTION_CONFIRMATION_PREFIX} 改登录`)).toContain("授权继续");

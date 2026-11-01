@@ -143,22 +143,25 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   return <aside className="assistant-panel vc-panel" aria-label="助理">
     <IconButton className="vc-panel-close" label="收起面板" icon={<X />} onClick={onClose} />
     <div className="vc-panel-card" data-tauri-drag-region="deep">
-      <div className="vc-panel-avatar">
-        <AssistantAvatarImage name={name} avatar={avatar} size={120} />
-        {onEditProfile && <button className="vc-panel-avatar-edit" aria-label="修改助理资料" title="名字、头像与「关于你」" onClick={onEditProfile}><PencilLine aria-hidden="true" /></button>}
+      <div className="vc-panel-identity-row">
+        <AssistantAvatarImage name={name} avatar={avatar} size={32} />
+        <div><strong className="vc-panel-name">{name}</strong>
+          <span className={`vc-panel-status${unreachable || !connected ? " is-down" : ""}`}>{status}</span></div>
+        {onEditProfile && <IconButton label="修改助理资料" icon={<PencilLine />} onClick={onEditProfile} />}
       </div>
-      <strong className="vc-panel-name">{name}</strong>
-      <span className={`vc-panel-status${unreachable || !connected ? " is-down" : ""}`}>{status}</span>
-      {model && <small className="vc-panel-model">{model}</small>}
       {unreachable
         ? <>
           <small className="vc-panel-note">它可能还在干活，只是这台电脑看不到</small>
           <Button variant="primary" className="vc-panel-action" onClick={onRetryResident}>重新连接</Button>
         </>
-        : host.kind === "local"
+        : null}
+      <details className="vc-panel-context"><summary>运行信息与电脑</summary>
+        {model && <small className="vc-panel-model">{model}</small>}
+        {!unreachable && (host.kind === "local"
           ? <Button className="vc-panel-action" onClick={host.canAddResident ? onAddResident : onRetryResident}>
             {host.canAddResident ? "连接常驻电脑" : "重新连接常驻电脑"}</Button>
-          : computer}
+          : computer)}
+      </details>
     </div>
     <div className="vc-panel-tabs" role="tablist" aria-label="助理面板">
       {TABS.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} title={item.label}

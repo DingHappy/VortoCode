@@ -32,3 +32,12 @@ it("renders account labels as escaped text", () => {
   const html = render({ snapshot: { ...snapshot, items: [{ ...snapshot.items[0], account: "<img src=x onerror=alert(1)>" }] } });
   expect(html).toContain("&lt;img"); expect(html).not.toContain("<img");
 });
+
+it("keeps unopened inventory neutral and highlights actual handoff or uncertain actions", () => {
+  const empty = render({ snapshot: null, stale: true });
+  expect(empty).toContain("常驻运行端 · 连接与能力");
+  expect(empty).toContain("按需查看");
+  expect(empty).not.toContain("<small>待核对</small>");
+  expect(render({ stale: false })).toContain("<small>需要核对</small>");
+  expect(empty).not.toContain('<details class="session-resources" open');
+});
