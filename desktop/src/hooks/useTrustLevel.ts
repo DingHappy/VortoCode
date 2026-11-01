@@ -11,7 +11,7 @@ import type { ConnectionState, TrustLevel, TrustStatus } from "../types";
 
 const TRUST_LEVEL_TEXT: Record<TrustLevel, string> = {
   ask: "每次确认",
-  reads: "只读免确认",
+  reads: "读取与事项免确认",
   full: "完全信任",
 };
 

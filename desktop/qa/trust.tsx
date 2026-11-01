@@ -20,7 +20,7 @@ function Fixture() {
     <section className="confirm-card"><div className="confirm-copy"><p>读取本机测试文件</p><ConfirmationTrust trust={trust} busy={trustBusy} connected={true} tainted={false} onChange={changeTrustLevel}/><button onClick={()=>setApproved(true)}>允许一次</button><p>本次批准：{String(approved)}</p></div></section>
     <p>工作区：{workspace}</p><p>档位：{trust?.level ?? "加载中"}</p><p>忙：{String(trustBusy)}</p><output>{note}</output>
     <button onClick={()=>pending.current.get?.(status("ask"))}>返回 A 查询</button>
-    <button onClick={()=>void changeTrustLevel("reads")}>只读免确认</button>
+    <button onClick={()=>void changeTrustLevel("reads")}>读取与事项免确认</button>
     <button onClick={()=>setWorkspace(workspace === "A" ? "B" : "A")}>切换工作区</button>
     <button onClick={()=>pending.current.get?.(status("reads"))}>迟到 A 查询</button>
     <button onClick={()=>pending.current.fail?.(new Error("测试保存失败"))}>保存失败</button>

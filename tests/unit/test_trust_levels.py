@@ -35,6 +35,16 @@ def test_levels_are_ordered_and_unknown_is_strictest():
         (trust.FULL, trust.WRITE, True),
         (trust.FULL, trust.EXECUTE, True),
         (trust.FULL, trust.DELIVER, True),
+        # ADR-011：主人自己的可撤销数据与草稿在 READS 起免确认；不可逆与 INTERACT 任何档都问。
+        (trust.ASK, trust.OWN_DATA, False),
+        (trust.ASK, trust.DRAFT, False),
+        (trust.READS, trust.OWN_DATA, True),
+        (trust.READS, trust.DRAFT, True),
+        (trust.READS, trust.DELIVER, False),
+        (trust.FULL, trust.OWN_DATA, True),
+        (trust.FULL, trust.DRAFT, True),
+        (trust.FULL, trust.IRREVERSIBLE, False),
+        (trust.FULL, trust.INTERACT, False),
     ],
 )
 def test_authorization_matrix(level, kind, expected):
@@ -132,3 +142,35 @@ async def test_external_session_cannot_be_dialed_up_to_write_without_asking():
     gate, asked = await _decide(trust_level=trust.FULL, capability_profile="external")
     assert await gate("写 todo.py", trust.WRITE) is True
     assert asked == ["写 todo.py"]
+
+
+async def test_own_data_is_free_in_the_desktop_general_assistant():
+    """Desktop 通用助理按 external 档案装配、上限 READS：改主人自己的事项不再每次确认。"""
+    gate, asked = await _decide(trust_level=trust.READS, capability_profile="external")
+    assert await gate("把「周五交周报」记进事项", trust.OWN_DATA) is True
+    assert await gate("起草给张三的回复", trust.DRAFT) is True
+    assert asked == []
+    assert await gate("写 todo.py", trust.WRITE) is True
+    assert asked == ["写 todo.py"]
+
+
+async def test_tainted_turn_turns_own_data_back_into_a_question():
+    """读过外部内容的回合里，改主人数据也要真人拍板——污点作废一切预授权，OWN_DATA 不例外。"""
+    gate, asked = await _decide(trust_level=trust.READS, capability_profile="external")
+    mark_tainted()
+    assert await gate("把邮件里的要求记进事项", trust.OWN_DATA) is True
+    assert len(asked) == 1 and "外部内容" in asked[0]
+
+
+async def test_unattended_cannot_write_own_data_silently():
+    """无人值守问不到人：OWN_DATA 也一样被拒，由调用方改成提议，不静默落地。"""
+    gate = make_confirm_gate(None, trust_level=trust.READS, capability_profile="unattended",
+                             can_ask_human=False)
+    assert await gate("记一条事项", trust.OWN_DATA) is False
+    assert await gate("起草周报", trust.DRAFT) is False
+
+
+async def test_irreversible_always_asks_even_with_auto_approve():
+    gate, asked = await _decide(auto_approve=True, capability_profile="local")
+    assert await gate("删除这个分支", trust.IRREVERSIBLE) is True
+    assert asked == ["删除这个分支"]
