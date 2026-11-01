@@ -6,9 +6,12 @@ import { hasConfirmedPersonalCriterion, hasConfirmedPersonalGoal } from "../lib/
 import { emptyPersonalGoalDraft, personalGoalDraft } from "../lib/personalGoalDraft";
 import { freshAt } from "../lib/readFreshness";
 import { startWorkdayClock } from "../lib/assistantWorkdayReads";
+import { AssistantChanges, type AssistantChangeClient } from "./AssistantChanges";
 
-export function AssistantGoals({ client, connected, focusId, onClearFocus, onFocusGoal, overview }: {
+export function AssistantGoals({ client, connected, focusId, onClearFocus, onFocusGoal, overview, changes }: {
   client: PersonalGoalClient | null; connected: boolean; focusId?: string; onClearFocus?: () => void;
+  /** 「我替你做了什么」的读写端；不给就不显示这一段 */
+  changes?: AssistantChangeClient | null;
   onFocusGoal?: (id: string, owner: PersonalGoalClient) => void;
   /** 今日概览：放在目标列表下面 */
   overview?: ReactNode;
@@ -128,6 +131,8 @@ export function AssistantGoals({ client, connected, focusId, onClearFocus, onFoc
       onConfirm={async (id, summary, passed) => { if (client) await writeGoal(() => client.confirmPersonalGoal(goal, id, summary, passed), goal.id); }}
       onFollowUp={async (enabled, uncertain) => { if (client) await writeGoal(() => client.configurePersonalGoalFollowUp(goal, enabled, uncertain), goal.id); }}
       onAcknowledge={async () => { if (client) await writeGoal(() => client.acknowledgePersonalGoalFollowUp(goal), goal.id); }} />)}
+    {!focusId && <AssistantChanges client={changes} connected={connected} version={snapshot?.checkedAt}
+      onChanged={() => void actionsRef.current?.refresh()} />}
     {overview && <section className="assistant-goals-overview" aria-label="今日概览"><h3>今日概览</h3>{overview}</section>}
   </section>;
 }

@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -397,6 +397,24 @@ def news_section(now: datetime) -> str:
         return ""
 
 
+def owner_changes_today(root: str, now: datetime) -> str:
+    """晚报的「今天我替你做了什么」：助理按 OWN_DATA 免确认做的改动（ADR-011）。
+
+    免确认的前提就是事后看得见、撤得掉，所以每一条都列出来，已撤销的照实标出。确定性文字，不进模型上下文。"""
+    from src.agents import undo_log
+    moment = now if now.tzinfo else now.astimezone()
+    start = moment.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+    try:
+        ops = undo_log.recent(root, limit=30, since=start)
+    except OSError:
+        return "🧾 今天替你做的改动暂时读不到，请在 Desktop 目标页核对。"
+    if not ops:
+        return ""
+    marks = {"undone": "（已撤销）", "failed": "（撤销没成功，请核对）", "undoing": "（正在撤销）"}
+    lines = [f"· {op['summary']}{marks.get(op.get('status'), '')}" for op in ops]
+    return "🧾 今天我替你做了什么（Desktop 目标页可逐条撤销）：\n" + "\n".join(lines)
+
+
 async def compose_report(root: str, now: datetime, label: str, *, llm: Any = None) -> str:
     """早报 / 晚报正文；早报末尾附上运维摘要（有运维心跳时）和新闻。
 
@@ -419,6 +437,9 @@ async def compose_report(root: str, now: datetime, label: str, *, llm: Any = Non
         codex_day = day_summary(root, now)
         if codex_day:
             body = f"{body or '🗒 晚报'}\n\n{codex_day}"
+        changes = owner_changes_today(root, now)
+        if changes:
+            body = f"{body or '🗒 晚报'}\n\n{changes}"
     if not body or label != "早报":
         return body
     from src.scheduling.ops_heartbeats import brief_line

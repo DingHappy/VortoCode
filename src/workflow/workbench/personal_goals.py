@@ -232,21 +232,49 @@ class PersonalGoals:
         with self._lock(goal_id):
             goal = self._load(goal_id)
             self._revision(goal, body)
-            if goal.status == "achieved":
-                raise ValueError("已达成的目标不能修改进展；复验未通过会重新打开目标")
-            for key in ("next_action", "blocker"):
-                if key in body:
-                    setattr(goal, key, _text(body[key], 1000, required=key == "next_action"))
-            for key in ("due_at", "follow_up_at"):
-                if key in body:
-                    setattr(goal, key, _date(body[key]))
-            failed = any(c.status == "failed" for c in goal.acceptance_criteria)
-            goal.status = "blocked" if goal.blocker or failed else "active"
-            if failed and not goal.blocker:
-                goal.blocker = "仍有验收标准未通过，请复验"
-            self._invalidate_follow_up(goal)
-            goal.revision += 1
-            return self._save(goal)
+            return self._apply_progress(goal, body)
+
+    def _apply_progress(self, goal: Goal, body: dict) -> dict:
+        if goal.status == "achieved":
+            raise ValueError("已达成的目标不能修改进展；复验未通过会重新打开目标")
+        for key in ("next_action", "blocker"):
+            if key in body:
+                setattr(goal, key, _text(body[key], 1000, required=key == "next_action"))
+        for key in ("due_at", "follow_up_at"):
+            if key in body:
+                setattr(goal, key, _date(body[key]))
+        failed = any(c.status == "failed" for c in goal.acceptance_criteria)
+        goal.status = "blocked" if goal.blocker or failed else "active"
+        if failed and not goal.blocker:
+            goal.blocker = "仍有验收标准未通过，请复验"
+        self._invalidate_follow_up(goal)
+        goal.revision += 1
+        return self._save(goal)
+
+    def restore(self, goal_id: str, revision: int, fields: dict) -> dict:
+        """撤销助理改的进展：只在那之后没人再动过（版本仍是改完时的）才把这几个字段放回原值。
+
+        之后又改过就拒绝——撤销不能盖掉你后来的进展。被那次修改取消的提醒批准不会恢复，
+        恢复本身同样会取消尚未发送的批准（与任何进展修改一致），需要你重新批准。"""
+        _fields(fields, {"next_action", "blocker", "due_at", "follow_up_at"})
+        with self._lock(goal_id):
+            goal = self._load(goal_id)
+            if goal.revision != revision:
+                raise ValueError("这个目标之后又改过，撤销会盖掉新的进展；请在目标卡上处理")
+            return self._apply_progress(goal, fields)
+
+    def withdraw(self, goal_id: str, revision: int) -> None:
+        """撤销助理新建的目标：只在建好后没人动过时移出列表（移到 .withdrawn/，不删除）。"""
+        with self._lock(goal_id):
+            goal = self._load(goal_id)
+            if goal.revision != revision or goal.evidence or goal.follow_up.get("status"):
+                raise ValueError("这个目标建好后又改过（进展、验收或提醒），请在目标卡上处理")
+            path = self.ledger._path(goal_id)
+            target = path.parent / ".withdrawn" / path.name
+            if target.parent.is_symlink():
+                raise OSError("目标存储位置不可用")
+            target.parent.mkdir(exist_ok=True)
+            os.replace(path, target)
 
     def evidence(self, goal_id: str, criterion_id: str, body: dict) -> dict:
         _fields(body, {"revision", "summary", "passed", "confirmed"})

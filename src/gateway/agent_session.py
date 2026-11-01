@@ -211,7 +211,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             tools += [tool for tool in build_memory_tools(repo_root, gated_confirm, source=kind)
                       if tool.name != "remember_repo"]
             from src.agents.tools.personal_goals import build_personal_goal_tools
-            tools += build_personal_goal_tools(repo_root)
+            # 新建目标 / 改进展申报 OWN_DATA：READS 档免确认、可撤销；IM 回合恒带 channel 污点，照旧问人
+            tools += build_personal_goal_tools(repo_root, confirm=gated_confirm)
             from src.agents.tools.personal_skills import build_personal_skill_tools
             tools += build_personal_skill_tools(repo_root)
             # 交代定时的事（「每天早上帮我…」）：只在本进程真的会跑调度时给——Desktop 本机 sidecar

@@ -67,3 +67,30 @@ async def configure_personal_goal_follow_up(goal_id: str, body: dict):
 @router.post("/api/assistant/goals/{goal_id}/follow-up/acknowledge")
 async def acknowledge_personal_goal_follow_up(goal_id: str, body: dict):
     return await _call("acknowledge_follow_up", goal_id, body)
+
+
+# 「我替你做了什么」：助理按 OWN_DATA 免确认做过的改动，逐条可撤（ADR-011）。
+@router.get("/api/assistant/undo")
+async def list_assistant_changes():
+    from src.agents import undo_log
+    try:
+        return {"ops": await asyncio.to_thread(undo_log.recent, os.getcwd(), limit=20)}
+    except OSError:
+        raise HTTPException(status_code=503, detail="操作记录暂不可读，请稍后重试") from None
+
+
+@router.post("/api/assistant/undo/{op_id}")
+async def undo_assistant_change(op_id: str):
+    import re
+
+    import src.agents.tools.personal_goals  # noqa: F401 —— 导入即登记目标改动的撤销函数
+    from src.agents import undo_log
+    if not re.fullmatch(r"op-[0-9a-f]{12}", op_id):
+        raise HTTPException(status_code=404, detail="没有这条操作")
+    try:
+        result = await asyncio.to_thread(undo_log.undo, os.getcwd(), op_id)
+    except undo_log.UndoError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    except OSError:
+        raise HTTPException(status_code=503, detail="操作记录暂不可写，请稍后重试") from None
+    return {"ok": result.ok, "detail": result.detail, "not_recallable": list(result.not_recallable)}
