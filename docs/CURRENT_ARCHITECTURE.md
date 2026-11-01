@@ -104,7 +104,8 @@ Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑
 
 用户已明确需要“总助手 + 专职 bot，按需独立 IM 入口”。[多 bot 方案](MULTI_BOT_COLLABORATION.md)
 记录 Grok 源码对照、会话隔离底座和分阶段联动。[Project 的 N 入口只读托管](IM_MULTI_HOST.md)
-已接入实际 runtime 生命周期；General 跨项目往返、完整持久输入与微信仍未实现。
+已接入实际 runtime 生命周期、账号级事件记录和原 SessionActors；未知认领不自动重跑。
+General 跨项目往返、持久排队/公平性、容量迁移与微信仍未实现。
 首个角色切片已接入原 IM/会话工厂：显式 `research_read` 只提供项目内读取与检索，工具
 运行层阻止动态追加权限；N 托管有共享 IM 模型额度和精确生命周期，仍不等于跨 runtime 研究往返。
 身份、权限、消息/任务交接、预算、取消及生命周期的待评审合同见 [多 bot 工程设计 v1.4](MULTI_BOT_DESIGN.md)。

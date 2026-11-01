@@ -36,6 +36,8 @@ class ChannelEvent:
     files: list = field(default_factory=list)    # 随消息带来的**文件**本地路径
     unsupported: str = ""         # 通道认出了附件但取不到（下载失败/类型不支持）→ 如实告知用户，
                                   # 绝不静默丢弃（"发过去石沉大海"是最差的体验，2026-07-26 的老毛病）
+    source_event_id: str = ""      # Native message identity, not an internal binding/generation.
+    source_conversation_id: str = ""
 
 
 class ChannelAdapter:

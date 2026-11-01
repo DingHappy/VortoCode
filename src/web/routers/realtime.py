@@ -38,6 +38,10 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     
     try:
+        from src.gateway.im_service import is_managed_session
+        if is_managed_session(os.getcwd(), _session_key(websocket)):
+            await _managed_im_observer(websocket)
+            return
         _get_session(websocket)              # 先绑定 repo_root，随后才能恢复持久事件 journal
         session_key = _session_key(websocket)
         replay_cursor = await _session_event_cursor(session_key)
@@ -80,6 +84,11 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
         msg_type, message = P.parse_event(message)
     except P.ProtocolError as e:              # 未登记类型/缺必填：与从前"未知类型掉落"同效，只记日志
         logger.debug(f"忽略不合协议的 WS 消息: {e}")
+        return
+
+    from src.gateway.im_service import is_managed_session
+    if is_managed_session(os.getcwd(), _session_key(websocket)):
+        await _managed_im_message(websocket, msg_type, message)
         return
 
     if msg_type == P.PING:
@@ -142,6 +151,50 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
     elif msg_type == P.AGENT_EVENTS_REPLAY:
         await _send_session_event_replay(
             websocket, message.get("after_seq"), message.get("limit"))
+
+
+async def _managed_im_snapshot(websocket):
+    """Read history without constructing a higher-privilege Web agent."""
+    from src.gateway.im_service import managed_session_bridge
+    from src.gateway.session_store import load_session
+    key = _session_key(websocket)
+    bridge = managed_session_bridge(os.getcwd(), key)
+    saved = load_session(os.getcwd(), key) or {}
+    transcript = getattr(bridge, "_transcript", []) if bridge else saved.get("transcript", [])
+    activities = getattr(bridge, "_activities", []) if bridge else saved.get("activities", [])
+    plan = getattr(bridge.agent, "plan", None) if bridge else saved.get("plan")
+    await websocket.send_json(P.make_event(P.AGENT_HISTORY, items=transcript))
+    await websocket.send_json(P.make_event(P.AGENT_ACTIVITY_HISTORY, items=activities))
+    await websocket.send_json(P.make_event(P.AGENT_PLAN, items=plan or []))
+    from src.gateway.session_actor import public_prompt_item
+    running = _ACTORS.running.get(key) if bridge is not None else None
+    await websocket.send_json(P.make_event(P.AGENT_QUEUE, items=[],
+        running=public_prompt_item(running) if running else None, paused=False))
+
+
+async def _managed_im_message(websocket, msg_type, message):
+    from src.gateway.im_service import managed_session_bridge
+    if msg_type == P.PING:
+        await websocket.send_json(P.make_event(P.PONG))
+    elif msg_type == P.GET_STATUS:
+        await websocket.send_json(P.make_event(P.STATUS, data=state.to_dict()))
+        if message.get("hydrate"):
+            await _managed_im_snapshot(websocket)
+    elif msg_type == P.AGENT_CANCEL:
+        bridge = managed_session_bridge(os.getcwd(), _session_key(websocket))
+        active = bridge._input_controller.stop() if bridge is not None else False
+        await websocket.send_json(P.make_event(P.AGENT_ERROR, text=(
+            "已请求停止；历史可刷新查看，执行退出仍需核对。" if active else "当前没有在跑的 IM 回合。")))
+    else:
+        await websocket.send_json(P.make_event(P.AGENT_ERROR, rid=message.get("rid"),
+            text="此会话由 IM 托管，可查看历史和请求停止；发送问题请回原 bot，或另开 Desktop 会话。"))
+
+
+async def _managed_im_observer(websocket):
+    await websocket.send_json(P.make_event(P.INIT, v=P.PROTOCOL_VERSION, data=state.to_dict()))
+    await _managed_im_snapshot(websocket)
+    while True:
+        await handle_websocket_message(websocket, json.loads(await websocket.receive_text()))
 
 
 # 等待前端确认的工具：confirm id → 结构化记录（future 只留进程内；其余字段供决策中心读取）
@@ -511,6 +564,9 @@ def _get_session(websocket) -> Dict[str, Any]:
     factory/_MAX_SESSIONS 按当前模块属性取（测试可 monkeypatch）；淘汰时表回调关 MCP。
     """
     import os
+    from src.gateway.im_service import is_managed_session
+    if is_managed_session(os.getcwd(), _session_key(websocket)):
+        raise ValueError("This IM session is owned by its managed channel; use a separate Web session")
     return _TABLE.get(_session_key(websocket), repo_root=os.getcwd(),
                       factory=_new_agent, max_sessions=_MAX_SESSIONS)
 
@@ -775,6 +831,13 @@ async def _replay_history(websocket) -> None:
 
 # Compatibility aliases: session dashboards and workspace edits share this registry.
 _ACTORS = SessionActors(clean_item=lambda raw: _clean_prompt_item(raw))
+
+
+def session_actors() -> SessionActors:
+    """The Runtime's original actor owner, also used by managed IM bindings."""
+    return _ACTORS
+
+
 _WS_AGENT_TASKS = _ACTORS.tasks
 _WS_AGENT_RUNNING = _ACTORS.running
 _WS_AGENT_PRIORITY = _ACTORS.priority

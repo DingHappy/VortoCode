@@ -459,10 +459,14 @@ def _to_event(up: dict, bot_username: Optional[str] = None,
         # 既没文字也没附件（入群通知之类的服务消息）→ 照旧不产生事件。
         if body or refs:
             is_group = _chat_is_group(msg.get("chat"))
+            chat = msg.get("chat")
+            chat_id = chat.get("id") if isinstance(chat, dict) else None
             return ChannelEvent(kind="message",
                                 sender_id=str((msg.get("from") or {}).get("id", "")),
                                 text=body, is_group=is_group,
-                                mentioned=is_group and _mentions_bot(msg, bot_username, bot_id))
+                                mentioned=is_group and _mentions_bot(msg, bot_username, bot_id),
+                                source_event_id=(str(up["update_id"]) if type(up.get("update_id")) is int and up["update_id"] >= 0 else ""),
+                                source_conversation_id=str(chat_id) if type(chat_id) is int else "")
     cq = up.get("callback_query")
     if isinstance(cq, dict):
         data = str(cq.get("data", ""))

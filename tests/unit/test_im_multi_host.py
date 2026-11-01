@@ -22,6 +22,16 @@ class HostedAdapter(AccountAdapter):
         super().__init__(account)
         self.lease = channel_lease(channel, account)
         self.fail_claim = fail_claim
+        self.source_sequence = 0
+
+    def push(self, event):
+        if isinstance(event, ChannelEvent) and event.kind == "message":
+            self.source_sequence += 1
+            if not event.source_event_id:
+                event.source_event_id = str(self.source_sequence)
+            if not event.source_conversation_id:
+                event.source_conversation_id = "private"
+        super().push(event)
 
     def claim_polling(self):
         if self.fail_claim:
@@ -214,7 +224,8 @@ async def test_cold_host_and_turn_cancellation_release_exact_resources(tmp_path,
     host = await im_host.start_host(str(root), runner=FakeRunner(), register_worker=lambda _worker: None, adapter_factory=factory)
     try:
         bridge = host.bindings["binding-1"].bridge
-        assert bridge._start_turn("cancel before model", [], [])
+        await bridge._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="cancel before model",
+                                            source_event_id="cold", source_conversation_id="private"))
         bridge._turn_task.cancel()
         await until(lambda: not host.admission.held)
     finally:
