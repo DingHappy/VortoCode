@@ -144,6 +144,7 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_HEARTBEAT_MODEL` | 默认模型 | 值班巡视用的模型。 | `scheduling/heartbeat.py` |
 | `VORTOCODE_ASSISTANT_REPORT_TIMES` | `09:00,21:00` | 助理早报、晚报的时间。 | `scheduling/assistant_watch.py` |
 | `VORTOCODE_ASSISTANT_NEWS_ROOT` | — | 早报末尾附新闻：指向一个有信号采集产出的项目目录。 | `scheduling/assistant_watch.py` |
+| `VORTOCODE_GOAL_ADVANCE` | 开 | 常驻助理主动推进个人目标（ADR-012）：每个进行中的目标最多 12 小时判断一次下一步，每轮最多 3 个、安静时段不跑；只拟任务单 / 问你 / 给建议，下发仍要你批。设为 `0` 关闭。 | `scheduling/goal_advancer.py` |
 | `VORTOCODE_SELF_HEAL` | 开 | 环境预检发现可自愈问题时自动处置。设 `0` 关闭。 | `scheduling/remediation.py` |
 
 ## 中转站巡检
