@@ -55,6 +55,20 @@ scripts/mobile-release.sh
 （被管理员令牌中间件拦下返回 `{"detail":"Unauthorized"}` 说明还在跑旧代码）。核对不过自动切回旧快照。
 已登录的手机不用重新登录（原生会话加密落盘，重启后恢复）。
 
+### 常驻助理数据备份（加密，2026-11-02）
+
+`~/assistant/.vortocode`（目标、长期记忆、主要聊天、手机钥匙登记、撤销记录、Codex 状态）、`~/.vortocode`、
+手机网关与 HTTPS 入口的配置，每天 03:40 加密打包、推到 NAS，本地与远端都只留最近 30 份。
+
+- **只有公钥在常驻电脑上**：在主人自己的电脑上生成密钥对，私钥只留在那里（另存一份到密码管理器）：
+  `python3 scripts/assistant-backup.py keygen --private ~/.config/vortocode/backup-key.pem`，把打印出的公钥放到
+  常驻电脑 `~/.config/vortocode-backup/backup.pub`。
+- `~/.config/vortocode-backup/environment`（600）：`VORTOCODE_BACKUP_TARGET=<user>@<nas>:<目录>/`、
+  `VORTOCODE_OPS_TOKEN=<运维心跳令牌>`。NAS 那边用一把只能 rsync 的专用密钥（authorized_keys 强制命令）。
+- 安装：`deploy/vortocode-backup.user.{service,timer}` 放进 `~/.config/systemd/user/`，`systemctl --user enable --now vortocode-backup.timer`。
+- 成功 / 失败都报到运维心跳（`assistant-backup`），30 小时没报就推送主人。
+- 恢复：`python3 scripts/assistant-backup.py restore --private <私钥> --archive <某份 .vcbak> --into <目录>`，核对后再拷回。
+
 ## 二、开关矩阵（都是 opt-in，默认全关 = 零自主消耗）
 
 Background capabilities are disabled unless the operator enables them explicitly:
