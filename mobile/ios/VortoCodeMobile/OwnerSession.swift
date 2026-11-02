@@ -54,7 +54,12 @@ final class OwnerSession {
 
     private func api(_ entry: AssistantEntry) -> MobileAPI { MobileAPI(entry: entry) }
 
+    /// 写入这边发现登录已失效（如网关重启后会话没恢复）：交给只读会话去核对并回到登录页，
+    /// 不在各页停着显示「登录或设备授权已失效」
+    var sessionExpired: (() -> Void)?
+
     private func say(_ error: Error) {
+        if error as? MobileError == .unauthorized { sessionExpired?(); return }
         if let error = error as? LocalizedError, let text = error.errorDescription { note = text }
         else { note = "这次操作没有完成，请重试。" }
     }
