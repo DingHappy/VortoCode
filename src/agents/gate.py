@@ -29,6 +29,8 @@ TAINT_WARNING = ("⚠ 本回合已摄入不可信外部内容（本机文件/网
 # 「你自己打了句话」说成「模型读过被投毒的网页」——那句狼来了每回合都喊，喊到第一百次时，
 # 真正那一次和前面九十九次长得一模一样（真机 2026-07-27）。
 CHANNEL_TAINT_NOTE = "（经 IM 入口，需你确认）"
+# 本回合没读外部内容，但对话里还留着之前读进来的（共享主要聊天后的历史污点，ADR-012）。
+CONTEXT_TAINT_NOTE = "（对话里还有之前读进来的外部内容，需你确认）"
 
 # 污点否决掉自动放行时给用户的**统一说法**。此前 CLI 的 attach 与 headless 各写了一份几乎相同的
 # 文案，改一处漏一处——正是这套收敛要根除的抄贴漂移。
@@ -50,6 +52,8 @@ def taint_prefix() -> str:
     src = taint_source()
     if src == "external":
         return TAINT_WARNING
+    if src == "context":
+        return f"{CONTEXT_TAINT_NOTE} "
     return f"{CHANNEL_TAINT_NOTE} " if src else ""
 
 
