@@ -1063,6 +1063,15 @@ export interface PhoneKeyRequest { device_id: string; name: string; requested_at
 export interface TrustedPhone { code: string; name: string; approved_at: number }
 export interface PhoneKeys { pending: PhoneKeyRequest[]; trusted: TrustedPhone[] }
 
+/** 动态时间线的一条（与 App「动态」同一份，见 scheduling/timeline.py）。 */
+export interface TimelineItem {
+  id: string; at: string;
+  kind: "notice" | "change" | "dispatch" | "codex" | "review" | "paused";
+  title: string; detail: string; status: string; tainted: boolean;
+  actions: Array<{ type: "undo" | "resume_goal" | "decide_dispatch" | "decide_codex"; id: string }>;
+}
+export interface Timeline { items: TimelineItem[]; unavailable: string[]; generated_at: string }
+
 export interface AssistantUndoResult {
   ok: boolean;
   detail: string;

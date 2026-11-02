@@ -1,3 +1,4 @@
+import { AssistantTimeline } from "./components/AssistantTimeline";
 import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
 import { ManagementHead, ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
@@ -2963,7 +2964,19 @@ function App() {
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
-              : <AssistantActivity key={assistantScope} items={assistantFeedItems}
+              : <><AssistantTimeline key={`timeline-${assistantScope}`} client={clientRef.current} connected={connection === "connected"}
+                  version={Math.max(...activitySources.map(source => source.checkedAt ?? 0))}
+                  onChanged={() => void refreshActivity()}
+                  onOpen={(type, id) => {
+                    const client = clientRef.current, scope = assistantScope;
+                    void refreshAgentTurns().then(() => {
+                      if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
+                      if (type === "decide_dispatch") { void openDispatch(id); return; }
+                      setSelectedDispatchId(null);
+                      setSelectedCodexAction({ client, scope, id });
+                    });
+                  }} />
+              <AssistantActivity key={assistantScope} items={assistantFeedItems}
                   client={clientRef.current}
                   currentSession={activeSid} connected={connection === "connected"} sources={activitySources} onRefresh={() => void refreshActivity()}
                   onOpen={(item) => {
@@ -2996,7 +3009,7 @@ function App() {
                     steps={dispatchDetailSteps(dispatches.find(item => item.id === selectedDispatchId)!)} statusLabel="任务单记录" onClose={() => setSelectedDispatchId(null)}><AssistantTaskCard
                     key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
                     connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} /></AssistantActivityDetail>}
-                </section></AssistantActivity>}
+                </section></AssistantActivity></>}
           </AssistantPanel>
         )}
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (

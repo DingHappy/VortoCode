@@ -53,7 +53,7 @@ _EXEMPT_EXACT = {"/", "/review", "/mobile", "/mobile/", "/mobile/manage",
                  # 手机 App 对话的本机转发：只认专用令牌 + 回环来源（routers/app_relay.py）
                  "/api/assistant/app-relay/turn", "/api/assistant/app-relay/status",
                  "/api/assistant/app-relay/card", "/api/assistant/app-relay/chat",
-                 "/api/assistant/app-relay/op"}
+                 "/api/assistant/app-relay/op", "/api/assistant/app-relay/timeline"}
 
 
 # 手机端自带凭据的路由：不走管理员令牌，改由路由自己的依赖校验（设备令牌、配对窗口 + 逐次证明、
@@ -83,6 +83,8 @@ MOBILE_SELF_AUTHENTICATED = frozenset({
     ("GET", "/api/mobile/native/chat"), ("POST", "/api/mobile/native/chat/card"),
     # 任务单：读要求钥匙已被信任；下发要批准钥匙（Face ID），撤回用日常钥匙
     ("GET", "/api/mobile/native/dispatches"), ("POST", "/api/mobile/native/dispatch"),
+    # 动态时间线：读要求钥匙已被信任；恢复被暂停的目标要日常钥匙签名
+    ("GET", "/api/mobile/native/timeline"), ("POST", "/api/mobile/native/goal-advance/resume"),
 })
 
 

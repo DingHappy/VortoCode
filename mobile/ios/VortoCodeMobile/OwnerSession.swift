@@ -36,6 +36,17 @@ final class OwnerSession {
     var decisions: [PendingDecision] = []
     var dispatches: [DispatchProposal] = []
     var changes: [OwnerChange] = []
+    var timeline: ActivityTimeline?
+    var timelineError = ""
+    private var timelineRequest = UUID()
+    private var timelineEpoch = UUID()
+
+    func resetTimeline() {
+        timelineEpoch = UUID()
+        timelineRequest = UUID()
+        timeline = nil
+        timelineError = ""
+    }
     var note = ""
     var working = false
     /// 随手记的草稿和它的请求 id：提交成功前重试都用同一个 id，服务端只记一次
@@ -111,6 +122,7 @@ final class OwnerSession {
             changes = Array(try await done.reversed())
             dispatches = try await orders
         } catch { say(error) }
+        await refreshTimeline(entry, credential)
     }
 
     func decide(_ entry: AssistantEntry, _ credential: NativeCredential, _ decision: PendingDecision, approve: Bool) async {
@@ -157,6 +169,45 @@ final class OwnerSession {
             let outcome = try await api(entry).undo(credential, signer: signer, deviceId: device, change: change)
             note = ([outcome.detail] + outcome.notRecallable).joined(separator: "；")
         } catch { say(error) }
+        await refresh(entry, credential)
+    }
+
+    /// 新请求和登录切换使旧响应失效；单独的错误提示不把读取失败当成没有动静。
+    func refreshTimeline(_ entry: AssistantEntry, _ credential: NativeCredential) async {
+        guard canWrite, !Task.isCancelled else { return }
+        let request = UUID()
+        timelineRequest = request
+        do {
+            let value = try await api(entry).timeline(credential)
+            guard timelineRequest == request, !Task.isCancelled else { return }
+            timeline = value
+            timelineError = ""
+        } catch {
+            guard timelineRequest == request, !Task.isCancelled else { return }
+            timelineError = "时间线暂时读不到；已有内容可能过期，请下拉刷新。"
+            if error as? MobileError == .unauthorized { sessionExpired?() }
+        }
+    }
+
+    func actOnTimeline(_ entry: AssistantEntry, _ credential: NativeCredential,
+                       _ action: ActivityTimelineItem.Action) async {
+        guard canWrite, let device = bootstrap?.device.id, !working else { return }
+        working = true; defer { working = false }
+        let epoch = timelineEpoch
+        do {
+            if action.type == "undo" {
+                let result = try await api(entry).undoChange(credential, signer: signer, deviceId: device, operationId: action.id)
+                guard epoch == timelineEpoch, !Task.isCancelled else { return }
+                note = ([result.detail] + result.notRecallable).joined(separator: "；")
+            } else if action.type == "resume_goal" {
+                try await api(entry).resumeGoalAdvance(credential, signer: signer, deviceId: device, goalId: action.id)
+                guard epoch == timelineEpoch, !Task.isCancelled else { return }
+                note = "已恢复自动推进，助理会在后续巡检中继续处理。"
+            } else { return }
+        } catch {
+            guard epoch == timelineEpoch, !Task.isCancelled else { return }
+            say(error)
+        }
         await refresh(entry, credential)
     }
 

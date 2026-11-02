@@ -134,7 +134,8 @@ async def advance_once(root: str, now: datetime, *, state: Dict[str, Any],
         from src.workflow.workbench.resident_projects import load_resident_projects
         projects = [str(p.get("name")) for p in load_resident_projects() if p.get("name")]
     marks: Dict[str, str] = state.setdefault("goal_advance", {})
-    paused: Dict[str, str] = state.setdefault("goal_advance_paused", {})
+    await asyncio.to_thread(_migrate_paused, root, state.get("goal_advance_paused"))
+    paused: Dict[str, str] = load_paused(root)
     goals = [g for g in await asyncio.to_thread(PersonalGoals(root).list) if g.get("status") in ("active", "blocked")]
     all_dispatches = await asyncio.to_thread(assistant_dispatch.list_dispatches, root)
     done: List[Dict[str, Any]] = []
@@ -171,11 +172,61 @@ async def advance_once(root: str, now: datetime, *, state: Dict[str, Any],
     # 只留还存在的目标的记号
     live = {g["id"] for g in goals}
     state["goal_advance"] = {key: value for key, value in marks.items() if key in live}
-    state["goal_advance_paused"] = {key: value for key, value in paused.items() if key in live}
+    state.pop("goal_advance_paused", None)               # 旧版本放在巡检状态里；改用单独文件
     return done
 
 
 PAUSE = timedelta(hours=24)
+
+
+def _paused_path(root: str):
+    from pathlib import Path
+    return Path(root) / ".vortocode" / "dispatches" / "goal_advance_paused.json"
+
+
+def load_paused(root: str) -> Dict[str, str]:
+    """只读暂停快照；首次升级前兼容旧 watch.json，空的新文件也优先于旧状态。"""
+    path = _paused_path(root)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        try:
+            state = json.loads((path.parent / "watch.json").read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        data = state.get("goal_advance_paused", {}) if isinstance(state, dict) else {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(data, dict) else {}
+
+
+def _save_paused(root: str, paused: Dict[str, str]) -> None:
+    from src.workflow.pipeline.pipeline_storage import write_json
+    write_json(_paused_path(root), paused)
+
+
+def _migrate_paused(root: str, legacy=None) -> None:
+    from src.workflow.pipeline.pipeline_storage import pipeline_lock
+    with pipeline_lock(root, "goal-advance-paused"):
+        if not _paused_path(root).exists():
+            _save_paused(root, load_paused(root) or (legacy if isinstance(legacy, dict) else {}))
+
+
+def pause_goal(root: str, goal_id: str, until: str) -> None:
+    from src.workflow.pipeline.pipeline_storage import pipeline_lock
+    with pipeline_lock(root, "goal-advance-paused"):
+        paused = load_paused(root)
+        paused[goal_id] = until
+        _save_paused(root, paused)
+
+
+def resume(root: str, goal_id: str) -> bool:
+    """在跨进程锁内只清除此目标，巡检不再整表写回旧快照。"""
+    from src.workflow.pipeline.pipeline_storage import pipeline_lock
+    with pipeline_lock(root, "goal-advance-paused"):
+        paused = load_paused(root)
+        found = paused.pop(str(goal_id), None) is not None
+        # 即使为空也落盘，防止旧 watch.json 在下一次读取时复活暂停。
+        _save_paused(root, paused)
+        return found
 
 
 async def _dispatch(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], now: datetime, *,
@@ -211,7 +262,9 @@ async def _dispatch(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], no
             await asyncio.to_thread(assistant_dispatch.cancel, root, entry["id"])
         except Exception:  # noqa: BLE001
             pass
-        paused[goal["id"]] = (now + PAUSE).isoformat()
+        until = (now + PAUSE).isoformat()
+        await asyncio.to_thread(pause_goal, root, goal["id"], until)
+        paused[goal["id"]] = until
         return (f"⏸ 为「{objective}」拟的任务单「{entry['title']}」没通过自动审核，已撤回：{review['reason']}。"
                 "这个目标暂停自动推进 24 小时；需要的话你可以直接在对话里交代。")
     return (f"🎯 为「{objective}」拟了下一步任务单：{entry['title']}（{verdict['project']}）。"

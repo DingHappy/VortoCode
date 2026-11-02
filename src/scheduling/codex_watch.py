@@ -75,11 +75,17 @@ def _state_path(root: str) -> Path:
     return Path(root) / ".vortocode" / "codex" / "state.json"
 
 
-def load_state(root: str) -> Dict[str, Any]:
+def load_state(root: str, *, strict: bool = False) -> Dict[str, Any]:
     try:
         data = json.loads(_state_path(root).read_text(encoding="utf-8"))
+        if strict and not isinstance(data, dict):
+            raise ValueError("进度记录格式损坏")
         return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
     except (OSError, ValueError):
+        if strict:
+            raise
         return {}
 
 
@@ -166,9 +172,9 @@ def _clean_execution(raw: Any, thread: dict) -> dict | None:
         return None
 
 
-def progress_snapshot(root: str) -> dict:
+def progress_snapshot(root: str, *, strict: bool = False) -> dict:
     """Existing API projection; recheck stored observations without changing state."""
-    state = load_state(root)
+    state = load_state(root, strict=True) if strict else load_state(root)
     threads = _clean_threads({"threads": state.get("threads") or []})
     records = load_handovers(root)
     handed = set(records)
@@ -546,11 +552,17 @@ def _actions_path(root: str) -> Path:
     return Path(root) / ".vortocode" / "codex" / "actions.json"
 
 
-def load_actions(root: str) -> List[dict]:
+def load_actions(root: str, *, strict: bool = False) -> List[dict]:
     try:
         data = json.loads(_actions_path(root).read_text(encoding="utf-8"))
+        if strict and not isinstance(data, list):
+            raise ValueError("动作记录格式损坏")
         return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+    except FileNotFoundError:
+        return []
     except (OSError, ValueError):
+        if strict:
+            raise
         return []
 
 

@@ -292,3 +292,27 @@ async def dispatch(request: Request):
         return await _execute(request, grant, kind, "dispatch",
                               {key: body.get(key) for key in ("dispatch_id", "approve", "digest")})
     return await _guarded(request, handle)
+
+
+# —— 动态时间线（ADR-012）：与 Desktop「动态」同一份 ——
+
+@router.get("/api/mobile/native/timeline")
+async def timeline(request: Request):
+    async def handle(grant):
+        if not _trusted(grant):
+            return _reply({"detail": "这台手机还没获得写入权限"}, 403)
+        from src.gateway.app_relay_client import configured
+        if configured():
+            return await _relayed("/api/assistant/app-relay/timeline", {"limit": 60})
+        from src.web import owner_ops
+        status, data = await asyncio.to_thread(owner_ops.timeline, os.getcwd(), 60)
+        return _reply(data, status)
+    return await _guarded(request, handle)
+
+
+@router.post("/api/mobile/native/goal-advance/resume")
+async def resume_goal(request: Request):
+    async def handle(grant):
+        body = await _signed(request, grant, "device")
+        return await _execute(request, grant, "device", "resume_goal", {"goal_id": body.get("goal_id")})
+    return await _guarded(request, handle)

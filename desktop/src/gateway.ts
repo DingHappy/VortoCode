@@ -23,6 +23,7 @@ import type {
   AssistantChange,
   AssistantUndoResult,
   PhoneKeys,
+  Timeline,
   AssistantScheduleItem,
   MemoryProposal,
   PhoneChat,
@@ -523,6 +524,14 @@ export class GatewayClient {
 
   async undoAssistantChange(id: string): Promise<AssistantUndoResult> {
     return this.request(`/api/assistant/undo/${encodeURIComponent(id)}`, { method: "POST" });
+  }
+
+  async getTimeline(limit = 60): Promise<Timeline> {
+    return this.request<Timeline>(`/api/assistant/timeline?limit=${limit}`);
+  }
+
+  async resumeGoalAdvance(goalId: string): Promise<void> {
+    await this.request("/api/assistant/goal-advance/resume", { method: "POST", body: JSON.stringify({ goal_id: goalId }) });
   }
 
   async listPhoneKeys(): Promise<PhoneKeys> {

@@ -126,7 +126,28 @@ async def dispatch(root: str, args: Dict[str, Any]) -> Result:
                  "status_text": "已下发" if entry.get("status") not in ("send_failed", "submission_unknown") else "下发结果待核对"}
 
 
-_SYNC = {"capture": capture, "undo": undo, "decide_codex": decide_codex}
+def resume_goal(root: str, args: Dict[str, Any]) -> Result:
+    """被自动审核暂停的目标现在就恢复自动推进。"""
+    from src.scheduling.goal_advancer import resume
+    goal_id = args.get("goal_id")
+    if not isinstance(goal_id, str) or not re.fullmatch(r"personal-[A-Za-z0-9_-]{1,72}", goal_id):
+        return 400, {"detail": "请求无效"}
+    from src.workflow.pipeline.pipeline_storage import PipelineBusy
+    try:
+        resumed = resume(root, goal_id)
+    except PipelineBusy:
+        return 409, {"detail": "目标正在更新，请稍后刷新"}
+    if not resumed:
+        return 404, {"detail": "这个目标没有在暂停中"}
+    return 200, {"ok": True, "goal_id": goal_id}
+
+
+def timeline(root: str, limit: int = 60) -> Result:
+    from src.scheduling import timeline as timeline_mod
+    return 200, timeline_mod.build(root, limit=limit)
+
+
+_SYNC = {"capture": capture, "undo": undo, "decide_codex": decide_codex, "resume_goal": resume_goal}
 
 
 async def run(root: str, op: str, args: Dict[str, Any]) -> Result:

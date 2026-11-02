@@ -458,18 +458,22 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
     return _notify
 
 
-def load_notices(repo_root: str, limit: int = 50) -> List[Dict[str, Any]]:
+def load_notices(repo_root: str, limit: int = 50, *, strict: bool = False) -> List[Dict[str, Any]]:
     """读通知台账尾部 N 条（新的在前）。无文件/坏行 → 尽量返回能解析的。"""
     p = _path(repo_root)
-    if not p.is_file():
-        return []
     out: List[Dict[str, Any]] = []
     try:
         for ln in p.read_text(encoding="utf-8").splitlines():
             try:
-                out.append(json.loads(ln))
+                row = json.loads(ln)
+                if isinstance(row, dict):
+                    out.append(row)
             except ValueError:
                 continue
+    except FileNotFoundError:
+        return []
     except OSError:
+        if strict:
+            raise
         return []
     return list(reversed(out[-limit:]))

@@ -129,11 +129,12 @@ struct ChatView: View {
     }
 }
 
-/// 动态：家里的助手连得上吗、等你决定的 Codex 动作、目标、我替你做了什么（可撤销）。
+/// 动态：共用时间线、待决定和目标；签名操作沿用原有接口。
 struct ActivityView: View {
     let entry: AssistantEntry
     let session: AssistantSession
     let owner: OwnerSession
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         List {
@@ -156,20 +157,70 @@ struct ActivityView: View {
                     ForEach(owner.decisions) { decision in decisionRow(decision) }
                 }
             }
+            if owner.canWrite { timelineSection }
             goalsSection
-            if owner.canWrite {
-                Section("我替你做了什么") {
-                    if owner.changes.isEmpty { Text("最近没有改动。").foregroundStyle(.secondary) }
-                    ForEach(owner.changes) { change in changeRow(change) }
-                }
-            }
         }
         .navigationTitle("动态")
         .refreshable {
             if let credential = session.credential { await owner.refresh(entry, credential) }
             await session.refreshAndWait(entry)
         }
-        .toolbar { RefreshAssistantButton(entry: entry, session: session) }
+        .toolbar {
+            Button("刷新", systemImage: "arrow.clockwise") {
+                Task {
+                    if let credential = session.credential { await owner.refresh(entry, credential) }
+                    await session.refreshAndWait(entry)
+                }
+            }.disabled(owner.working)
+        }
+        .task(id: "\(session.credential?.token ?? ""):\(scenePhase == .active):\(owner.canWrite)") {
+            guard scenePhase == .active, owner.canWrite, let credential = session.credential else { return }
+            while !Task.isCancelled {
+                await owner.refresh(entry, credential)
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            }
+        }
+    }
+
+    private var timelineSection: some View {
+        Section("时间线") {
+            if !owner.timelineError.isEmpty {
+                Text(owner.timelineError).font(.footnote).foregroundStyle(.orange)
+            }
+            if let timeline = owner.timeline {
+                if !timeline.unavailable.isEmpty {
+                    Text("部分来源暂时读不到（" + timeline.unavailableLabels.joined(separator: "、") + "），不代表没有动静。")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+                if timeline.items.isEmpty && timeline.unavailable.isEmpty {
+                    Text("还没有动静。").foregroundStyle(.secondary)
+                }
+                ForEach(timeline.items) { item in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.title).font(.subheadline.bold())
+                        HStack {
+                            Text(item.kindLabel)
+                            if let date = item.date { Text(date, format: .dateTime.month().day().hour().minute()) }
+                            if !item.status.isEmpty { Text(item.status) }
+                        }.font(.caption).foregroundStyle(.secondary)
+                        if item.tainted { Text("读过外部内容后拟的，请核对").font(.caption).foregroundStyle(.orange) }
+                        if !item.detail.isEmpty {
+                            DisclosureGroup("详情") { Text(item.detail).font(.footnote).textSelection(.enabled) }
+                        }
+                        ForEach(Array(item.actions.enumerated()), id: \.offset) { _, action in
+                            if action.type == "undo" || action.type == "resume_goal" {
+                                Button(action.type == "undo" ? "撤销" : "恢复推进") {
+                                    guard let credential = session.credential else { return }
+                                    Task { await owner.actOnTimeline(entry, credential, action) }
+                                }.buttonStyle(.bordered).disabled(owner.working)
+                            }
+                        }
+                    }.padding(.vertical, 4)
+                }
+            } else if owner.timelineError.isEmpty {
+                ProgressView("正在读取时间线…")
+            }
+        }
     }
 
     private func decisionRow(_ decision: PendingDecision) -> some View {
@@ -216,24 +267,6 @@ struct ActivityView: View {
         Task { await owner.decideDispatch(entry, credential, proposal, approve: approve) }
     }
 
-    private func changeRow(_ change: OwnerChange) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(change.summary)
-            HStack {
-                Text(change.statusLabel + (change.tainted ? " · 读过外部内容后" : ""))
-                    .font(.footnote).foregroundStyle(.secondary)
-                Spacer()
-                if change.status == "done" {
-                    Button("撤销") { undo(change) }.disabled(owner.working).buttonStyle(.bordered)
-                }
-            }
-            if let detail = change.undoDetail, change.status != "done" {
-                Text(([detail] + (change.notRecallable ?? [])).joined(separator: "；"))
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-    }
-
     @ViewBuilder private var goalsSection: some View {
         Section("目标") {
             if let goals = session.reading.goals.data {
@@ -254,10 +287,5 @@ struct ActivityView: View {
     private func act(_ decision: PendingDecision, approve: Bool) {
         guard let credential = session.credential else { return }
         Task { await owner.decide(entry, credential, decision, approve: approve) }
-    }
-
-    private func undo(_ change: OwnerChange) {
-        guard let credential = session.credential else { return }
-        Task { await owner.undo(entry, credential, change) }
     }
 }
