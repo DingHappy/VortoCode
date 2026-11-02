@@ -8,6 +8,7 @@ struct ChatView: View {
     let session: AssistantSession
     @Bindable var owner: OwnerSession
     @Environment(\.scenePhase) private var scenePhase
+    @FocusState private var typing: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,10 @@ struct ChatView: View {
                         Color.clear.frame(height: 1).id("bottom")
                     }.padding(.horizontal).padding(.top, 8)
                 }
+                // 点消息区域或往下拖都收起键盘（原来点别处键盘退不下）
+                .scrollDismissesKeyboard(.interactively)
+                .contentShape(Rectangle())
+                .onTapGesture { typing = false }
                 .onChange(of: owner.chat.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
                 .onChange(of: owner.turn?.cards.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
                 .refreshable { if let credential = session.credential { await owner.loadChat(entry, credential) } }
@@ -95,6 +100,7 @@ struct ChatView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(owner.captureOnly ? "比如：周五前交周报" : "跟助理说…", text: $owner.draft, axis: .vertical)
                     .lineLimit(1...5).textFieldStyle(.roundedBorder)
+                    .focused($typing)
                     .disabled(!owner.canWrite)
                 Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                     .disabled(!canSend).accessibilityLabel(owner.captureOnly ? "记下" : "发送")
@@ -113,6 +119,7 @@ struct ChatView: View {
 
     private func send() {
         guard let credential = session.credential else { return }
+        typing = false
         Task { await owner.send(entry, credential) }
     }
 
