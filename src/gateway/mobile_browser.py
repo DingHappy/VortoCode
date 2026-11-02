@@ -147,6 +147,12 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _config_fingerprint(config: BrowserConfig) -> list:
+    """恢复落盘会话时核对：助手归属、账号服务、入口地址都没变，才认这条会话。"""
+    return [config.instance_id, config.revision, config.origin, config.issuer,
+            config.owner.issuer, config.owner.subject, config.name]
+
+
 class MobileBrowserSessions:
     def __init__(self, *, clock=time.time):
         self.clock = clock
@@ -195,6 +201,7 @@ class MobileBrowserSessions:
             raise BrowserDenied()
         self._check(ticket.session)
         self.tickets.pop(_digest(code))
+        self._persist(ticket.session)
         return {
             "schema_version": 1,
             "token": "vcn_" + ticket.secret,
@@ -208,10 +215,60 @@ class MobileBrowserSessions:
 
         if not re.fullmatch(r"vcn_[A-Za-z0-9_-]{43}", token):
             raise BrowserDenied()
-        session = self.sessions.get(_digest(token[4:]))
+        digest = _digest(token[4:])
+        session = self.sessions.get(digest) or self._restore(digest)
         if not session or not session.native:
             raise BrowserDenied()
         self._check(session)
+        return session
+
+    def _persist(self, session: BrowserSession) -> None:
+        """把原生会话写进加密的会话记录，网关重启后 App 不用重新登录。浏览器会话不落盘。"""
+        if not session.native or not session.active:
+            return
+        key = next((key for key, value in self.sessions.items() if value is session), None)
+        context = self.contexts.get(session.context_key)
+        if key is None or context is None:
+            return
+        from src.gateway.mobile_session_store import NativeSessionStore
+
+        NativeSessionStore(session.config.root).save(key, {
+            "config": _config_fingerprint(session.config),
+            "access": session.tokens.access, "refresh": session.tokens.refresh,
+            "expires_in": session.tokens.expires_in, "access_until": session.access_until,
+            "expires": session.expires, "device_id": session.device_id,
+            "context_key": session.context_key, "generation": session.generation,
+            "context_expires": context.expires, "context_generation": context.generation,
+            "resource_id": session.resource_id, "resource_token": session.resource_token,
+            "lease_until": session.lease_until,
+        }, now=self.clock())
+
+    def _restore(self, digest: str) -> BrowserSession | None:
+        """网关重启后第一次见到这个凭据：从会话记录里恢复。归属或入口变了、已到期就不认。"""
+        from src.gateway.mobile_session_store import NativeSessionStore
+
+        root = os.getcwd()
+        store = NativeSessionStore(root)
+        record = store.load(digest)
+        if not record:
+            return None
+        try:
+            config = browser_config(root)
+            if record.get("config") != _config_fingerprint(config) or float(record["expires"]) <= self.clock():
+                raise ValueError
+            session = BrowserSession(
+                config, OAuthTokens(str(record["access"]), str(record["refresh"]), int(record["expires_in"])),
+                access_until=float(record["access_until"]), expires=float(record["expires"]),
+                device_id=int(record["device_id"]), context_key=str(record["context_key"]),
+                generation=int(record["generation"]), resource_id=str(record["resource_id"]),
+                resource_token=str(record["resource_token"]), lease_until=int(record["lease_until"]), native=True,
+            )
+        except (BrowserNotReady, KeyError, TypeError, ValueError):
+            store.delete(digest)
+            return None
+        self.contexts.setdefault(session.context_key, BrowserContext(
+            root, float(record["context_expires"]), int(record["context_generation"])))
+        self.sessions[digest] = session
         return session
 
     def context(self, config: BrowserConfig, secret: str = "") -> str:
@@ -273,6 +330,10 @@ class MobileBrowserSessions:
         for key, value in list(self.sessions.items()):
             if value is session:
                 self.sessions.pop(key, None)
+                if session.native:
+                    from src.gateway.mobile_session_store import NativeSessionStore
+
+                    NativeSessionStore(session.config.root).delete(key)
         if session.lease_until:
             try:
                 AccountRegistration(session.config.root).revoke(session.resource_id)
@@ -460,6 +521,8 @@ class MobileBrowserSessions:
                 self._check(session)
                 if not grant:
                     raise BrowserDenied("设备读取授权已失效")
+                if session.native:   # 令牌轮换、读取授权续期都要跟着落盘，重启后才接得上
+                    await asyncio.to_thread(self._persist, session)
                 return grant
             except (AccountRejected, AccountOwnerMismatch, BrowserDenied):
                 self.drop(session)
