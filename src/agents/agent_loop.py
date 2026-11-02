@@ -582,6 +582,7 @@ class MainAgent:
         self.max_context_tokens = _pinned if _pinned is not None else max_context_tokens
         self._context_budget_auto = _pinned is None
         self._task_anchor = ""                 # 原始任务纯文本（首个 user）；压缩后仍作锚点，修"锚到孤儿工具结果"
+        self._task_anchor_external = False     # 锚点是否来自外部（不可信入口的首条消息）：锚点每轮都进上下文
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
         self._on_tool = on_tool                # 工具执行后的审计钩子(name, args, result)
@@ -907,6 +908,21 @@ class MainAgent:
                             "最近的对话在下方消息里逐字给出)\n" + self._summary)}
 
     def _trimmed_history(self, mode: str | None = None, mutate: bool = True) -> list[dict]:
+        """发给模型的裁剪历史：去掉出处标记（见 taint.EXTERNAL_MARK），其余同 `_context_window`。"""
+        from src.agents.taint import without_marks
+        return without_marks(self._context_window(mode, mutate))
+
+    def _context_has_external(self, mode: str | None = None) -> bool:
+        """下一次请求的上下文里是否还有外部内容（带出处标记的消息，或锚点本身来自外部）。"""
+        from src.agents.taint import EXTERNAL_MARK, has_external
+        if has_external(self._context_window(mode, mutate=False)):
+            return True
+        if self._task_anchor:
+            return self._task_anchor_external
+        first = next((m for m in self.history if m.get("role") == "user"), None)
+        return bool(first and first.get(EXTERNAL_MARK))
+
+    def _context_window(self, mode: str | None = None, mutate: bool = True) -> list[dict]:
         """按 **token 预算** 裁剪跨轮历史（max_history 仅作硬条数上限兜底）。
 
         为什么按 token 而非条数：真正撑爆上下文窗口的是 token——少量超大消息（一段 8000 字的
@@ -1639,6 +1655,11 @@ class MainAgent:
         # 用 channel 档而非 external：拦截强度完全一样，但别把"你自己打了句话"说成"读过网页"。
         if self._untrusted_input:
             mark_channel_untrusted()
+        # 共享主要聊天后，历史里可能留着别的入口或上几轮读进来的外部内容：上下文里还有就算污点
+        # （ADR-012）。主人终端的干净输入不能把它们洗白，直到压缩或滚出窗口。
+        if self._context_has_external(mode):
+            from src.agents.taint import mark_context_external
+            mark_context_external()
         # TUI 自动召回在 agent 外拼接；attach 后 serve 也只能看到文本。显式数据边界让两条路径
         # 都能在 reset 之后重新标污点。用户伪造该标记只会触发更保守的确认，不会获得权限。
         if "<vortocode_untrusted_memory>" in str(user_text):
@@ -1709,6 +1730,9 @@ class MainAgent:
             # 先于 env/plan 附加块捕获：历史已有首条 user 就用它；本轮就是首条时用原始 user_text，
             # 锚点绝不包含运行时附加块（否则跨轮重注入的锚点会带着过期的 env/plan）。
             self._task_anchor = self._anchor_text() or str(user_text)
+            from src.agents.taint import EXTERNAL_MARK
+            first = next((m for m in self.history if m.get("role") == "user"), None)
+            self._task_anchor_external = bool(first.get(EXTERNAL_MARK)) if first else self._untrusted_input
         # 先让**原始请求**入历史（压缩器只看干净原文），压缩后再决定动态附加块并改写本轮 user 消息
         # ——此刻本轮尚未发出任何请求，改写末条不影响已建立的前缀缓存；且压缩若刚移走 env 载体，
         # 这里立刻重附，不留"缺 env 一轮"的空窗。
@@ -1735,6 +1759,10 @@ class MainAgent:
             sent_text = str(user_text) + "\n\n" + "\n\n".join(extra_blocks)
             self.history[-1] = {"role": "user",
                                 "content": build_user_content(sent_text, images, audio)}
+        # 不可信入口（IM）发来的消息、拼进了召回记忆的消息，本身就是外部内容，留在历史里也算
+        if self._untrusted_input or "<vortocode_untrusted_memory>" in str(user_text):
+            from src.agents.taint import mark_message_external
+            mark_message_external(self.history[-1])
 
     def _request_messages(self, mode: str) -> list[dict]:
         """本步请求：稳定 system + 裁剪后历史；记忆召回/日期只附到本次请求的最后一条 user，不进持久历史。"""
@@ -1769,9 +1797,18 @@ class MainAgent:
         if reasoning:
             message["reasoning_content"] = str(reasoning)
         self.history.append(message)
+        media_before = self._media_ingested
         results = await self._run_tools(calls, mode, say)   # 全只读→并发；含写→顺序
+        start = len(self.history)
         self.history.append({"role": "user", "content": _tool_results_msg(results)})
         self._flush_pending_images()           # 工具带回的图紧跟结果注入（read_file 读图）
+        # 这一批里有外部来源的工具（网页/搜索/MCP）或带回了图：结果留在历史里，后续回合仍算外部内容
+        if self._media_ingested != media_before or any(
+                (tool := self.tools.get(str(call[0]))) is not None and tool.untrusted_source
+                for call in calls if isinstance(call, (list, tuple)) and call):
+            from src.agents.taint import mark_message_external
+            for appended in self.history[start:]:
+                mark_message_external(appended)
 
     async def _run_turn_body(
         self,
