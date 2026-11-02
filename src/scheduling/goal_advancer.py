@@ -121,7 +121,7 @@ async def advance_once(root: str, now: datetime, *, state: Dict[str, Any],
     """推进一轮：返回本轮做出的判断（测试与审计用）。巡检框架负责保存 ``state``。"""
     from src.scheduling.notices import in_quiet_hours
     from src.workflow.tasks import assistant_dispatch
-    from src.workflow.workbench.personal_goals import PersonalGoals, has_external_text
+    from src.workflow.workbench.personal_goals import PersonalGoals
 
     if not enabled() or in_quiet_hours(now):
         return []
@@ -134,10 +134,18 @@ async def advance_once(root: str, now: datetime, *, state: Dict[str, Any],
         from src.workflow.workbench.resident_projects import load_resident_projects
         projects = [str(p.get("name")) for p in load_resident_projects() if p.get("name")]
     marks: Dict[str, str] = state.setdefault("goal_advance", {})
+    paused: Dict[str, str] = state.setdefault("goal_advance_paused", {})
     goals = [g for g in await asyncio.to_thread(PersonalGoals(root).list) if g.get("status") in ("active", "blocked")]
     all_dispatches = await asyncio.to_thread(assistant_dispatch.list_dispatches, root)
     done: List[Dict[str, Any]] = []
-    for goal in [g for g in goals if _due(g, marks, now)][:MAX_PER_PASS]:
+    def is_paused(goal_id: str) -> bool:
+        until = paused.get(goal_id)
+        try:
+            return bool(until) and datetime.fromisoformat(until) > now
+        except (TypeError, ValueError):
+            return False
+
+    for goal in [g for g in goals if _due(g, marks, now) and not is_paused(g["id"])][:MAX_PER_PASS]:
         linked = [d for d in all_dispatches if (d.get("goal_link") or {}).get("id") == goal["id"]]
         marks[goal["id"]] = now.isoformat()
         if any(d.get("status") in _OPEN_DISPATCH for d in linked):
@@ -151,25 +159,89 @@ async def advance_once(root: str, now: datetime, *, state: Dict[str, Any],
             continue
         objective = str(goal.get("objective") or "")[:60]
         if verdict["action"] == "dispatch":
-            try:
-                entry = await asyncio.to_thread(
-                    assistant_dispatch.propose, root, project=verdict["project"], title=verdict["title"],
-                    goal=verdict["goal"], criteria=verdict["criteria"], session="goal-advancer",
-                    tainted=has_external_text(goal), goal_id=goal["id"],
-                    criterion_id=verdict["criterion_id"] if any(
-                        c.get("id") == verdict["criterion_id"] for c in goal.get("acceptance_criteria") or []) else "")
-            except (assistant_dispatch.DispatchError, OSError, ValueError) as error:
-                logger.warning("推进目标拟任务单失败：%s", str(error)[:120])
+            text = await _dispatch(root, goal, verdict, now, paused=paused, llm=llm)
+            if text is None:
                 continue
-            text = (f"🎯 为「{objective}」拟了下一步任务单：{entry['title']}（{verdict['project']}）。"
-                    f"{verdict['reason']} 在「动态 → 等你决定」里下发或撤回。")
         elif verdict["action"] == "ask":
             text = f"🎯 推进「{objective}」需要你定一下：{verdict['question']}（直接在对话里回我就行）"
         else:
-            text = f"🎯 「{objective}」建议你下一步：{verdict['next']}。{verdict['reason']}"
+            text = await _suggest(root, goal, verdict, now, llm=llm)
         await notify(text)
         done.append({"goal_id": goal["id"], **verdict})
     # 只留还存在的目标的记号
     live = {g["id"] for g in goals}
     state["goal_advance"] = {key: value for key, value in marks.items() if key in live}
+    state["goal_advance_paused"] = {key: value for key, value in paused.items() if key in live}
     return done
+
+
+PAUSE = timedelta(hours=24)
+
+
+async def _dispatch(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], now: datetime, *,
+                    paused: Dict[str, str], llm: Any) -> Optional[str]:
+    """拟任务单 → 自动审核：放行就下发（每天有上限），拒绝就撤回并暂停这个目标，拿不准就等主人。"""
+    from src.scheduling import auto_review
+    from src.workflow.tasks import assistant_dispatch
+    from src.workflow.workbench.personal_goals import has_external_text
+
+    objective = str(goal.get("objective") or "")[:60]
+    tainted = has_external_text(goal)
+    criterion_ids = {c.get("id") for c in goal.get("acceptance_criteria") or []}
+    try:
+        entry = await asyncio.to_thread(
+            assistant_dispatch.propose, root, project=verdict["project"], title=verdict["title"],
+            goal=verdict["goal"], criteria=verdict["criteria"], session="goal-advancer", tainted=tainted,
+            goal_id=goal["id"], criterion_id=verdict["criterion_id"] if verdict["criterion_id"] in criterion_ids else "")
+    except (assistant_dispatch.DispatchError, OSError, ValueError) as error:
+        logger.warning("推进目标拟任务单失败：%s", str(error)[:120])
+        return None
+    review = await auto_review.review(root, kind=auto_review.DISPATCH, proposal=verdict, goal=goal,
+                                      tainted=tainted, now=now, llm=llm)
+    if review["verdict"] == auto_review.APPROVE:
+        try:
+            await assistant_dispatch.approve(root, entry["id"])
+        except Exception as error:  # noqa: BLE001 —— 下发失败就留给主人，任务单还在
+            logger.warning("自动下发失败：%s", str(error)[:120])
+        else:
+            return (f"🎯 为「{objective}」拟了任务单「{entry['title']}」（{verdict['project']}），自动审核通过，已下发："
+                    f"{review['reason']} 只会开分支和 PR，合并仍要你点。")
+    if review["verdict"] == auto_review.DENY:
+        try:
+            await asyncio.to_thread(assistant_dispatch.cancel, root, entry["id"])
+        except Exception:  # noqa: BLE001
+            pass
+        paused[goal["id"]] = (now + PAUSE).isoformat()
+        return (f"⏸ 为「{objective}」拟的任务单「{entry['title']}」没通过自动审核，已撤回：{review['reason']}。"
+                "这个目标暂停自动推进 24 小时；需要的话你可以直接在对话里交代。")
+    return (f"🎯 为「{objective}」拟了下一步任务单：{entry['title']}（{verdict['project']}）。"
+            f"{verdict['reason']} 需要你看一下（{review['reason']}），在「动态 → 等你决定」里下发或撤回。")
+
+
+async def _suggest(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], now: datetime, *, llm: Any) -> str:
+    """建议的下一步 → 自动审核通过就写进目标卡（可撤销）；目标上有你批准过的提醒时不改（改了会取消提醒）。"""
+    from src.scheduling import auto_review
+    from src.workflow.workbench.personal_goals import has_external_text
+
+    objective = str(goal.get("objective") or "")[:60]
+    plain = f"🎯 「{objective}」建议你下一步：{verdict['next']}。{verdict['reason']}"
+    if (goal.get("follow_up") or {}).get("status") == "scheduled" or goal.get("next_action") == verdict["next"]:
+        return plain
+    review = await auto_review.review(root, kind=auto_review.OWN_DATA_NEXT, proposal={"next": verdict["next"]},
+                                      goal=goal, tainted=has_external_text(goal), now=now, llm=llm)
+    if review["verdict"] != auto_review.APPROVE:
+        return plain
+    import src.agents.tools.personal_goals  # noqa: F401 —— 导入即登记目标改动的撤销函数
+    from src.agents import undo_log
+    from src.workflow.workbench.personal_goals import PersonalGoals
+    try:
+        after = await asyncio.to_thread(lambda: PersonalGoals(root).update(
+            goal["id"], {"revision": goal["revision"], "next_action": verdict["next"]}, origin="owner"))
+    except (OSError, KeyError, ValueError):
+        return plain                                  # 目标刚被改过（版本对不上）：不硬写，只提建议
+    undo_log.record(root, action="personal_goal.update", summary=f"后台推进：改了目标「{objective}」的下一步",
+                    payload={"goal_id": goal["id"], "revision": after["revision"],
+                             "before": {"next_action": goal.get("next_action") or ""},
+                             "before_origins": {"next_action": (goal.get("origins") or {}).get("next_action", "owner")},
+                             "cancelled_follow_up": False}, source="goal-advancer")
+    return (f"📝 已把「{objective}」的下一步更新为：{verdict['next']}（自动审核通过；可在「我替你做了什么」里撤销）")

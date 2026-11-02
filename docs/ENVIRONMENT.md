@@ -145,6 +145,8 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_ASSISTANT_REPORT_TIMES` | `09:00,21:00` | 助理早报、晚报的时间。 | `scheduling/assistant_watch.py` |
 | `VORTOCODE_ASSISTANT_NEWS_ROOT` | — | 早报末尾附新闻：指向一个有信号采集产出的项目目录。 | `scheduling/assistant_watch.py` |
 | `VORTOCODE_GOAL_ADVANCE` | 开 | 常驻助理主动推进个人目标（ADR-012）：每个进行中的目标最多 12 小时判断一次下一步，每轮最多 3 个、安静时段不跑；只拟任务单 / 问你 / 给建议，下发仍要你批。设为 `0` 关闭。 | `scheduling/goal_advancer.py` |
+| `VORTOCODE_AUTO_REVIEW` | 开 | 自动审核（ADR-012 修订）：后台推进拟出的任务单和「下一步」先交隔离审核模型，放行 / 拒绝 / 交给主人。只有「改自己的事项」「给常驻电脑项目派活」可被放行；带污点的一律交给主人。设为 `0` 全部交给主人。 | `scheduling/auto_review.py` |
+| `VORTOCODE_AUTO_DISPATCH_PER_DAY` | `3` | 自动审核每天最多放行几张任务单（0–20），用完交给主人。 | `scheduling/auto_review.py` |
 | `VORTOCODE_SELF_HEAL` | 开 | 环境预检发现可自愈问题时自动处置。设 `0` 关闭。 | `scheduling/remediation.py` |
 
 ## 中转站巡检
