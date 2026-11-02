@@ -32,6 +32,13 @@ _TOKEN = re.compile(r"vcm_[A-Za-z0-9_-]{43}")
 _KEY = re.compile(r"[A-Za-z0-9+/]{86}[A-Za-z0-9+/=]{2}")   # 65 字节的 base64
 _NONCE_KEEP = 900                                           # 秒；大于签名时间窗的两倍
 PUSH_STALE = 30 * 86400                                     # App 每次启动都会重新登记；30 天没登记就不再推
+MAX_TRUSTED = 16
+
+
+def key_code(device_key: str, approval_key: str) -> str:
+    """一对钥匙的核对码：手机上和 Desktop 上显示同一串，批准前对一眼，防止批错申请。"""
+    digest = hashlib.sha256(f"{device_key}\n{approval_key}".encode("ascii")).hexdigest().upper()
+    return f"{digest[:4]}-{digest[4:8]}"
 
 
 def _check_keys(keys: object) -> None:
@@ -42,6 +49,28 @@ def _check_keys(keys: object) -> None:
             or type(keys["bound_at"]) is not int
             or not all(isinstance(keys[kind], str) and _KEY.fullmatch(keys[kind]) for kind in ("device", "approval"))):
         raise ValueError
+
+
+def _check_pending(pending: object) -> None:
+    if pending is None:
+        return
+    if (not isinstance(pending, dict) or set(pending) != {"device", "approval", "requested_at"}
+            or type(pending["requested_at"]) is not int
+            or not all(isinstance(pending[kind], str) and _KEY.fullmatch(pending[kind]) for kind in ("device", "approval"))):
+        raise ValueError
+
+
+def _check_trusted(trusted: object) -> None:
+    if trusted is None:
+        return
+    if not isinstance(trusted, list) or len(trusted) > MAX_TRUSTED:
+        raise ValueError
+    for item in trusted:
+        if (not isinstance(item, dict) or set(item) != {"device", "approval", "name", "approved_at"}
+                or type(item["approved_at"]) is not int
+                or not all(isinstance(item[kind], str) and _KEY.fullmatch(item[kind]) for kind in ("device", "approval"))):
+            raise ValueError
+        _name(item["name"])
 
 
 def _check_push(push: object) -> None:
@@ -136,8 +165,10 @@ class MobileDevices:
                     raise ValueError
                 _name(item.get("name"))
                 _check_keys(item.get("keys"))
+                _check_pending(item.get("pending_keys"))
                 _check_push(item.get("push"))
                 seen.add(item["id"])
+            _check_trusted(data.get("trusted_keys"))
             return data
         except FileNotFoundError:
             return None
@@ -250,7 +281,13 @@ class MobileDevices:
             raise KeyError(device_id)
 
     def bind_keys(self, device_id: str, device_key: str, approval_key: str) -> dict:
-        """给设备绑定签名公钥。只能绑一次：要换钥匙，先撤销这台设备再重新授权。"""
+        """给设备绑定签名公钥。只能绑一次：要换钥匙，先撤销这台设备再重新授权。
+
+        手机入口在公网上，光凭账号登录不能拿到写入能力（ADR-011 修订）：信任挂在钥匙上，不挂在设备记录上。
+        - 已信任的钥匙（同一台手机重新登录）直接绑定；
+        - 还没有任何信任过的钥匙时，第一台直接绑定并记为信任（首次使用即信任）；
+        - 其余一律停在「待确认」，主人在 Desktop 上对过核对码批准后才生效。
+        """
         if not isinstance(device_id, str) or not _ID.fullmatch(device_id):
             raise KeyError(device_id)
         if device_key == approval_key:
@@ -265,14 +302,80 @@ class MobileDevices:
                     raise KeyError(device_id)
                 current = item.get("keys")
                 wanted = {"device": device_key, "approval": approval_key}
+                code = key_code(device_key, approval_key)
                 if current is not None:
                     if {kind: current[kind] for kind in wanted} == wanted:
-                        return {"bound_at": current["bound_at"]}      # 同一对钥匙重试：返回原回执
+                        return {"bound_at": current["bound_at"], "code": code}  # 同一对钥匙重试：返回原回执
                     raise ValueError("这台设备已经绑定过钥匙；要更换请先撤销设备再重新授权")
-                item["keys"] = {**wanted, "bound_at": int(self.clock())}
-                self._save(data)
-                return {"bound_at": item["keys"]["bound_at"]}
+                # 首次使用即信任只发生一次：名单一旦建立（哪怕之后被移空），再来的钥匙都要批准
+                first = "trusted_keys" not in data and not any(other.get("keys") for other in data["devices"])
+                trusted = data.setdefault("trusted_keys", [])
+                if first or any({kind: entry[kind] for kind in wanted} == wanted for entry in trusted):
+                    now = int(self.clock())
+                    item["keys"] = {**wanted, "bound_at": now}
+                    item.pop("pending_keys", None)
+                    if first:
+                        trusted.append({**wanted, "name": item["name"], "approved_at": now})
+                    self._save(data)
+                    return {"bound_at": now, "code": code}
+                pending = item.get("pending_keys")
+                if pending is not None and {kind: pending[kind] for kind in wanted} != wanted:
+                    raise ValueError("这台设备已有一对钥匙在等确认")
+                if pending is None:
+                    pending = item["pending_keys"] = {**wanted, "requested_at": int(self.clock())}
+                    self._save(data)
+                return {"pending": True, "requested_at": pending["requested_at"], "code": code}
             raise KeyError(device_id)
+
+    def key_requests(self) -> dict:
+        """等确认的钥匙申请与已信任的钥匙（给 Desktop 列出来批准或移除）。不含公钥本身，只给核对码。"""
+        data = self._load()
+        devices = data["devices"] if data else []
+        pending = [{"device_id": item["id"], "name": item["name"], "requested_at": item["pending_keys"]["requested_at"],
+                    "code": key_code(item["pending_keys"]["device"], item["pending_keys"]["approval"])}
+                   for item in devices if item.get("pending_keys") and item["revoked_at"] is None]
+        trusted = [{"code": key_code(entry["device"], entry["approval"]), "name": entry["name"],
+                    "approved_at": entry["approved_at"]} for entry in (data or {}).get("trusted_keys") or []]
+        return {"pending": pending, "trusted": trusted}
+
+    def decide_keys(self, device_id: str, approve: bool) -> dict:
+        """主人批准或拒绝一份钥匙申请。批准的是这对钥匙：以后这台手机重新登录也不用再批。"""
+        if not isinstance(device_id, str) or not _ID.fullmatch(device_id) or type(approve) is not bool:
+            raise KeyError(device_id)
+        with self._lock():
+            data = self._load()
+            for item in data["devices"] if data else []:
+                pending = item.get("pending_keys")
+                if item["id"] != device_id or not pending or item["revoked_at"] is not None:
+                    continue
+                del item["pending_keys"]
+                wanted = {"device": pending["device"], "approval": pending["approval"]}
+                if approve:
+                    trusted = data.setdefault("trusted_keys", [])
+                    if len(trusted) >= MAX_TRUSTED:
+                        raise ValueError("信任的手机已达上限，请先移除不用的")
+                    now = int(self.clock())
+                    trusted.append({**wanted, "name": item["name"], "approved_at": now})
+                    item["keys"] = {**wanted, "bound_at": now}
+                self._save(data)
+                return {"approved": approve, "code": key_code(wanted["device"], wanted["approval"])}
+            raise KeyError(device_id)
+
+    def untrust_keys(self, code: str) -> dict:
+        """移除一台信任的手机：从信任名单删掉，并清掉所有设备记录上的这对钥匙，下一次写入就签不过。"""
+        with self._lock():
+            data = self._load()
+            trusted = (data or {}).get("trusted_keys") or []
+            match = [entry for entry in trusted if key_code(entry["device"], entry["approval"]) == code]
+            if not data or not match:
+                raise KeyError(code)
+            data["trusted_keys"] = [entry for entry in trusted if entry not in match]
+            for item in data["devices"]:
+                keys = item.get("keys")
+                if keys and any(keys["device"] == entry["device"] for entry in match):
+                    del item["keys"]
+            self._save(data)
+            return {"removed": code}
 
     def signing_key(self, device_id: str, kind: str) -> str | None:
         data = self._load()

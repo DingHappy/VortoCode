@@ -57,9 +57,9 @@ extension MobileAPI {
     }
 
     /// 第一次绑定日常钥匙和批准钥匙（65 字节未压缩 P-256 公钥的 base64）。同一对钥匙重试是安全的。
-    public func bindKeys(_ credential: NativeCredential, deviceKey: String, approvalKey: String) async throws {
-        _ = try await owner("keys", method: "POST", credential: credential,
-                            body: try json(["device_key": deviceKey, "approval_key": approvalKey]))
+    public func bindKeys(_ credential: NativeCredential, deviceKey: String, approvalKey: String) async throws -> KeyBinding {
+        try decode(KeyBinding.self, try await owner("keys", method: "POST", credential: credential,
+                                                    body: try json(["device_key": deviceKey, "approval_key": approvalKey])))
     }
 
     public func decisions(_ credential: NativeCredential) async throws -> [PendingDecision] {

@@ -54,6 +54,13 @@ public struct DecisionOutcome: Codable, Sendable {
     public let statusText: String
 }
 
+/// 绑定钥匙的回执。手机入口在公网上：第一台手机直接生效，之后的新手机要在 Desktop 上对核对码批准。
+public struct KeyBinding: Codable, Sendable {
+    public let pending: Bool?
+    public let code: String?
+    public var waitingApproval: Bool { pending == true }
+}
+
 public struct CaptureOutcome: Codable, Sendable {
     public let goalId: String
     public let objective: String

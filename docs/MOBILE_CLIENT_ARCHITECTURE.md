@@ -93,13 +93,17 @@ snapshot 的 `sources` 分别报告来源：
 手机 App 从只读伴侣变成主人终端之一。写入只开给原生 App（`/api/mobile/native/*`），都是确定性的文件操作，
 手机网关进程里仍然没有 Agent、调度和 IM。
 
-**默认关闭**：服务端设置 `VORTOCODE_MOBILE_WRITES=1` 才开放。ADR-009 修订要求先完成 WireGuard 直连
-（手机网关只在 WireGuard 网段监听，不开放公网 HTTP 端口）再开启；部署代码不等于开放写入。
+**默认关闭**：服务端设置 `VORTOCODE_MOBILE_WRITES=1` 才开放；部署代码不等于开放写入。写入路由走现有公网 HTTPS 入口
+（反向代理要把下表路径加进放行名单），不要求 WireGuard，前提是下面的「新手机要批准」（见 DECISIONS「ADR-011 修订」）。
+
+**新手机要批准**：信任挂在钥匙上。第一台手机首次使用即信任；之后新的钥匙对停在「待确认」，`/keys` 回
+`{pending: true, code}`，App 显示核对码。主人在 Desktop 助理面板（`/api/assistant/phone-keys`，管理员令牌）对过核对码批准后生效，
+也可以拒绝或移除已信任的手机。同一台手机重新登录用同一对钥匙，不用再批。常驻助理对每份申请、每台新信任的手机各推一次通知。
 `bootstrap` 的 `capabilities.writes` 只有在开启且这台设备已绑定钥匙时才列出 `capture`、`decide`、`undo`。
 
 | 方法与路径 | 身份 | 效果 |
 | --- | --- | --- |
-| `POST /api/mobile/native/keys` | 原生会话 | 绑定日常钥匙与批准钥匙（P-256 公钥）。同一会话的设备只能绑一次；重新登录得到新设备授权后再绑 |
+| `POST /api/mobile/native/keys` | 原生会话 | 绑定日常钥匙与批准钥匙（P-256 公钥）。已信任的钥匙或第一台手机直接生效，其余等 Desktop 批准（回 `pending` 与核对码）。同一会话的设备只能绑一次 |
 | `GET /api/mobile/native/decisions` | 原生会话 | 等你批准的 Codex 动作，每条带 `action_digest` |
 | `POST /api/mobile/native/decide` | 会话 + 签名 | `{action_id, approve, action_digest}`；批准只认批准钥匙，摘要必须与此刻的动作一致；拒绝用日常钥匙 |
 | `POST /api/mobile/native/capture` | 会话 + 日常钥匙签名 | `{request_id, text}`：记成一个个人目标（来源为主人），可撤销；同一 `request_id` 重试只建一次 |

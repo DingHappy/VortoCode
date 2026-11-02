@@ -2928,7 +2928,7 @@ function App() {
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting} waitingUncertain={!activityComplete}
             onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setMemoryFocus(0); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
-              : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} changes={clientRef.current} connected={connection === "connected"}
+              : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} changes={clientRef.current} phones={clientRef.current} connected={connection === "connected"}
                   focusId={assistantGoalFocus?.client === clientRef.current && assistantGoalFocus?.scope === assistantScope ? assistantGoalFocus.id : undefined}
                   onFocusGoal={(id, owner) => {
                     if (clientRef.current === owner && assistantScopeRef.current === assistantScope) {
