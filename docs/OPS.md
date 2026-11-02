@@ -37,6 +37,24 @@ Telegram Bot token 先放在运行 `vc` 的私密环境中，不要作为命令�
 
 无效的整批响应会重试且不推进 offset。单条畸形更新会被计数并跳过，后续有效更新继续处理；带有效更新 ID 的记录会照常推进 offset，因此这不是持久收件箱或消息必达保证。空轮询成功也属于连接活性，发送通知成功不算接收恢复。只读验收采样器仅保留上述诊断字段的白名单，断连采样点仍记为异常，恢复后也不会抹掉。
 
+### 手机网关（vortocode-mobile）要单独发布
+
+手机网关**不跑部署目录的代码**：它的 `PYTHONPATH` 指向固定的发布快照
+`~/.local/share/vortocode-mobile/releases/<发布标识>`（环境文件 `~/.config/vortocode-mobile/environment`
+里的 `PYTHONPATH` 与 `VORTOCODE_MOBILE_RELEASE`）。部署目录 `git merge --ff-only` 再重启，**不会**更新它。
+
+部署目录更新后，在常驻电脑上运行：
+
+```bash
+cd ~/personal_project/VortoCode && scripts/mobile-release.sh --dry-run   # 先看会不会变
+scripts/mobile-release.sh
+```
+
+脚本从部署目录当前提交生成新快照（`git archive` 的 `src` + 沿用当前快照里的 `web/mobile` + `RELEASE.json`），
+备份并切换环境文件，重启后核对：服务在运行、重启计数没涨、`POST /api/mobile/native/keys` 由路由自己应答
+（被管理员令牌中间件拦下返回 `{"detail":"Unauthorized"}` 说明还在跑旧代码）。核对不过自动切回旧快照。
+重启会让已登录的手机需要重新登录。
+
 ## 二、开关矩阵（都是 opt-in，默认全关 = 零自主消耗）
 
 Background capabilities are disabled unless the operator enables them explicitly:
