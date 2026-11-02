@@ -66,6 +66,19 @@ public struct CaptureOutcome: Codable, Sendable {
     public let objective: String
 }
 
+/// 助理拟好、等你下发的任务单。下发要 Face ID，签进去的 `digest` 必须对上此刻的标题和目标。
+/// 读过外部内容后拟的（`tainted`）只能在电脑上下发。
+public struct DispatchProposal: Codable, Identifiable, Sendable, Equatable {
+    public let id: String
+    public let project: String?
+    public let title: String
+    public let goal: String
+    public let status: String
+    public let tainted: Bool
+    public let criteria: [String]
+    public let digest: String
+}
+
 /// 主要聊天里的一条（Desktop、Telegram、App 都在这一段，`source` 标来源）。
 public struct ChatItem: Codable, Sendable, Equatable {
     public let role: String

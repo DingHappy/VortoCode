@@ -33,7 +33,9 @@ RESEARCH_READ_TOOLS = frozenset({"read_file", "list_files", "grep"})
 # （OWN_DATA，可撤销）。命令执行、写文件、操控电脑与浏览器、派开发任务、对外发送一律不在这里做——
 # 对外发送以后以审批卡形式出现（阶段 B），现在请到 Desktop 上做。
 OWNER_DEVICE_PROFILE = "owner_device"
-OWNER_DEVICE_WRITE_TOOLS = frozenset({"personal_goal_create", "personal_goal_update", "save_memory"})
+OWNER_DEVICE_WRITE_TOOLS = frozenset({"personal_goal_create", "personal_goal_update", "save_memory",
+                                      # 只是「拟」：任务单要你在手机上 Face ID 下发，Codex 的话要你 Face ID 批准才发
+                                      "propose_task", "propose_codex_message", "propose_codex_interrupt"})
 # 即使申报只读也不开：操控 / 截取电脑屏幕、发送文件与图片、读宿主任意文件、派子任务或给执行中的任务补指令、运行技能脚本
 _OWNER_DEVICE_DENIED_PREFIXES = ("desktop_", "dev_", "send_")
 _OWNER_DEVICE_DENIED_TOOLS = frozenset({"read_local_file", "screenshot_page", "task", "research_parallel",

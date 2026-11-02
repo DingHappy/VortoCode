@@ -108,6 +108,23 @@ extension MobileAPI {
         return try decode(UndoOutcome.self, data)
     }
 
+    // —— 任务单：助理拟好的派活，手机上核对后下发或撤回 ——
+
+    public func dispatches(_ credential: NativeCredential) async throws -> [DispatchProposal] {
+        struct Reply: Decodable { let dispatches: [DispatchProposal] }
+        return try decode(Reply.self, try await owner("dispatches", method: "GET", credential: credential)).dispatches
+    }
+
+    /// 下发用批准钥匙（Face ID），撤回用日常钥匙。
+    public func dispatch(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                         proposal: DispatchProposal, approve: Bool) async throws -> DecisionOutcome {
+        var body: [String: Any] = ["dispatch_id": proposal.id, "approve": approve]
+        if approve { body["digest"] = proposal.digest }
+        let data = try await owner("dispatch", method: "POST", credential: credential, body: try json(body),
+                                   signer: signer, key: approve ? .approval : .device, deviceId: deviceId)
+        return try decode(DecisionOutcome.self, data)
+    }
+
     // —— 对话：App 是主要聊天的又一个入口（ADR-012）——
 
     public func chatHistory(_ credential: NativeCredential) async throws -> ChatHistory {

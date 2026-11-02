@@ -83,6 +83,22 @@ async def _guarded(request: Request, handler):
         return failure(error)
 
 
+async def _execute(op: str, args: dict):
+    """写操作交给常驻助理执行（网关的沙箱写不了目标、撤销记录、Codex 动作和任务单，见 web/owner_ops.py）；
+    没配转发（本机开发、测试）就地执行同一份代码。"""
+    from src.gateway.app_relay_client import RelayUnavailable, configured, relay
+    from src.web import owner_ops
+
+    if not configured():
+        status, data = await owner_ops.run(os.getcwd(), op, args)
+        return _reply(data, status)
+    try:
+        status, data = await relay("/api/assistant/app-relay/op", {"op": op, "args": args})
+    except RelayUnavailable as error:
+        return _reply({"detail": str(error)}, 503)
+    return _reply(data if status < 400 else {"detail": str(data.get("detail") or "请求没有被接受")[:200]}, status)
+
+
 @router.post("/api/mobile/native/keys")
 async def bind_keys(request: Request):
     """第一次绑定两把公钥（只凭原生会话；之后所有写入都要签名）。已绑定的设备不能换钥匙。"""
@@ -128,26 +144,7 @@ async def decide(request: Request):
             return _reply({"detail": "请求无效"}, 400)
         approve = isinstance(peek, dict) and peek.get("approve") is True
         body = await _signed(request, grant, "approval" if approve else "device")
-        action_id, digest = body.get("action_id"), body.get("action_digest")
-        if not isinstance(action_id, str) or not re.fullmatch(r"cdx-[0-9a-f]{10}", action_id) or type(body.get("approve")) is not bool:
-            return _reply({"detail": "请求无效"}, 400)
-        from src.scheduling import codex_watch
-
-        def run():
-            current = next((item for item in codex_watch.load_actions(os.getcwd()) if item.get("id") == action_id), None)
-            if current is None:
-                raise KeyError(action_id)
-            if body["approve"] and signing.action_digest(current) != digest:
-                raise codex_watch.CodexActionError("这条动作已经变了，请刷新后重新核对")
-            return codex_watch.decide_action(os.getcwd(), action_id, body["approve"])
-        try:
-            action = await asyncio.to_thread(run)
-        except KeyError:
-            return _reply({"detail": "没有这条动作"}, 404)
-        except codex_watch.CodexActionError as error:
-            return _reply({"detail": str(error)[:200]}, 409)
-        return _reply({"id": action["id"], "status": action["status"],
-                       "status_text": codex_watch.ACTION_STATUS_TEXT.get(action["status"], action["status"])})
+        return await _execute("decide_codex", {key: body.get(key) for key in ("action_id", "approve", "action_digest")})
     return await _guarded(request, handle)
 
 
@@ -156,31 +153,7 @@ async def capture(request: Request):
     """随手记：直接记成一个个人目标（来源是主人），不运行模型；之后可以在助理里再整理，也能撤销。"""
     async def handle(grant):
         body = await _signed(request, grant, "device")
-        text, request_id = body.get("text"), body.get("request_id")
-        if not isinstance(text, str) or not text.strip() or len(text) > 500 or not isinstance(request_id, str) \
-                or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", request_id):
-            return _reply({"detail": "内容需要 1–500 字"}, 400)
-        import src.agents.tools.personal_goals  # noqa: F401 —— 导入即登记目标改动的撤销函数
-        from src.agents import undo_log
-        from src.workflow.workbench.personal_goals import PersonalGoals
-
-        def run():
-            root, text_ = os.getcwd(), text.strip()
-            service = PersonalGoals(root)
-            # 网络重试会带同一个 request_id：目标只建一次（create 本身幂等），撤销也只记一次
-            existed = service.ledger._path(f"personal-m-{request_id}").exists()
-            goal = service.create({"request_id": f"m-{request_id}", "objective": text_,
-                                   "acceptance_criteria": [text_], "next_action": "待整理（手机随手记）"},
-                                  origin="owner")
-            if not existed:
-                undo_log.record(root, action="personal_goal.create", summary=f"手机随手记「{goal['objective'][:60]}」",
-                                payload={"goal_id": goal["id"], "revision": goal["revision"]}, source="mobile")
-            return goal
-        try:
-            goal = await asyncio.to_thread(run)
-        except (OSError, ValueError) as error:
-            return _reply({"detail": str(error)[:200]}, 409)
-        return _reply({"goal_id": goal["id"], "objective": goal["objective"]})
+        return await _execute("capture", {"text": body.get("text"), "request_id": body.get("request_id")})
     return await _guarded(request, handle)
 
 
@@ -196,16 +169,7 @@ async def changes(request: Request):
 async def undo(request: Request):
     async def handle(grant):
         body = await _signed(request, grant, "device")
-        op_id = body.get("op_id")
-        if not isinstance(op_id, str) or not re.fullmatch(r"op-[0-9a-f]{12}", op_id):
-            return _reply({"detail": "没有这条操作"}, 404)
-        import src.agents.tools.personal_goals  # noqa: F401 —— 导入即登记目标改动的撤销函数
-        from src.agents import undo_log
-        try:
-            result = await asyncio.to_thread(undo_log.undo, os.getcwd(), op_id)
-        except undo_log.UndoError as error:
-            return _reply({"detail": str(error)}, 409)
-        return _reply({"ok": result.ok, "detail": result.detail, "not_recallable": list(result.not_recallable)})
+        return await _execute("undo", {"op_id": body.get("op_id")})
     return await _guarded(request, handle)
 
 
@@ -289,4 +253,31 @@ async def chat_card(request: Request):
         return await _relayed("/api/assistant/app-relay/card", {
             "rid": body.get("rid"), "card_id": body.get("card_id"), "approve": body.get("approve"),
             "digest": body.get("digest"), "key_kind": declared})
+    return await _guarded(request, handle)
+
+
+# —— 任务单（ADR-012）：助理在对话里拟好的任务单，手机上核对后下发（Face ID）或撤回 ——
+
+@router.get("/api/mobile/native/dispatches")
+async def dispatches(request: Request):
+    async def handle(grant):
+        if not _trusted(grant):
+            return _reply({"detail": "这台手机还没获得写入权限"}, 403)
+        from src.web import owner_ops
+        status, data = await asyncio.to_thread(owner_ops.dispatches, os.getcwd())
+        return _reply(data, status)
+    return await _guarded(request, handle)
+
+
+@router.post("/api/mobile/native/dispatch")
+async def dispatch(request: Request):
+    """下发用批准钥匙（Face ID），撤回用日常钥匙；下发签进去的摘要必须对上任务单此刻的标题和目标。"""
+    async def handle(grant):
+        try:
+            peek = json.loads(await request.body() or b"{}")
+        except ValueError:
+            return _reply({"detail": "请求无效"}, 400)
+        approve = isinstance(peek, dict) and peek.get("approve") is True
+        body = await _signed(request, grant, "approval" if approve else "device")
+        return await _execute("dispatch", {key: body.get(key) for key in ("dispatch_id", "approve", "digest")})
     return await _guarded(request, handle)
