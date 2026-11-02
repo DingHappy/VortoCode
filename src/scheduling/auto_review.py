@@ -64,6 +64,23 @@ def record(root: str, entry: Dict[str, Any]) -> None:
         logger.warning("自动审核记录写入失败：%s", type(error).__name__)
 
 
+def recent_reviews(root: str, limit: int = 200) -> list:
+    """只读审核记录，坏行跳过；读失败交给调用者标记来源不可用。"""
+    try:
+        lines = _log_path(root).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows[-limit:]
+
+
 def approved_dispatches_today(root: str, now: datetime) -> int:
     day = now.date().isoformat()
     try:

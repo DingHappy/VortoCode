@@ -31,6 +31,15 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(reply.dispatches.first?.title, "修登录")
         XCTAssertFalse(reply.dispatches[0].tainted)
     }
+    func testTimelineContractIncludesFailuresActionsAndUnknownKinds() throws {
+        let data = Data(#"{"items":[{"id":"paused:1","at":"2026-11-02T10:00:00.123456+00:00","kind":"paused","title":"暂停推进","detail":"拒绝原因","status":"暂停中","tainted":false,"actions":[{"type":"resume_goal","id":"personal-one"}]},{"id":"new:1","at":"2026-11-02T10:00:00Z","kind":"future_kind","title":"新动态","detail":"","status":"","tainted":true,"actions":[]}],"unavailable":["codex_progress"],"generated_at":"2026-11-02T10:00:00Z"}"#.utf8)
+        let timeline = try MobileAPI.decoder.decode(ActivityTimeline.self, from: data)
+        XCTAssertEqual(timeline.items[0].actions[0].type, "resume_goal")
+        XCTAssertNotNil(timeline.items[0].date)
+        XCTAssertNotNil(timeline.items[1].date)
+        XCTAssertEqual(timeline.items[1].kindLabel, "动态")
+        XCTAssertEqual(timeline.unavailableLabels, ["Codex 进展"])
+    }
     func testChatContracts() throws {
         let turn = try MobileAPI.decoder.decode(ChatTurn.self, from: JSONSerialization.data(withJSONObject: [
             "rid": "app-0123456789abcdef", "request_id": "req-00000001", "state": "waiting", "reply": "", "error": "",

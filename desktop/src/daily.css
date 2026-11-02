@@ -414,3 +414,15 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 /* 主要聊天里从手机发来的消息 */
 .message-source { display: inline-block; margin-bottom: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; color: var(--n10); background: var(--n3); }
 .message-author.with-avatar .message-source { margin: 0 0 0 4px; }
+
+/* 共用动态时间线沿用设计变量，普通历史折叠；不新增面板。 */
+.assistant-timeline header { display: flex; align-items: center; justify-content: space-between; gap: var(--vc-space-2); }
+.assistant-timeline button { flex: none; padding: var(--vc-space-1) var(--vc-space-2); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); background: var(--vc-surface); color: var(--vc-text-secondary); font: inherit; font-size: var(--vc-size-caption); cursor: pointer; }
+.assistant-timeline button:hover:not(:disabled) { background: var(--vc-hover); }
+.assistant-timeline button:disabled { opacity: .5; cursor: default; }
+.assistant-timeline button:focus-visible, .assistant-timeline summary:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: 2px; }
+.assistant-timeline .assistant-audit-text { flex: 1; }
+.assistant-timeline h5, .assistant-timeline .assistant-audit-text strong { font-size: var(--vc-size-small); color: var(--vc-text); }
+.assistant-timeline .assistant-audit-text small, .assistant-timeline .assistant-audit-text span, .assistant-timeline summary, .assistant-timeline p { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.assistant-timeline summary { cursor: pointer; }
+.assistant-timeline details span { white-space: pre-wrap; }

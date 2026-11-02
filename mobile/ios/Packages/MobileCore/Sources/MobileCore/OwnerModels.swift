@@ -142,3 +142,45 @@ public enum OwnerWriteError: Error, LocalizedError, Equatable {
         }
     }
 }
+
+/// Desktop 与 App 共用的动态投影。种类和动作使用开放字符串，未来新增条目仍可显示。
+public struct ActivityTimeline: Codable, Sendable, Equatable {
+    public let items: [ActivityTimelineItem]
+    public let unavailable: [String]
+    public let generatedAt: String
+    public var unavailableLabels: [String] {
+        let labels = ["notices": "通知", "changes": "改动记录", "dispatches": "任务单",
+                      "codex": "Codex 动作", "codex_progress": "Codex 进展", "reviews": "自动审核", "paused": "暂停目标"]
+        return unavailable.map { labels[$0] ?? "其他来源" }
+    }
+}
+
+public struct ActivityTimelineItem: Codable, Identifiable, Sendable, Equatable {
+    public struct Action: Codable, Sendable, Equatable {
+        public let type: String
+        public let id: String
+    }
+    public let id: String
+    public let at: String
+    public let kind: String
+    public let title: String
+    public let detail: String
+    public let status: String
+    public let tainted: Bool
+    public let actions: [Action]
+    public var kindLabel: String {
+        ["notice": "通知", "change": "替你做的", "dispatch": "任务单", "codex": "Codex",
+         "review": "自动审核", "paused": "已暂停"][kind] ?? "动态"
+    }
+    public var date: Date? { ISO8601DateFormatter.activityDate(at) }
+}
+
+private extension ISO8601DateFormatter {
+    static func activityDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+}

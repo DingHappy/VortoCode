@@ -23,6 +23,7 @@ PATH_OPS = {
     "/api/mobile/native/dispatch": "dispatch",
     "/api/mobile/native/chat/send": "chat_send",
     "/api/mobile/native/chat/card": "chat_card",
+    "/api/mobile/native/goal-advance/resume": "resume_goal",
 }
 # 批准时必须是批准钥匙（Face ID）签的操作。对话里的卡片按卡片自己的风险级别在 AppTurns 里判。
 _APPROVAL_OPS = {"decide_codex", "dispatch"}

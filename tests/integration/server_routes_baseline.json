@@ -1058,6 +1058,18 @@
     ]
   },
   {
+    "path": "/api/assistant/timeline",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/goal-advance/resume",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/assistant/phone-keys",
     "methods": [
       "GET"
@@ -1101,6 +1113,12 @@
   },
   {
     "path": "/api/assistant/app-relay/op",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/timeline",
     "methods": [
       "POST"
     ]
@@ -1425,6 +1443,18 @@
   },
   {
     "path": "/api/mobile/native/dispatch",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/timeline",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/goal-advance/resume",
     "methods": [
       "POST"
     ]

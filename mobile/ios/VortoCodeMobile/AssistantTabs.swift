@@ -18,6 +18,7 @@ struct AssistantTabs: View {
         }
         // 每次登录 / 恢复会话：读写入能力，必要时绑定钥匙、登记推送、读对话
         .task(id: session.credential?.token) {
+            owner.resetTimeline()
             owner.sessionExpired = { [session, entry] in session.refresh(entry) }
             if let credential = session.credential { await owner.load(entry, credential) }
         }

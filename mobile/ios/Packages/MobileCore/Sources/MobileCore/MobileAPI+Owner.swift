@@ -108,6 +108,23 @@ extension MobileAPI {
         return try decode(UndoOutcome.self, data)
     }
 
+    public func timeline(_ credential: NativeCredential) async throws -> ActivityTimeline {
+        try decode(ActivityTimeline.self, try await owner("timeline", method: "GET", credential: credential))
+    }
+
+    public func resumeGoalAdvance(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                                  goalId: String) async throws {
+        _ = try await owner("goal-advance/resume", method: "POST", credential: credential,
+                            body: try json(["goal_id": goalId]), signer: signer, deviceId: deviceId)
+    }
+
+    public func undoChange(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                           operationId: String) async throws -> UndoOutcome {
+        let data = try await owner("undo", method: "POST", credential: credential,
+                                   body: try json(["op_id": operationId]), signer: signer, deviceId: deviceId)
+        return try decode(UndoOutcome.self, data)
+    }
+
     // —— 任务单：助理拟好的派活，手机上核对后下发或撤回 ——
 
     public func dispatches(_ credential: NativeCredential) async throws -> [DispatchProposal] {

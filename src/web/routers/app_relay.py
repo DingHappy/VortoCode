@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import os
 from typing import Optional
@@ -22,7 +23,8 @@ STATUS_PATH = "/api/assistant/app-relay/status"
 CARD_PATH = "/api/assistant/app-relay/card"
 CHAT_PATH = "/api/assistant/app-relay/chat"
 OP_PATH = "/api/assistant/app-relay/op"
-PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH)
+TIMELINE_PATH = "/api/assistant/app-relay/timeline"
+PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH, TIMELINE_PATH)
 
 _turns = None
 
@@ -129,7 +131,7 @@ async def recent_chat(request: Request):
     _guard(request)
     body = await _body(request)
     limit = body.get("limit", 50)
-    if not isinstance(limit, int) or not 1 <= limit <= 200:
+    if type(limit) is not int or not 1 <= limit <= 200:
         raise HTTPException(400, "limit 需要 1–200")
     from src.gateway.main_conversation import main_chat_key
     from src.gateway.session_store import load_session
@@ -144,7 +146,8 @@ async def recent_chat(request: Request):
 
 
 _OP_ARGS = {"capture": ("text", "request_id"), "undo": ("op_id",),
-            "decide_codex": ("action_id", "approve", "action_digest"), "dispatch": ("dispatch_id", "approve", "digest")}
+            "decide_codex": ("action_id", "approve", "action_digest"), "dispatch": ("dispatch_id", "approve", "digest"),
+            "resume_goal": ("goal_id",)}
 
 
 @router.post(OP_PATH)
@@ -158,3 +161,15 @@ async def owner_op(request: Request):
     if status >= 400:
         raise HTTPException(status, str(result.get("detail") or "请求没有被接受"))
     return result
+
+
+@router.post(TIMELINE_PATH)
+async def relay_timeline(request: Request):
+    """动态时间线，给 App（只读；网关沙箱里读不了要加锁的目标存储，所以经这里读）。"""
+    _guard(request)
+    body = await _body(request)
+    limit = body.get("limit", 60)
+    if type(limit) is not int or not 1 <= limit <= 200:
+        raise HTTPException(400, "limit 需要 1–200")
+    from src.scheduling import timeline
+    return await asyncio.to_thread(timeline.build, os.getcwd(), limit=limit)
