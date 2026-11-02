@@ -114,6 +114,17 @@ AES-GCM），键是会话凭据的摘要，凭据本身不落盘；网关重启�
 | `GET /api/mobile/native/changes` | 原生会话 | 「我替你做了什么」：最近 20 条可撤销的改动 |
 | `POST /api/mobile/native/undo` | 会话 + 日常钥匙签名 | `{op_id}`：撤销一条改动，撤不回的下游影响在 `not_recallable` 里 |
 
+**对话（2026-11-02，ADR-012 阶段 A）**：App 是主要聊天的第三个入口（Desktop、Telegram 之后）。手机网关核对会话与签名后，
+经本机专用接口（`VORTOCODE_APP_RELAY_TOKEN`，只收回环来源）转给常驻助理；助理以 `owner_device` 档案跑回合并写进主要聊天，
+Desktop 同一段对话可见。回合中途要确认的动作变成待批准卡，App 用设备钥匙签名批准（卡片摘要必须对上）；10 分钟没人处理按拒绝。
+
+| 方法与路径 | 身份 | 效果 |
+| --- | --- | --- |
+| `POST /api/mobile/native/chat/send` | 会话 + 日常钥匙签名 | `{request_id, text}`（≤4000 字）：起一个回合，同一 `request_id` 重试只起一次；返回 `rid` |
+| `GET /api/mobile/native/chat/turn?rid=` | 会话 + 钥匙已信任 | 回合状态：`running / waiting / done / failed / busy`、回复、待批准卡 |
+| `GET /api/mobile/native/chat` | 会话 + 钥匙已信任 | 主要聊天最近 50 条（各入口都有，标来源），只给正文 |
+| `POST /api/mobile/native/chat/card` | 会话 + 签名（`key_kind` 声明用哪把钥匙并一起签进去） | `{rid, card_id, approve, digest, key_kind}`；级别不够的卡由助理拒绝 |
+
 **钥匙**：两把都在 Secure Enclave 里生成，私钥不出设备。批准钥匙创建时要求生物识别
 （`kSecAccessControlBiometryCurrentSet`），所以「批准必须过 Face ID」由密码学保证，服务端只认这把钥匙签的批准。
 公钥格式为 `SecKeyCopyExternalRepresentation` 的输出（65 字节未压缩点）的 base64。

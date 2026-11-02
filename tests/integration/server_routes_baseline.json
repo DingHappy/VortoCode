@@ -1076,6 +1076,30 @@
     ]
   },
   {
+    "path": "/api/assistant/app-relay/turn",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/status",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/card",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/chat",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/assistant/skills",
     "methods": [
       "GET"
@@ -1359,6 +1383,30 @@
   },
   {
     "path": "/api/mobile/native/push",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/chat/send",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/chat/turn",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/chat",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/chat/card",
     "methods": [
       "POST"
     ]

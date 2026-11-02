@@ -1,0 +1,199 @@
+"""手机 App 的对话回合（ADR-012 阶段 A）：App 是主要聊天的第三个入口（Desktop、Telegram 之后）。
+
+- 在常驻助理进程里跑：手机网关核对签名后经本机专用接口转进来，网关自己不执行任何东西。
+- 回合用 ``owner_device`` 能力档案（由调用方装配），经 ``run_external_turn(source="app")``
+  写进主要聊天；Desktop 同一段对话里看得到。
+- 回合中途要人确认的动作变成**待批准卡**：App 轮询时看到，用设备钥匙签名批准或拒绝后回合继续。
+  10 分钟没人处理按拒绝。阶段 A 里 ``owner_device`` 能触发的只有普通一类（你的事项、记忆），
+  所以卡片风险级别固定为 normal；对外发送等高风险类别要到阶段 B 才会出现在手机上。
+- 回合状态只在内存里：常驻助理重启后，进行中的回合按「结果待核对」处理，App 重新发起即可。
+
+本模块不导入前端（web / im），装配函数由 web 层传入。
+"""
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+import hashlib
+import logging
+import secrets
+import time
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+CARD_TIMEOUT = 600.0
+_KEEP_FINISHED = 3600.0
+_MAX_TURNS = 64
+MAX_TEXT = 4000
+
+# build(confirm) -> agent：用 owner_device 档案装配一个 agent，确认走传入的 confirm
+AgentFactory = Callable[[Callable[[str], Awaitable[bool]]], Any]
+Notify = Callable[[str], Awaitable[Any]]
+
+
+class AppTurnError(RuntimeError):
+    """请求不成立（文本、请求 id 不合法，或太多回合）。"""
+
+
+@dataclass
+class Card:
+    id: str
+    text: str
+    risk: str = "normal"
+    status: str = "pending"            # pending / approved / denied / expired
+    created: float = field(default_factory=time.time)
+    future: Optional[asyncio.Future] = field(default=None, repr=False)
+
+    def digest(self, rid: str) -> str:
+        return hashlib.sha256(f"{rid}\n{self.id}\n{self.text}".encode()).hexdigest()
+
+    def public(self, rid: str) -> dict:
+        return {"id": self.id, "text": self.text, "risk": self.risk, "status": self.status,
+                "digest": self.digest(rid)}
+
+
+@dataclass
+class AppTurn:
+    rid: str
+    request_id: str
+    text: str
+    state: str = "running"             # running / waiting / done / failed / busy
+    reply: str = ""
+    error: str = ""
+    cards: List[Card] = field(default_factory=list)
+    started: float = field(default_factory=time.time)
+    finished: float = 0.0
+
+    def public(self) -> dict:
+        return {"rid": self.rid, "request_id": self.request_id, "state": self.state, "reply": self.reply,
+                "error": self.error, "cards": [card.public(self.rid) for card in self.cards]}
+
+
+class AppTurns:
+    def __init__(self, root: str, build_agent: AgentFactory, *, notify: Optional[Notify] = None,
+                 card_timeout: float = CARD_TIMEOUT, clock: Callable[[], float] = time.time):
+        self.root = root
+        self.build_agent = build_agent
+        self.notify = notify
+        self.card_timeout = card_timeout
+        self.clock = clock
+        self.turns: Dict[str, AppTurn] = {}
+        self.by_request: Dict[str, str] = {}
+        self._agent: Any = None
+        self._current: Optional[AppTurn] = None
+
+    # —— 回合 ——
+
+    def start(self, request_id: str, text: str) -> AppTurn:
+        """起一个回合；同一个 request_id 重试只起一次（网络重发）。"""
+        import re
+
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", request_id):
+            raise AppTurnError("请求 id 无效")
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
+            raise AppTurnError(f"消息需要 1–{MAX_TEXT} 字")
+        existing = self.by_request.get(request_id)
+        if existing in self.turns:
+            return self.turns[existing]
+        self._prune()
+        if len(self.turns) >= _MAX_TURNS:
+            raise AppTurnError("进行中的回合太多，请稍后再试")
+        turn = AppTurn("app-" + secrets.token_hex(8), request_id, text.strip())
+        self.turns[turn.rid] = turn
+        self.by_request[request_id] = turn.rid
+        asyncio.get_running_loop().create_task(self._run(turn))
+        return turn
+
+    def get(self, rid: str) -> Optional[AppTurn]:
+        return self.turns.get(rid) if isinstance(rid, str) else None
+
+    def _prune(self) -> None:
+        now = self.clock()
+        for rid, turn in list(self.turns.items()):
+            if turn.finished and now - turn.finished > _KEEP_FINISHED:
+                self.turns.pop(rid, None)
+                self.by_request.pop(turn.request_id, None)
+
+    def _agent_for_turn(self) -> Any:
+        if self._agent is None:
+            self._agent = self.build_agent(self._confirm)
+        return self._agent
+
+    async def _run(self, turn: AppTurn) -> None:
+        from src.gateway.main_conversation import run_external_turn
+
+        agent = self._agent_for_turn()
+
+        async def run(history: list):
+            self._current = turn
+            try:
+                agent.history = list(history)
+                reply = await agent.run_turn(turn.text, mode="build")
+                return list(agent.history), str(reply or "")
+            finally:
+                self._current = None
+
+        try:
+            reply = await run_external_turn(self.root, source="app", user_text=turn.text, rid=turn.rid, run=run)
+            if reply is None:
+                turn.state, turn.error = "failed", "主要聊天还没开通：请先在 Desktop 上打开一次助理对话"
+            else:
+                turn.state, turn.reply = "done", reply
+        except Exception as error:  # noqa: BLE001 —— 回合失败要告诉 App，不能静默
+            busy = type(error).__name__ == "MainConversationBusy"
+            turn.state = "busy" if busy else "failed"
+            turn.error = str(error)[:200] if busy else "这一轮没有完成，可能已有部分操作，请核对后再继续"
+            if not busy:
+                logger.warning("App 回合失败：%s", type(error).__name__)
+        finally:
+            turn.finished = self.clock()
+            for card in turn.cards:
+                if card.status == "pending":
+                    card.status = "expired"
+            if self.notify is not None and turn.finished - turn.started > 15:
+                await self._tell(f"助理回复了：{(turn.reply or turn.error)[:80]}")
+
+    # —— 待批准卡 ——
+
+    async def _confirm(self, prompt: str) -> bool:
+        turn = self._current
+        if turn is None:                     # 不在 App 回合里（不该发生）：按拒绝
+            return False
+        card = Card("card-" + secrets.token_hex(6), str(prompt)[:2000])
+        card.future = asyncio.get_running_loop().create_future()
+        turn.cards.append(card)
+        turn.state = "waiting"
+        await self._tell(f"有一张卡等你处理：{card.text[:60]}")
+        try:
+            return bool(await asyncio.wait_for(asyncio.shield(card.future), self.card_timeout))
+        except asyncio.TimeoutError:
+            card.status = "expired"
+            return False
+        finally:
+            if turn.state == "waiting" and not any(c.status == "pending" for c in turn.cards):
+                turn.state = "running"
+
+    def decide(self, rid: str, card_id: str, approve: bool, digest: str, key_kind: str) -> dict:
+        """App 的批准 / 拒绝（签名已由手机网关核对）。摘要必须对上卡片此刻的内容，钥匙要够级别。"""
+        turn = self.get(rid)
+        card = next((c for c in (turn.cards if turn else []) if c.id == card_id), None)
+        if turn is None or card is None:
+            raise KeyError(card_id)
+        if card.status != "pending" or card.future is None or card.future.done():
+            raise AppTurnError("这张卡已经处理过或已过期")
+        if digest != card.digest(rid):
+            raise AppTurnError("卡片内容已变化，请刷新后再确认")
+        if approve and card.risk != "normal" and key_kind != "approval":
+            raise AppTurnError("这一步需要 Face ID 批准")
+        card.status = "approved" if approve else "denied"
+        card.future.set_result(bool(approve))
+        return card.public(rid)
+
+    async def _tell(self, text: str) -> None:
+        if self.notify is None:
+            return
+        try:
+            await self.notify(text)
+        except Exception:  # noqa: BLE001 —— 推送是附加通道
+            pass

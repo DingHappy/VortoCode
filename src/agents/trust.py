@@ -65,6 +65,8 @@ _PROFILE_CEILING = {
     "local": FULL,
     "external": READS,
     "researcher": READS,
+    # 手机 App 发起的回合（ADR-012）：工具面另由 capabilities 白名单限到读 + 主人自己的事项与记忆
+    "owner_device": READS,
     "unattended": ASK,
 }
 
