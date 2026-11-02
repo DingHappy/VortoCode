@@ -43,6 +43,18 @@ final class OwnerSession {
     private var pushedToken: String?
     private let signer = DeviceSigner()
 
+    // —— 对话（ADR-012）：App 是主要聊天的又一个入口 ——
+    var chat: [ChatItem] = []
+    var chatRegistered = true
+    var turn: ChatTurn?
+    var sending = false
+    /// 打开时输入框只记下来（随手记），不让助理去做
+    var captureOnly = false
+    private var chatRequest = OwnerSession.newRequestId()
+    private var polling: Task<Void, Never>?
+
+    private static func newRequestId() -> String { UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
+
     var canWrite: Bool { bootstrap?.canWrite ?? false }
     /// 这台手机的钥匙在等 Desktop 批准时的核对码
     var approvalCode: String?
@@ -79,7 +91,11 @@ final class OwnerSession {
                 }
             }
             bootstrap = boot
-            if boot.canWrite { await refresh(entry, credential); await registerPush(entry, credential) }
+            if boot.canWrite {
+                await refresh(entry, credential)
+                await loadChat(entry, credential)
+                await registerPush(entry, credential)
+            }
         } catch { say(error) }
     }
 
@@ -127,6 +143,70 @@ final class OwnerSession {
             note = ([outcome.detail] + outcome.notRecallable).joined(separator: "；")
         } catch { say(error) }
         await refresh(entry, credential)
+    }
+
+    func loadChat(_ entry: AssistantEntry, _ credential: NativeCredential) async {
+        guard canWrite else { return }
+        do {
+            let history = try await api(entry).chatHistory(credential)
+            chat = history.items
+            chatRegistered = history.registered
+        } catch { say(error) }
+    }
+
+    /// 发一句话给助理；打开「只记下来」时改为随手记。重试复用同一个请求 id，服务端只起一个回合。
+    func send(_ entry: AssistantEntry, _ credential: NativeCredential) async {
+        if captureOnly { await capture(entry, credential); await loadChat(entry, credential); return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let device = bootstrap?.device.id, !sending, !text.isEmpty, turn?.isFinished ?? true else { return }
+        sending = true; defer { sending = false }
+        do {
+            let started = try await api(entry).chatSend(credential, signer: signer, deviceId: device,
+                                                        text: String(text.prefix(4000)), requestId: chatRequest)
+            chat.append(ChatItem(role: "user", text: text, rid: started.rid, source: "app"))
+            turn = started
+            draft = ""
+            chatRequest = Self.newRequestId()
+            note = ""
+            follow(entry, credential)
+        } catch { say(error) }
+    }
+
+    /// 回合没结束就每 2 秒看一次；结束后重读对话（回复已写进主要聊天）。App 退到后台时停。
+    func follow(_ entry: AssistantEntry, _ credential: NativeCredential) {
+        polling?.cancel()
+        guard let rid = turn?.rid, !(turn?.isFinished ?? true) else { return }
+        polling = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled else { return }
+                do {
+                    let latest = try await self.api(entry).chatTurn(credential, rid: rid)
+                    self.turn = latest
+                    if latest.isFinished {
+                        if latest.state != "done", !latest.error.isEmpty { self.note = latest.error }
+                        await self.loadChat(entry, credential)
+                        return
+                    }
+                } catch {
+                    self.say(error)
+                    return
+                }
+            }
+        }
+    }
+
+    func stopFollowing() { polling?.cancel() }
+
+    func decideCard(_ entry: AssistantEntry, _ credential: NativeCredential, _ card: ChatCard, approve: Bool) async {
+        guard let device = bootstrap?.device.id, let rid = turn?.rid, !working else { return }
+        working = true; defer { working = false }
+        do {
+            _ = try await api(entry).chatDecide(credential, signer: signer, deviceId: device, rid: rid,
+                                                card: card, approve: approve)
+            turn = try await api(entry).chatTurn(credential, rid: rid)
+            follow(entry, credential)
+        } catch { say(error) }
     }
 
     /// 申请通知权限并登记推送；每次启动都重新登记（令牌可能变化），失败不影响其它功能。

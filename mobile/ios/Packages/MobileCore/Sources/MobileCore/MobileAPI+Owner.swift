@@ -4,10 +4,16 @@ import Foundation
 /// 错误分开处理：写入的 401/403 不清除登录（那是签名或服务端开关的问题），只告诉用户这次没提交。
 extension MobileAPI {
     private func owner(_ path: String, method: String, credential: NativeCredential, body: Data? = nil,
-                       signer: RequestSigner? = nil, key: SigningKey = .device, deviceId: String? = nil) async throws -> Data {
+                       signer: RequestSigner? = nil, key: SigningKey = .device, deviceId: String? = nil,
+                       query: [URLQueryItem] = []) async throws -> Data {
         try credential.validate()
         let route = "/api/mobile/native/" + path
-        var request = URLRequest(url: entry.origin.appendingPathComponent(String(route.dropFirst())))
+        var url = entry.origin.appendingPathComponent(String(route.dropFirst()))
+        if !query.isEmpty, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            parts.queryItems = query
+            url = parts.url ?? url
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -37,6 +43,10 @@ extension MobileAPI {
         case 400, 404, 409:
             let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? String
             throw OwnerWriteError.rejected(String((detail ?? "请求没有被接受").prefix(200)))
+        case 503:   // 对话没开通 / 常驻助理暂时连不上：照实说，不当成断网
+            let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? String
+            if let detail { throw OwnerWriteError.rejected(String(detail.prefix(200))) }
+            throw OwnerWriteError.unavailable
         default: throw OwnerWriteError.unavailable
         }
     }
@@ -96,6 +106,37 @@ extension MobileAPI {
         let data = try await owner("undo", method: "POST", credential: credential, body: try json(["op_id": change.id]),
                                    signer: signer, deviceId: deviceId)
         return try decode(UndoOutcome.self, data)
+    }
+
+    // —— 对话：App 是主要聊天的又一个入口（ADR-012）——
+
+    public func chatHistory(_ credential: NativeCredential) async throws -> ChatHistory {
+        try decode(ChatHistory.self, try await owner("chat", method: "GET", credential: credential))
+    }
+
+    /// 发一句话。`requestId` 由调用方生成并在重试时复用：服务端只起一个回合。
+    public func chatSend(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                         text: String, requestId: String) async throws -> ChatTurn {
+        let data = try await owner("chat/send", method: "POST", credential: credential,
+                                   body: try json(["request_id": requestId, "text": text]),
+                                   signer: signer, deviceId: deviceId)
+        return try decode(ChatTurn.self, data)
+    }
+
+    public func chatTurn(_ credential: NativeCredential, rid: String) async throws -> ChatTurn {
+        try decode(ChatTurn.self, try await owner("chat/turn", method: "GET", credential: credential,
+                                                  query: [URLQueryItem(name: "rid", value: rid)]))
+    }
+
+    /// 批准 / 拒绝一张卡。高风险卡的批准用批准钥匙（Face ID），其余用日常钥匙；用哪把也签进请求体。
+    public func chatDecide(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                           rid: String, card: ChatCard, approve: Bool) async throws -> ChatCard {
+        let key: SigningKey = approve && card.needsFaceID ? .approval : .device
+        let body: [String: Any] = ["rid": rid, "card_id": card.id, "approve": approve, "digest": card.digest,
+                                   "key_kind": key == .approval ? "approval" : "device"]
+        let data = try await owner("chat/card", method: "POST", credential: credential, body: try json(body),
+                                   signer: signer, key: key, deviceId: deviceId)
+        return try decode(ChatCard.self, data)
     }
 
     /// 登记推送：APNs 设备令牌（十六进制）和解密推送正文用的公钥。App 每次启动都调。

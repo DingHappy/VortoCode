@@ -44,9 +44,9 @@ struct HomeView: View {
                             .disabled(session.busy)
                     }
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("随时交接，\n随处跟进。")
+                        Text("目标说一次，\n它一直在推进。")
                             .font(.system(.largeTitle, design: .rounded, weight: .bold)).fixedSize(horizontal: false, vertical: true)
-                        Text("用同一个 VortoCode 账号，查看常驻助手的目标与进展。合上手机，服务器上的工作仍由助手继续负责。")
+                        Text("跟住在你家里电脑上的助手对话：交代事情、批准它要做的事、看它替你做了什么。合上手机，它还在继续。")
                             .foregroundStyle(.secondary).lineSpacing(5)
                     }
                     connectionCard
@@ -54,10 +54,10 @@ struct HomeView: View {
                     if !session.pendingLogouts.isEmpty { PendingLogoutView(session: session) }
                     VStack(alignment: .leading, spacing: 22) {
                         capability("person.crop.circle.badge.checkmark", "同账号登录", "沿用 VortoCode 账号，日常登录无需手动核对码。")
-                        capability("checklist", "查看目标与下一步", "读取原助手记录，保留状态、阻塞和核对时间。")
-                        capability("lock.shield", "权限清楚", "当前为只读入口，聊天、审批和电脑接管尚未接入手机。")
+                        capability("bubble.left.and.bubble.right", "对话", "和电脑、Telegram 上是同一段对话；需要你确认的事以卡片出现。")
+                        capability("lock.shield", "权限清楚", "手机发起的对话只能查资料、改你自己的事项和记忆；执行命令和对外发送要到电脑上做。")
                     }
-                    Text("iPhone · 0.2.0\n当前为原生只读版。登录后直接查看概览与目标；服务是否可用，以最近读取结果为准。")
+                    Text("iPhone · 0.3.0\n登录后进入对话；新手机第一次登录要在电脑上确认。")
                         .font(.footnote).foregroundStyle(.secondary).lineSpacing(4)
                 }.padding(24).frame(maxWidth: 600)
                     .frame(maxWidth: .infinity)
