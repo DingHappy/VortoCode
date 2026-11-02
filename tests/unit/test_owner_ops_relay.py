@@ -67,8 +67,9 @@ def test_writes_go_to_the_assistant_when_the_relay_is_configured(owner, monkeypa
     response = signed(client, headers, device_id, "/api/mobile/native/capture",
                       {"request_id": "cap-0101-abcd", "text": "周五交周报"}, device)
     assert response.status_code == 200
-    assert sent == [("/api/assistant/app-relay/op",
-                     {"op": "capture", "args": {"text": "周五交周报", "request_id": "cap-0101-abcd"}})]
+    [(path, body)] = sent
+    assert path == "/api/assistant/app-relay/op" and set(body) == {"envelope"}
+    assert body["envelope"]["path"] == "/api/mobile/native/capture" and body["envelope"]["key_kind"] == "device"
     from src.workflow.workbench.personal_goals import PersonalGoals
     assert PersonalGoals(root).list() == []                                # 网关自己没写
 
@@ -89,18 +90,21 @@ def test_dispatch_needs_the_face_id_key_and_a_trusted_phone(owner, ledger):  # n
 
 
 def test_relay_op_route_runs_the_operation_inside_the_assistant(tmp_path, monkeypatch):
+    from tests.unit.test_relay_envelope import envelope, phone
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
     monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
     monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
+    device_id, device, _ = phone(tmp_path)
     from src.web.server import app
     local = TestClient(app, client=("127.0.0.1", 50000))
     auth = {"Authorization": "Bearer relay-token"}
-    made = local.post("/api/assistant/app-relay/op", headers=auth,
-                      json={"op": "capture", "args": {"text": "买牛奶", "request_id": "cap-0202-abcd"}})
+    env = envelope(device_id, device, "/api/mobile/native/capture", {"text": "买牛奶", "request_id": "cap-0202-abcd"})
+    made = local.post("/api/assistant/app-relay/op", headers=auth, json={"envelope": env})
     assert made.status_code == 200 and made.json()["objective"] == "买牛奶"
     from src.workflow.workbench.personal_goals import PersonalGoals
     assert [goal["objective"] for goal in PersonalGoals(str(tmp_path)).list()] == ["买牛奶"]
-    assert local.post("/api/assistant/app-relay/op", headers=auth, json={"op": "nope", "args": {}}).status_code == 404
+    again = local.post("/api/assistant/app-relay/op", headers=auth, json={"envelope": env})
+    assert again.status_code == 401                                        # 同一个签名请求不能转发两次
     assert TestClient(app).post("/api/assistant/app-relay/op", headers=auth,
-                                json={"op": "capture", "args": {}}).status_code == 404   # 非本机来源
+                                json={"envelope": env}).status_code == 404   # 非本机来源

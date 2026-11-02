@@ -74,13 +74,25 @@ async def _body(request: Request) -> dict:
     return body
 
 
+def _opened(body: dict, expected: set):
+    """拆开转发来的签名请求并再验一遍；操作由签进去的路径决定，不在预期里就拒。"""
+    from src.gateway.relay_envelope import EnvelopeRejected, open_envelope
+    try:
+        op, data, _device, key_kind = open_envelope(os.getcwd(), body.get("envelope"))
+    except EnvelopeRejected as error:
+        raise HTTPException(401, str(error)) from None
+    if op not in expected:
+        raise HTTPException(401, "这个请求不能在这里执行")
+    return op, data, key_kind
+
+
 @router.post(TURN_PATH)
 async def start_turn(request: Request):
     _guard(request)
     from src.gateway.app_turns import AppTurnError
-    body = await _body(request)
+    _op, data, _kind = _opened(await _body(request), {"chat_send"})
     try:
-        return turns().start(body.get("request_id"), body.get("text")).public()
+        return turns().start(data.get("request_id"), data.get("text")).public()
     except AppTurnError as error:
         raise HTTPException(409, str(error)) from None
 
@@ -99,13 +111,12 @@ async def turn_status(request: Request):
 async def decide_card(request: Request):
     _guard(request)
     from src.gateway.app_turns import AppTurnError
-    body = await _body(request)
-    approve, key_kind = body.get("approve"), body.get("key_kind")
-    if not isinstance(approve, bool) or key_kind not in ("device", "approval"):
+    _op, data, key_kind = _opened(await _body(request), {"chat_card"})
+    if not isinstance(data.get("approve"), bool):
         raise HTTPException(400, "需要 {rid, card_id, approve, digest, key_kind}")
     try:
-        return turns().decide(str(body.get("rid")), str(body.get("card_id")), approve,
-                              str(body.get("digest")), key_kind)
+        return turns().decide(str(data.get("rid")), str(data.get("card_id")), data["approve"],
+                              str(data.get("digest")), key_kind)
     except KeyError:
         raise HTTPException(404, "没有这张卡") from None
     except AppTurnError as error:
@@ -132,13 +143,18 @@ async def recent_chat(request: Request):
     return {"registered": key is not None, "items": items[-limit:]}
 
 
+_OP_ARGS = {"capture": ("text", "request_id"), "undo": ("op_id",),
+            "decide_codex": ("action_id", "approve", "action_digest"), "dispatch": ("dispatch_id", "approve", "digest")}
+
+
 @router.post(OP_PATH)
 async def owner_op(request: Request):
-    """手机上的写操作（随手记、撤销、批 Codex 动作、下发 / 撤回任务单）：签名已由手机网关核对。"""
+    """手机上的写操作（随手记、撤销、批 Codex 动作、下发 / 撤回任务单）。网关转来的是手机签过名的原始请求，
+    这里再验一遍签名；做哪个操作由签进去的路径决定，参数只取签名请求体里的。"""
     _guard(request)
-    body = await _body(request)
+    op, data, _kind = _opened(await _body(request), set(_OP_ARGS))
     from src.web import owner_ops
-    status, data = await owner_ops.run(os.getcwd(), str(body.get("op") or ""), body.get("args"))
+    status, result = await owner_ops.run(os.getcwd(), op, {key: data.get(key) for key in _OP_ARGS[op]})
     if status >= 400:
-        raise HTTPException(status, str(data.get("detail") or "请求没有被接受"))
-    return data
+        raise HTTPException(status, str(result.get("detail") or "请求没有被接受"))
+    return result
