@@ -81,7 +81,7 @@ class _SlowAgent:
         self.started = asyncio.Event()
         self.cancelled = False
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None):
         say("🔧 working")
         self.started.set()
         try:
@@ -101,7 +101,7 @@ class _QueueAgent:
         self.active = 0
         self.max_active = 0
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None):
         self.seen.append(text)
         self.active += 1
         self.max_active = max(self.max_active, self.active)
@@ -748,7 +748,7 @@ async def test_ws_confirm_accepts_the_kernel_kind_argument():
 # ---- 会话持久化：同 sid 跨重连复用 agent + 回放对话 ----
 
 class _EchoAgent:
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None):
         emit("回复：" + text)
 
 
@@ -799,7 +799,7 @@ class _PlanAgent:
     def __init__(self):
         self.plan = []
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None):
         self.plan = [{"step": "x", "status": "in_progress"}]
         from src.web.routers.realtime import turn_bindings
         turn_bindings(self).emit_plan(self.plan)
@@ -885,7 +885,7 @@ class _DesktopContextAgent:
         say(f"read_file {args['path']}")
         return f"内容:{args['path']}"
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None):
         self.seen_text = text
         emit("已分析")
 
@@ -1123,7 +1123,7 @@ class _CaptureAgent:
         self.got_images = "unset"
         self.got_audio = "unset"
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None):
         self.got_images = images
         self.got_audio = audio
         emit("收到。")
@@ -1334,7 +1334,7 @@ async def test_rid_echoed_on_early_errors(monkeypatch):
 
 class _ThinkingAgent:
     """带思维链的假 agent：验证 want_reasoning 时 reasoning_cb 被接上、事件发出。"""
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None,
                        reasoning_cb=None):
         if reasoning_cb:
             reasoning_cb("想一想")
@@ -1347,7 +1347,7 @@ class _HookLifecycleAgent:
     def __init__(self):
         self.plan = []
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None,
                        reasoning_cb=None):
         from src.web.routers.realtime import turn_bindings
         callback = turn_bindings(self).emit_tool_event
@@ -1498,7 +1498,7 @@ class _LateCallbackAgent:
         self.plan = []
         self.kept = None
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None,
                        reasoning_cb=None):
         from src.web.routers.realtime import turn_bindings
         self.kept = turn_bindings(self)

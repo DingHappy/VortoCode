@@ -1552,7 +1552,7 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
                 turn_text += "\n\n" + hint
             await agent.run_turn(turn_text, mode=mode, say=agent_say, emit=agent_emit,
                                  stream_cb=agent_stream, images=images, audio=audio,
-                                 **extra_cbs)
+                                 owner_text=text, **extra_cbs)
         except asyncio.CancelledError:        # 中断：直接上抛，不当成错误
             outcome = "cancelled"
             raise

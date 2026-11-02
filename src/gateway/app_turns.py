@@ -129,7 +129,7 @@ class AppTurns:
             self._current = turn
             try:
                 agent.history = list(history)
-                reply = await agent.run_turn(turn.text, mode="build")
+                reply = await agent.run_turn(turn.text, mode="build", owner_text=turn.text)
                 return list(agent.history), str(reply or "")
             finally:
                 self._current = None

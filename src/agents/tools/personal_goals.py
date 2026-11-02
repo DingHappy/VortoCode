@@ -92,6 +92,17 @@ def build_personal_goal_tools(root: str, confirm=None) -> list[Tool]:
     return tools + _write_tools(root, confirm)
 
 
+def _field_origin(value) -> str:
+    """字段来源：没读过外部内容 → 主人；读过但这段文字基本取自主人本回合亲手说的话 → 也算主人；否则外部。"""
+    from src.agents.taint import is_tainted, owner_said
+
+    if not is_tainted():
+        return "owner"
+    texts = [str(item) for item in value] if isinstance(value, list) else [str(value or "")]
+    texts = [text for text in texts if text.strip()]
+    return "owner" if texts and all(owner_said(text) for text in texts) else "external"
+
+
 def _write_tools(root: str, confirm) -> list[Tool]:
     from src.agents.gate import request
     from src.agents.taint import is_tainted
@@ -111,8 +122,8 @@ def _write_tools(root: str, confirm) -> list[Tool]:
         if not await request(confirm, preview, OWN_DATA):
             return "没有新建目标（未获同意）。"
         try:
-            origin = "external" if is_tainted() else "owner"
-            goal = await asyncio.to_thread(lambda: PersonalGoals(root).create(body, origin=origin))
+            origins = {key: _field_origin(body.get(key)) for key in ("objective", "acceptance_criteria", "next_action")}
+            goal = await asyncio.to_thread(lambda: PersonalGoals(root).create(body, origins=origins))
         except (OSError, ValueError) as error:
             return f"目标没建成：{error}"
         undo_log.record(root, action="personal_goal.create", summary=f"新建目标「{goal['objective'][:60]}」",
@@ -136,9 +147,9 @@ def _write_tools(root: str, confirm) -> list[Tool]:
         if not await request(confirm, "\n".join(lines), OWN_DATA):
             return "没有修改目标（未获同意）。"
         try:
-            origin = "external" if is_tainted() else "owner"
+            origins = {key: _field_origin(changes[key]) for key in ("next_action", "blocker") if key in changes}
             after = await asyncio.to_thread(lambda: service.update(goal_id, {"revision": before["revision"], **changes},
-                                                                   origin=origin))
+                                                                   origins=origins))
         except (OSError, KeyError, ValueError) as error:
             return f"目标没改成：{error}"
         cancelled = (before.get("follow_up") or {}).get("status") == "scheduled"
