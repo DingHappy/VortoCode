@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import contextvars
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
@@ -33,10 +34,35 @@ _tainted: contextvars.ContextVar = contextvars.ContextVar("vortocode_taint", def
 _source: contextvars.ContextVar = contextvars.ContextVar("vortocode_taint_src", default="")
 
 
+# 主人本回合在 App / Desktop 输入框里亲手打的字（不可信入口一律为空）。只用来判断「写进事项的文字是不是
+# 取自主人自己的话」，不参与放行判定：历史里留着外部内容时，主人亲手说的「周五前交周报」不该被标成外部来源。
+_owner_text: contextvars.ContextVar = contextvars.ContextVar("vortocode_owner_text", default="")
+
+
 def reset_taint() -> None:
     """回合开始时清除污点态。"""
     _tainted.set(False)
     _source.set("")
+    _owner_text.set("")
+
+
+def set_owner_text(text: str) -> None:
+    _owner_text.set(str(text or "")[:8000])
+
+
+def _tokens(text: str) -> list[str]:
+    """汉字逐字、拉丁字母按词（小写）；数字和标点不算——模型常补日期，日期本身不是指令。"""
+    return re.findall(r"[\u4e00-\u9fff]|[a-z]+", str(text or "").lower())
+
+
+def owner_said(text: str, *, coverage: float = 0.8) -> bool:
+    """这段文字是不是基本取自主人本回合亲手输入的消息：它的字 / 词至少八成出现在主人的话里。"""
+    said = _owner_text.get()
+    tokens = _tokens(text)
+    if not said or len(tokens) < 2:
+        return False
+    pool = set(_tokens(said))
+    return sum(token in pool for token in tokens) / len(tokens) >= coverage
 
 
 def mark_tainted() -> None:

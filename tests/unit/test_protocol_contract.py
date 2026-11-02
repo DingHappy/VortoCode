@@ -320,7 +320,7 @@ class _ScriptedAgent:
     def __init__(self):
         self.plan = []
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None,
                        reasoning_cb=None):
         say("🔧 tool")
         if reasoning_cb:

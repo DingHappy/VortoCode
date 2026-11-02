@@ -1621,6 +1621,7 @@ class MainAgent:
         audio: Optional[list] = None,
         reasoning_cb: Optional[Callable[[str], None]] = None,
         execution_ref: ExecutionRef | None = None,
+        owner_text: str | None = None,
     ) -> str:
         """一轮对话的外壳：在回合首尾触发 agent_start / agent_end 生命周期钩子，主体见 _run_turn_body。
 
@@ -1655,6 +1656,9 @@ class MainAgent:
         # 用 channel 档而非 external：拦截强度完全一样，但别把"你自己打了句话"说成"读过网页"。
         if self._untrusted_input:
             mark_channel_untrusted()
+        elif owner_text:                    # 主人终端（App / Desktop）亲手输入的原话，见 taint.owner_said
+            from src.agents.taint import set_owner_text
+            set_owner_text(owner_text)
         # 共享主要聊天后，历史里可能留着别的入口或上几轮读进来的外部内容：上下文里还有就算污点
         # （ADR-012）。主人终端的干净输入不能把它们洗白，直到压缩或滚出窗口。
         if self._context_has_external(mode):

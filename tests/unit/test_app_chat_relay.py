@@ -18,7 +18,7 @@ class FakeAgent:
     def __init__(self, confirm, ask: str | None):
         self.confirm, self.ask, self.history = confirm, ask, []
 
-    async def run_turn(self, text, mode="plan"):
+    async def run_turn(self, text, mode="plan", **_kwargs):
         if self.ask is not None:
             ok = await self.confirm(self.ask)
             return "已记下" if ok else "没有记"

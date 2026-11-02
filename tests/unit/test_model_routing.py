@@ -63,7 +63,7 @@ class _ModelAgent:
     def set_model(self, model):
         self.models.append(model)
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, reasoning_cb=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None, owner_text=None, reasoning_cb=None):
         emit("ok")
 
 

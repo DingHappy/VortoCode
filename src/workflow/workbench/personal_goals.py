@@ -157,7 +157,7 @@ class PersonalGoals:
             raise OSError("目标未保存，请刷新确认后重试")
         return self._view(goal)
 
-    def create(self, body: dict, *, origin: str = "owner") -> dict:
+    def create(self, body: dict, *, origin: str = "owner", origins: dict | None = None) -> dict:
         _fields(body, {"request_id", "objective", "acceptance_criteria", "next_action", "due_at", "follow_up_at"})
         request_id = body.get("request_id")
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id):
@@ -185,7 +185,8 @@ class PersonalGoals:
             goal.kind, goal.status, goal.revision = "personal", "active", 1
             goal.request_fingerprint = fingerprint
             goal.next_action, goal.due_at, goal.follow_up_at = next_action, due, follow_up
-            goal.origins = {key: _origin(origin) for key in ("objective", "acceptance_criteria", "next_action")}
+            goal.origins = {key: _origin((origins or {}).get(key, origin))
+                            for key in ("objective", "acceptance_criteria", "next_action")}
             return self._save(goal)
 
     @staticmethod
@@ -244,12 +245,13 @@ class PersonalGoals:
             goal.revision += 1
             return self._save(goal)
 
-    def update(self, goal_id: str, body: dict, *, origin: str = "owner") -> dict:
+    def update(self, goal_id: str, body: dict, *, origin: str = "owner", origins: dict | None = None) -> dict:
         _fields(body, {"revision", "next_action", "blocker", "due_at", "follow_up_at"})
         with self._lock(goal_id):
             goal = self._load(goal_id)
             self._revision(goal, body)
-            return self._apply_progress(goal, body, {key: origin for key in ("next_action", "blocker") if key in body})
+            return self._apply_progress(goal, body, {key: (origins or {}).get(key, origin)
+                                                     for key in ("next_action", "blocker") if key in body})
 
     def _apply_progress(self, goal: Goal, body: dict, origins: dict) -> dict:
         if goal.status == "achieved":
