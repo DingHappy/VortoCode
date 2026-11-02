@@ -23,6 +23,11 @@ def _target() -> tuple[str, str]:
     return url, token
 
 
+def configured() -> bool:
+    """配了转发地址和令牌（地址不合法也算配了，由 relay 报错，不悄悄退回本地执行）。"""
+    return bool(os.getenv("VORTOCODE_APP_RELAY_URL", "").strip() and os.getenv("VORTOCODE_APP_RELAY_TOKEN", "").strip())
+
+
 async def relay(path: str, body: dict, *, client=None) -> tuple[int, dict]:
     """POST 给常驻助理的 app-relay 接口，返回 (状态码, JSON)。连不上抛 RelayUnavailable。"""
     import httpx

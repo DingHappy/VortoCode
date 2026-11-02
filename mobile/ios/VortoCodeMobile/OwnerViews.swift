@@ -148,7 +148,11 @@ struct ActivityView: View {
                 Section { Text(owner.readOnlyReason).foregroundStyle(.secondary) }
             } else {
                 Section("等你决定") {
-                    if owner.decisions.isEmpty { Text("现在没有等你批准的动作。").foregroundStyle(.secondary) }
+                    if owner.decisions.isEmpty && owner.dispatches.isEmpty {
+                        Text("现在没有等你批准的事。在对话里说「让 Codex 把…」「派个任务去…」，助理拟好会出现在这里。")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(owner.dispatches) { proposal in dispatchRow(proposal) }
                     ForEach(owner.decisions) { decision in decisionRow(decision) }
                 }
             }
@@ -183,6 +187,33 @@ struct ActivityView: View {
                 Button("批准（Face ID）") { act(decision, approve: true) }.buttonStyle(.borderedProminent)
             }.disabled(owner.working).buttonStyle(.bordered)
         }.padding(.vertical, 4)
+    }
+
+    private func dispatchRow(_ proposal: DispatchProposal) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("任务单 · \(proposal.project ?? "项目")", systemImage: "hammer").font(.headline)
+            Text(proposal.title).font(.subheadline.bold())
+            Text(proposal.goal).font(.subheadline).textSelection(.enabled).lineLimit(6)
+            if !proposal.criteria.isEmpty {
+                Text("验收：" + proposal.criteria.joined(separator: "；")).font(.footnote).foregroundStyle(.secondary)
+            }
+            if proposal.tainted {
+                Label("助理读过外部内容后拟的，请到电脑上核对后下发", systemImage: "exclamationmark.triangle")
+                    .font(.footnote).foregroundStyle(.orange)
+            }
+            HStack {
+                Button("撤回", role: .destructive) { dispatch(proposal, approve: false) }
+                Spacer()
+                if !proposal.tainted {
+                    Button("下发（Face ID）") { dispatch(proposal, approve: true) }.buttonStyle(.borderedProminent)
+                }
+            }.disabled(owner.working).buttonStyle(.bordered)
+        }.padding(.vertical, 4)
+    }
+
+    private func dispatch(_ proposal: DispatchProposal, approve: Bool) {
+        guard let credential = session.credential else { return }
+        Task { await owner.decideDispatch(entry, credential, proposal, approve: approve) }
     }
 
     private func changeRow(_ change: OwnerChange) -> some View {

@@ -1100,6 +1100,12 @@
     ]
   },
   {
+    "path": "/api/assistant/app-relay/op",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/assistant/skills",
     "methods": [
       "GET"
@@ -1407,6 +1413,18 @@
   },
   {
     "path": "/api/mobile/native/chat/card",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/dispatches",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/dispatch",
     "methods": [
       "POST"
     ]
