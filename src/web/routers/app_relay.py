@@ -21,7 +21,8 @@ TURN_PATH = "/api/assistant/app-relay/turn"
 STATUS_PATH = "/api/assistant/app-relay/status"
 CARD_PATH = "/api/assistant/app-relay/card"
 CHAT_PATH = "/api/assistant/app-relay/chat"
-PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH)
+OP_PATH = "/api/assistant/app-relay/op"
+PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH)
 
 _turns = None
 
@@ -129,3 +130,15 @@ async def recent_chat(request: Request):
              for item in (data or {}).get("transcript") or []
              if isinstance(item, dict) and item.get("role") in ("user", "assistant")]
     return {"registered": key is not None, "items": items[-limit:]}
+
+
+@router.post(OP_PATH)
+async def owner_op(request: Request):
+    """手机上的写操作（随手记、撤销、批 Codex 动作、下发 / 撤回任务单）：签名已由手机网关核对。"""
+    _guard(request)
+    body = await _body(request)
+    from src.web import owner_ops
+    status, data = await owner_ops.run(os.getcwd(), str(body.get("op") or ""), body.get("args"))
+    if status >= 400:
+        raise HTTPException(status, str(data.get("detail") or "请求没有被接受"))
+    return data

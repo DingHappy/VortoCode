@@ -22,6 +22,15 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertEqual(waiting.code, "AB12-CD34")
     }
     /// 对话接口的回包：回合、卡片、主要聊天记录（字段与服务端 app_turns / app_relay 一致）
+    func testDispatchProposalContract() throws {
+        let raw: [String: Any] = ["dispatches": [["id": "dsp-0123456789", "project": "VortoCode", "title": "修登录",
+            "goal": "登录不再 500", "status": "proposed", "tainted": false, "created_at": "2026-11-02T08:00:00",
+            "criteria": ["登录 200"], "digest": String(repeating: "a", count: 64)]]]
+        struct Reply: Decodable { let dispatches: [DispatchProposal] }
+        let reply = try MobileAPI.decoder.decode(Reply.self, from: JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(reply.dispatches.first?.title, "修登录")
+        XCTAssertFalse(reply.dispatches[0].tainted)
+    }
     func testChatContracts() throws {
         let turn = try MobileAPI.decoder.decode(ChatTurn.self, from: JSONSerialization.data(withJSONObject: [
             "rid": "app-0123456789abcdef", "request_id": "req-00000001", "state": "waiting", "reply": "", "error": "",

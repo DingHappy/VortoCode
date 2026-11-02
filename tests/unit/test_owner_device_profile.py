@@ -42,7 +42,8 @@ def test_assembled_tools_are_limited_to_reads_research_and_owner_data(tmp_path, 
         if name in decisions:
             assert name not in allowed, name
     for name in ("read_file", "grep", "web_search", "recall_memory", "personal_goal_create",
-                 "personal_goal_update", "save_memory"):
+                 "personal_goal_update", "save_memory", "propose_task", "propose_codex_message",
+                 "propose_codex_interrupt"):
         if name in decisions:
             assert name in allowed, name
     # 放行的写入只有主人自己的事项与记忆

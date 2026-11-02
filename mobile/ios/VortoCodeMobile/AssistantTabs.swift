@@ -12,7 +12,7 @@ struct AssistantTabs: View {
                 .tabItem { Label("对话", systemImage: "bubble.left.and.bubble.right") }
             NavigationStack { ActivityView(entry: entry, session: session, owner: owner) }
                 .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
-                .badge(owner.decisions.count + (owner.turn?.pendingCards.count ?? 0))
+                .badge(owner.decisions.count + owner.dispatches.count + (owner.turn?.pendingCards.count ?? 0))
             NavigationStack { settings.navigationTitle("我") }
                 .tabItem { Label("我", systemImage: "person.crop.circle") }
         }

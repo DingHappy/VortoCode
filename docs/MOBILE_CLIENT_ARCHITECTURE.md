@@ -125,6 +125,18 @@ Desktop 同一段对话可见。回合中途要确认的动作变成待批准卡
 | `GET /api/mobile/native/chat` | 会话 + 钥匙已信任 | 主要聊天最近 50 条（各入口都有，标来源），只给正文 |
 | `POST /api/mobile/native/chat/card` | 会话 + 签名（`key_kind` 声明用哪把钥匙并一起签进去） | `{rid, card_id, approve, digest, key_kind}`；级别不够的卡由助理拒绝 |
 
+**写操作在常驻助理里执行（2026-11-02）**：随手记、撤销、批 Codex 动作、下发 / 撤回任务单都由手机网关核对签名后，
+经 `/api/assistant/app-relay/op` 转给常驻助理执行（`web/owner_ops.py`）。网关的 systemd 沙箱只能写设备授权目录，
+写不了目标、撤销记录、Codex 动作和任务单；没配转发时（本机开发、测试）网关就地执行同一份代码。
+
+**派活（2026-11-02）**：对话里说「派个任务去…」「让 Codex 把…」，助理（`owner_device` 档案只允许「拟」：`propose_task`、
+`propose_codex_message`、`propose_codex_interrupt`）拟好任务单或给 Codex 的话，出现在「动态 → 等你决定」：
+
+| 方法与路径 | 身份 | 效果 |
+| --- | --- | --- |
+| `GET /api/mobile/native/dispatches` | 会话 + 钥匙已信任 | 等你下发的任务单，带 `digest` |
+| `POST /api/mobile/native/dispatch` | 会话 + 签名：下发用批准钥匙（Face ID），撤回用日常钥匙 | `{dispatch_id, approve, digest}`；读过外部内容后拟的只能在 Desktop 上下发 |
+
 **钥匙**：两把都在 Secure Enclave 里生成，私钥不出设备。批准钥匙创建时要求生物识别
 （`kSecAccessControlBiometryCurrentSet`），所以「批准必须过 Face ID」由密码学保证，服务端只认这把钥匙签的批准。
 公钥格式为 `SecKeyCopyExternalRepresentation` 的输出（65 字节未压缩点）的 base64。

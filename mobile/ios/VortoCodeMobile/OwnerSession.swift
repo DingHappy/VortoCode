@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 final class OwnerSession {
     var bootstrap: NativeBootstrap?
     var decisions: [PendingDecision] = []
+    var dispatches: [DispatchProposal] = []
     var changes: [OwnerChange] = []
     var note = ""
     var working = false
@@ -105,8 +106,10 @@ final class OwnerSession {
         do {
             async let pending = api(entry).decisions(credential)
             async let done = api(entry).changes(credential)
+            async let orders = api(entry).dispatches(credential)
             decisions = try await pending
             changes = Array(try await done.reversed())
+            dispatches = try await orders
         } catch { say(error) }
     }
 
@@ -117,6 +120,18 @@ final class OwnerSession {
             let outcome = try await api(entry).decide(credential, signer: signer, deviceId: device,
                                                       decision: decision, approve: approve)
             note = approve ? "已批准：\(outcome.statusText)" : "已拒绝，这条不会发出。"
+        } catch { say(error) }
+        await refresh(entry, credential)
+    }
+
+    func decideDispatch(_ entry: AssistantEntry, _ credential: NativeCredential, _ proposal: DispatchProposal,
+                        approve: Bool) async {
+        guard let device = bootstrap?.device.id, !working else { return }
+        working = true; defer { working = false }
+        do {
+            let outcome = try await api(entry).dispatch(credential, signer: signer, deviceId: device,
+                                                        proposal: proposal, approve: approve)
+            note = "「\(proposal.title)」\(outcome.statusText)"
         } catch { say(error) }
         await refresh(entry, credential)
     }

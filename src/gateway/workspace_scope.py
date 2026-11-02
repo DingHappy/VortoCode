@@ -82,7 +82,9 @@ _GENERAL_HTTP_PATTERNS = (
                # 主人终端写入：只动常驻助理自己的目标、撤销记录和 Codex 待批动作，不碰项目文件、Shell 或 Git
                r"|keys|decisions|decide|capture|changes|undo|push"
                # 对话：转给常驻助理以 owner_device 档案跑回合，不碰项目文件、Shell 或 Git
-               r"|chat|chat/(send|turn|card)))"),
+               r"|chat|chat/(send|turn|card)"
+               # 任务单：只读常驻助理已有的任务单，下发 / 撤回交给常驻助理执行
+               r"|dispatches|dispatch))"),
     re.compile(r"/api/runtime-activity"),  # 只读进程活动计数，不授予任务、文件或命令能力。
     re.compile(r"/api/cron/[^/]+/(enabled|history)"),
 )

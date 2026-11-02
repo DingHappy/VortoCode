@@ -8,6 +8,7 @@ struct ChatView: View {
     let session: AssistantSession
     @Bindable var owner: OwnerSession
     @Environment(\.scenePhase) private var scenePhase
+    @FocusState private var typing: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,10 @@ struct ChatView: View {
                         Color.clear.frame(height: 1).id("bottom")
                     }.padding(.horizontal).padding(.top, 8)
                 }
+                // 点消息区域或往下拖都收起键盘（原来点别处键盘退不下）
+                .scrollDismissesKeyboard(.interactively)
+                .contentShape(Rectangle())
+                .onTapGesture { typing = false }
                 .onChange(of: owner.chat.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
                 .onChange(of: owner.turn?.cards.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
                 .refreshable { if let credential = session.credential { await owner.loadChat(entry, credential) } }
@@ -95,6 +100,7 @@ struct ChatView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(owner.captureOnly ? "比如：周五前交周报" : "跟助理说…", text: $owner.draft, axis: .vertical)
                     .lineLimit(1...5).textFieldStyle(.roundedBorder)
+                    .focused($typing)
                     .disabled(!owner.canWrite)
                 Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                     .disabled(!canSend).accessibilityLabel(owner.captureOnly ? "记下" : "发送")
@@ -113,6 +119,7 @@ struct ChatView: View {
 
     private func send() {
         guard let credential = session.credential else { return }
+        typing = false
         Task { await owner.send(entry, credential) }
     }
 
@@ -141,7 +148,11 @@ struct ActivityView: View {
                 Section { Text(owner.readOnlyReason).foregroundStyle(.secondary) }
             } else {
                 Section("等你决定") {
-                    if owner.decisions.isEmpty { Text("现在没有等你批准的动作。").foregroundStyle(.secondary) }
+                    if owner.decisions.isEmpty && owner.dispatches.isEmpty {
+                        Text("现在没有等你批准的事。在对话里说「让 Codex 把…」「派个任务去…」，助理拟好会出现在这里。")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(owner.dispatches) { proposal in dispatchRow(proposal) }
                     ForEach(owner.decisions) { decision in decisionRow(decision) }
                 }
             }
@@ -176,6 +187,33 @@ struct ActivityView: View {
                 Button("批准（Face ID）") { act(decision, approve: true) }.buttonStyle(.borderedProminent)
             }.disabled(owner.working).buttonStyle(.bordered)
         }.padding(.vertical, 4)
+    }
+
+    private func dispatchRow(_ proposal: DispatchProposal) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("任务单 · \(proposal.project ?? "项目")", systemImage: "hammer").font(.headline)
+            Text(proposal.title).font(.subheadline.bold())
+            Text(proposal.goal).font(.subheadline).textSelection(.enabled).lineLimit(6)
+            if !proposal.criteria.isEmpty {
+                Text("验收：" + proposal.criteria.joined(separator: "；")).font(.footnote).foregroundStyle(.secondary)
+            }
+            if proposal.tainted {
+                Label("助理读过外部内容后拟的，请到电脑上核对后下发", systemImage: "exclamationmark.triangle")
+                    .font(.footnote).foregroundStyle(.orange)
+            }
+            HStack {
+                Button("撤回", role: .destructive) { dispatch(proposal, approve: false) }
+                Spacer()
+                if !proposal.tainted {
+                    Button("下发（Face ID）") { dispatch(proposal, approve: true) }.buttonStyle(.borderedProminent)
+                }
+            }.disabled(owner.working).buttonStyle(.bordered)
+        }.padding(.vertical, 4)
+    }
+
+    private func dispatch(_ proposal: DispatchProposal, approve: Bool) {
+        guard let credential = session.credential else { return }
+        Task { await owner.decideDispatch(entry, credential, proposal, approve: approve) }
     }
 
     private func changeRow(_ change: OwnerChange) -> some View {
