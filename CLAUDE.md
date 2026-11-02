@@ -49,7 +49,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 **安全内核（改动前必读——最容易踩的地方）**：安全规则**上收到内核一处**，别在每个端各写一遍（那正是"加一端漏一端"的历史病根，`tests/unit/test_three_end_contract.py` 是钉死它的能力矩阵契约表）。
 - **确认门** `make_confirm_gate`（**`src/agents/gate.py`**，main_agent 仅再导出）：唯一的确认/放行判定。各端只声明能力（`auto_approve` 是否 headless、`can_ask_human` 是否有真人），**由内核决定问不问、能不能免**。别再往 `build_agent_tools` 塞裸 confirm。
-- **污点追踪** `src/agents/taint.py`（`contextvars.ContextVar`，多会话并发互不串扰）：本回合摄入过 web/search/MCP 外部内容即"污点"，**污点态下一切免确认授权失效**（防提示注入 D0）。
+- **污点追踪** `src/agents/taint.py`（`contextvars.ContextVar`，多会话并发互不串扰）：本回合摄入过 web/search/MCP 外部内容即"污点"，**污点态下一切免确认授权失效**（防提示注入 D0）。共享主要聊天后，外部工具结果和不可信入口（IM）的消息在历史里带出处标记（`taint.EXTERNAL_MARK`，发给模型前剥掉），**上下文里还留着它们时回合起点就是污点**（ADR-012），直到压缩或滚出窗口。
 - **能力档案** `src/agents/capabilities.py`：local/external/unattended 三档，另有 `owner_device`（手机 App 发起的回合，ADR-012：只读检索、查资料、改主人自己的事项与记忆；命令、写文件、操控电脑与浏览器、派活、对外发送一律拒绝，白名单见 `OWNER_DEVICE_WRITE_TOOLS`）。`UNATTENDED_PROFILE`（cron/heartbeat）**fail-closed 且不给出网工具**（`with_web=False`）——因为无人值守下系统提示可能被本地文件污染，而 web_fetch 的 GET query 就是外传通道。
 - **记忆写入策略** `src/memory/write_policy.py`：durable/proposal/quarantine/reject 四级；污点回合的指令性文本与疑似凭据不进长期记忆。
 - **前缀缓存稳定**：system prompt 在**同一会话内必须字节级稳定**（静态注入，装配时读一次），否则破坏 relay 侧前缀缓存命中。仓库记忆（`src/agents/repo_memory.py`）等静态注入项都遵守这条。
@@ -81,7 +81,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 ## 约定与坑
 
-- **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）；手机端是只读伴侣，写入/审批/推送等 P1 稳定后再议（ADR-009）。**终端 TUI 与浏览器对话台（`/agent`、PWA、`/artifacts` 画廊）已于 2026-10-17 退役删除**；`src/web/` 保留的是 Desktop 用的 API 与 `/ws`，以及流水线审批台 `/review`（IM 通知里的审批链接指向它）和制品查看页 `/artifact/<id>`。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
+- **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）。**主人终端（2026-11-02 起，ADR-011/012）**：Desktop 与 iOS App 同构、对话为中心、向 Muse 一类的个人 Agent 应用靠拢；App 已有签名写入、新手机批准与加密推送，手机对话按 ADR-012 的阶段 A 接入（前提：历史污点、`owner_device` 档案）。**终端 TUI 与浏览器对话台（`/agent`、PWA、`/artifacts` 画廊）已于 2026-10-17 退役删除**；`src/web/` 保留的是 Desktop 用的 API 与 `/ws`，以及流水线审批台 `/review`（IM 通知里的审批链接指向它）和制品查看页 `/artifact/<id>`。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
 - **任务协作高级功能已冻结（2026-10-22，ADR-008）**：`workflow/tasks` 下的 `task_scan`、`task_dependents`、`task_dependencies`、`task_chain_budget`、`continuations`、`check_reports`、`model_evidence`、`model_comparison`、`runtime_inbox`、`dashboard` 不加新功能，只修安全问题和明确的 bug。隔离开发流水线和助理派活照常维护。新需求先看能不能放进常驻助理或 Codex 监管。
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
