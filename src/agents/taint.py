@@ -19,7 +19,7 @@ from __future__ import annotations
 import contextvars
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Any, Iterable, Iterator
 
 _tainted: contextvars.ContextVar = contextvars.ContextVar("vortocode_taint", default=False)
 # 污点的**来源**，只用来决定跟人怎么说，**绝不参与放行判定**（两种来源一律算污点）。
@@ -55,13 +55,44 @@ def mark_channel_untrusted() -> None:
         _source.set("channel")
 
 
+def mark_context_external() -> None:
+    """本回合本身没读外部内容，但**上下文里还留着之前读进来的外部内容**——同样算污点（ADR-012）。
+
+    共享主要聊天后，Telegram 转来的文字、上几轮读过的网页结果都留在历史里；主人终端的一句
+    「继续」不能把它们洗白成干净输入。不降级已有的 external / channel 来源，只影响措辞。
+    """
+    _tainted.set(True)
+    if _source.get() not in ("external", "channel"):
+        _source.set("context")
+
+
+# 历史消息上的出处标记：外部工具结果、不可信入口的用户消息。随历史一起落盘、在入口之间传递，
+# 发给模型前剥掉（`without_marks`）。只标真正来自外部的消息，不标助理自己的回复。
+EXTERNAL_MARK = "_vc_external"
+
+
+def mark_message_external(message: dict) -> None:
+    message[EXTERNAL_MARK] = True
+
+
+def has_external(messages: Iterable[Any]) -> bool:
+    return any(isinstance(message, dict) and message.get(EXTERNAL_MARK) for message in messages)
+
+
+def without_marks(messages: list) -> list:
+    """发给模型前去掉出处标记；没有标记的消息原样返回（不复制）。"""
+    return [{key: value for key, value in message.items() if key != EXTERNAL_MARK}
+            if isinstance(message, dict) and EXTERNAL_MARK in message else message
+            for message in messages]
+
+
 def is_tainted() -> bool:
     """本回合是否处于污点态（两种来源一视同仁——放行判定只看这个）。"""
     return _tainted.get()
 
 
 def taint_source() -> str:
-    """污点来源：``external`` / ``channel`` / ``""``（未污点）。**仅供措辞**。"""
+    """污点来源：``external`` / ``channel`` / ``context`` / ``""``（未污点）。**仅供措辞**。"""
     return _source.get() if _tainted.get() else ""
 
 
