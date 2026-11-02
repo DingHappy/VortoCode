@@ -50,7 +50,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 **安全内核（改动前必读——最容易踩的地方）**：安全规则**上收到内核一处**，别在每个端各写一遍（那正是"加一端漏一端"的历史病根，`tests/unit/test_three_end_contract.py` 是钉死它的能力矩阵契约表）。
 - **确认门** `make_confirm_gate`（**`src/agents/gate.py`**，main_agent 仅再导出）：唯一的确认/放行判定。各端只声明能力（`auto_approve` 是否 headless、`can_ask_human` 是否有真人），**由内核决定问不问、能不能免**。别再往 `build_agent_tools` 塞裸 confirm。
 - **污点追踪** `src/agents/taint.py`（`contextvars.ContextVar`，多会话并发互不串扰）：本回合摄入过 web/search/MCP 外部内容即"污点"，**污点态下一切免确认授权失效**（防提示注入 D0）。
-- **能力档案** `src/agents/capabilities.py`：local/external/unattended 三档。`UNATTENDED_PROFILE`（cron/heartbeat）**fail-closed 且不给出网工具**（`with_web=False`）——因为无人值守下系统提示可能被本地文件污染，而 web_fetch 的 GET query 就是外传通道。
+- **能力档案** `src/agents/capabilities.py`：local/external/unattended 三档，另有 `owner_device`（手机 App 发起的回合，ADR-012：只读检索、查资料、改主人自己的事项与记忆；命令、写文件、操控电脑与浏览器、派活、对外发送一律拒绝，白名单见 `OWNER_DEVICE_WRITE_TOOLS`）。`UNATTENDED_PROFILE`（cron/heartbeat）**fail-closed 且不给出网工具**（`with_web=False`）——因为无人值守下系统提示可能被本地文件污染，而 web_fetch 的 GET query 就是外传通道。
 - **记忆写入策略** `src/memory/write_policy.py`：durable/proposal/quarantine/reject 四级；污点回合的指令性文本与疑似凭据不进长期记忆。
 - **前缀缓存稳定**：system prompt 在**同一会话内必须字节级稳定**（静态注入，装配时读一次），否则破坏 relay 侧前缀缓存命中。仓库记忆（`src/agents/repo_memory.py`）等静态注入项都遵守这条。
 
