@@ -137,16 +137,25 @@ def relay_app(tmp_path, monkeypatch):
     return app
 
 
-def test_relay_routes_need_the_relay_token_and_a_loopback_peer(relay_app, shared_chat):
+def test_relay_routes_need_the_relay_token_and_a_loopback_peer(relay_app, shared_chat, tmp_path):
+    from tests.unit.test_relay_envelope import envelope, phone
+    device_id, device, _ = phone(tmp_path)
     local = TestClient(relay_app, client=("127.0.0.1", 50000))
     remote = TestClient(relay_app)
-    body = {"request_id": "req-00000007", "text": "你好"}
-    assert remote.post("/api/assistant/app-relay/turn", json=body,
+
+    def body(request_id):
+        return {"envelope": envelope(device_id, device, "/api/mobile/native/chat/send",
+                                     {"request_id": request_id, "text": "你好"})}
+    assert remote.post("/api/assistant/app-relay/turn", json=body("req-00000007"),
                        headers={"Authorization": "Bearer relay-token"}).status_code == 404
-    assert local.post("/api/assistant/app-relay/turn", json=body,
+    assert local.post("/api/assistant/app-relay/turn", json=body("req-00000008"),
                       headers={"Authorization": "Bearer admin-token"}).status_code == 404   # 主令牌进不来
-    started = local.post("/api/assistant/app-relay/turn", json=body, headers={"Authorization": "Bearer relay-token"})
+    started = local.post("/api/assistant/app-relay/turn", json=body("req-00000009"),
+                         headers={"Authorization": "Bearer relay-token"})
     assert started.status_code == 200 and started.json()["rid"].startswith("app-")
+    # 只有令牌、没有手机签名：拒
+    assert local.post("/api/assistant/app-relay/turn", json={"request_id": "req-00000010", "text": "x"},
+                      headers={"Authorization": "Bearer relay-token"}).status_code == 401
     # 专用令牌也进不了别的接口
     assert local.get("/api/assistant/goals", headers={"Authorization": "Bearer relay-token"}).status_code == 401
 
@@ -192,7 +201,11 @@ def test_send_requires_a_device_signature_and_is_forwarded(owner, relayed):  # n
     assert client.post("/api/mobile/native/chat/send", json=payload, headers=headers).status_code == 401
     response = signed(client, headers, device_id, "/api/mobile/native/chat/send", payload, device)
     assert response.status_code == 200 and response.json()["rid"] == "app-" + "a" * 16
-    assert relayed == [("/api/assistant/app-relay/turn", payload)]
+    [(path, body)] = relayed
+    env = body["envelope"]                                   # 转发的是签过名的原始请求，不是摘出来的参数
+    assert path == "/api/assistant/app-relay/turn" and env["path"] == "/api/mobile/native/chat/send"
+    import base64, json as _json
+    assert _json.loads(base64.b64decode(env["body"])) == payload and env["signature"]
 
 
 def test_reading_the_chat_needs_a_trusted_key(owner, relayed):  # noqa: F811
@@ -210,7 +223,7 @@ def test_card_decision_is_signed_with_the_declared_key(owner, relayed):  # noqa:
     wrong = signed(client, headers, device_id, "/api/mobile/native/chat/card", body, device)
     assert wrong.status_code == 401                         # 声明用批准钥匙却用日常钥匙签：拒
     right = signed(client, headers, device_id, "/api/mobile/native/chat/card", body, approval)
-    assert right.status_code == 200 and relayed[-1][1]["key_kind"] == "approval"
+    assert right.status_code == 200 and relayed[-1][1]["envelope"]["key_kind"] == "approval"
 
 
 def test_chat_is_unavailable_until_the_relay_is_configured(owner, monkeypatch):  # noqa: F811
