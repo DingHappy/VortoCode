@@ -301,7 +301,8 @@ function App() {
   const [feedScope, setFeedScope] = useState<"all" | "session">("all");
   // 助理模式（参考 Muse 个人助理）：一个常驻「主要聊天」+ 旁聊；右侧是助理本人与它做过的事。
   const [appMode, setAppMode] = useState<AppMode>(() => {
-    try { return localStorage.getItem(STORAGE_KEYS.appMode) === "assistant" ? "assistant" : "work"; } catch { return "work"; }
+    // 默认进助理模式（ADR-012：个人 Agent 是主入口）；选过工作台的照旧
+    try { return localStorage.getItem(STORAGE_KEYS.appMode) === "work" ? "work" : "assistant"; } catch { return "assistant"; }
   });
   const appModeRef = useRef(appMode);
   appModeRef.current = appMode;
