@@ -6,71 +6,28 @@ struct AssistantTabs: View {
     let session: AssistantSession
     @State private var owner = OwnerSession()
     var body: some View {
+        // 与 Desktop 同构（ADR-012）：对话为中心；等你决定、我替你做了什么、目标都在「动态」里
         TabView {
-            NavigationStack { overview.navigationTitle("我的助手") }
-                .tabItem { Label("概览", systemImage: "square.grid.2x2") }
-            NavigationStack { DecisionsView(entry: entry, session: session, owner: owner) }
-                .tabItem { Label("等你决定", systemImage: "checkmark.seal") }
-                .badge(owner.decisions.count)
-            NavigationStack { CaptureView(entry: entry, session: session, owner: owner) }
-                .tabItem { Label("随手记", systemImage: "square.and.pencil") }
-            NavigationStack { GoalListView(entry: entry, session: session) }
-                .tabItem { Label("目标", systemImage: "checklist") }
-            NavigationStack { settings.navigationTitle("设置") }
-                .tabItem { Label("设置", systemImage: "gearshape") }
+            NavigationStack { ChatView(entry: entry, session: session, owner: owner) }
+                .tabItem { Label("对话", systemImage: "bubble.left.and.bubble.right") }
+            NavigationStack { ActivityView(entry: entry, session: session, owner: owner) }
+                .tabItem { Label("动态", systemImage: "list.bullet.rectangle") }
+                .badge(owner.decisions.count + (owner.turn?.pendingCards.count ?? 0))
+            NavigationStack { settings.navigationTitle("我") }
+                .tabItem { Label("我", systemImage: "person.crop.circle") }
         }
-        // 每次登录 / 恢复会话：读写入能力，必要时绑定钥匙、登记推送
+        // 每次登录 / 恢复会话：读写入能力，必要时绑定钥匙、登记推送、读对话
         .task(id: session.credential?.token) {
             owner.sessionExpired = { [session, entry] in session.refresh(entry) }
             if let credential = session.credential { await owner.load(entry, credential) }
         }
-    }
-    private var overview: some View {
-        List {
-            Section {
-                HStack(spacing: 14) {
-                    Image("Brand").resizable().scaledToFit().frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 12))
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(session.reading.profile.data?.name ?? session.credential?.name ?? "常驻助手").font(.title3.bold())
-                        Text(entry.host).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }.padding(.vertical, 8)
-                // 打开 App 时核对一次家里的助手连不连得上；不做后台心跳，所以不会在你没打开时误报
-                Label(session.contact.text(), systemImage: session.contact.isProblem ? "wifi.exclamationmark" : "house")
-                    .font(.subheadline).foregroundStyle(session.contact.isProblem ? Color.orange : Color.secondary)
-                    .accessibilityIdentifier("native-contact")
-                ReadingStatus(session: session)
-            }
-            if let goals = session.reading.goals.data {
-                Section("目标中的进展") {
-                    SourceStatus(title: "目标", source: session.reading.goals)
-                    LabeledContent("跟进中", value: String(goals.items.filter { $0.status == "active" }.count))
-                    LabeledContent("有阻塞", value: String(goals.items.filter { $0.status == "blocked" }.count))
-                    LabeledContent("原记录已达成", value: String(goals.items.filter { $0.status == "achieved" }.count))
-                }
-                Section("下一步") {
-                    let actionable = goals.items.filter { ["active","blocked"].contains($0.status) }.prefix(5)
-                    if actionable.isEmpty { Text("当前读取的目标中没有跟进项。").foregroundStyle(.secondary) }
-                    ForEach(Array(actionable)) { goal in NavigationLink { GoalDetail(original: goal, entry: entry, session: session) } label: { GoalRow(goal: goal) } }
-                }
-            } else { Section { Text("目标来源尚未取得，不能据此判断是否有待办。").foregroundStyle(.secondary) } }
-            Section {
-                SourceStatus(title: "主聊天", source: session.reading.mainChat)
-                if let chat = session.reading.mainChat.data {
-                    LabeledContent("原记录", value: chat.sid != nil ? "已登记" : "尚未登记")
-                }
-                Text(owner.canWrite ? "可以在手机上随手记、批准 Codex 动作和撤销；聊天与电脑接管尚未接入。不会根据目标数量推断今天的任务完成情况。"
-                     : "手机当前只读，聊天正文、任务批准与电脑接管尚未接入。不会根据目标数量推断今天的任务完成情况。")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        }.refreshable { await session.refreshAndWait(entry) }.toolbar { refreshButton }
     }
     private var settings: some View {
         List {
             Section("这次连接") {
                 LabeledContent("助手", value: session.credential?.name ?? "待核对")
                 Text(entry.displayAddress).font(.footnote).textSelection(.enabled)
-                LabeledContent("权限", value: owner.canWrite ? "读取，随手记、批准与撤销" : "只读助手概览与目标")
+                LabeledContent("权限", value: owner.canWrite ? "对话、随手记、批准与撤销" : "只读助手概览与目标")
                 if let until = session.credential?.expiresAt { Text("会话有效至 \(Date(timeIntervalSince1970: Double(until)).formatted())").font(.footnote).foregroundStyle(.secondary) }
             }
             Section("账号") {
@@ -88,9 +45,9 @@ struct AssistantTabs: View {
                     .accessibilityIdentifier("native-retry-sources")
             }
             Section("关于") {
-                LabeledContent("版本", value: "0.2.0")
+                LabeledContent("版本", value: "0.3.0")
                 Text("原生会话存于设备钥匙串；账号服务的访问和刷新令牌由常驻服务保管。")
-                Text("批准由这台手机安全芯片里需要 Face ID 的钥匙签名；推送正文加密，只有这台手机能解开。没有手机后台任务和语音。")
+                Text("发出的消息和批准由这台手机安全芯片里的钥匙签名，批准 Codex 动作要 Face ID；推送正文加密，只有这台手机能解开。手机发起的对话只能查资料、改你自己的事项和记忆，不能执行命令或对外发送。")
             }.font(.subheadline)
             if !session.pendingLogouts.isEmpty { Section { PendingLogoutView(session: session) } }
         }

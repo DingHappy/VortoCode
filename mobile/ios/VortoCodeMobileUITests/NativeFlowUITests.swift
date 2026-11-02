@@ -13,8 +13,8 @@ final class NativeFlowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
-        if app.tabBars.buttons["设置"].waitForExistence(timeout: 2) {
-            app.tabBars.buttons["设置"].tap(); app.buttons["native-logout"].tap()
+        if app.tabBars.buttons["我"].waitForExistence(timeout: 2) {
+            app.tabBars.buttons["我"].tap(); app.buttons["native-logout"].tap()
         }
         XCTAssertTrue(app.buttons["entry-settings"].waitForExistence(timeout: 20))
         app.buttons["entry-settings"].tap()
@@ -52,9 +52,9 @@ final class NativeFlowUITests: XCTestCase {
         }
         let allow = app.webViews.buttons["允许"]
         try require(allow.waitForExistence(timeout: 20), "account-consent", app); allow.tap()
-        try require(app.tabBars.buttons["目标"].waitForExistence(timeout: 25), "native-tabs", app)
+        try require(app.tabBars.buttons["动态"].waitForExistence(timeout: 25), "native-tabs", app)
         capture(app, name: "native-overview")
-        app.tabBars.buttons["目标"].tap()
+        try openGoals(app)
         try verifyGoalBrowsing(app)
         let goal = app.staticTexts["核对同账号手机入口"].firstMatch
         XCTAssertTrue(goal.waitForExistence(timeout: 10)); goal.tap()
@@ -78,8 +78,8 @@ final class NativeFlowUITests: XCTestCase {
         try await setMode("normal", fixture: url)
         app.buttons["native-refresh"].tap()
         app.terminate(); app.launch()
-        XCTAssertTrue(app.tabBars.buttons["目标"].waitForExistence(timeout: 20))
-        app.tabBars.buttons["目标"].tap()
+        XCTAssertTrue(app.tabBars.buttons["动态"].waitForExistence(timeout: 20))
+        try openGoals(app)
         XCTAssertTrue(app.staticTexts["核对同账号手机入口"].firstMatch.waitForExistence(timeout: 15))
         capture(app, name: "native-session-restored")
         // Real authenticated reads, with only the isolated server response altered.
@@ -101,7 +101,7 @@ final class NativeFlowUITests: XCTestCase {
         app.buttons["native-refresh"].tap()
         try require(app.staticTexts["各来源最近读取有效"].waitForExistence(timeout: 15), "read-recovered", app)
         capture(app, name: "native-read-recovered")
-        app.tabBars.buttons["设置"].tap()
+        app.tabBars.buttons["我"].tap()
         try await setMode("logout-failed", fixture: url)
         app.buttons["native-logout"].tap()
         try require(app.buttons["retry-native-logout"].waitForExistence(timeout: 15), "logout-retry-offered", app)
@@ -126,6 +126,13 @@ final class NativeFlowUITests: XCTestCase {
         let (_, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NSError(domain: "NativeFixture", code: 1) }
     }
+    /// 目标并入「动态」（ADR-012）：从动态里的「全部」进目标列表
+    @MainActor private func openGoals(_ app: XCUIApplication) throws {
+        app.tabBars.buttons["动态"].tap()
+        let all = app.buttons["activity-all-goals"]
+        try reveal(all, app: app); all.tap()
+    }
+
     @MainActor private func verifyGoalBrowsing(_ app: XCUIApplication) throws {
         let search = app.searchFields.firstMatch
         try require(search.waitForExistence(timeout: 10), "goal-search", app)

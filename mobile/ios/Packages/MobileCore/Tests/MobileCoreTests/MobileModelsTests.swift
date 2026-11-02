@@ -21,6 +21,21 @@ final class MobileModelsTests: XCTestCase {
         XCTAssertTrue(waiting.waitingApproval)
         XCTAssertEqual(waiting.code, "AB12-CD34")
     }
+    /// 对话接口的回包：回合、卡片、主要聊天记录（字段与服务端 app_turns / app_relay 一致）
+    func testChatContracts() throws {
+        let turn = try MobileAPI.decoder.decode(ChatTurn.self, from: JSONSerialization.data(withJSONObject: [
+            "rid": "app-0123456789abcdef", "request_id": "req-00000001", "state": "waiting", "reply": "", "error": "",
+            "cards": [["id": "card-abc", "text": "记成目标？", "risk": "normal", "status": "pending", "digest": String(repeating: "d", count: 64)]]]))
+        XCTAssertFalse(turn.isFinished)
+        XCTAssertEqual(turn.pendingCards.count, 1)
+        XCTAssertFalse(turn.cards[0].needsFaceID)
+        let history = try MobileAPI.decoder.decode(ChatHistory.self, from: JSONSerialization.data(withJSONObject: [
+            "registered": true, "items": [["role": "user", "text": "hi", "rid": "r1", "source": "telegram-1", "at": "2026-11-02T08:00:00+00:00"],
+                                          ["role": "assistant", "text": "你好", "source": "app"]]]))
+        XCTAssertEqual(history.items[0].sourceLabel, "Telegram")
+        XCTAssertNil(history.items[1].sourceLabel)
+        XCTAssertTrue(history.items[0].isMine)
+    }
     func testSnapshotMatchesOriginalContract() throws {
         let snapshot = try decode(wire()); try snapshot.validate(instance: instance)
         XCTAssertEqual(snapshot.sources.goals.data?.items.first?.statusLabel, "跟进中")
