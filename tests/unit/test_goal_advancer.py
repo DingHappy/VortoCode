@@ -73,7 +73,8 @@ async def test_cadence_and_cap(world):
     assert len(again) == 2                                     # 剩下两个；已判断过的 12 小时内不再判断
     later = await goal_advancer.advance_once(root, NOW + timedelta(hours=1), state=state, notify=notify, llm=llm, projects=[])
     assert later == []
-    assert len(llm.calls) == 5
+    judgments = [c for c in llm.calls if "正在后台主动推进" in c[0]["content"]]
+    assert len(judgments) == 5                                  # 判断只做 5 次（另有自动审核的调用）
 
 
 async def test_goal_with_work_in_flight_is_left_alone(world, monkeypatch):
