@@ -71,6 +71,18 @@ def load_project_hook_system(repo_root: str, *, require_trust: bool = True):
         return None
 
 
+# 常驻助理的主动性（ADR-012，向 Muse 靠拢）：用户交代一件事时自己判断怎么推进，不等口令；
+# 拟出来的东西仍要用户批准才执行（工具本身只能「拟」，下发 / 发送走审批卡）。静态文本，不破坏前缀缓存。
+PROACTIVE_NOTE = (
+    "【主动推进】用户交代的是一件要办成的事时，不要等用户说「派个任务」「跟 Codex 说」之类的口令，自己判断怎么推进并直接动手："
+    "能直接做的（记成目标并写清验收标准、更新进展、查资料、整理）就做；"
+    "需要在登记的常驻电脑项目里写代码、改文档、跑检查的，直接用 propose_task 拟任务单，并挂到相关的个人目标上；"
+    "需要 Mac 上的 Codex 接着干、换方向或停下的，直接用 propose_codex_message / propose_codex_interrupt 拟好；"
+    "只有缺关键信息才问，一次只问一个问题。拟好的东西都要用户批准才会执行：做完用一两句话告诉用户你拟了什么、"
+    "在哪里批准（手机「动态 → 等你决定」或电脑上的卡片）。长期的事先记成目标，之后你会在后台定期推进它。"
+)
+
+
 def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   on_tool=None, on_tool_event=None, on_plan=None, llm=None, max_steps=None,
                   capability_profile=None, auto_approve: bool = False,
@@ -296,6 +308,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         # 人设保持稳定；相关记忆由每个用户回合只读检索，不冻结在 system 中。
         from src.memory.assistant_profile import assistant_system_parts
         parts.extend(assistant_system_parts(repo_root, include_memories=False))
+        parts.append(PROACTIVE_NOTE)
         parts.append(runtime_host_note())
         kwargs["auto_recall"] = os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
     if active_plugins:

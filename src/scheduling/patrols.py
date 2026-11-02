@@ -90,10 +90,11 @@ def _parse(value: Any) -> Optional[datetime]:
 async def run_patrols(patrols: List[Patrol], ctx: PatrolContext) -> None:
     """按登记顺序跑一遍到点的巡检。每项的结果单独记；一项失败不挡后面的。"""
     records = load_records(ctx.root)
+    now = ctx.now if ctx.now.tzinfo else ctx.now.astimezone()   # 记录里的时间都带时区；调用方可能传本地无时区时间
     for patrol in patrols:
         record = dict(records.get(patrol.name) or {})
         last = _parse(record.get("last_run"))
-        if patrol.every and last is not None and timedelta(0) <= ctx.now - last < patrol.every:
+        if patrol.every and last is not None and timedelta(0) <= now - last < patrol.every:
             continue
         record.update(last_run=ctx.now.isoformat(), last_status="running")
         record.pop("last_error", None)

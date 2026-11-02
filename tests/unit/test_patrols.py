@@ -163,7 +163,7 @@ async def test_overview_lists_visible_patrols_with_last_run_and_failures(tmp_pat
 
 async def test_assistant_watch_runs_its_patrols_and_keeps_following_dispatches_when_one_breaks(tmp_path, monkeypatch):
     root = str(tmp_path)
-    assert [patrol.name for patrol in watch.PATROLS] == ["ops", "goals", "codex", "usage", "phone_keys", "plugins"]
+    assert [patrol.name for patrol in watch.PATROLS] == ["ops", "goals", "goal_advance", "codex", "usage", "phone_keys", "plugins"]
 
     async def broken(_ctx):
         raise ValueError("bad ops file")
