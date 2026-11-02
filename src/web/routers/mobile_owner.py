@@ -224,3 +224,69 @@ async def register_push(request: Request):
             return _reply({"detail": "设备授权无效或已到期"}, 401)
         return _reply({"ok": True})
     return await _guarded(request, handle)
+
+
+# —— 对话（ADR-012 阶段 A）：手机是主要聊天的又一个入口。网关只核对会话与签名，再经本机专用接口
+# 转给常驻助理跑回合（owner_device 档案）；回合中途要确认的动作以待批准卡出现，App 签名批准。
+# 对话正文比概览敏感：读也要求这台设备的钥匙已被信任。
+
+def _trusted(grant) -> bool:
+    return bool(MobileDevices(os.getcwd()).signing_key(grant["device"]["id"], "device"))
+
+
+async def _relayed(path: str, body: dict):
+    from src.gateway.app_relay_client import RelayUnavailable, relay
+    try:
+        status, data = await relay(path, body)
+    except RelayUnavailable as error:
+        return _reply({"detail": str(error)}, 503)
+    if status == 404 and not data.get("detail"):
+        return _reply({"detail": "这台助理还没开通手机对话"}, 503)
+    return _reply(data if status < 400 else {"detail": str(data.get("detail") or "请求没有被接受")[:200]}, status)
+
+
+@router.post("/api/mobile/native/chat/send")
+async def chat_send(request: Request):
+    async def handle(grant):
+        body = await _signed(request, grant, "device")
+        return await _relayed("/api/assistant/app-relay/turn",
+                              {"request_id": body.get("request_id"), "text": body.get("text")})
+    return await _guarded(request, handle)
+
+
+@router.get("/api/mobile/native/chat/turn")
+async def chat_turn(request: Request):
+    async def handle(grant):
+        if not _trusted(grant):
+            return _reply({"detail": "这台手机还没获得对话权限"}, 403)
+        rid = request.query_params.get("rid", "")
+        if not re.fullmatch(r"app-[0-9a-f]{16}", rid):
+            return _reply({"detail": "没有这一轮"}, 404)
+        return await _relayed("/api/assistant/app-relay/status", {"rid": rid})
+    return await _guarded(request, handle)
+
+
+@router.get("/api/mobile/native/chat")
+async def chat_recent(request: Request):
+    async def handle(grant):
+        if not _trusted(grant):
+            return _reply({"detail": "这台手机还没获得对话权限"}, 403)
+        return await _relayed("/api/assistant/app-relay/chat", {"limit": 50})
+    return await _guarded(request, handle)
+
+
+@router.post("/api/mobile/native/chat/card")
+async def chat_card(request: Request):
+    """批准 / 拒绝回合里的一张卡。用哪把钥匙签写在请求体里（也被签进去）；够不够级别由常驻助理按卡判定。"""
+    async def handle(grant):
+        try:
+            declared = json.loads(await request.body() or b"{}").get("key_kind")
+        except (ValueError, AttributeError):
+            declared = None
+        if declared not in ("device", "approval"):
+            return _reply({"detail": "需要 {rid, card_id, approve, digest, key_kind}"}, 400)
+        body = await _signed(request, grant, declared)
+        return await _relayed("/api/assistant/app-relay/card", {
+            "rid": body.get("rid"), "card_id": body.get("card_id"), "approve": body.get("approve"),
+            "digest": body.get("digest"), "key_kind": declared})
+    return await _guarded(request, handle)

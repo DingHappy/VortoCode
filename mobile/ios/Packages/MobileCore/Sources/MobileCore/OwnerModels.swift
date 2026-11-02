@@ -66,6 +66,57 @@ public struct CaptureOutcome: Codable, Sendable {
     public let objective: String
 }
 
+/// 主要聊天里的一条（Desktop、Telegram、App 都在这一段，`source` 标来源）。
+public struct ChatItem: Codable, Sendable, Equatable {
+    public let role: String
+    public let text: String
+    public let rid: String?
+    public let source: String?
+    public let at: String?
+    public init(role: String, text: String, rid: String? = nil, source: String? = nil, at: String? = nil) {
+        self.role = role; self.text = text; self.rid = rid; self.source = source; self.at = at
+    }
+    public var isMine: Bool { role == "user" }
+    /// 不是这台手机发的就标一下从哪来的
+    public var sourceLabel: String? {
+        switch source {
+        case "app", nil: return nil
+        case let value? where value.hasPrefix("telegram"): return "Telegram"
+        case let value? where value.hasPrefix("dingtalk"): return "钉钉"
+        default: return "电脑"
+        }
+    }
+}
+
+public struct ChatHistory: Codable, Sendable {
+    public let registered: Bool
+    public let items: [ChatItem]
+}
+
+/// 回合里等你处理的一张卡。批准时把 `digest` 原样签进去：服务端核对卡片内容没变。
+public struct ChatCard: Codable, Identifiable, Sendable, Equatable {
+    public let id: String
+    public let text: String
+    public let risk: String
+    public let status: String
+    public let digest: String
+    /// 高风险的卡批准要用需要 Face ID 的批准钥匙；普通卡点一下（日常钥匙）
+    public var needsFaceID: Bool { risk != "normal" }
+    public var isPending: Bool { status == "pending" }
+}
+
+/// 一个 App 发起的回合。`state`：running / waiting（有卡等你）/ done / failed / busy。
+public struct ChatTurn: Codable, Sendable, Equatable {
+    public let rid: String
+    public let requestId: String
+    public let state: String
+    public let reply: String
+    public let error: String
+    public let cards: [ChatCard]
+    public var isFinished: Bool { ["done", "failed", "busy"].contains(state) }
+    public var pendingCards: [ChatCard] { cards.filter(\.isPending) }
+}
+
 /// 写入的失败要和读取分开：一次签名失败不该把人登出。
 public enum OwnerWriteError: Error, LocalizedError, Equatable {
     case writesDisabled, signatureRejected, rejected(String), unavailable
