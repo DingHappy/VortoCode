@@ -7,7 +7,7 @@
 # 切换环境文件、重启并核对；核对不过就自动切回旧快照。
 #
 # 用法：scripts/mobile-release.sh [--dry-run]
-# 注意：重启手机网关会让已登录的手机需要重新登录（原生会话目前只在内存里）。
+# 重启手机网关不会登出手机：原生会话加密落盘，重启后恢复（gateway/mobile_session_store.py）。
 set -euo pipefail
 
 DEPLOY_DIR="${VORTOCODE_DEPLOY_DIR:-$HOME/personal_project/VortoCode}"
@@ -105,7 +105,7 @@ sleep "${VORTOCODE_MOBILE_SETTLE_SECONDS:-12}"
 if [[ "$(systemctl --user is-active "$SERVICE")" == active && "$(restarts)" == "$before" ]] && probe; then
   say "✓ 手机网关已切换到 $release 并通过核对（环境文件备份：${backup}）"
   say "  回滚：把环境文件里的 $release 改回 ${current}，再 systemctl --user restart $SERVICE"
-  say "  提醒：已登录的手机需要重新登录"
+  say "  已登录的手机不用重新登录（会话已加密落盘，见 gateway/mobile_session_store.py）"
   exit 0
 fi
 say "✗ 新快照没有通过核对，切回 $current" >&2

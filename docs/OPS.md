@@ -53,7 +53,7 @@ scripts/mobile-release.sh
 脚本从部署目录当前提交生成新快照（`git archive` 的 `src` + 沿用当前快照里的 `web/mobile` + `RELEASE.json`），
 备份并切换环境文件，重启后核对：服务在运行、重启计数没涨、`POST /api/mobile/native/keys` 由路由自己应答
 （被管理员令牌中间件拦下返回 `{"detail":"Unauthorized"}` 说明还在跑旧代码）。核对不过自动切回旧快照。
-重启会让已登录的手机需要重新登录。
+已登录的手机不用重新登录（原生会话加密落盘，重启后恢复）。
 
 ### 常驻助理数据备份（加密，2026-11-02）
 

@@ -83,9 +83,17 @@ async def _guarded(request: Request, handler):
         return failure(error)
 
 
-async def _execute(op: str, args: dict):
-    """写操作交给常驻助理执行（网关的沙箱写不了目标、撤销记录、Codex 动作和任务单，见 web/owner_ops.py）；
-    没配转发（本机开发、测试）就地执行同一份代码。"""
+async def _envelope(request: Request, grant: dict, key_kind: str) -> dict:
+    """这次已核对过签名的请求，原样打包给常驻助理再验一遍（见 gateway/relay_envelope.py）。"""
+    from src.gateway.relay_envelope import build
+    return build(method=request.method, path=request.url.path, body=await request.body(), headers=request.headers,
+                 device_id=grant["device"]["id"], key_kind=key_kind)
+
+
+async def _execute(request: Request, grant: dict, key_kind: str, op: str, args: dict):
+    """写操作交给常驻助理执行（网关的沙箱写不了目标、撤销记录、Codex 动作和任务单，见 web/owner_ops.py）。
+    转发的是手机签过名的原始请求，助理自己再验签、按签进去的路径决定操作；没配转发（本机开发、测试）
+    就地执行同一份代码。"""
     from src.gateway.app_relay_client import RelayUnavailable, configured, relay
     from src.web import owner_ops
 
@@ -93,7 +101,8 @@ async def _execute(op: str, args: dict):
         status, data = await owner_ops.run(os.getcwd(), op, args)
         return _reply(data, status)
     try:
-        status, data = await relay("/api/assistant/app-relay/op", {"op": op, "args": args})
+        status, data = await relay("/api/assistant/app-relay/op",
+                                   {"envelope": await _envelope(request, grant, key_kind)})
     except RelayUnavailable as error:
         return _reply({"detail": str(error)}, 503)
     return _reply(data if status < 400 else {"detail": str(data.get("detail") or "请求没有被接受")[:200]}, status)
@@ -143,8 +152,10 @@ async def decide(request: Request):
         except ValueError:
             return _reply({"detail": "请求无效"}, 400)
         approve = isinstance(peek, dict) and peek.get("approve") is True
-        body = await _signed(request, grant, "approval" if approve else "device")
-        return await _execute("decide_codex", {key: body.get(key) for key in ("action_id", "approve", "action_digest")})
+        kind = "approval" if approve else "device"
+        body = await _signed(request, grant, kind)
+        return await _execute(request, grant, kind, "decide_codex",
+                              {key: body.get(key) for key in ("action_id", "approve", "action_digest")})
     return await _guarded(request, handle)
 
 
@@ -153,7 +164,8 @@ async def capture(request: Request):
     """随手记：直接记成一个个人目标（来源是主人），不运行模型；之后可以在助理里再整理，也能撤销。"""
     async def handle(grant):
         body = await _signed(request, grant, "device")
-        return await _execute("capture", {"text": body.get("text"), "request_id": body.get("request_id")})
+        return await _execute(request, grant, "device", "capture",
+                              {"text": body.get("text"), "request_id": body.get("request_id")})
     return await _guarded(request, handle)
 
 
@@ -169,7 +181,7 @@ async def changes(request: Request):
 async def undo(request: Request):
     async def handle(grant):
         body = await _signed(request, grant, "device")
-        return await _execute("undo", {"op_id": body.get("op_id")})
+        return await _execute(request, grant, "device", "undo", {"op_id": body.get("op_id")})
     return await _guarded(request, handle)
 
 
@@ -212,9 +224,8 @@ async def _relayed(path: str, body: dict):
 @router.post("/api/mobile/native/chat/send")
 async def chat_send(request: Request):
     async def handle(grant):
-        body = await _signed(request, grant, "device")
-        return await _relayed("/api/assistant/app-relay/turn",
-                              {"request_id": body.get("request_id"), "text": body.get("text")})
+        await _signed(request, grant, "device")
+        return await _relayed("/api/assistant/app-relay/turn", {"envelope": await _envelope(request, grant, "device")})
     return await _guarded(request, handle)
 
 
@@ -249,10 +260,8 @@ async def chat_card(request: Request):
             declared = None
         if declared not in ("device", "approval"):
             return _reply({"detail": "需要 {rid, card_id, approve, digest, key_kind}"}, 400)
-        body = await _signed(request, grant, declared)
-        return await _relayed("/api/assistant/app-relay/card", {
-            "rid": body.get("rid"), "card_id": body.get("card_id"), "approve": body.get("approve"),
-            "digest": body.get("digest"), "key_kind": declared})
+        await _signed(request, grant, declared)
+        return await _relayed("/api/assistant/app-relay/card", {"envelope": await _envelope(request, grant, declared)})
     return await _guarded(request, handle)
 
 
@@ -278,6 +287,8 @@ async def dispatch(request: Request):
         except ValueError:
             return _reply({"detail": "请求无效"}, 400)
         approve = isinstance(peek, dict) and peek.get("approve") is True
-        body = await _signed(request, grant, "approval" if approve else "device")
-        return await _execute("dispatch", {key: body.get(key) for key in ("dispatch_id", "approve", "digest")})
+        kind = "approval" if approve else "device"
+        body = await _signed(request, grant, kind)
+        return await _execute(request, grant, kind, "dispatch",
+                              {key: body.get(key) for key in ("dispatch_id", "approve", "digest")})
     return await _guarded(request, handle)

@@ -377,6 +377,13 @@ class MobileDevices:
             self._save(data)
             return {"removed": code}
 
+    def is_active(self, device_id: str) -> bool:
+        """设备记录存在且没被撤销（常驻助理核对转发来的签名请求时用；会话有效期由网关核对）。"""
+        if not isinstance(device_id, str) or not _ID.fullmatch(device_id):
+            return False
+        data = self._load()
+        return any(item["id"] == device_id and item["revoked_at"] is None for item in (data["devices"] if data else []))
+
     def signing_key(self, device_id: str, kind: str) -> str | None:
         data = self._load()
         for item in data["devices"] if data else []:
