@@ -8,7 +8,8 @@ it("模式切换：两个选项，当前项 aria-checked", () => {
   expect(html).toContain('aria-checked="false">工作台');
 });
 
-it("左侧：一级入口不超过 5 个，「任务」角标只计等你处理的件数", () => {
+it("左侧：一级入口不超过 5 个，「动态」角标只计等你处理的件数", () => {
+  expect(ASSISTANT_PAGES.map(item => item.label)).toContain("动态");   // 与 App 同名（ADR-012）
   expect(ASSISTANT_PAGES.length).toBeLessThanOrEqual(5);
   const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" page="schedule" waiting={3}
     onSelect={() => {}} onNewSideChat={() => {}} />);

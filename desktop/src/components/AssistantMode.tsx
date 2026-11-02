@@ -19,11 +19,12 @@ export function ModeSwitch({ mode, onChange }: { mode: AppMode; onChange: (mode:
 
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
 
-/** 侧栏一级入口（docs/DESIGN_SYSTEM.md 第 2 节）：最多 5 个，「任务」的角标只计等你处理的件数。 */
+/** 侧栏一级入口（docs/DESIGN_SYSTEM.md 第 2 节）：最多 5 个，「动态」的角标只计等你处理的件数。
+ * 与手机 App 同构（ADR-012）：对话在中间，动态 / 目标 / 资料库在侧栏。 */
 export type AssistantPage = "tasks" | "schedule" | "goals" | "library" | "customize";
 
 export const ASSISTANT_PAGES: Array<{ id: AssistantPage; label: string; icon: ReactNode; hint: string }> = [
-  { id: "tasks", label: "任务", icon: <ListChecks aria-hidden="true" />, hint: "派出去的事、等你处理的事和 Codex 进度" },
+  { id: "tasks", label: "动态", icon: <ListChecks aria-hidden="true" />, hint: "助理在做什么、等你处理的事、派出去的事和 Codex 进度" },
   { id: "schedule", label: "定时", icon: <Clock3 aria-hidden="true" />, hint: "早晚报、签到和定时作业" },
   { id: "goals", label: "目标", icon: <Target aria-hidden="true" />, hint: "交给助理盯着的个人目标" },
   { id: "library", label: "资料库", icon: <Archive aria-hidden="true" />, hint: "做出来的网页、文档和文件" },
