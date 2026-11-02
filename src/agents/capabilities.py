@@ -28,6 +28,17 @@ RESEARCHER_PROFILE = "researcher"
 # The older researcher profile intentionally permits scripts and is not this policy.
 RESEARCH_READ_PROFILE = "research_read"
 RESEARCH_READ_TOOLS = frozenset({"read_file", "list_files", "grep"})
+# 主人终端（手机 App）发起的回合（ADR-012）：手机入口在公网上，签名只证明「是你的手机」，不证明
+# 这一步该交给公网入口做。所以只开：读与检索、查资料（外部内容照常打污点）、改你自己的事项与记忆
+# （OWN_DATA，可撤销）。命令执行、写文件、操控电脑与浏览器、派开发任务、对外发送一律不在这里做——
+# 对外发送以后以审批卡形式出现（阶段 B），现在请到 Desktop 上做。
+OWNER_DEVICE_PROFILE = "owner_device"
+OWNER_DEVICE_WRITE_TOOLS = frozenset({"personal_goal_create", "personal_goal_update", "save_memory"})
+# 即使申报只读也不开：操控 / 截取电脑屏幕、发送文件与图片、读宿主任意文件、派子任务或给执行中的任务补指令、运行技能脚本
+_OWNER_DEVICE_DENIED_PREFIXES = ("desktop_", "dev_", "send_")
+_OWNER_DEVICE_DENIED_TOOLS = frozenset({"read_local_file", "screenshot_page", "task", "research_parallel",
+                                        "task_followup", "task_review", "task_acknowledge",
+                                        "use_personal_skill", "use_skill", "pr_fix"})
 
 _CREDENTIAL_CAPABILITIES = frozenset(
     {HOST_PROCESS, AUTHENTICATED_OUTBOUND, SENSITIVE_FILES}
@@ -49,6 +60,8 @@ _PROFILE_CAPABILITIES = {
     # external, named separately so audit trails identify whose session it was.
     RESEARCHER_PROFILE: frozenset({EXTERNAL_CONTENT}),
     RESEARCH_READ_PROFILE: frozenset({EXTERNAL_CONTENT}),
+    # 主人终端（App）：能查资料，碰不到宿主进程、认证远端和敏感文件；工具面另有白名单（见 denied）。
+    OWNER_DEVICE_PROFILE: frozenset({EXTERNAL_CONTENT}),
 }
 
 _SAFE_ENV_TEMPLATES = {
@@ -142,6 +155,16 @@ def _sensitive_arg(tool_name: str, args: dict, repo_root: str | None = None) -> 
     return ""
 
 
+def _owner_device_denied(tool_name: str, *, read_only: bool, outward: bool) -> str | None:
+    if outward:
+        return "手机上不能直接对外发送；请到 Desktop 上确认这一步（手机上的审批卡稍后接入）"
+    if tool_name in _OWNER_DEVICE_DENIED_TOOLS or tool_name.startswith(_OWNER_DEVICE_DENIED_PREFIXES):
+        return f"手机发起的对话不能使用 {tool_name}；需要的话请到 Desktop 上做"
+    if not read_only and tool_name not in OWNER_DEVICE_WRITE_TOOLS:
+        return "手机发起的对话只能改你自己的事项和记忆；写文件、执行命令等请到 Desktop 上做"
+    return None
+
+
 @dataclass(frozen=True)
 class SessionCapabilities:
     """Immutable-profile capability gate shared by one logical session."""
@@ -177,6 +200,10 @@ class SessionCapabilities:
             tool_name not in RESEARCH_READ_TOOLS or not read_only or outward
         ):
             return "只读研究策略仅允许项目内 read_file/list_files/grep；不能升级、出网、执行或派活"
+        if self.profile == OWNER_DEVICE_PROFILE:
+            reason = _owner_device_denied(tool_name, read_only=read_only, outward=outward)
+            if reason:
+                return reason
         needed = set(required or ())
         sensitive = _sensitive_arg(tool_name, args, self.repo_root)
         if sensitive:
@@ -201,6 +228,9 @@ class SessionCapabilities:
         caps = ", ".join(sorted(self.allowed)) or "none"
         if self.profile == RESEARCH_READ_PROFILE:
             rule = "仅允许项目内文件读取与检索；无写入、命令、联网、凭据、MCP 或委派权限。"
+        elif self.profile == OWNER_DEVICE_PROFILE:
+            rule = ("来自主人的手机：可读取与检索、查资料、改主人自己的事项与记忆；"
+                    "不能执行命令、写文件、操控电脑或浏览器、派开发任务或对外发送——这些请主人到 Desktop 上做。")
         elif self.profile == LOCAL_PROFILE:
             rule = "可使用本机凭据能力，但禁止 Web/MCP 外部内容；外部调研请新建 external 会话。"
         else:
