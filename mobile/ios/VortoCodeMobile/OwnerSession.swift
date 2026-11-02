@@ -44,6 +44,13 @@ final class OwnerSession {
     private let signer = DeviceSigner()
 
     var canWrite: Bool { bootstrap?.canWrite ?? false }
+    /// 这台手机的钥匙在等 Desktop 批准时的核对码
+    var approvalCode: String?
+    /// 不能写入时告诉你为什么
+    var readOnlyReason: String {
+        if let approvalCode { return "这台手机在等你在 Desktop 上确认（核对码 \(approvalCode)）。对上核对码批准后，回到这里下拉刷新。" }
+        return "这台助理还没开启手机写入，这里只显示说明。"
+    }
 
     private func api(_ entry: AssistantEntry) -> MobileAPI { MobileAPI(entry: entry) }
 
@@ -58,8 +65,9 @@ final class OwnerSession {
             var boot = try await api(entry).bootstrap(credential)
             if !boot.canWrite {
                 do {
-                    try await api(entry).bindKeys(credential, deviceKey: try DeviceKeys.publicKey(.device),
-                                                  approvalKey: try DeviceKeys.publicKey(.approval))
+                    let binding = try await api(entry).bindKeys(credential, deviceKey: try DeviceKeys.publicKey(.device),
+                                                                approvalKey: try DeviceKeys.publicKey(.approval))
+                    approvalCode = binding.waitingApproval ? binding.code : nil
                     boot = try await api(entry).bootstrap(credential)
                 } catch OwnerWriteError.writesDisabled {
                     // 服务端还没开启手机写入：保持只读，不提示错误
@@ -71,7 +79,8 @@ final class OwnerSession {
     }
 
     func refresh(_ entry: AssistantEntry, _ credential: NativeCredential) async {
-        guard canWrite else { return }
+        // 还不能写（比如钥匙刚在 Desktop 上批准）：下拉刷新时重新走一遍绑定
+        guard canWrite else { await load(entry, credential); return }
         do {
             async let pending = api(entry).decisions(credential)
             async let done = api(entry).changes(credential)

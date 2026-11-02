@@ -576,6 +576,27 @@ async def _patrol_plugins(ctx: PatrolContext) -> None:
     await _plugin_reminders(ctx.now, ctx.state, ctx.notify)
 
 
+async def _patrol_phone_keys(ctx: PatrolContext) -> None:
+    """手机写入钥匙：有新手机申请、或有手机刚获得写入权限，各告诉你一次（不是你操作的就去 Desktop 处理）。"""
+    from src.gateway.mobile_devices import MobileDevices
+    requests = await asyncio.to_thread(MobileDevices(ctx.root).key_requests)
+    told: Dict[str, List[str]] = ctx.state.setdefault("phone_keys", {"pending": [], "trusted": []})
+    for item in requests["pending"]:
+        if item["device_id"] in told["pending"]:
+            continue
+        text = (f"📱 有一台手机申请手机写入权限（核对码 {item['code']}）。是你本人在登录，就在 Desktop 助理面板里"
+                "对一下核对码再批准；不是你，请拒绝，并尽快修改 VortoCode 账号密码。")
+        if await _notify_accepted(ctx.notify, text):
+            told["pending"] = (told["pending"] + [item["device_id"]])[-50:]
+    for entry in requests["trusted"]:
+        if entry["code"] in told["trusted"]:
+            continue
+        text = (f"📱 一台手机已获得手机写入权限（核对码 {entry['code']}）：可以在手机上批准、随手记和撤销。"
+                "不是你操作的，请在 Desktop 助理面板里移除它。")
+        if await _notify_accepted(ctx.notify, text):
+            told["trusted"] = (told["trusted"] + [entry["code"]])[-50:]
+
+
 def _has_ops(root: str) -> bool:
     from src.scheduling.ops_heartbeats import sources
     return bool(sources(root))
@@ -603,6 +624,8 @@ PATROLS: List[Patrol] = [
     Patrol("codex", "监管 Codex", "看着 Mac 上的 Codex：卡住、出错、要你定方向时找你，定时汇报进度",
            _patrol_codex, visible=_has_codex, schedule=_codex_schedule, timeout_seconds=120),
     Patrol("usage", "模型用量报警", "当天用量超过 200 万 token 且是前 7 天日均的 3 倍时提醒一次", _patrol_usage),
+    Patrol("phone_keys", "手机写入权限", "有手机申请或获得写入权限时告诉你", _patrol_phone_keys,
+           visible=lambda _root: False),
     Patrol("plugins", "日程与新邮件提醒", "日程开始前、刚收到的私人邮件，推到手机",
            _patrol_plugins, visible=_has_reminder_plugins, timeout_seconds=60),
 ]

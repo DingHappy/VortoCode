@@ -10,7 +10,7 @@ struct DecisionsView: View {
         List {
             if !owner.note.isEmpty { Section { Text(owner.note).font(.subheadline).foregroundStyle(.secondary) } }
             if !owner.canWrite {
-                Section { Text("这台助理还没开启手机写入，这里只显示说明。").foregroundStyle(.secondary) }
+                Section { Text(owner.readOnlyReason).foregroundStyle(.secondary) }
             } else if owner.decisions.isEmpty {
                 Section { Text("现在没有等你批准的动作。").foregroundStyle(.secondary) }
             }
@@ -56,7 +56,7 @@ struct CaptureView: View {
                     .lineLimit(2...5).disabled(!owner.canWrite || owner.working)
                 Button("记下") { submit() }
                     .disabled(!owner.canWrite || owner.working || owner.draft.trimmingCharacters(in: .whitespaces).isEmpty)
-                Text("记成你的一个目标，之后可以让助理整理；记错了在下面撤销。")
+                Text(owner.canWrite ? "记成你的一个目标，之后可以让助理整理；记错了在下面撤销。" : owner.readOnlyReason)
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if !owner.note.isEmpty { Section { Text(owner.note).font(.subheadline).foregroundStyle(.secondary) } }

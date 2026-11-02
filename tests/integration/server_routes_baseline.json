@@ -1058,6 +1058,24 @@
     ]
   },
   {
+    "path": "/api/assistant/phone-keys",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/phone-keys/{device_id}",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/phone-keys/trusted/{code}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
     "path": "/api/assistant/skills",
     "methods": [
       "GET"

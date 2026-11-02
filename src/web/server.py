@@ -100,6 +100,7 @@ from src.web.routers.account_access import router as account_access_router
 from src.web.routers.mobile_browser import router as mobile_browser_router
 from src.web.routers.mobile_native import router as mobile_native_router
 from src.web.routers.mobile_owner import router as mobile_owner_router
+from src.web.routers.phone_keys import router as phone_keys_router
 
 for _router in (
     pages_router, git_router, context_router,
@@ -108,6 +109,7 @@ for _router in (
     journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
     pipelines_router, trust_router, resident_router, assistant_router, personal_goals_router, voice_router, ops_heartbeat_router,
     codex_router, mobile_router, mobile_pages_router, account_access_router, mobile_browser_router, mobile_native_router, mobile_owner_router,
+    phone_keys_router,
 ):
     app.include_router(_router)
 

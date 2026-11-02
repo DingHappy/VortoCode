@@ -22,6 +22,7 @@ import type {
   PersonalGoalInput,
   AssistantChange,
   AssistantUndoResult,
+  PhoneKeys,
   AssistantScheduleItem,
   MemoryProposal,
   PhoneChat,
@@ -522,6 +523,19 @@ export class GatewayClient {
 
   async undoAssistantChange(id: string): Promise<AssistantUndoResult> {
     return this.request(`/api/assistant/undo/${encodeURIComponent(id)}`, { method: "POST" });
+  }
+
+  async listPhoneKeys(): Promise<PhoneKeys> {
+    return this.request<PhoneKeys>("/api/assistant/phone-keys");
+  }
+
+  async decidePhoneKey(deviceId: string, approve: boolean): Promise<void> {
+    await this.request(`/api/assistant/phone-keys/${encodeURIComponent(deviceId)}`,
+      { method: "POST", body: JSON.stringify({ approve }) });
+  }
+
+  async removeTrustedPhone(code: string): Promise<void> {
+    await this.request(`/api/assistant/phone-keys/trusted/${encodeURIComponent(code)}`, { method: "DELETE" });
   }
 
   async listPersonalGoals(): Promise<PersonalGoal[]> {

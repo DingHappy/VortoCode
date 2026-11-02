@@ -1058,6 +1058,11 @@ export interface AssistantChange {
   not_recallable?: string[];
 }
 
+/** 手机写入钥匙：等你批准的申请与已信任的手机。只有核对码，没有公钥。 */
+export interface PhoneKeyRequest { device_id: string; name: string; requested_at: number; code: string }
+export interface TrustedPhone { code: string; name: string; approved_at: number }
+export interface PhoneKeys { pending: PhoneKeyRequest[]; trusted: TrustedPhone[] }
+
 export interface AssistantUndoResult {
   ok: boolean;
   detail: string;

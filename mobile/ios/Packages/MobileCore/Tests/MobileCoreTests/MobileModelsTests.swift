@@ -11,6 +11,16 @@ final class MobileModelsTests: XCTestCase {
             "goals":source(["items":[["id":"personal-1","objective":"核对原生端","status":"active","next_action":"查看依据","blocker":"","revision":1]],"truncated":false])]]
     }
     private func decode(_ raw: [String: Any]) throws -> MobileSnapshot { try MobileAPI.decoder.decode(MobileSnapshot.self, from: JSONSerialization.data(withJSONObject: raw)) }
+    /// 服务端两种回执：已生效（bound_at）和等 Desktop 批准（pending + 核对码）
+    func testKeyBindingReceipts() throws {
+        let bound = try MobileAPI.decoder.decode(KeyBinding.self, from: JSONSerialization.data(withJSONObject:
+            ["ok": true, "bound_at": 1_793_550_000, "code": "AB12-CD34"]))
+        XCTAssertFalse(bound.waitingApproval)
+        let waiting = try MobileAPI.decoder.decode(KeyBinding.self, from: JSONSerialization.data(withJSONObject:
+            ["ok": true, "pending": true, "requested_at": 1_793_550_000, "code": "AB12-CD34"]))
+        XCTAssertTrue(waiting.waitingApproval)
+        XCTAssertEqual(waiting.code, "AB12-CD34")
+    }
     func testSnapshotMatchesOriginalContract() throws {
         let snapshot = try decode(wire()); try snapshot.validate(instance: instance)
         XCTAssertEqual(snapshot.sources.goals.data?.items.first?.statusLabel, "跟进中")
