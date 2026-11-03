@@ -9,7 +9,8 @@
 - ``wait``：在等别的事（任务在跑、在等人）→ 不打扰。
 
 节奏与成本：每个目标最多每 ``INTERVAL`` 判断一次，每轮最多 ``MAX_PER_PASS`` 个，安静时段不跑；
-已经有挂在这个目标上、还没结束的任务单时不再拟新的。目标里有外部来源的文字时，拟出的任务单带
+已经有挂在这个目标上、还没结束的任务单时不再拟新的。判断材料（目标卡、任务单状态、项目名、到期档位）
+和上次判断时一样时不再判断，最多隔 ``REJUDGE_MAX`` 重判一次，免得同一个问题每个周期推一遍。目标里有外部来源的文字时，拟出的任务单带
 ``tainted``（手机上不能下发，要到电脑上核对）。``VORTOCODE_GOAL_ADVANCE=0`` 关闭。
 
 判断用的材料只有目标卡本身、挂在它上面的任务单状态和登记的项目名：都按数据给，不当指令。
@@ -105,6 +106,39 @@ async def judge(goal: Dict[str, Any], dispatches: List[Dict[str, Any]], projects
     return parse(str((response or {}).get("content") or ""), projects)
 
 
+REJUDGE_MAX = timedelta(days=7)
+_DUE_SOON = timedelta(hours=48)
+
+
+def _due_bucket(goal: Dict[str, Any], now: datetime) -> str:
+    try:
+        due = datetime.fromisoformat(str(goal.get("due_at") or ""))
+    except ValueError:
+        return "none"
+    if due.tzinfo is None:
+        return "none"
+    if due <= now:
+        return "overdue"
+    return "within_48h" if due - now <= _DUE_SOON else "later"
+
+
+def fingerprint(goal: Dict[str, Any], dispatches: List[Dict[str, Any]], projects: List[str],
+                now: datetime) -> str:
+    """判断材料加到期档位的哈希：材料没变就不必再花一次判断，也不再推同一句话。"""
+    import hashlib
+    raw = _material(goal, dispatches, projects) + "\n" + _due_bucket(goal, now)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _unchanged(record: Any, fp: str, now: datetime) -> bool:
+    if not isinstance(record, dict) or record.get("fp") != fp:
+        return False
+    try:
+        return now - datetime.fromisoformat(str(record.get("at"))) < REJUDGE_MAX
+    except (TypeError, ValueError):
+        return False
+
+
 def _due(goal: Dict[str, Any], marks: Dict[str, str], now: datetime) -> bool:
     last = marks.get(goal["id"])
     if not last:
@@ -146,18 +180,31 @@ async def advance_once(root: str, now: datetime, *, state: Dict[str, Any],
         except (TypeError, ValueError):
             return False
 
-    for goal in [g for g in goals if _due(g, marks, now) and not is_paused(g["id"])][:MAX_PER_PASS]:
+    fingerprints: Dict[str, Any] = state.setdefault("goal_advance_fp", {})
+    judged = 0
+    for goal in [g for g in goals if _due(g, marks, now) and not is_paused(g["id"])]:
+        if judged >= MAX_PER_PASS:
+            break
         linked = [d for d in all_dispatches if (d.get("goal_link") or {}).get("id") == goal["id"]]
         marks[goal["id"]] = now.isoformat()
         if any(d.get("status") in _OPEN_DISPATCH for d in linked):
             continue                                  # 已经有活在路上：不再拟新的，也不花一次判断
+        fp = fingerprint(goal, linked, projects, now)
+        if _unchanged(fingerprints.get(goal["id"]), fp, now):
+            continue                                  # 上次判断后材料没变：不花判断，不重复打扰
+        judged += 1
         try:
             verdict = await judge(goal, linked, projects, llm=llm)
         except Exception as error:  # noqa: BLE001 —— 一个目标判断失败不影响其它目标
             logger.warning("推进目标判断失败：%s", type(error).__name__)
             continue
-        if verdict is None or verdict["action"] == "wait":
+        if verdict is None:
+            continue                                  # 读不懂的判断不记指纹，下个周期重判
+        fingerprints[goal["id"]] = {"fp": fp, "at": now.isoformat(), "action": verdict["action"]}
+        if verdict["action"] == "wait":
             continue
+        if verdict["action"] == "suggest" and verdict["next"] == goal.get("next_action"):
+            continue                                  # 目标卡上已经是这一步，不再推一遍
         objective = str(goal.get("objective") or "")[:60]
         if verdict["action"] == "dispatch":
             text = await _dispatch(root, goal, verdict, now, paused=paused, llm=llm)
@@ -172,6 +219,7 @@ async def advance_once(root: str, now: datetime, *, state: Dict[str, Any],
     # 只留还存在的目标的记号
     live = {g["id"] for g in goals}
     state["goal_advance"] = {key: value for key, value in marks.items() if key in live}
+    state["goal_advance_fp"] = {key: value for key, value in fingerprints.items() if key in live}
     state.pop("goal_advance_paused", None)               # 旧版本放在巡检状态里；改用单独文件
     return done
 
