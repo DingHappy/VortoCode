@@ -28,6 +28,7 @@ ROLE_PROMPTS = {
     ),
 }
 _ROLE_MODEL_ROUTE = {"web-researcher": "research", "reviewer": "review"}
+ROLES_WITH_WEB = {"web-researcher": True, "reviewer": False}
 
 
 def _client(role: str) -> Any:
@@ -66,6 +67,7 @@ async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = 
                      agent_factory: Callable[..., Any] = MainAgent) -> Any:
     """执行一条成员子任务并把结果写回。返回写回后的子任务。"""
     from src.agents.taint import merge_nested_taint
+    from src.utils.async_ops import timeout_scope
     from src.workflow.tasks.team import TeamService
 
     service = TeamService(repo_root)
@@ -75,17 +77,21 @@ async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = 
     number = child.collaboration["round"]
     dispatch = child.collaboration["dispatch"]
     child = work.start(child_id, number)
-    tainted = False
+    # 读不到污点状态时（超时、取消、异常）按角色保守处理：联网角色记为污点
+    tainted = bool(ROLES_WITH_WEB.get(dispatch["role"]))
+
     try:
         agent = build_member(dispatch["role"], dispatch.get("model", ""), max_steps=dispatch["max_steps"],
                              llm=llm, agent_factory=agent_factory)
-        with merge_nested_taint() as nested:
-            text = await asyncio.wait_for(agent.run_turn(member_prompt(child), mode="plan"),
-                                          dispatch["timeout_seconds"])
+        # 计时与污点合并都要和成员回合在同一个任务里：Python 3.10 的 wait_for 会另起任务、拷贝上下文，
+        # 外层就读不到成员读网页时打的污点标记。timeout_scope 在 3.10 上也就地计时。
+        async with timeout_scope(dispatch["timeout_seconds"]):
+            with merge_nested_taint() as nested:
+                text = await agent.run_turn(member_prompt(child), mode="plan")
         tainted = nested.child_tainted
         text = str(text or "")
         return work.finish(child_id, number, text, error="" if text.strip() else "成员没有交回内容", tainted=tainted)
-    except asyncio.TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         return work.finish(child_id, number, "", error=f"超过单轮时限 {dispatch['timeout_seconds']} 秒", tainted=tainted)
     except asyncio.CancelledError:
         work.finish(child_id, number, "", cancelled=True, tainted=tainted)
