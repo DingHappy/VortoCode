@@ -1,6 +1,7 @@
 """HTTP/Desktop binding for the shared Runtime lifecycle."""
 import asyncio
 import contextlib
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -70,9 +71,25 @@ async def runtime_lifespan():
         # Mac 上的本机引擎：Desktop 注入了常驻助理的地址和令牌，就看着 Codex、把进度报过去
         from src.scheduling.codex_observer import observe_loop, observer_enabled
         observer = asyncio.create_task(observe_loop(stop)) if observer_enabled() else None
+        # 任务上下文（ADR-014）：常驻助理开的大任务，成员交回就叫醒协调人；启动时恢复被打断的回合
+        team_runner = None
+        if current_workspace_scope() == GENERAL:
+            from src.scheduling.task_notices import notify_transition
+            from src.scheduling.team_runner import TeamRunner, set_team_runner
+            root = os.getcwd()
+            team_runner = TeamRunner(root, get_runner(), on_update=lambda task: notify_transition(root, task))
+            set_team_runner(team_runner)
+            try:
+                await team_runner.recover()
+            except Exception:  # noqa: BLE001 —— 恢复失败不挡住服务启动；坏掉的任务在列表里可见
+                logging.getLogger(__name__).warning("任务上下文恢复失败", exc_info=True)
         try:
             yield
         finally:
+            if team_runner is not None:
+                from src.scheduling.team_runner import set_team_runner
+                set_team_runner(None)
+                await team_runner.close()
             stop.set()
             for task in (watch, observer):
                 if task is not None:
