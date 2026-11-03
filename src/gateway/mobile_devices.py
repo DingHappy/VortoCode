@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
-from typing import Callable, List, Tuple
+from typing import Callable, Dict, List, Tuple
 import uuid
 
 from src.utils.state_dir import ensure_state_gitignore
@@ -393,28 +393,40 @@ class MobileDevices:
         return None
 
     def register_push(self, device_id: str, registration: dict) -> None:
-        """登记或刷新这台设备的推送目标（APNs 令牌 + 解密推送用的公钥）。"""
+        """登记或刷新这台设备的推送目标（APNs 令牌 + 解密推送用的公钥）。
+
+        一个 APNs 令牌对应手机上的一次安装；同一台手机重新登录会换一条设备记录，旧记录仍挂着
+        同一个令牌，每条通知就会推好几遍。所以登记时把这个令牌从其他设备记录上摘掉。"""
         if not isinstance(device_id, str) or not _ID.fullmatch(device_id):
             raise KeyError(device_id)
         with self._lock():
             data = self._load()
-            for item in data["devices"] if data else []:
-                if item["id"] == device_id:
-                    if item["revoked_at"] is not None:
-                        raise KeyError(device_id)
-                    item["push"] = {**registration, "refreshed_at": int(self.clock())}
-                    self._save(data)
-                    return
-            raise KeyError(device_id)
+            devices = data["devices"] if data else []
+            target = next((item for item in devices if item["id"] == device_id), None)
+            if target is None or target["revoked_at"] is not None:
+                raise KeyError(device_id)
+            target["push"] = {**registration, "refreshed_at": int(self.clock())}
+            for item in devices:
+                if item is not target and (item.get("push") or {}).get("token") == registration["token"]:
+                    del item["push"]
+            self._save(data)
 
     def push_targets(self) -> List[Tuple[str, dict]]:
         """可以推送的设备。不按读取租约的有效期筛（App 在后台时租约本来就会过期），
-        只排除已撤销的和 30 天没重新登记的；推送正文是加密的，过期登记最多泄露「有一条新消息」。"""
+        只排除已撤销的和 30 天没重新登记的；推送正文是加密的，过期登记最多泄露「有一条新消息」。
+        同一个令牌只推一次，取最近登记的那条（旧版本留下的重复登记不用迁移）。"""
         data = self._load()
         now = self.clock()
-        return [(item["id"], item["push"]) for item in (data["devices"] if data else [])
+        live = [(item["id"], item["push"]) for item in (data["devices"] if data else [])
                 if item.get("push") and item["revoked_at"] is None
                 and now - item["push"]["refreshed_at"] < PUSH_STALE]
+        newest: Dict[str, int] = {}
+        for index, (_device_id, push) in enumerate(live):
+            best = newest.get(push["token"])
+            if best is None or push["refreshed_at"] >= live[best][1]["refreshed_at"]:
+                newest[push["token"]] = index
+        keep = set(newest.values())
+        return [target for index, target in enumerate(live) if index in keep]
 
     def forget_push(self, device_id: str, token: str) -> None:
         """APNs 说这个令牌已失效：清掉登记（只清同一个令牌，App 期间换了新令牌就不动）。"""
