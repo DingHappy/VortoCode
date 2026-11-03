@@ -135,3 +135,97 @@ async def test_no_model_configured_means_no_attempt(world, monkeypatch):
     monkeypatch.setenv("OPENAI_API_BASE", "https://relay.example.com/v1")
     assert await goal_advancer.advance_once(root, NOW, state={}, notify=notify, projects=["VortoCode"]) == []
     assert sent == []
+
+
+def _judgments(llm):
+    return [c for c in llm.calls if "正在后台主动推进" in c[0]["content"]]
+
+
+async def test_unchanged_goal_is_not_judged_or_asked_again(world):
+    root, _proposed, sent, notify = world
+    PersonalGoals(root).create(contract(), origin="owner")
+    state: dict = {}
+    ask = {"action": "ask", "reason": "缺信息", "question": "登录用哪个环境？"}
+    llm = ScriptedLLM(ask, ask)
+    await goal_advancer.advance_once(root, NOW, state=state, notify=notify, llm=llm, projects=[])
+    assert len(sent) == 1
+    for hours in (12, 24, 36, 48):
+        await goal_advancer.advance_once(root, NOW + timedelta(hours=hours), state=state, notify=notify,
+                                         llm=llm, projects=[])
+    assert len(_judgments(llm)) == 1 and len(sent) == 1        # 材料没变：不花判断，同一个问题不再推
+    await goal_advancer.advance_once(root, NOW + goal_advancer.REJUDGE_MAX, state=state, notify=notify,
+                                     llm=llm, projects=[])
+    assert len(_judgments(llm)) == 2                            # 隔得够久仍会重判一次
+
+
+async def test_changed_goal_card_is_judged_again(world):
+    root, _proposed, _sent, notify = world
+    goal = PersonalGoals(root).create(contract(), origin="owner")
+    state: dict = {}
+    llm = ScriptedLLM({"action": "wait", "reason": "r"}, {"action": "wait", "reason": "r"})
+    await goal_advancer.advance_once(root, NOW, state=state, notify=notify, llm=llm, projects=[])
+    PersonalGoals(root).update(goal["id"], {"revision": goal["revision"], "blocker": "等测试账号"}, origin="owner")
+    await goal_advancer.advance_once(root, NOW + timedelta(hours=12), state=state, notify=notify, llm=llm, projects=[])
+    assert len(_judgments(llm)) == 2
+
+
+async def test_task_order_status_change_is_judged_again(world, monkeypatch):
+    root, _proposed, _sent, notify = world
+    goal = PersonalGoals(root).create(contract(), origin="owner")
+    from src.workflow.tasks import assistant_dispatch
+    orders = [{"id": "dsp-1", "status": "done", "result": "", "goal_link": {"id": goal["id"]}}]
+    monkeypatch.setattr(assistant_dispatch, "list_dispatches", lambda r: orders)
+    state: dict = {}
+    llm = ScriptedLLM({"action": "wait", "reason": "r"}, {"action": "wait", "reason": "r"})
+    await goal_advancer.advance_once(root, NOW, state=state, notify=notify, llm=llm, projects=[])
+    orders[0] = {**orders[0], "result": "已合并 PR"}
+    await goal_advancer.advance_once(root, NOW + timedelta(hours=12), state=state, notify=notify, llm=llm, projects=[])
+    assert len(_judgments(llm)) == 2
+
+
+async def test_crossing_into_due_soon_is_judged_again(world):
+    root, _proposed, _sent, notify = world
+    PersonalGoals(root).create(contract(due_at=(NOW + timedelta(days=3)).isoformat()), origin="owner")
+    state: dict = {}
+    llm = ScriptedLLM({"action": "wait", "reason": "r"}, {"action": "wait", "reason": "r"})
+    await goal_advancer.advance_once(root, NOW, state=state, notify=notify, llm=llm, projects=[])
+    await goal_advancer.advance_once(root, NOW + timedelta(hours=12), state=state, notify=notify, llm=llm, projects=[])
+    assert len(_judgments(llm)) == 1                            # 还是「之后」档
+    await goal_advancer.advance_once(root, NOW + timedelta(hours=36), state=state, notify=notify, llm=llm, projects=[])
+    assert len(_judgments(llm)) == 2                            # 进了 48 小时内
+
+
+async def test_suggestion_already_on_the_card_is_not_pushed(world):
+    root, _proposed, sent, notify = world
+    PersonalGoals(root).create(contract(), origin="owner")
+    llm = ScriptedLLM({"action": "suggest", "reason": "r", "next": "查一下报错"})
+    done = await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=[])
+    assert done == [] and sent == []
+
+
+async def test_unreadable_verdict_is_retried_next_cycle(world):
+    root, _proposed, _sent, notify = world
+    PersonalGoals(root).create(contract(), origin="owner")
+    state: dict = {}
+
+    class Garbled(ScriptedLLM):
+        async def chat(self, messages, **_kwargs):
+            self.calls.append(messages)
+            return {"content": "我觉得可以再等等"}
+    llm = Garbled()
+    await goal_advancer.advance_once(root, NOW, state=state, notify=notify, llm=llm, projects=[])
+    await goal_advancer.advance_once(root, NOW + timedelta(hours=12), state=state, notify=notify, llm=llm, projects=[])
+    assert len(_judgments(llm)) == 2 and state["goal_advance_fp"] == {}
+
+
+async def test_unchanged_goals_do_not_use_up_the_pass_cap(world):
+    root, _proposed, _sent, notify = world
+    for i in range(goal_advancer.MAX_PER_PASS):
+        PersonalGoals(root).create(contract(f"老目标 {i}"), origin="owner")
+    state: dict = {}
+    llm = ScriptedLLM(*[{"action": "wait", "reason": "r"}] * 10)
+    await goal_advancer.advance_once(root, NOW, state=state, notify=notify, llm=llm, projects=[])
+    PersonalGoals(root).create(contract("新目标"), origin="owner")
+    await goal_advancer.advance_once(root, NOW + timedelta(hours=12), state=state, notify=notify, llm=llm, projects=[])
+    assert len(_judgments(llm)) == goal_advancer.MAX_PER_PASS + 1
+    assert "新目标" in _judgments(llm)[-1][1]["content"]

@@ -630,7 +630,7 @@ PATROLS: List[Patrol] = [
     Patrol("ops", "运维心跳", "家里其它机器的定时活（备份、恢复演练）报失败或该报没报时推一条",
            _patrol_ops, visible=_has_ops),
     Patrol("goals", "个人目标提醒", "到点推你批准过的目标提醒", _patrol_goals, visible=lambda _root: False),
-    Patrol("goal_advance", "主动推进目标", "每个还在进行的目标最多 12 小时想一次下一步：拟任务单、问你或给建议，下发仍要你批",
+    Patrol("goal_advance", "主动推进目标", "每个还在进行的目标最多 12 小时想一次下一步，没有新变化就不再想；拟任务单、问你或给建议，下发仍要你批",
            _patrol_goal_advance, every=timedelta(hours=1), timeout_seconds=300),
     Patrol("codex", "监管 Codex", "看着 Mac 上的 Codex：卡住、出错、要你定方向时找你，定时汇报进度",
            _patrol_codex, visible=_has_codex, schedule=_codex_schedule, timeout_seconds=120),
