@@ -186,8 +186,11 @@ class TeamService:
         return member
 
     # ── 协调人的动作 ───────────────────────────────────────────────────
-    def assign(self, root_id: str, member: str, instruction: str, expected: str) -> BackgroundTask:
-        """给成员派一件事：预留额度并落盘根，再建子任务。子任务建失败时预留不退。"""
+    def assign(self, root_id: str, member: str, instruction: str, expected: str, *,
+               tainted: bool = False) -> BackgroundTask:
+        """给成员派一件事：预留额度并落盘根，再建子任务。子任务建失败时预留不退。
+
+        ``tainted``：要求里带着别的成员交回的外部内容（例如请审查员审研究员的结果），这条子任务一开始就是污点。"""
         if not instruction.strip() or not expected.strip():
             raise CollaborationConflict("派活要写清做什么和交回什么")
         with _LOCK:
@@ -202,6 +205,10 @@ class TeamService:
                 dispatch={"source": KIND, "root": root.id, "member": member, "role": entry["role"],
                           "model": entry["model"], "max_steps": role["max_steps"],
                           "timeout_seconds": role["timeout_seconds"]})
+            if tainted:
+                child.collaboration["tainted"] = True
+                if not self.ledger.save(child):
+                    raise OSError("子任务污点标记未能保存")
             root = self.get(root_id)
             root.team["children"].append(child.id)
             self._event(root, "assigned", f"{member}：{instruction}")
@@ -416,3 +423,39 @@ class TeamService:
                               "review": child.collaboration.get("review"), "round": child.collaboration.get("round"),
                               "tainted": bool(child.collaboration.get("tainted"))} for child in children],
                 "tainted": bool(root.team.get("tainted")) or any(child.collaboration.get("tainted") for child in children)}
+
+
+# ── 协调记录（与主对话分开；只存协调人自己的上下文） ─────────────────────────
+_MAX_HISTORY = 48
+
+
+def _history_path(repo_root: str, root_id: str):
+    from pathlib import Path
+    from src.utils.ids import safe_id
+    clean = safe_id(root_id)
+    if clean is None:
+        raise CollaborationConflict("任务上下文 ID 无效")
+    return Path(repo_root) / ".vortocode" / "teams" / f"{clean}.json"
+
+
+def load_history(repo_root: str, root_id: str) -> List[dict]:
+    import json
+    try:
+        data = json.loads(_history_path(repo_root, root_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+
+
+def save_history(repo_root: str, root_id: str, history: List[dict]) -> None:
+    import json
+    from src.utils.state_dir import ensure_state_gitignore
+    path = _history_path(repo_root, root_id)
+    ensure_state_gitignore(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    kept = list(history[-_MAX_HISTORY:])
+    while kept and kept[0].get("role") != "user":      # 不从一组工具调用的中间开始
+        kept.pop(0)
+    tmp.write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
