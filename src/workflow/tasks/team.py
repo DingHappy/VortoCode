@@ -52,7 +52,7 @@ def is_team_child(task: Any) -> bool:
     return isinstance(dispatch, dict) and dispatch.get("source") == KIND
 
 
-def _limits(value: Optional[dict]) -> dict:
+def normalize_limits(value: Optional[dict]) -> dict:
     limits = dict(DEFAULT_LIMITS)
     for key, number in (value or {}).items():
         if key not in MAX_LIMITS or type(number) is not int or not 1 <= number <= MAX_LIMITS[key]:
@@ -160,7 +160,7 @@ class TeamService:
                 "version": 1, "mode": mode, "objective": objective,
                 "acceptance": [_text(item, 300) for item in acceptance],
                 "members": roster, "private_refs": refs,
-                "limits": _limits(limits), "used": {key: 0 for key in _USAGE_KEYS},
+                "limits": normalize_limits(limits), "used": {key: 0 for key in _USAGE_KEYS},
                 "children": [], "coordinator": {"kind": "main_agent", "model": ""},
                 "events": 0, "log": [], "inbox": [], "waiting_reason": "", "submission": None, "tainted": False,
                 "wake": {"open": False, "cuts": 0, "events_at_start": 0, "idle": 0, "last_error": "", "same_error": 0},
