@@ -135,10 +135,27 @@ def build_decision_queue(
             created=goal.updated or goal.created, target_id=goal.id, action="open_goal",
         ))
 
+    from src.workflow.tasks.team import KIND as TEAM_KIND, is_team_child
     for task in tasks:
         if task.id in resumed_sources:
             continue
         status = getattr(task, "status", "")
+        if is_team_child(task):
+            continue                      # 任务上下文的成员结果由协调人审，不直接占主人的注意力
+        if getattr(task, "kind", "") == TEAM_KIND:
+            team = getattr(task, "team", {}) or {}
+            if status in {"waiting", "review"}:
+                decision_id = f"team:{task.id}:{status}:{team.get('events', 0)}"
+                if decision_id not in hidden:
+                    title = "任务小组需要你决定" if status == "waiting" else "任务小组待你验收"
+                    output.append(_item(decision_id, "team", "high" if status == "waiting" else "medium", title,
+                                        str(team.get("objective") or "")[:200],
+                                        created=getattr(task, "updated", ""), target_id=task.id, action="open_team"))
+            elif status == "failed" and f"team:{task.id}" not in hidden:
+                output.append(_item(f"team:{task.id}", "team", "high", "任务小组失败",
+                                    getattr(task, "error", "") or str(team.get("objective") or "")[:200],
+                                    created=getattr(task, "updated", ""), target_id=task.id, action="open_team"))
+            continue
         collaboration = getattr(task, "collaboration", {}) or {}
         review = collaboration.get("review")
         if status == "waiting" and getattr(task, "dependencies", {}):

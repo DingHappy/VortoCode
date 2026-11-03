@@ -34,7 +34,18 @@ def _state_path(root: str) -> Path:
     return Path(root) / ".vortocode" / "logs" / "task_notified.json"
 
 
+_TEAM_LABELS = {"waiting": "需要你决定", "review": "交付了，等你验收", "failed": "失败了"}
+
+
 def _key(task: Any) -> Optional[str]:
+    from src.workflow.tasks.team import KIND as TEAM_KIND, is_team_child
+    if getattr(task, "kind", "") == TEAM_KIND:
+        team = getattr(task, "team", None)
+        if not isinstance(team, dict) or task.status not in _TEAM_LABELS:
+            return None
+        return f"team:{task.id}:{task.status}:{team.get('events', 0)}"
+    if is_team_child(task):
+        return None                        # 任务上下文的成员结果由协调人处理，不直接推给主人
     if not isinstance(getattr(task, "collaboration", None), dict) or not task.collaboration:
         return None
     if task.status not in _LABELS:
@@ -42,10 +53,28 @@ def _key(task: Any) -> Optional[str]:
     return f"{task.id}:{task.collaboration.get('round', 0)}:{task.status}"
 
 
+def _team_message(task: Any) -> str:
+    team = task.team
+    label = _TEAM_LABELS[task.status]
+    objective = " ".join(str(team.get("objective") or "").split())[:30] or task.id
+    tainted = bool(team.get("tainted")) or bool((team.get("submission") or {}).get("tainted"))
+    detail = ""
+    if task.status == "waiting" and team.get("waiting_reason") and not tainted:
+        detail = "：" + " ".join(str(team["waiting_reason"]).split())[:80]
+    elif task.status == "failed" and task.error:
+        detail = "：" + " ".join(str(task.error).split())[:80]
+    elif tainted:
+        detail = "（成员读过外部内容，打开任务核对原文）"
+    text = f"🧩 任务小组「{objective}」{label}{detail}"
+    return text if text[-1] in "。？！）" else text + "。"
+
+
 def message(task: Any) -> Optional[str]:
     """要推的那句话；不该推就返回 None。"""
     if _key(task) is None:
         return None
+    if getattr(task, "kind", "") == "team":
+        return _team_message(task)
     label = _LABELS[task.status]
     if task.collaboration.get("tainted"):
         return f"🧩 一个后台子任务{label}（它读过外部内容，结果要核对）。回到对话里让我汇报。"
