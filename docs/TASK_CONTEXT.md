@@ -1,6 +1,6 @@
 # 任务上下文：主 agent 协调多个职责分明的成员（设计稿 v0.1）
 
-状态：待评审，未实现。日期：2026-11-03。附 ADR-014 草案（§11），主人确认后移入 `DECISIONS.md`。
+状态：已决定（ADR-014，2026-11-03），未实现。§12 的待定项已按本稿建议确认。
 
 ## 0. 结论
 
@@ -92,7 +92,29 @@
 | 研究员 `web-researcher` | 只读联网：`web_search`、`web_fetch` | 默认便宜模型 | 读到的外部内容使本次子任务为污点 |
 | 审查员 `reviewer` | 无工具 | 与研究员不同的模型 | 只看交给它的结果和验收标准，给出问题清单 |
 
-开发成员（Codex / Claude Code 在隔离 worktree 里写）放到第二个切片（§10）。
+开发成员放到第二个切片（§10），执行框架见 §5.1。
+
+### 5.1 成员的执行框架
+
+成员可以由不同框架执行，每种框架一个适配器，对上提供同一组动作：开始一次派活、读状态（执行快照 v1）、请求停止。
+
+| 框架 | 接入方式 | 权限怎么管 | 现有基础 |
+| --- | --- | --- | --- |
+| VortoCode 自有 agent | 进程内 `MainAgent` | 确认门、污点、能力档案全程生效 | 已有 |
+| ACP 通用适配器：DeepSeek Harness（`dsh --profile acp`）、OpenCode（`opencode acp`），以及 Gemini CLI、Qwen Code、Kimi 等 | stdio 上的 Agent Client Protocol | 框架每次要执行命令、改文件都发 `session/request_permission`，由我们的确认门按成员角色卡判定 | 无；参考 OpenMausBot `server/drivers/acp/` |
+| Pi（`pi --mode rpc`） | Pi 自己的 stdio JSON-RPC | 自带工具的确认经 RPC 交给我们判定；不支持的按只读处理 | 无；参考 OpenMausBot `server/drivers/pi.ts` |
+| Codex | `codex exec` / App Server | 只能从外面限制：`-s workspace-write` 只在一次性 worktree、审查 `-s read-only`、不给危险参数、剥离推送令牌 | `agents/external_workers.py`、`agents/backends/codex.py` |
+| Claude Code | `claude -p` 流式 JSON | 同上：`dontAsk` + 工具白名单，审查不给编辑工具 | `agents/external_workers.py` |
+
+共同规则：
+
+- 外部框架只在登记项目的一次性 worktree 里写；交付是分支和 PR，由 VortoCode 开，合并要主人。
+- 子进程环境走 `sandbox.policy.child_env()`，并剥离 GitHub 令牌和 VortoCode 自己的密钥。
+- 看得到工具调用的框架（ACP、Pi、自有 agent）：出现联网动作就把这次子任务标为污点。看不到的（Codex、Claude Code
+  的内部动作）：结果一律按外部内容处理。
+- 框架的登录用常驻电脑上的专用目录（沿用 `VORTOCODE_WORKER_HOME` 的做法），不碰个人配置；安装和登录属于部署
+  配置变更，每装一种单独征求主人同意。
+- 无人值守档位不启动外部框架。
 
 ## 6. 安全
 
@@ -167,17 +189,18 @@
 
 1. **S1 只读小组（General 范围）**：任务卡提议与批准；`kind="team"` 根与协调记录；协调人工具；研究员和审查员
    两种角色卡；唤醒、预算、无进展判定；`work_status` 与 G2 推送接上。不装外部 CLI。
-2. **S2 开发成员**：成员可以是 Codex / Claude Code（复用 `external_workers` 的隔离与参数规则），只在登记的
-   项目里、一次性 worktree 中写；交付仍是分支和 PR，合并要主人。前提：常驻电脑装好 CLI 并登录专用账号（部署
-   配置变更，单独征求主人同意）。
+2. **S2 外部框架成员**（§5.1）：先做 ACP 通用适配器（一次覆盖 DeepSeek Harness、OpenCode 等），再把 Codex /
+   Claude Code 的 `external_workers` 接成成员，最后是 Pi。只在登记项目的一次性 worktree 中写，交付是分支和 PR。
+   前提：常驻电脑装好对应 CLI 并登录专用账号（部署配置变更，每种单独征求主人同意）。S2 上线后，开发流水线与
+   项目运行时按 ADR-015 退役。
 3. **S3 任务视图**：Desktop 与 App 同构展示（`docs/DESIGN_SYSTEM.md`），停止与加预算走审批卡。
 
 每个切片合并前跑 `./scripts/ci-local.sh`；S1 上线后用 2–3 个真实任务观察：协调轮数、返工次数、主人介入次数、
 费用，再决定是否做 S2。
 
-## 11. ADR-014 草案
+## 11. ADR-014
 
-> 待主人确认后移入 `docs/DECISIONS.md`。
+> 已确认，正式文本见 `docs/DECISIONS.md`。
 
 **ADR-014：大任务开任务上下文，由主 agent 协调职责分明的成员（2026-11-03）**
 
@@ -204,8 +227,9 @@
   `tests/unit/test_layering.py`（任务上下文服务只经 workflow 公开 API）；新的契约测试：`open` 档协调人读不到
   记忆与目标、预算用尽不能再派、无进展转 `waiting_owner`、污点结果不进主对话正文。
 
-## 12. 待主人确认
+## 12. 已确认（2026-11-03）
 
-1. 是否接受 §11 的 ADR-014（含对 ADR-008 和多 bot 设计 V1 的两处修改）。
-2. 第一个切片的默认额度（§7）是否合适，尤其累计时限 1 小时、协调人唤醒 16 次。
-3. 默认开放档位用 `open`，还是默认 `private`、需要联网时再选 `open`。本稿建议默认 `open`：大任务多半要查资料。
+1. 接受 ADR-014，含对 ADR-008 和多 bot 设计 V1 的两处修改。
+2. S1 默认额度按 §7。
+3. 默认开放档位 `open`。
+4. 成员执行框架扩展到 ACP 系（DeepSeek Harness、OpenCode 等）与 Pi（§5.1）。

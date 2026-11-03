@@ -2,6 +2,7 @@
 
 > 2026-11-01：产品结构调整为「个人 Agent 底座 + 插件 + 主人终端」，见 [ADR-011](DECISIONS.md)。本文的四个问题和 P0 / P1 顺序继续有效，之后按 ADR-011 的落地顺序推进。
 > 2026-11-02：主人终端向 Muse 一类的个人 Agent 应用靠拢，Desktop 与 App 同构、对话为中心，见 [ADR-012](DECISIONS.md)。
+> 2026-11-03：大任务由主 agent 开任务上下文、协调多框架成员，见 [ADR-014](DECISIONS.md) 与 [任务上下文](TASK_CONTEXT.md)；主线是个人 Agent，Desktop 工作台分三步撤掉，见 [ADR-015](DECISIONS.md)。
 
 整理日期：2026-10-23。本文描述当前源码与近期投入顺序；已安装应用、真实主机、外部 CLI 版本及真实模型效果需要分别验收。早期蓝图保留在 [历史架构设计](ARCHITECTURE.md)。
 
