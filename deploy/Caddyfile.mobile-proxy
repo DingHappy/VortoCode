@@ -33,7 +33,7 @@ https://{$VORTOCODE_HTTPS_HOST}:18443 {
 		-Server
 	}
 	request_body {
-		max_size 8KB
+		max_size 16KB
 	}
 
 	# Transport probe only. Account readiness is reported by the status route.
@@ -49,7 +49,7 @@ https://{$VORTOCODE_HTTPS_HOST}:18443 {
 
 	@mobile_get {
 		method GET
-		path /mobile /mobile/ /api/mobile/browser/status /api/mobile/browser/bootstrap /api/mobile/browser/snapshot /api/mobile/account/callback /api/mobile/native/authorize /api/mobile/native/bootstrap /api/mobile/native/snapshot
+		path /mobile /mobile/ /api/mobile/browser/status /api/mobile/browser/bootstrap /api/mobile/browser/snapshot /api/mobile/account/callback /api/mobile/native/authorize /api/mobile/native/bootstrap /api/mobile/native/snapshot /api/mobile/native/decisions /api/mobile/native/changes /api/mobile/native/chat /api/mobile/native/chat/turn /api/mobile/native/dispatches /api/mobile/native/timeline
 	}
 	handle @mobile_get {
 		import mobile_backend
@@ -63,7 +63,7 @@ https://{$VORTOCODE_HTTPS_HOST}:18443 {
 	}
 	@mobile_post {
 		method POST
-		path /api/mobile/account/login /api/mobile/browser/logout /api/mobile/native/exchange /api/mobile/native/logout
+		path /api/mobile/account/login /api/mobile/browser/logout /api/mobile/native/exchange /api/mobile/native/logout /api/mobile/native/keys /api/mobile/native/decide /api/mobile/native/capture /api/mobile/native/undo /api/mobile/native/push /api/mobile/native/chat/send /api/mobile/native/chat/card /api/mobile/native/dispatch /api/mobile/native/goal-advance/resume
 	}
 	handle @mobile_post {
 		import mobile_backend

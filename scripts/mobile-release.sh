@@ -15,6 +15,8 @@ ENV_FILE="${VORTOCODE_MOBILE_ENV_FILE:-$HOME/.config/vortocode-mobile/environmen
 RELEASES="${VORTOCODE_MOBILE_RELEASES:-$HOME/.local/share/vortocode-mobile/releases}"
 SERVICE="${VORTOCODE_MOBILE_SERVICE:-vortocode-mobile}"
 PORT="${VORTOCODE_MOBILE_PORT:-18081}"
+CHECKER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mobile-route-check.py"
+CADDY_FILE="${VORTOCODE_MOBILE_CADDYFILE:-$HOME/.config/vortocode-https/Caddyfile}"
 DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
 
@@ -62,8 +64,19 @@ target="$RELEASES/$release"
 say "部署目录提交：${commit:0:12}"
 say "当前快照：$current"
 say "新快照：  $release"
+# 新接口遗漏于 HTTPS 白名单时，在切换快照或重启前失败。脚本不会自动放宽入口。
+check_routes() {
+  local root="$1"; shift
+  set -- --auth-file "$root/src/web/auth.py" --environment-file "$ENV_FILE" \
+    --loopback-origin "http://127.0.0.1:$PORT" "$@"
+  if [[ -f "$CADDY_FILE" ]]; then set -- "$@" --caddyfile "$CADDY_FILE"; fi
+  python3 "$CHECKER" "$@"
+}
+check_routes "$staging" --contract-only || fail "接口/HTTPS 合同不完整；未切换、未重启"
 if [[ "$release" == "$current" ]]; then
-  say "✓ 内容没有变化，不用切换"
+  if [[ "$DRY_RUN" == 1 ]]; then say "（--dry-run：内容没有变化，未发请求、未切换、未重启）"; exit 0; fi
+  check_routes "$current_dir" || fail "当前发布的路由/公网入口检查失败；未重启"
+  say "✓ 内容没有变化，入口核对通过，不用切换"
   exit 0
 fi
 if [[ "$DRY_RUN" == 1 ]]; then
@@ -89,26 +102,31 @@ switch_to() {
 }
 restarts() { systemctl --user show -p NRestarts --value "$SERVICE"; }
 
-# 新路由必须由路由自己应答；被管理员令牌中间件拦下（{"detail":"Unauthorized"}）说明还在跑旧代码。
-probe() {
-  local body
-  body="$(curl -s -m 5 -X POST -H 'Authorization: Bearer vcn_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' \
-    -H 'Content-Type: application/json' -d '{}' "http://127.0.0.1:$PORT/api/mobile/native/keys" || true)"
-  [[ -n "$body" && "$body" != '{"detail":"Unauthorized"}' && "$body" != *'"Not Found"'* ]]
-}
 
+# 从切换开始到成功收尾之间，任何退出（包括 restart / 计数读取失败）都恢复环境。
+rollback_required=1
+rollback_on_exit() {
+  local status=$?
+  trap - EXIT
+  if [[ "$rollback_required" == 1 ]]; then
+    say "✗ 新快照或公网入口没有通过核对，切回 ${current}（HTTPS 配置保持原样）" >&2
+    cp -p "$backup" "$ENV_FILE" || { say "✗ 环境恢复失败，请使用备份：$backup" >&2; exit 1; }
+    systemctl --user restart "$SERVICE" || { say "✗ 旧环境已恢复，但旧服务重启失败" >&2; exit 1; }
+    exit 1
+  fi
+  exit "$status"
+}
+trap rollback_on_exit EXIT
 switch_to "$current" "$release"
-grep -q "^VORTOCODE_MOBILE_RELEASE=$release\$" "$ENV_FILE" || { cp -p "$backup" "$ENV_FILE"; fail "环境文件没有按预期切换，已恢复"; }
+grep -q "^VORTOCODE_MOBILE_RELEASE=$release\$" "$ENV_FILE" || fail "环境文件没有按预期切换"
 systemctl --user restart "$SERVICE"
 before="$(restarts)"          # 手动重启后再取基线：之后再涨就是起来又崩了
 sleep "${VORTOCODE_MOBILE_SETTLE_SECONDS:-12}"
-if [[ "$(systemctl --user is-active "$SERVICE")" == active && "$(restarts)" == "$before" ]] && probe; then
+if [[ "$(systemctl --user is-active "$SERVICE")" == active && "$(restarts)" == "$before" ]] && check_routes "$target"; then
+  rollback_required=0
   say "✓ 手机网关已切换到 $release 并通过核对（环境文件备份：${backup}）"
   say "  回滚：把环境文件里的 $release 改回 ${current}，再 systemctl --user restart $SERVICE"
   say "  已登录的手机不用重新登录（会话已加密落盘，见 gateway/mobile_session_store.py）"
   exit 0
 fi
-say "✗ 新快照没有通过核对，切回 $current" >&2
-cp -p "$backup" "$ENV_FILE"
-systemctl --user restart "$SERVICE"
 exit 1
