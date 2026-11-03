@@ -1,4 +1,5 @@
 import { approvalCategory, approvalSource } from "../lib/approval";
+import { OwnerAccess } from "./OwnerAccess";
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode, RefObject } from "react";
 import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, ImagePlus, List, ListChecks, PanelRightClose, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, UserRound, Users, X } from "lucide-react";
@@ -287,10 +288,12 @@ function ago(value?: string, now: Date = new Date()): string {
 }
 
 /** 「审核记录」：它请你确认过的事——做了什么、你允许还是拒绝、什么时候（决策审计）。 */
-export function AssistantAudit({ entries, now }: { entries: AuditEntry[]; now?: Date }) {
+export function AssistantAudit({ entries, now, accessClient, connected = false }: { entries: AuditEntry[]; now?: Date;
+  accessClient?: Partial<Pick<import("../gateway").GatewayClient, "ownerAccess">> | null; connected?: boolean }) {
   const decisions = entries.filter((entry) => entry.category === "decision" && entry.operation);
   return <section className="assistant-section">
     <h5>审核记录</h5>
+    <OwnerAccess client={accessClient} connected={connected} />
     {decisions.length === 0 && <p className="assistant-memory-empty">还没有需要你确认的事。它要发消息、下发任务、写记忆这类动作前都会先问你，问过的都记在这里。</p>}
     <ul className="assistant-audit">
       {decisions.map((entry) => {

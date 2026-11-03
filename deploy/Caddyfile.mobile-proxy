@@ -49,7 +49,7 @@ https://{$VORTOCODE_HTTPS_HOST}:18443 {
 
 	@mobile_get {
 		method GET
-		path /mobile /mobile/ /api/mobile/browser/status /api/mobile/browser/bootstrap /api/mobile/browser/snapshot /api/mobile/account/callback /api/mobile/native/authorize /api/mobile/native/bootstrap /api/mobile/native/snapshot /api/mobile/native/decisions /api/mobile/native/changes /api/mobile/native/chat /api/mobile/native/chat/turn /api/mobile/native/dispatches /api/mobile/native/timeline
+		path /mobile /mobile/ /api/mobile/browser/status /api/mobile/browser/bootstrap /api/mobile/browser/snapshot /api/mobile/account/callback /api/mobile/native/authorize /api/mobile/native/bootstrap /api/mobile/native/snapshot /api/mobile/native/decisions /api/mobile/native/changes /api/mobile/native/chat /api/mobile/native/chat/turn /api/mobile/native/dispatches /api/mobile/native/timeline /api/mobile/native/access
 	}
 	handle @mobile_get {
 		import mobile_backend

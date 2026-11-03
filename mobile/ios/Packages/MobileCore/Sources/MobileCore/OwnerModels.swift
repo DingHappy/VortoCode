@@ -118,9 +118,7 @@ public struct ChatCard: Codable, Identifiable, Sendable, Equatable {
     public let tainted: Bool?
     public let approvalScope: String?
     public var categoryLabel: String {
-        ["read": "只读访问", "own_data": "你的事项", "draft": "本地草稿", "write": "文件修改",
-         "execute": "命令执行", "deliver": "对外发送", "interact": "电脑或网页操作",
-         "irreversible": "不可逆操作"][operationKind ?? ""] ?? "类别待核对"
+        ApprovalLabels.category(operationKind)
     }
     /// 高风险的卡批准要用需要 Face ID 的批准钥匙；普通卡点一下（日常钥匙）
     public var needsFaceID: Bool { risk != "normal" || (requiredKey != nil && requiredKey != "device") }
@@ -135,8 +133,9 @@ public struct ChatTurn: Codable, Sendable, Equatable {
     public let reply: String
     public let error: String
     public let cards: [ChatCard]
-    public var isFinished: Bool { ["done", "failed", "busy"].contains(state) }
-    public var pendingCards: [ChatCard] { cards.filter(\.isPending) }
+    public let outcome: String?
+    public var isFinished: Bool { outcome == "unknown" || ["done", "failed", "busy"].contains(state) }
+    public var pendingCards: [ChatCard] { isFinished ? [] : cards.filter(\.isPending) }
 }
 
 /// 写入的失败要和读取分开：一次签名失败不该把人登出。
