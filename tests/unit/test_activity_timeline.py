@@ -79,6 +79,8 @@ def test_desktop_routes(world, monkeypatch):
     monkeypatch.chdir(root)
     monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
     monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    # 路由按真实当前时间判断暂停是否过期，暂停期限要相对真实时间给，测试才不随日期失效
+    goal_advancer._save_paused(root, {goal["id"]: (datetime.now(timezone.utc) + timedelta(hours=10)).isoformat()})
     from src.web.server import app
     client = TestClient(app)
     data = client.get("/api/assistant/timeline", params={"limit": 20}).json()
