@@ -70,7 +70,7 @@ async def codex_actions(status: str | None = None):
 async def _decide(action_id: str, approved: bool):
     root = _general_root()
     try:
-        action = codex_watch.decide_action(root, action_id, approved)
+        action = codex_watch.decide_action(root, action_id, approved, origin="runtime", decision_source="user")
     except codex_watch.CodexActionError as error:
         raise _action_error(error) from error
     from src.gateway.audit import record_decision_audit

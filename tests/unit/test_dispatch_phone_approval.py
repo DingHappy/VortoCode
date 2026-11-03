@@ -40,7 +40,8 @@ async def test_owner_approve_button_dispatches_without_the_model(tmp_path, monke
     entry = dispatch.propose(str(tmp_path), project="VortoCode", title="补单测", goal="给 safe_id 补边界单测")
     approved = []
 
-    async def fake_approve(root, dispatch_id):
+    async def fake_approve(root, dispatch_id, *, origin, decision_source):
+        assert origin == "im" and decision_source == "user"
         approved.append(dispatch_id)
         return {**entry, "status": "running"}
     monkeypatch.setattr(dispatch, "approve", fake_approve)

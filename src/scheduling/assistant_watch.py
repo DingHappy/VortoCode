@@ -775,7 +775,7 @@ async def _nudge_overdue(root: str, now: datetime, items: List[Dict[str, Any]], 
                 continue
             if now - since >= PROPOSED_EXPIRE:
                 try:
-                    assistant_dispatch.cancel(root, item["id"])
+                    assistant_dispatch.cancel(root, item["id"], origin="runtime", decision_source="system")
                 except assistant_dispatch.DispatchError:
                     continue
                 await _notify_accepted(notify, f"🗑 {title} 写好一周了一直没确认，已自动撤回（还没执行过）。要做的话跟我说一声重写。")

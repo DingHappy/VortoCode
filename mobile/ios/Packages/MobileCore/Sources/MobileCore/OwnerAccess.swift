@@ -27,6 +27,12 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
         public let entries: [Entry]
         public let status: String
         public let bounded: Bool
+        public let sources: [String: String]?
+        public var unavailableLabels: [String] {
+            (sources ?? [:]).filter { $0.value != "current" }.keys.sorted().map {
+                ["audit": "审批审计", "codex": "Codex 动作", "dispatches": "任务单"][$0] ?? "未知来源"
+            }
+        }
     }
     public struct Entry: Codable, Identifiable, Sendable, Equatable {
         public let id: String
@@ -41,19 +47,47 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
         public let tainted: Bool
         public let recordType: String
         public let origin: String
-        public var label: String { ApprovalLabels.category(operationKind) }
+        public let domainKind: String?
+        public let sourceStatus: String?
+        public let decisionMetadataMissing: Bool?
+        public var recordLabel: String {
+            switch recordType {
+            case "card": return "卡片处理"
+            case "decision": return "内核决定"
+            case "dispatch": return "任务单"
+            case "codex_action": return domainKind == "message" ? "Codex 消息" : domainKind == "interrupt" ? "Codex 叫停" : "Codex 动作"
+            default: return "记录类型待核对"
+            }
+        }
+        public var label: String { ["dispatch", "codex_action"].contains(recordType) ? recordLabel : ApprovalLabels.category(operationKind) }
+        public var originLabel: String {
+            ["app": "App", "runtime": "助理运行端", "im": "IM"][origin] ?? "入口待核对"
+        }
+        public var sourceStatusLabel: String? {
+            guard let sourceStatus else { return nil }
+            let labels = recordType == "codex_action" ? [
+                "proposed": "待批准", "approved": "已批准，等待交给 Codex", "sending": "正在交给 Codex，回执待核对",
+                "sent": "Codex 已受理，执行结果仍需核对", "failed": "来源记录为未发送成功",
+                "cancelled": "动作已撤回", "expired": "动作已过时", "unknown": "发送结果无法核对"
+            ] : [
+                "proposed": "待批准", "sending": "正在下发，结果待核对", "send_failed": "下发前失败，未提交",
+                "submission_unknown": "下发结果无法核对", "running": "运行端报告进行中", "waiting": "运行端等待处理",
+                "done": "运行端报告结束，验收仍需核对", "failed": "运行端报告失败", "cancelled": "任务单已取消", "stopped": "运行端已暂停或中断"
+            ]
+            return labels[sourceStatus] ?? "来源状态待核对"
+        }
         public var outcomeLabel: String {
             switch approvalOutcome {
             case "expired": return "已过期，未放行"
             case "cancelled": return "已取消，未放行"
             case "approved": return "已允许"
             case "denied": return "已拒绝"
-            case nil: return decision == "allowed" ? "已允许" : "已拒绝"
+            case nil: return decision == "allowed" ? "已允许" : decision == "denied" ? "已拒绝" : "结果待核对"
             default: return "结果待核对"
             }
         }
         public var sourceLabel: String {
-            ["user": "人工确认", "preauthorized": "既有授权", "system": "系统决定", "timeout": "超时", "cancelled": "已取消"][decisionSource ?? ""] ?? "来源待核对"
+            ["user": "人工确认", "automatic_review": "后台审核", "preauthorized": "既有授权", "system": "系统决定", "timeout": "超时", "cancelled": "已取消"][decisionSource ?? ""] ?? "来源待核对"
         }
         public var scopeLabel: String {
             ["once": "仅本次", "existing_trust": "既有授权范围", "none": "无新增授权"][approvalScope ?? ""] ?? "范围待核对"

@@ -31,3 +31,23 @@ it("rejects incompatible permission contracts and never guesses future outcomes"
   expect(approvalOutcome("future", "allowed")).toBe("结果待核对");
   expect(approvalOutcome(undefined, "allowed")).toBe("已允许");
 });
+
+it("shows domain approval separately from uncertain delivery and automated review", () => {
+  const data = value();
+  data.history.entries = [{ id: "domain", ts: "today", record_type: "codex_action", domain_kind: "message", origin: "im",
+    decision: "allowed", tainted: false, approval_outcome: "approved", approval_scope: "once", decision_source: "user", source_status: "unknown" },
+    { id: "auto", ts: "today", record_type: "dispatch", origin: "runtime", decision: "allowed", tainted: false,
+      approval_outcome: "approved", decision_source: "automatic_review", approval_scope: "none", source_status: "done" }];
+  const html = renderToStaticMarkup(<OwnerAccessDetails value={data} />);
+  for (const text of ["Codex 消息", "已允许", "IM", "发送结果无法核对", "后台审核", "运行端报告结束，验收仍需核对"]) expect(html).toContain(text);
+  expect(html).not.toContain("已完成");
+});
+
+it("a legacy sent record is not presented as a known human approval", () => {
+  const data = value(); data.history.status = "partial"; data.history.sources = { audit: "current", codex: "current", dispatches: "unavailable" };
+  data.history.entries = [{ id: "old", ts: "", record_type: "codex_action", domain_kind: "interrupt", origin: "unknown",
+    decision: "unknown", tainted: false, approval_outcome: "unknown", decision_source: "unknown", source_status: "sent", decision_metadata_missing: true }];
+  const html = renderToStaticMarkup(<OwnerAccessDetails value={data} />);
+  for (const text of ["结果待核对", "入口待核对", "审批时点待核对", "Codex 已受理，执行结果仍需核对", "待核对来源：", "任务单"]) expect(html).toContain(text);
+  expect(html).not.toContain("已允许"); expect(html).not.toContain("已拒绝");
+});

@@ -42,4 +42,32 @@ final class OwnerAccessTests: XCTestCase {
         let turn = try MobileAPI.decoder.decode(ChatTurn.self, from: JSONSerialization.data(withJSONObject: raw))
         XCTAssertTrue(turn.isFinished); XCTAssertTrue(turn.pendingCards.isEmpty)
     }
+
+    func testDomainDecisionAndExecutionStateDoNotCollapseIntoOneResult() throws {
+        var raw = wire()
+        raw["history"] = ["status": "partial", "bounded": true, "sources": ["codex": "current", "dispatches": "unavailable"],
+            "entries": [["id": "domain", "ts": "today", "decision": "allowed", "tainted": false,
+                "record_type": "codex_action", "domain_kind": "message", "origin": "im", "approval_outcome": "approved",
+                "decision_source": "user", "approval_scope": "once", "source_status": "unknown"],
+                ["id": "auto", "ts": "today", "decision": "allowed", "tainted": false, "record_type": "dispatch", "origin": "runtime",
+                 "approval_outcome": "approved", "decision_source": "automatic_review", "source_status": "done"]]]
+        let value = try decode(raw); try value.validate()
+        XCTAssertEqual(value.history.unavailableLabels, ["任务单"])
+        let codex = value.history.entries[0]
+        XCTAssertEqual(codex.label, "Codex 消息"); XCTAssertEqual(codex.outcomeLabel, "已允许")
+        XCTAssertEqual(codex.originLabel, "IM"); XCTAssertEqual(codex.sourceStatusLabel, "发送结果无法核对")
+        let automatic = value.history.entries[1]
+        XCTAssertEqual(automatic.sourceLabel, "后台审核")
+        XCTAssertEqual(automatic.sourceStatusLabel, "运行端报告结束，验收仍需核对")
+    }
+
+    func testLegacyUnknownDecisionIsNeitherApprovedNorDenied() throws {
+        var raw = wire()
+        raw["history"] = ["status": "current", "bounded": true, "entries": [["id": "old", "ts": "", "decision": "unknown", "tainted": false,
+            "record_type": "codex_action", "origin": "unknown", "source_status": "sent", "decision_metadata_missing": true]]]
+        let row = try decode(raw).history.entries[0]
+        XCTAssertEqual(row.outcomeLabel, "结果待核对"); XCTAssertEqual(row.originLabel, "入口待核对")
+        XCTAssertEqual(row.sourceStatusLabel, "Codex 已受理，执行结果仍需核对")
+        XCTAssertEqual(row.decisionMetadataMissing, true)
+    }
 }

@@ -9,8 +9,9 @@ export interface OwnerAccessSnapshot {
   schema_version: number;
   generated_at: string;
   permissions: { profile: string; effective_level: string; scopes: string[]; taint_revokes_preauthorization: boolean };
-  history: { status: string; bounded: boolean; entries: Array<ApprovalMetadata & {
+  history: { status: string; bounded: boolean; sources?: Record<string, string>; entries: Array<ApprovalMetadata & {
     id: string; ts: string; decision: string; tainted: boolean; record_type: string; origin: string;
+    domain_kind?: string; source_status?: string; decision_metadata_missing?: boolean;
   }> };
 }
 export function ownerAccessSnapshot(raw: OwnerAccessSnapshot): OwnerAccessSnapshot {
@@ -29,4 +30,40 @@ export function approvalOutcome(outcome: unknown, decision: string): string {
   if (outcome === "approved" || (outcome == null && decision === "allowed")) return "已允许";
   if (outcome === "denied" || (outcome == null && decision === "denied")) return "已拒绝";
   return "结果待核对";
+}
+
+export type ApprovalHistoryRow = OwnerAccessSnapshot["history"]["entries"][number];
+
+export function recordLabel(row: ApprovalHistoryRow): string {
+  switch (row.record_type) {
+    case "card": return "卡片处理";
+    case "decision": return "内核决定";
+    case "dispatch": return "任务单";
+    case "codex_action": return row.domain_kind === "message" ? "Codex 消息" : row.domain_kind === "interrupt" ? "Codex 叫停" : "Codex 动作";
+    default: return "记录类型待核对";
+  }
+}
+
+export function originLabel(origin: string): string {
+  return origin === "app" ? "App" : origin === "runtime" ? "助理运行端" : origin === "im" ? "IM" : "入口待核对";
+}
+
+export function domainStatus(row: ApprovalHistoryRow): string | undefined {
+  if (row.source_status === undefined) return undefined;
+  const labels = row.record_type === "codex_action" ? new Map([
+    ["proposed", "待批准"], ["approved", "已批准，等待交给 Codex"], ["sending", "正在交给 Codex，回执待核对"],
+    ["sent", "Codex 已受理，执行结果仍需核对"], ["failed", "来源记录为未发送成功"],
+    ["cancelled", "动作已撤回"], ["expired", "动作已过时"], ["unknown", "发送结果无法核对"],
+  ]) : new Map([
+    ["proposed", "待批准"], ["sending", "正在下发，结果待核对"], ["send_failed", "下发前失败，未提交"],
+    ["submission_unknown", "下发结果无法核对"], ["running", "运行端报告进行中"], ["waiting", "运行端等待处理"],
+    ["done", "运行端报告结束，验收仍需核对"], ["failed", "运行端报告失败"], ["cancelled", "任务单已取消"],
+    ["stopped", "运行端已暂停或中断"],
+  ]);
+  return labels.get(row.source_status) ?? "来源状态待核对";
+}
+
+export function unavailableHistorySources(value: OwnerAccessSnapshot): string[] {
+  const labels = new Map([["audit", "审批审计"], ["codex", "Codex 动作"], ["dispatches", "任务单"]]);
+  return Object.entries(value.history.sources ?? {}).filter(([, status]) => status !== "current").map(([name]) => labels.get(name) ?? "未知来源");
 }

@@ -52,7 +52,9 @@ def test_unreadable_or_malformed_history_never_becomes_empty_success(tmp_path, m
         raise OSError("blocked")
 
     monkeypatch.setattr(audit, "_tail_lines", unreadable)
-    assert snapshot(str(tmp_path))["history"] == {"entries": [], "status": "unavailable", "bounded": True}
+    history = snapshot(str(tmp_path))["history"]
+    assert history["entries"] == [] and history["status"] == "unavailable" and history["bounded"]
+    assert history["sources"]["audit"] == "unavailable"
 
 
 def test_projection_is_bounded_and_ids_do_not_expose_legacy_values(tmp_path):
