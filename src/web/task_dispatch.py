@@ -44,6 +44,8 @@ def get_dispatch_service(repo_root: str | None = None) -> DispatchService:
         task_events.broadcast_task_update(view)
         if task.status in {"done", "failed", "cancelled", "interrupted"}:
             task_events.publish_task_handoff(task.owner_session, view)
+        from src.scheduling.task_notices import notify_transition
+        notify_transition(root, task)
 
     return DispatchService(
         root, get_runner(), execute=lambda task, service: execute_dispatch(root, task, service),
