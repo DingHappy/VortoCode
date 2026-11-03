@@ -163,3 +163,50 @@ async def test_notifier_dual_sends_and_an_app_failure_never_breaks_im(tmp_path, 
     monkeypatch.setattr(notices, "in_quiet_hours", lambda now=None: False)
     assert await notices.make_notifier(str(tmp_path), source="test")("Codex 出错了") is True
     assert sent and pushed == ["Codex 出错了"]
+
+
+def test_same_phone_logging_in_again_is_pushed_once(tmp_path):
+    """真机 2026-11-03：同一台手机重新登录三次，留下三条都挂着同一个令牌的设备记录，每条通知推三遍。"""
+    root = str(tmp_path)
+    store = MobileDevices(root)
+    first = store.issue("手机")["device"]["id"]
+    second = store.issue("手机")["device"]["id"]
+    _, old_key = _key_pair()
+    _, new_key = _key_pair()
+    store.register_push(first, mobile_push.normalize_registration("ab" * 32, old_key, "production"))
+    store.register_push(second, mobile_push.normalize_registration("ab" * 32, new_key, "production"))
+    [(device_id, push)] = store.push_targets()
+    assert device_id == second and push["key"] == new_key       # 手机现在只持有最新那台的解密钥匙
+    store.register_push(first, mobile_push.normalize_registration("cd" * 32, old_key, "production"))
+    assert sorted(d for d, _ in store.push_targets()) == sorted([first, second])  # 不同令牌各推各的
+
+
+def test_duplicate_registrations_left_by_older_versions_are_pushed_once(tmp_path):
+    root = str(tmp_path)
+    store = MobileDevices(root)
+    ids = [store.issue("手机")["device"]["id"] for _ in range(3)]
+    _, key = _key_pair()
+    registration = mobile_push.normalize_registration("ab" * 32, key, "production")
+    data = store._load()
+    for offset, item in enumerate(item for item in data["devices"] if item["id"] in ids):
+        item["push"] = {**registration, "refreshed_at": int(time.time()) - 100 + offset}
+    store._save(data)
+    assert [d for d, _ in store.push_targets()] == [ids[-1]]
+
+
+async def test_push_owner_sends_each_token_once(tmp_path, apns, monkeypatch):
+    root = str(tmp_path)
+    store = MobileDevices(root)
+    _, key = _key_pair()
+    for _ in range(3):
+        device_id = store.issue("手机")["device"]["id"]
+        store.register_push(device_id, mobile_push.normalize_registration("ab" * 32, key, "production"))
+    sent = []
+
+    async def ok(registration, text, client=None):
+        sent.append(registration["token"])
+        return "ok"
+
+    monkeypatch.setattr(mobile_push, "send", ok)
+    assert await mobile_push.push_owner(root, "x") is True
+    assert sent == ["ab" * 32]
