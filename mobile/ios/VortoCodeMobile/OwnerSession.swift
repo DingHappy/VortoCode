@@ -40,9 +40,13 @@ final class OwnerSession {
     var timelineError = ""
     private var timelineRequest = UUID()
     private var timelineEpoch = UUID()
+    var chatApproval = ChatApprovalState()
+    private var chatApprovalWork: UUID?
 
     func resetTimeline() {
         polling?.cancel()
+        chatApproval.reset()
+        if chatApprovalWork != nil { working = false; chatApprovalWork = nil }
         turn = nil
         chat = []
         chatNeedsReview = false
@@ -275,6 +279,7 @@ final class OwnerSession {
                     let latest = try await self.api(entry).chatTurn(credential, rid: rid)
                     guard !Task.isCancelled, epoch == self.timelineEpoch, self.turn?.rid == rid else { return }
                     self.turn = latest
+                    self.chatApproval.observe(latest)
                     if latest.isFinished {
                         if latest.state != "done", !latest.error.isEmpty { self.note = latest.error }
                         await self.loadChat(entry, credential)
@@ -291,22 +296,62 @@ final class OwnerSession {
 
     func stopFollowing() { polling?.cancel() }
 
-    func decideCard(_ entry: AssistantEntry, _ credential: NativeCredential, _ card: ChatCard, approve: Bool, scope: String = "once") async {
-        guard let device = bootstrap?.device.id, let rid = turn?.rid, !working else { return }
+    func decideCard(_ entry: AssistantEntry, _ credential: NativeCredential, _ card: ChatCard, approve: Bool, scope: String = "once",
+                    sessionCurrent: @escaping @MainActor @Sendable () -> Bool) async {
+        guard sessionCurrent(), canWrite, let device = bootstrap?.device.id, let rid = turn?.rid, !working,
+              turn?.pendingCards.contains(card) == true,
+              let attempt = chatApproval.begin(rid: rid, card: card, approve: approve, scope: scope) else { return }
         let epoch = timelineEpoch
-        working = true; defer { working = false }
+        let work = UUID(); chatApprovalWork = work
+        working = true
+        defer { if chatApprovalWork == work { chatApprovalWork = nil; working = false } }
         do {
-            _ = try await api(entry).chatDecide(credential, signer: signer, deviceId: device, rid: rid,
-                                                card: card, approve: approve, scope: scope)
-            guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
+            let receipt = try await api(entry).chatDecide(credential, signer: signer, deviceId: device, rid: rid,
+                card: card, approve: approve, scope: scope, beforeSend: { [weak self] in
+                    try await MainActor.run {
+                        guard let self, !Task.isCancelled, sessionCurrent(), epoch == self.timelineEpoch,
+                              self.canWrite, self.bootstrap?.device.id == device, self.turn?.rid == rid,
+                              self.turn?.pendingCards.contains(card) == true,
+                              self.chatApproval.willSend(attempt) else { throw CancellationError() }
+                    }
+                })
+            try Task.checkCancellation()
+            guard sessionCurrent(), epoch == timelineEpoch, turn?.rid == rid, chatApproval.isCurrent(attempt) else { return }
+            guard chatApproval.receive(receipt, for: attempt) else { throw MobileError.invalidResponse }
             let latest = try await api(entry).chatTurn(credential, rid: rid)
-            guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
+            try Task.checkCancellation()
+            guard sessionCurrent(), epoch == timelineEpoch, turn?.rid == rid, chatApproval.isCurrent(attempt), latest.rid == rid else { return }
             turn = latest
+            chatApproval.observe(latest)
             if latest.outcome == "unknown" { note = latest.error }
             follow(entry, credential)
         } catch {
-            guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
-            say(error)
+            guard sessionCurrent(), epoch == timelineEpoch, turn?.rid == rid, chatApproval.failed(attempt) else { return }
+            if !(error is CancellationError) { say(error) }
+        }
+    }
+
+    /// Explicit read only reconciliation; a pending result never automatically resubmits a decision.
+    func checkCardDecision(_ entry: AssistantEntry, _ credential: NativeCredential,
+                           sessionCurrent: @escaping @MainActor @Sendable () -> Bool) async {
+        guard sessionCurrent(), canWrite, !working, let rid = turn?.rid, chatApproval.active?.rid == rid,
+              let attempt = chatApproval.beginCheck() else { return }
+        let epoch = timelineEpoch
+        let work = UUID(); chatApprovalWork = work
+        working = true
+        defer { if chatApprovalWork == work { chatApprovalWork = nil; working = false } }
+        do {
+            let latest = try await api(entry).chatTurn(credential, rid: rid)
+            try Task.checkCancellation()
+            guard sessionCurrent(), epoch == timelineEpoch, turn?.rid == rid, chatApproval.isCurrent(attempt) else { return }
+            guard chatApproval.checked(latest, for: attempt) else { throw MobileError.invalidResponse }
+            turn = latest
+            note = latest.outcome == "unknown" ? latest.error : chatApproval.blocksDecisions ? chatApproval.message
+                : latest.pendingCards.isEmpty ? "已核对运行端状态，批准不表示执行完成。" : "运行端仍在等你决定；请核对卡片后手动选择。"
+            follow(entry, credential)
+        } catch {
+            guard sessionCurrent(), epoch == timelineEpoch, turn?.rid == rid, chatApproval.failed(attempt) else { return }
+            if !(error is CancellationError) { say(error) }
         }
     }
 

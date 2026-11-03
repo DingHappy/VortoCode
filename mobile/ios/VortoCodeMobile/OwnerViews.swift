@@ -95,12 +95,21 @@ struct ChatView: View {
                     Spacer()
                     Button(card.needsFaceID ? "同意（Face ID）" : "同意") { decide(card, approve: true) }
                         .buttonStyle(.borderedProminent)
-                }.disabled(owner.working)
+                }.disabled(owner.working || owner.chatApproval.blocksDecisions || !owner.canWrite || session.credential == nil)
                 if card.canAllowTurn {
                     Button("本轮同类允许（Face ID，最多 \(card.scopeLimits?.maxActions ?? 0) 次）") { decide(card, approve: true, scope: "turn") }
-                        .buttonStyle(.bordered).disabled(owner.working)
+                        .buttonStyle(.bordered).disabled(owner.working || owner.chatApproval.blocksDecisions || !owner.canWrite || session.credential == nil)
                     Text("含本次，仅覆盖\(card.categoryLabel)类操作。从本轮开始最多 \(((card.scopeLimits?.ttlSeconds ?? 0) + 59) / 60) 分钟，回合结束或读过外部内容后失效。")
                         .font(.footnote).foregroundStyle(.secondary)
+                }
+                if owner.chatApproval.active?.cardId == card.id {
+                    Text(owner.chatApproval.message).font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("native-chat-approval-status")
+                    if owner.chatApproval.canCheck || owner.chatApproval.phase == .checking {
+                        Button("核对状态") { checkDecision() }.buttonStyle(.bordered)
+                            .disabled(owner.working || !owner.chatApproval.canCheck || !owner.canWrite || session.credential == nil)
+                            .accessibilityIdentifier("native-chat-approval-check")
+                    }
                 }
             }
             .padding(14)
@@ -142,7 +151,18 @@ struct ChatView: View {
 
     private func decide(_ card: ChatCard, approve: Bool, scope: String = "once") {
         guard let credential = session.credential else { return }
-        Task { await owner.decideCard(entry, credential, card, approve: approve, scope: scope) }
+        Task {
+            await owner.decideCard(entry, credential, card, approve: approve, scope: scope,
+                sessionCurrent: { session.credential?.token == credential.token && session.credential?.instanceId == credential.instanceId })
+        }
+    }
+
+    private func checkDecision() {
+        guard let credential = session.credential else { return }
+        Task {
+            await owner.checkCardDecision(entry, credential,
+                sessionCurrent: { session.credential?.token == credential.token && session.credential?.instanceId == credential.instanceId })
+        }
     }
 }
 
