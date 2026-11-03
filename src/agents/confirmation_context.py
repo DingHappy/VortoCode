@@ -59,6 +59,12 @@ def record_approval_outcome(outcome: str, source: str = "user") -> None:
         _APPROVAL.set({**value, "approval_outcome": outcome, "decision_source": source})
 
 
+def record_approval_scope(scope: str) -> None:
+    value = _APPROVAL.get()
+    if value is not None:
+        _APPROVAL.set({**value, "approval_scope": scope})
+
+
 @contextmanager
 def presenting_approval(kind: str | None, *, source: str, scope: str):
     token = _APPROVAL.set({**approval_details(kind), "decision_source": source, "approval_scope": scope})

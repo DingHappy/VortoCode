@@ -32,6 +32,14 @@ describe("confirmAction", () => {
 });
 
 import { createConfirmationReply, type ConfirmationReplyState } from "./confirm";
+it("sends a turn choice once and fences its late completion by connection identity",async()=>{
+  let client={};let state:ConfirmationReplyState="idle";let release!:()=>void;
+  const pending=new Promise<void>(resolve=>{release=resolve;});const calls:unknown[][]=[];
+  const reply=createConfirmationReply(()=>({client,scope:"owner",id:"c",state}),async(...args)=>{calls.push(args);await pending;},(_id,next)=>{state=next;});
+  const submission=reply.submit("c",true,"turn");await reply.submit("c",true,"once");
+  expect(calls).toEqual([[client,"c",true,"turn"]]);client={};release();await submission;
+  expect(state).toBe("sending");
+});
 function replyFixture() {
   let view={client:{} as object|null,scope:"one",id:"c1",state:"idle" as ConfirmationReplyState};
   let resolve!:()=>void, reject!:(error:Error)=>void;

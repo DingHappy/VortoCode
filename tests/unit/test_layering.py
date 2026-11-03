@@ -30,6 +30,7 @@ def _imports(path, root=SRC):
 
 
 @pytest.mark.parametrize('module', ['agents/gate.py', 'agents/taint.py', 'agents/capabilities.py',
+                                    'agents/scoped_approval.py',
                                     'memory/write_policy.py', 'sandbox/policy.py',
                                     'agents/tool.py', 'agents/tool_runtime.py',
                                     'agents/tool_results.py', 'agents/tool_calls.py', 'agents/tool_arguments.py',

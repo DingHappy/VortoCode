@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Optional
 
+from src.agents.scoped_approval import ApprovalDecision
+
 SLOTS = ("confirm", "progress", "diff", "workspace_required", "tool_event", "plan")
 
 
 class TurnBindings:
     def __init__(self, *, session: str = "", mode: str = "plan") -> None:
-        self.confirm: Optional[Callable[..., Awaitable[bool]]] = None
+        self.confirm: Optional[Callable[..., Awaitable[bool | ApprovalDecision]]] = None
         self.progress: Optional[Callable[[str], None]] = None
         self.diff: Optional[Callable[[str, str], None]] = None
         self.workspace_required: Optional[Callable[[str, str, str], None]] = None
@@ -37,10 +39,10 @@ class TurnBindings:
                 raise TypeError(f"unknown turn binding: {name}")
             setattr(self, name, None)
 
-    async def ask(self, message: str, kind: str | None = None) -> bool:
-        from src.agents.gate import request
+    async def ask(self, message: str, kind: str | None = None) -> bool | ApprovalDecision:
+        from src.agents.gate import request_raw
         fn = self.confirm
-        return await request(fn, message, kind)
+        return await request_raw(fn, message, kind)
 
     def emit_progress(self, message: str) -> None:
         if self.progress is not None:

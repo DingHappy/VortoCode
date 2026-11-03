@@ -21,6 +21,7 @@ from src.gateway.session_actor import (
     clean_prompt_item, new_prompt_item as _new_prompt_item,
 )
 from src.agents.notice import timeline_text
+from src.agents.scoped_approval import ApprovalDecision
 from src.agents.wait_clock import minus_wait, waited
 from src.utils.rich_markup import strip_rich_markup
 from src.web.deps import *  # noqa: F401,F403
@@ -147,7 +148,20 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
             return                              # 确认只能由发起它的会话回答，不能跨会话代批
         fut = pending.get("future") if isinstance(pending, dict) else pending
         if fut is not None and not fut.done():
-            fut.set_result(bool(message.get("ok")))
+            scope = message.get("scope", "once")
+            if scope == "once":
+                fut.set_result(bool(message.get("ok")))
+            else:
+                offer = pending.get("scope_offer") if isinstance(pending, dict) else None
+                valid = scope == "turn" and message.get("ok") is True and offer is not None and offer.valid()
+                if valid:
+                    from src.gateway.audit import record_decision_audit
+                    valid = record_decision_audit(pending["root"], session=pending["session"], mode="build",
+                        operation="本轮同类授权", decision=True, tainted=False,
+                        approval={"operation_kind": offer.kind, "approval_scope": "turn", "decision_source": "user", "approval_outcome": "approved"}, durable=True)
+                if not valid:
+                    pending["scope_rejected"] = True
+                fut.set_result(ApprovalDecision(True, "turn") if valid else False)
 
     elif msg_type == P.AGENT_TTS:             # 「🔊 播放」：把某条回复合成成语音回传前端播放
         await handle_tts_message(websocket, message)
@@ -224,7 +238,7 @@ def pending_confirmations(session: str = "") -> list[dict]:
                 "id": cid,
                 "text": str(record.get("text") or "")[:4000],
                 "tainted": bool(record.get("tainted")),
-                **{key: record[key] for key in ("operation_kind", "risk", "required_key", "approval_scope") if key in record},
+                **{key: record[key] for key in ("operation_kind", "risk", "required_key", "approval_scope", "scope_options", "scope_limits") if key in record},
                 "session": str(record.get("session") or "")[:120],
                 "created": str(record.get("created") or "")[:80],
                 **({"website": dict(record["website"])} if record.get("website") else {}),
@@ -249,7 +263,7 @@ def _make_ws_confirm(websocket, q):
     事件经 q 走（与其它事件同序、由 drain 循环发出）；接收循环并发处理应答（#29 起回合不阻塞收消息）。
     超时/出错/取消都安全返回 False（不放行）。
     """
-    async def _confirm(message: str, kind: str | None = None) -> bool:
+    async def _confirm(message: str, kind: str | None = None) -> bool | ApprovalDecision:
         # 内核决定要问人；可信工具类别只投影成展示字段，不在传输层授予权限。
         import uuid
         from datetime import datetime, timezone
@@ -264,6 +278,9 @@ def _make_ws_confirm(websocket, q):
         website = website_confirmation()
         from src.agents.confirmation_context import approval_details
         approval = approval_details(kind)
+        from src.agents.scoped_approval import current_offer
+        offer = current_offer()
+        scopes = ["once", "turn"] if offer is not None and offer.valid() else ["once"]
         _PENDING_CONFIRMS[cid] = {
             "future": fut,
             "text": str(message)[:4000],
@@ -272,14 +289,20 @@ def _make_ws_confirm(websocket, q):
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "website": website,
             **approval, "approval_scope": "once",
+            "scope_options": scopes, "scope_limits": offer.limits if offer is not None else None, "scope_offer": offer, "root": os.getcwd(),
         }
         q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message), tainted=tainted, website=website,
-                                  **approval, approval_scope="once"))
+                                  **approval, approval_scope="once", scope_options=scopes, scope_limits=offer.limits if offer is not None else None))
         from src.gateway.im_runtime import start_confirmation_notice
         notice = start_confirmation_notice(message)
         reason = "answered"
         try:
-            return bool(await asyncio.wait_for(fut, timeout=300))
+            result = await asyncio.wait_for(fut, timeout=300)
+            if _PENDING_CONFIRMS[cid].get("scope_rejected"):
+                from src.agents.confirmation_context import record_approval_outcome
+                record_approval_outcome("denied", "system")
+                reason = "scope_rejected"
+            return result
         except asyncio.TimeoutError:              # 超时 → 拒绝（安全），并**告诉前端**
             reason = "timeout"
             from src.agents.confirmation_context import record_approval_outcome
@@ -536,6 +559,7 @@ def _new_agent():
                           trust_level=lambda: get_trust_level(repo_root),
                           workspace_scope=workspace_scope,
                           allow_local_files=os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1",
+                          enable_turn_scope=os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1",
                           on_workspace_required=bindings.emit_workspace_required)
     _TURN_BINDINGS[agent] = bindings
     return agent
@@ -848,7 +872,7 @@ async def _replay_history(websocket) -> None:
         item = pending[0]
         await websocket.send_json(P.make_event(
             P.AGENT_CONFIRM, id=item["id"], text=item["text"], tainted=item["tainted"], website=item.get("website"),
-            **{key: item[key] for key in ("operation_kind", "risk", "required_key", "approval_scope") if key in item}))
+            **{key: item[key] for key in ("operation_kind", "risk", "required_key", "approval_scope", "scope_options", "scope_limits") if key in item}))
     await websocket.send_json(_prompt_queue_event(websocket))
 
 

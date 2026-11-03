@@ -64,7 +64,7 @@ def turns():
             return build_session(root, kind="web", confirm=confirm, can_ask_human=True,
                                  capability_profile="owner_device", workspace_scope="general",
                                  trust_level=lambda: get_trust_level(root), with_dev=False,
-                                 on_decision=manager.audit_decision)
+                                 on_decision=manager.audit_decision, enable_turn_scope=True)
 
         async def notify(text: str):
             from src.gateway.mobile_push import push_owner
@@ -136,7 +136,7 @@ async def decide_card(request: Request):
         raise HTTPException(400, "需要 {rid, card_id, approve, digest, key_kind}")
     try:
         return turns().decide(str(data.get("rid")), str(data.get("card_id")), data["approve"],
-                              str(data.get("digest")), key_kind)
+                              str(data.get("digest")), key_kind, scope=data.get("scope", "once"))
     except KeyError:
         raise HTTPException(404, "没有这张卡") from None
     except AppTurnError as error:

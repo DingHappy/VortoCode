@@ -21,6 +21,8 @@ import secrets
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from src.agents.scoped_approval import ApprovalDecision
+
 logger = logging.getLogger(__name__)
 
 CARD_TIMEOUT = 600.0
@@ -29,7 +31,7 @@ _MAX_TURNS = 64
 MAX_TEXT = 4000
 
 # build(confirm) -> agent：用 owner_device 档案装配一个 agent，确认走传入的 confirm
-AgentFactory = Callable[[Callable[..., Awaitable[bool]]], Any]
+AgentFactory = Callable[[Callable[..., Awaitable[bool | ApprovalDecision]]], Any]
 Notify = Callable[[str], Awaitable[Any]]
 
 
@@ -50,6 +52,20 @@ class Card:
     status: str = "pending"            # pending / approved / denied / expired
     created: float = field(default_factory=time.time)
     future: Optional[asyncio.Future] = field(default=None, repr=False)
+    scope_offer: Any = field(default=None, repr=False)
+    selected_scope: str = "once"
+
+    @property
+    def scope_options(self) -> list[str]:
+        return ["once", "turn"] if self.scope_offer is not None else ["once"]
+
+    @property
+    def scope_keys(self) -> dict:
+        return {scope: "approval" if scope == "turn" else self.required_key for scope in self.scope_options}
+
+    @property
+    def scope_limits(self) -> dict | None:
+        return self.scope_offer.limits if self.scope_offer is not None else None
 
     @property
     def risk(self) -> str:
@@ -63,16 +79,18 @@ class Card:
 
     def digest(self, rid: str) -> str:
         # 摘要版本、正文、类别、风险、所需钥匙、污点与本次范围都由服务端绑定。
-        payload = {"v": 2, "rid": rid, "id": self.id, "text": self.text,
+        payload = {"v": 3, "rid": rid, "id": self.id, "text": self.text,
                    "operation_kind": self.operation_kind, "risk": self.risk,
-                   "required_key": self.required_key, "tainted": self.tainted, "approval_scope": "once"}
+                   "required_key": self.required_key, "tainted": self.tainted, "approval_scope": "once",
+                   "scope_options": self.scope_options, "scope_keys": self.scope_keys, "scope_limits": self.scope_limits}
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False,
                                          separators=(",", ":")).encode()).hexdigest()
 
     def public(self, rid: str) -> dict:
         return {"id": self.id, "text": self.text, "risk": self.risk, "status": self.status,
                 "operation_kind": self.operation_kind, "required_key": self.required_key,
-                "tainted": self.tainted, "approval_scope": "once", "digest": self.digest(rid)}
+                "tainted": self.tainted, "approval_scope": self.selected_scope, "digest": self.digest(rid),
+                "scope_options": self.scope_options, "scope_keys": self.scope_keys, "scope_limits": self.scope_limits}
 
 
 @dataclass
@@ -195,15 +213,16 @@ class AppTurns:
 
     # —— 待批准卡 ——
 
-    async def _confirm(self, prompt: str, kind: str | None = None) -> bool:
+    async def _confirm(self, prompt: str, kind: str | None = None) -> bool | ApprovalDecision:
         turn = self._current
         if turn is None:                     # 不在 App 回合里（不该发生）：按拒绝
             return False
         from src.agents.confirmation_context import approval_details
         from src.agents.taint import is_tainted
+        from src.agents.scoped_approval import current_offer
         card = Card("card-" + secrets.token_hex(6), str(prompt)[:2000],
                     operation_kind=approval_details(kind)["operation_kind"], tainted=bool(is_tainted()),
-                    created=self.clock())
+                    created=self.clock(), scope_offer=current_offer())
         from src.gateway.app_approval_journal import open_card
         if not open_card(self.root, rid=turn.rid, cid=card.id, request_id=turn.request_id,
                          kind=card.operation_kind, tainted=card.tainted):
@@ -214,12 +233,14 @@ class AppTurns:
         try:
             await self._tell(f"有一张卡等你处理：{card.text[:60]}")
             if card.future.done():
-                return bool(card.future.result())
-            remaining = max(0.0, self.card_timeout - (self.clock() - card.created))
-            return bool(await asyncio.wait_for(asyncio.shield(card.future), remaining))
+                result = bool(card.future.result())
+            else:
+                remaining = max(0.0, self.card_timeout - (self.clock() - card.created))
+                result = bool(await asyncio.wait_for(asyncio.shield(card.future), remaining))
+            return ApprovalDecision(True, "turn") if result and card.selected_scope == "turn" else result
         except asyncio.TimeoutError:
             self._settle_card(turn, card, "expired", "timeout")
-            return card.status == "approved"
+            return ApprovalDecision(True, "turn") if card.status == "approved" and card.selected_scope == "turn" else card.status == "approved"
         finally:
             if card.status == "pending":
                 self._settle_card(turn, card, "cancelled", "cancelled")
@@ -231,7 +252,7 @@ class AppTurns:
             if turn.state == "waiting" and not any(c.status == "pending" for c in turn.cards):
                 turn.state = "running"
 
-    def decide(self, rid: str, card_id: str, approve: bool, digest: str, key_kind: str) -> dict:
+    def decide(self, rid: str, card_id: str, approve: bool, digest: str, key_kind: str, *, scope: str = "once") -> dict:
         """App 的批准 / 拒绝（签名已由手机网关核对）。摘要必须对上卡片此刻的内容，钥匙要够级别。"""
         turn = self.get(rid)
         card = next((c for c in (turn.cards if turn else []) if c.id == card_id), None)
@@ -247,9 +268,15 @@ class AppTurns:
             raise AppTurnError("这张卡已经过期，请核对当前任务")
         if digest != card.digest(rid):
             raise AppTurnError("卡片内容已变化，请刷新后再确认")
-        if approve and card.required_key == "approval" and key_kind != "approval":
+        if not isinstance(scope, str) or scope not in card.scope_options or (not approve and scope != "once"):
+            raise AppTurnError("这张卡不支持这个批准范围")
+        if scope == "turn" and (card.scope_offer is None or not card.scope_offer.valid()):
+            raise AppTurnError("本轮授权范围已失效，请只允许这一次或拒绝")
+        if approve and card.scope_keys[scope] == "approval" and key_kind != "approval":
             raise AppTurnError("这一步需要 Face ID 批准")
+        card.selected_scope = scope
         if not self._settle_card(turn, card, "approved" if approve else "denied", "user"):
+            card.selected_scope = "once"
             raise AppTurnError("审批记录保存结果无法确认，未执行这次批准。请刷新核对后再处理")
         card.future.set_result(bool(approve))
         return card.public(rid)
@@ -262,7 +289,7 @@ class AppTurns:
         saved = record_decision_audit(self.root, session=turn.rid, mode="build",
             operation=f"App 审批卡 {card.id}", decision=outcome == "approved", tainted=card.tainted,
             approval={"operation_kind": card.operation_kind, "risk": card.risk,
-                      "required_key": card.required_key, "approval_scope": "once",
+                      "required_key": card.scope_keys[card.selected_scope], "approval_scope": card.selected_scope,
                       "decision_source": source, "approval_outcome": outcome,
                       "app_card_ref": card_ref(turn.rid, card.id)}, durable=True)
         if outcome == "approved" and not saved:

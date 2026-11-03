@@ -174,10 +174,12 @@ extension MobileAPI {
 
     /// 批准 / 拒绝一张卡。高风险卡的批准用批准钥匙（Face ID），其余用日常钥匙；用哪把也签进请求体。
     public func chatDecide(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
-                           rid: String, card: ChatCard, approve: Bool) async throws -> ChatCard {
-        let key: SigningKey = approve && card.needsFaceID ? .approval : .device
-        let body: [String: Any] = ["rid": rid, "card_id": card.id, "approve": approve, "digest": card.digest,
+                           rid: String, card: ChatCard, approve: Bool, scope: String = "once") async throws -> ChatCard {
+        guard scope == "once" || (approve && scope == "turn" && card.canAllowTurn) else { throw OwnerWriteError.rejected("批准范围待核对") }
+        let key: SigningKey = approve && (card.needsFaceID || scope == "turn") ? .approval : .device
+        var body: [String: Any] = ["rid": rid, "card_id": card.id, "approve": approve, "digest": card.digest,
                                    "key_kind": key == .approval ? "approval" : "device"]
+        if scope != "once" { body["scope"] = scope }
         let data = try await owner("chat/card", method: "POST", credential: credential, body: try json(body),
                                    signer: signer, key: key, deviceId: deviceId)
         return try decode(ChatCard.self, data)

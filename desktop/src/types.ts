@@ -1243,6 +1243,8 @@ export interface RuntimeInboxSnapshot {
 }
 
 export interface ApprovalMetadata {
+  scope_options?: string[];
+  scope_limits?: { max_actions: number; ttl_seconds: number };
   operation_kind?: string;
   risk?: string;
   required_key?: string;

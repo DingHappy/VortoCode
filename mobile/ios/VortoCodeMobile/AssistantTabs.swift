@@ -84,6 +84,8 @@ struct OwnerAccessView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                     Text("普通卡用日常钥匙；加强确认用 Face ID 批准钥匙。单次批准不扩大手机工具权限。")
                         .font(.footnote).foregroundStyle(.secondary)
+                    Text("本轮同类授权只在当时回合内生效，历史记录不会恢复授权。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("最近审批记录") {
                     Text("有限汇总内核决定、App 回合卡片、Codex 动作和任务单，不含操作正文。当前领域记录之外的归档尚未汇总；批准不代表执行完成。")

@@ -117,6 +117,16 @@ public struct ChatCard: Codable, Identifiable, Sendable, Equatable {
     public let requiredKey: String?
     public let tainted: Bool?
     public let approvalScope: String?
+    public let scopeOptions: [String]?
+    public let scopeKeys: [String: String]?
+    public struct ScopeLimits: Codable, Sendable, Equatable { public let maxActions: Int; public let ttlSeconds: Int }
+    public let scopeLimits: ScopeLimits?
+    public var canAllowTurn: Bool {
+        ["own_data", "draft"].contains(operationKind ?? "") && risk == "normal" && tainted == false
+            && scopeOptions?.contains("turn") == true && scopeKeys?["turn"] == "approval"
+            && (scopeLimits?.maxActions ?? 0) > 0 && (scopeLimits?.maxActions ?? 0) <= 10
+            && (scopeLimits?.ttlSeconds ?? 0) > 0 && (scopeLimits?.ttlSeconds ?? 0) <= 600
+    }
     public var categoryLabel: String {
         ApprovalLabels.category(operationKind)
     }

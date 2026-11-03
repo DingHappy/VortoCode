@@ -96,6 +96,12 @@ struct ChatView: View {
                     Button(card.needsFaceID ? "同意（Face ID）" : "同意") { decide(card, approve: true) }
                         .buttonStyle(.borderedProminent)
                 }.disabled(owner.working)
+                if card.canAllowTurn {
+                    Button("本轮同类允许（Face ID，最多 \(card.scopeLimits?.maxActions ?? 0) 次）") { decide(card, approve: true, scope: "turn") }
+                        .buttonStyle(.bordered).disabled(owner.working)
+                    Text("含本次，仅覆盖\(card.categoryLabel)类操作。从本轮开始最多 \(((card.scopeLimits?.ttlSeconds ?? 0) + 59) / 60) 分钟，回合结束或读过外部内容后失效。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             .padding(14)
             .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
@@ -134,9 +140,9 @@ struct ChatView: View {
         Task { await owner.send(entry, credential) }
     }
 
-    private func decide(_ card: ChatCard, approve: Bool) {
+    private func decide(_ card: ChatCard, approve: Bool, scope: String = "once") {
         guard let credential = session.credential else { return }
-        Task { await owner.decideCard(entry, credential, card, approve: approve) }
+        Task { await owner.decideCard(entry, credential, card, approve: approve, scope: scope) }
     }
 }
 

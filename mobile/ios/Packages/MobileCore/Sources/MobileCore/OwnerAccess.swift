@@ -98,12 +98,13 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
             ["user": "人工确认", "automatic_review": "后台审核", "preauthorized": "既有授权", "system": "系统决定", "timeout": "超时", "cancelled": "已取消"][decisionSource ?? ""] ?? "来源待核对"
         }
         public var scopeLabel: String {
-            ["once": "仅本次", "existing_trust": "既有授权范围", "none": "无新增授权"][approvalScope ?? ""] ?? "范围待核对"
+            ["once": "仅本次", "turn": "本轮同类", "existing_trust": "既有授权范围", "none": "无新增授权"][approvalScope ?? ""] ?? "范围待核对"
         }
     }
     public func validate() throws {
         guard schemaVersion == 1, permissions.profile == "owner_device",
-              ["ask", "reads"].contains(permissions.effectiveLevel), permissions.scopes == ["once"],
+              ["ask", "reads"].contains(permissions.effectiveLevel), permissions.scopes.contains("once"),
+              permissions.scopes.allSatisfy({ ["once", "turn"].contains($0) }),
               permissions.taintRevokesPreauthorization, history.bounded,
               permissions.categories.count <= 16, Set(permissions.categories.map(\.id)).count == permissions.categories.count,
               history.entries.count <= 100, Set(history.entries.map(\.id)).count == history.entries.count else { throw MobileError.unavailable }

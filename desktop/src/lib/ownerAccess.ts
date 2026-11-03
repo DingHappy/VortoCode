@@ -17,7 +17,8 @@ export interface OwnerAccessSnapshot {
 export function ownerAccessSnapshot(raw: OwnerAccessSnapshot): OwnerAccessSnapshot {
   if (raw?.schema_version !== 1 || typeof raw.generated_at !== "string" || raw.permissions?.profile !== "owner_device"
     || !["ask", "reads"].includes(raw.permissions.effective_level) || raw.permissions.taint_revokes_preauthorization !== true
-    || !Array.isArray(raw.permissions.scopes) || raw.permissions.scopes.length !== 1 || raw.permissions.scopes[0] !== "once"
+    || !Array.isArray(raw.permissions.scopes) || !raw.permissions.scopes.includes("once")
+    || raw.permissions.scopes.some(scope => !["once", "turn"].includes(scope))
     || raw.history?.bounded !== true || !Array.isArray(raw.history.entries) || raw.history.entries.length > 100
     || raw.history.entries.some(row => !row || typeof row.id !== "string" || typeof row.ts !== "string"
       || typeof row.decision !== "string" || typeof row.tainted !== "boolean")

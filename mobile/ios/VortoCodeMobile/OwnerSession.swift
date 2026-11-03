@@ -291,13 +291,13 @@ final class OwnerSession {
 
     func stopFollowing() { polling?.cancel() }
 
-    func decideCard(_ entry: AssistantEntry, _ credential: NativeCredential, _ card: ChatCard, approve: Bool) async {
+    func decideCard(_ entry: AssistantEntry, _ credential: NativeCredential, _ card: ChatCard, approve: Bool, scope: String = "once") async {
         guard let device = bootstrap?.device.id, let rid = turn?.rid, !working else { return }
         let epoch = timelineEpoch
         working = true; defer { working = false }
         do {
             _ = try await api(entry).chatDecide(credential, signer: signer, deviceId: device, rid: rid,
-                                                card: card, approve: approve)
+                                                card: card, approve: approve, scope: scope)
             guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
             let latest = try await api(entry).chatTurn(credential, rid: rid)
             guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
