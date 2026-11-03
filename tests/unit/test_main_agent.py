@@ -574,7 +574,7 @@ def test_system_prompt_frames_tool_results_and_forbids_fabrication():
     """dogfood 发现：mimo 曾把 [工具 X 结果] 误当用户消息、编造未做的分支/测试。系统提示须明确框定。"""
     s = MainAgent([])._system("plan")
     assert "不是用户发来的新消息" in s                # 工具结果 = 工具输出，非用户新消息
-    assert "只读一眼代码不等于完成" in s              # 只 read 不算做完
+    assert "只完成分析不能当作已经执行" in s           # 普通事项和开发任务遵循同一证据边界
     assert "绝不编造分支名或测试结果" in s            # 反幻觉：没做的别说做了
     assert "提示式协议下" in s                        # 框定对两种协议都准确（native 是结构化 tool 消息）
     # codex 审：模板不再硬编码只有 TUI 才有的 run_dev_workflow；也不点名各端不一的 dev_* 工具

@@ -306,7 +306,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     ] if workspace_scope == GENERAL else [
         "【工作区范围】当前是 Scratch 隔离临时工作区。只在这里创建和运行临时代码；"
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
-    ] if workspace_scope == SCRATCH else []
+    ] if workspace_scope == SCRATCH else [
+        "【工作区范围】当前是 Project 项目会话。围绕用户选择的仓库工作，遵守项目指令与当前工具边界；"
+        "开发能力服务于本次目标，不能把其他项目或私人资料视为默认可访问。"
+    ]
     if workspace_scope == GENERAL and kind in ("web", "im"):
         # 人设保持稳定；相关记忆由每个用户回合只读检索，不冻结在 system 中。
         from src.memory.assistant_profile import assistant_system_parts

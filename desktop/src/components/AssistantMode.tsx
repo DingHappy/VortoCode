@@ -2,7 +2,9 @@ import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
 import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, X } from "lucide-react";
 import { Button, GroupTitle, IconButton, NavItem } from "./ui";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
+import type { MemorySnapshot } from "../lib/memorySnapshot";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import type { AssistantAvatar, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal } from "../types";
 export { PhoneChatDialog } from "./PhoneChatDialog";
@@ -175,7 +177,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   </aside>;
 }
 
-/** 「记忆」页：它记住的关于你的事，可以删。新记住的事从下一个对话起自动带上。 */
+/** 「记忆」页：已确认的事实；后续回合按相关性召回，可以删除。 */
 export function AssistantMemories({ memories, onDelete }: { memories: AssistantMemory[]; onDelete: (memory: AssistantMemory) => void }) {
   if (memories.length === 0) {
     return <p className="assistant-memory-empty">还没有记住什么。聊天时说「记住……」，或者它觉得重要时会问你要不要记下来。</p>;
@@ -207,11 +209,12 @@ export function AssistantProfileDialog({ profile, onSave, onClose }: {
   return <div className="modal-backdrop"><section className="settings-modal assistant-profile-dialog" role="dialog" aria-modal="true" aria-label="助理资料">
     <h2>助理资料</h2>
     <label>名字<input autoFocus value={name} maxLength={20} onChange={(event) => setName(event.target.value)} disabled={busy} /></label>
-    <label>SOUL<textarea rows={4} maxLength={2000} value={soul} onChange={(event) => setSoul(event.target.value)} disabled={busy}
-      placeholder="它是什么性格、怎么说话：比如「简短直接，先给结论；不确定就直说」。" /></label>
+    <label>角色与个性（SOUL）<textarea rows={5} maxLength={2000} value={soul} onChange={(event) => setSoul(event.target.value)} disabled={busy}
+      placeholder="例如：我的个人工作助手；沉稳直接，先给结论；信息足够时推进，必要问题集中询问。" /></label>
     <label>关于你<textarea rows={6} maxLength={2000} value={about} onChange={(event) => setAbout(event.target.value)} disabled={busy}
       placeholder="在哪、做什么、习惯怎么被汇报……助理每次对话都会带上，手机上也一样。" /></label>
-    <p>改动从下一个对话开始生效。</p>
+    <p>SOUL 定义角色、表达与协作偏好；「关于你」提供主人背景。能力与审批仍按当前权限执行。</p>
+    <p>保存后从新建会话生效；进行中的会话保持原设定。</p>
     {error && <p role="alert">{error}</p>}
     <div className="settings-actions"><button onClick={onClose} disabled={busy}>取消</button><button onClick={() => void save()} disabled={busy || !name.trim()}>{busy ? "正在保存…" : "保存"}</button></div>
   </section></div>;
@@ -302,7 +305,7 @@ export function MemoryProposals({ proposals, onDecide }: {
   </>;
 }
 
-export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal, initialMemories = false }: {
+export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal, onMemorySnapshot, initialMemories = false }: {
   profile: AssistantProfile;
   /** 头像：选了文件就换，null 恢复成名字首字 */
   avatar?: AssistantAvatar | null;
@@ -313,16 +316,38 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   onEdit: () => void;
   onDeleteMemory: (memory: AssistantMemory) => void;
   onDecideProposal?: (proposal: MemoryProposal, approve: boolean, replace?: string[]) => void;
+  onMemorySnapshot?: () => Promise<MemorySnapshot | null>;
   /** 从今日概览「去确认记忆」进来：直接打开记忆页 */
   initialMemories?: boolean;
 }) {
   const [showMemories, setShowMemories] = useState(initialMemories);
+  const [preview, setPreview] = useState(false);
+  const [snapshot, setSnapshot] = useState<MemorySnapshot | null>(null);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [snapshotError, setSnapshotError] = useState("");
+  const snapshotRead = useRef(0);
+  useEffect(() => () => { snapshotRead.current += 1; }, []);
+  const readSnapshot = async () => {
+    const serial = ++snapshotRead.current;
+    setPreview(true); setSnapshot(null); setSnapshotError(""); setSnapshotBusy(true);
+    try {
+      const result = await onMemorySnapshot?.();
+      if (serial !== snapshotRead.current) return;
+      if (result) setSnapshot(result);
+      else setSnapshotError("连接已变化，请关闭后重新读取。");
+    } catch (error) {
+      if (serial === snapshotRead.current) setSnapshotError(error instanceof Error ? error.message : "读取记忆失败，请重试");
+    } finally { if (serial === snapshotRead.current) setSnapshotBusy(false); }
+  };
   const fileRef = useRef<HTMLInputElement>(null);
   if (showMemories) {
     return <section className="assistant-section">
       <h5><button className="assistant-back" aria-label="返回身份" onClick={() => setShowMemories(false)}><ArrowLeft size={14} /></button>记忆</h5>
+      {onMemorySnapshot && <p className="assistant-memory-empty"><button onClick={() => void readSnapshot()} disabled={snapshotBusy}>预览与导出记忆</button></p>}
       <MemoryProposals proposals={proposals} onDecide={onDecideProposal} />
       <AssistantMemories memories={memories} onDelete={onDeleteMemory} />
+      {preview && <MemorySnapshotDialog snapshot={snapshot} busy={snapshotBusy} error={snapshotError} onRetry={() => void readSnapshot()}
+        onClose={() => { snapshotRead.current += 1; setPreview(false); setSnapshotBusy(false); setSnapshot(null); }} />}
     </section>;
   }
   const latest = memories[0]?.created_at?.slice(5, 10).replace("-", ".");

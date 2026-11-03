@@ -1554,5 +1554,11 @@
     "methods": [
       "PUT"
     ]
+  },
+  {
+    "path": "/api/assistant/memory-snapshot",
+    "methods": [
+      "GET"
+    ]
   }
 ]
