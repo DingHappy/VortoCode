@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | OpenMausBot 的 Chief of Staff 与运行时契约 | 协调人派活、成员不自由互聊；每根任务的预算；无进展判定；被打断的回合只重跑一次 | 默认 Full access；每个 bot 一个常驻外部进程；频道里多 bot 自由接话 |
 | 本仓库 `CollaborationService` | 派活 → 执行 → 审查接受或返工（最多 3 轮）→ 成员可提问；执行完成与验收分开；轮次校验拒绝迟到结果 | — |
-| 本仓库 `task_chain_budget`（ADR-008 冻结） | 根任务上的执行额度：任务数、轮数、步数、累计时限，预留不退款 | 不改它的默认值，只给任务上下文的根显式传额度 |
+| 本仓库 `task_chain_budget`（ADR-008 冻结） | 规则：额度记在根上，先落盘预留再执行，预留不退款 | 不复用其接口：它绑定 API 下派的单轮合同（指纹、≤12 步、≤600 秒、≤3 轮），根不是一次执行 |
 | ADR-012 定时任务两档案 | 「能上网」和「能看私人上下文」二选一 | — |
 
 ## 2. 现状与缺口
@@ -28,7 +28,7 @@
 | 已有 | 位置 | 对本设计的意义 |
 | --- | --- | --- |
 | 子任务生命周期 | `workflow/tasks/collaboration.py`、`tasks.py` | 成员的每次派活就是一条协作子任务，不新建记录 |
-| 根额度 | `workflow/tasks/task_chain_budget.py` | 任务上下文的根，管所有成员的累计额度 |
+| 根额度的规则 | `workflow/tasks/task_chain_budget.py` | 沿用其规则，额度另记在根任务的 `team` 字段 |
 | 角色卡 | `.vortocode/agents/*.md`（`agents/subagents.py`） | 成员的职责、工具面、模型；工具面是封闭枚举 |
 | 结果推送 | `scheduling/task_notices.py`（G2） | 完成、失败、等回答推给主人 |
 | 在办汇总 | `scheduling/work_status.py`（G3） | 增加「任务上下文」一段 |
@@ -64,7 +64,8 @@
    → 主人验收 / 退回 / 停止
 ```
 
-根状态：`proposed → running ⇄ waiting_owner → review → done / failed / cancelled`。
+根状态：`active ⇄ waiting → review → done / failed / cancelled`（提议在批准前不进台账）。根不用 `running`：启动时的
+恢复扫描会把残留的 `running` 改标 `interrupted`，根的重启规则另按 §7 处理。
 
 - **协调人不保存状态**：每次醒来只读根、子任务和协调记录。模型不可用时，主人仍能看状态、回答、停止。
 - **唤醒来源**：根刚创建；成员完成、失败、中断、提问；主人在审批卡或主对话里回了话。没有定时空转。
@@ -152,7 +153,7 @@
 
 ## 7. 预算与停止
 
-每个根显式传入额度，复用 `task_chain_budget` 的结构，只对 `kind="team"` 的根生效，不改它的默认值：
+每个根在批准时写入额度，记在根任务的 `team` 字段（规则同 `task_chain_budget`：先落盘预留再执行，预留不退款）：
 
 | 额度 | 第一个切片默认 | 用完时 |
 | --- | --- | --- |
@@ -218,7 +219,7 @@
   7. 不设群主层；协调人字段预留，按 §9 的条件再升级。
   8. ADR-013 的 G1 由本 ADR 取代：成员角色在任务卡里选，新角色卡的提议并入 S1 之后再评估。
 - **对既有决定的修改**：
-  - ADR-008：`task_chain_budget`、`task_dependencies` 为任务上下文解冻，只用于 `kind="team"` 的根；其余冻结模块不变。
+  - ADR-008：冻结范围不变。任务上下文的额度另记在根上，不改 `task_chain_budget`、`task_dependencies`。
   - 多 bot 设计 V1：「完成唤醒 = 0」对任务上下文的根改为「成员结果唤醒协调人，受唤醒次数额度约束」；「bot 之间
     自由派活」仍关闭，成员不能派活。
 - **不改**：`gate.decide()`；污点规则（污点态预授权失效、历史污点）；无人值守 fail-closed；ADR-010 交接规则；
