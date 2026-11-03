@@ -51,9 +51,25 @@ scripts/mobile-release.sh
 ```
 
 脚本从部署目录当前提交生成新快照（`git archive` 的 `src` + 沿用当前快照里的 `web/mobile` + `RELEASE.json`），
-备份并切换环境文件，重启后核对：服务在运行、重启计数没涨、`POST /api/mobile/native/keys` 由路由自己应答
-（被管理员令牌中间件拦下返回 `{"detail":"Unauthorized"}` 说明还在跑旧代码）。核对不过自动切回旧快照。
-已登录的手机不用重新登录（原生会话加密落盘，重启后恢复）。
+备份并切换环境文件，重启后核对服务在运行、重启计数没涨，并执行 `scripts/mobile-route-check.py`：
+
+- 从目标快照的 `MOBILE_SELF_AUTHENTICATED` 读取全部原生 App 方法/路径，新增接口自动进入检查；不导入 Web 应用或模型。
+- 若存在 `~/.config/vortocode-https/Caddyfile`（可用 `VORTOCODE_MOBILE_CADDYFILE` 指定），切换前检查两个精确 matcher。缺路径、方法不符或使用前缀通配都会阻止发布。其它反向代理可以没有该文件，发布后的公网探测仍必须通过。
+- 每个原生接口发一次本机、一次公网请求：只用固定无效会话和空正文，不使用真实手机或管理员身份。不跟随重定向、不跳过 TLS 验证、不重试；公网必须是环境文件中的 HTTPS origin。本机请求限定 HTTP 回环，并带配置的 Host / HTTPS 转发头。
+- 本机必须由路由本身返回预期拒绝，公网的状态和 JSON 必须一致。Caddy 的 404、管理员中间件的 `Unauthorized`、重定向、网络/TLS 失败和意外成功都不算通过。另核对管理员时间线和内部 relay 在公网仍为 404。
+- 当前 20 个原生接口最多产生 42 个请求；每次最长 8 秒、响应最多 64 KiB，遇错立即停。`--dry-run` 只核对合同/配置，不发网络请求；内容未变的正常发布仍要核对入口，但不重启。
+
+检查器**不自动编辑或放宽 HTTPS 白名单**。新增路径需要在经审核的入口配置中精确添加，模板见 `deploy/Caddyfile.mobile-proxy`；模板已包含当前对话、派活、时间线与恢复路径，手机正文上限为 16 KiB。路径存在检查不替代 Caddy 自身的完整 `validate`，也不证明手机登录、签名写入或设备接收已验收。
+
+快照切换后，重启、读取重启计数或路由检查失败都恢复旧环境并重启旧手机网关；不恢复用户业务数据，不改 HTTPS 配置。独立检查可以这样运行（不切换、不重启）：
+
+```bash
+python3 scripts/mobile-route-check.py --auth-file src/web/auth.py \
+  --environment-file ~/.config/vortocode-mobile/environment \
+  --caddyfile ~/.config/vortocode-https/Caddyfile
+```
+
+已登录的手机无需因这项发布机制重新登录（原生会话加密落盘，重启后恢复）；真实手机登录和 UI 仍需另行验收。
 
 ### 常驻助理数据备份（加密，2026-11-02）
 
