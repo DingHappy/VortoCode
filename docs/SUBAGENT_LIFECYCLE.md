@@ -1,6 +1,6 @@
 # 主 agent 负责制：子 agent 的创建与生命周期（缺口分析 + ADR 草案）
 
-状态：已决定，见 [ADR-013](DECISIONS.md)（2026-11-03）。G2 已实现，G3、G1 未实现。
+状态：已决定，见 [ADR-013](DECISIONS.md)（2026-11-03）。G2、G3 已实现，G1 未实现。
 
 ## 0. 要回答的问题
 
@@ -108,3 +108,8 @@ TaskLedger 上，跨主机的派活单另有记录是因为它跨进程、跨宿
 
 G2 实现：`src/scheduling/task_notices.py`，接在 `web/task_dispatch.get_dispatch_service` 的状态更新上。
 只覆盖带协作记录的后台子任务；独立 `vc im` 进程自带的任务池不经过这里。
+
+G3 实现：`src/scheduling/work_status.py` 的只读工具 `work_status`，挂在常驻助理（General 范围的 Desktop / IM / App
+会话）上。来源为等你处理清单、进行中的任务单、未达成的个人目标、Codex 会话（与 `codex_status` 共用
+`codex_watch.thread_states` 的状态判断）和连续失败的定时；读不到的来源单独列出。常驻助理本身没有进程内 `task`
+子 agent，项目范围的会话仍用 `task_status`。
