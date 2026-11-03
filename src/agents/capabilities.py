@@ -35,7 +35,9 @@ RESEARCH_READ_TOOLS = frozenset({"read_file", "list_files", "grep"})
 OWNER_DEVICE_PROFILE = "owner_device"
 OWNER_DEVICE_WRITE_TOOLS = frozenset({"personal_goal_create", "personal_goal_update", "save_memory",
                                       # 只是「拟」：任务单要你在手机上 Face ID 下发，Codex 的话要你 Face ID 批准才发
-                                      "propose_task", "propose_codex_message", "propose_codex_interrupt"})
+                                      "propose_task", "propose_codex_message", "propose_codex_interrupt",
+                                      # 任务小组（ADR-014）：开小组 / 加预算按「执行」类问人，回话 / 验收按 OWN_DATA
+                                      "team_propose", "team_reply", "team_decide", "team_add_budget", "team_stop"})
 # 即使申报只读也不开：操控 / 截取电脑屏幕、发送文件与图片、读宿主任意文件、派子任务或给执行中的任务补指令、运行技能脚本
 _OWNER_DEVICE_DENIED_PREFIXES = ("desktop_", "dev_", "send_")
 _OWNER_DEVICE_DENIED_TOOLS = frozenset({"read_local_file", "screenshot_page", "task", "research_parallel",
