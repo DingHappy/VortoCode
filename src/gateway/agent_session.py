@@ -246,6 +246,9 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             tools += build_supervisor_tools(repo_root)
             tools += build_codex_action_tools(repo_root, is_tainted=is_tainted, session=task_owner or "",
                                               confirm=gated_confirm)
+            # 在办汇总（ADR-013 G3）：上面几处来源一次读清，细节仍用各自的工具
+            from src.scheduling.work_status import build_work_status_tool
+            tools.append(build_work_status_tool(repo_root))
             # 插件（日历等外部数据）：放了凭据才挂，带回来的内容按外部不可信处理；
             # 写入（存邮件草稿）每次过内核确认门
             from src.plugins import build_plugin_tools, enabled_plugins

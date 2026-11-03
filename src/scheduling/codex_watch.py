@@ -422,6 +422,30 @@ def _goal_supervision(root: str, state: dict, records: dict, stamp: datetime) ->
     return out
 
 
+def _thread_status(thread: dict, now: datetime, stale: bool) -> str:
+    """一个会话此刻的状态说法；报告过期或观察不可用时一律「状态待核对」。"""
+    current = not stale and execution_is_current(thread, now)
+    status = STATUS_TEXT.get(thread.get("status"), thread.get("status")) if current else "状态待核对"
+    waiting = _waiting(thread) if current else ""
+    if waiting:
+        status = "在等你批准" if waiting == "approval" else "在问你问题"
+    return str(status)
+
+
+def thread_states(root: str, *, now: Optional[datetime] = None) -> dict:
+    """在办汇总用的精简视图：与 ``overview`` 同一套状态判断，只给 id、名字、状态和是否已交给助理。"""
+    now = now or _now()
+    state = load_state(root)
+    received = _parse(state.get("received_at"))
+    threads = _clean_threads({"threads": state.get("threads") or []})
+    stale = not received or not timedelta(0) <= now - received <= STALE_AFTER
+    handed = set(load_handovers(root))
+    return {"received": received is not None, "stale": stale,
+            "threads": [{"id": thread["id"], "label": thread_label(thread),
+                         "status": _thread_status(thread, now, stale),
+                         "handed_over": thread["id"] in handed} for thread in threads]}
+
+
 def _overview(state: dict, now: datetime, handed: Optional[set] = None) -> str:
     """Render one observation, so overview and details cannot mix report versions."""
     received = _parse(state.get("received_at"))
@@ -438,11 +462,8 @@ def _overview(state: dict, now: datetime, handed: Optional[set] = None) -> str:
     for thread in threads:
         turn = thread.get("turn") or {}
         current = not stale and execution_is_current(thread, now)
-        status = STATUS_TEXT.get(thread.get("status"), thread.get("status")) if current else "状态待核对"
-        waiting = _waiting(thread) if current else ""
-        if waiting:
-            status = "在等你批准" if waiting == "approval" else "在问你问题"
-        line = f"- {thread_label(thread)}{'【已交给助理】' if thread.get('id') in (handed or set()) else ''}：{status}"
+        status = _thread_status(thread, now, stale)
+        line =f"- {thread_label(thread)}{'【已交给助理】' if thread.get('id') in (handed or set()) else ''}：{status}"
         if turn.get("request"):
             line += f"；这一轮的要求：{turn['request'][:120]}"
         if turn.get("running_command"):
