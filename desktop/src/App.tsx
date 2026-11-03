@@ -885,6 +885,10 @@ function App() {
               text: String(event.text ?? "需要确认"),
               tainted: event.tainted !== false,
               website: websiteConfirmation(event.website),
+              operation_kind: typeof event.operation_kind === "string" ? event.operation_kind : undefined,
+              risk: typeof event.risk === "string" ? event.risk : undefined,
+              required_key: typeof event.required_key === "string" ? event.required_key : undefined,
+              approval_scope: typeof event.approval_scope === "string" ? event.approval_scope : undefined,
             });
             void refreshDecisions();
             void refreshSessions();

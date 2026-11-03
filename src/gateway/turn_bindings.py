@@ -16,7 +16,7 @@ SLOTS = ("confirm", "progress", "diff", "workspace_required", "tool_event", "pla
 
 class TurnBindings:
     def __init__(self, *, session: str = "", mode: str = "plan") -> None:
-        self.confirm: Optional[Callable[[str], Awaitable[bool]]] = None
+        self.confirm: Optional[Callable[..., Awaitable[bool]]] = None
         self.progress: Optional[Callable[[str], None]] = None
         self.diff: Optional[Callable[[str, str], None]] = None
         self.workspace_required: Optional[Callable[[str, str, str], None]] = None
@@ -37,9 +37,10 @@ class TurnBindings:
                 raise TypeError(f"unknown turn binding: {name}")
             setattr(self, name, None)
 
-    async def ask(self, message: str) -> bool:
+    async def ask(self, message: str, kind: str | None = None) -> bool:
+        from src.agents.gate import request
         fn = self.confirm
-        return bool(await fn(message)) if fn is not None else False
+        return await request(fn, message, kind)
 
     def emit_progress(self, message: str) -> None:
         if self.progress is not None:

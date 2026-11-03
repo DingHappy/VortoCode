@@ -15,12 +15,12 @@ from src.gateway.app_turns import AppTurnError, AppTurns
 class FakeAgent:
     """run_turn 时按脚本：可选地请求一次确认，再回复。"""
 
-    def __init__(self, confirm, ask: str | None):
-        self.confirm, self.ask, self.history = confirm, ask, []
+    def __init__(self, confirm, ask: str | None, kind="own_data"):
+        self.confirm, self.ask, self.history, self.kind = confirm, ask, [], kind
 
     async def run_turn(self, text, mode="plan", **_kwargs):
         if self.ask is not None:
-            ok = await self.confirm(self.ask)
+            ok = await self.confirm(self.ask, self.kind)
             return "已记下" if ok else "没有记"
         return f"收到：{text}"
 
@@ -40,11 +40,11 @@ def shared_chat(monkeypatch):
     return seen
 
 
-def _turns(tmp_path, ask=None, **kwargs):
+def _turns(tmp_path, ask=None, ask_kind="own_data", **kwargs):
     agents = []
 
     def build(confirm):
-        agents.append(FakeAgent(confirm, ask))
+        agents.append(FakeAgent(confirm, ask, ask_kind))
         return agents[-1]
     return AppTurns(str(tmp_path), build, **kwargs), agents
 
@@ -88,15 +88,145 @@ async def test_unanswered_card_expires_as_a_denial(tmp_path, shared_chat):
 
 
 async def test_high_risk_card_needs_the_face_id_key(tmp_path, shared_chat):
-    turns, _ = _turns(tmp_path, ask="对外发送？")
+    turns, _ = _turns(tmp_path, ask="对外发送？", ask_kind="deliver")
     turn = turns.start("req-00000004", "发出去")
     await _settle(turn, ("waiting",))
-    turn.cards[0].risk = "high"                   # 阶段 B 才会出现；规则先立住
+    assert turn.cards[0].risk == "high"
     card = turn.cards[0].public(turn.rid)
     with pytest.raises(AppTurnError):
         turns.decide(turn.rid, card["id"], True, card["digest"], "device")
     turns.decide(turn.rid, card["id"], True, card["digest"], "approval")
     await _settle(turn, ("done",))
+
+
+@pytest.mark.parametrize("kind", [None, "new_kind", "write", "execute", "interact", "irreversible"])
+async def test_unknown_or_sensitive_category_cannot_be_downgraded_by_prompt(tmp_path, shared_chat, kind):
+    from src.gateway.audit import list_audit
+    turns, _ = _turns(tmp_path, ask="只是查看，不用确认", ask_kind=kind)
+    turn = turns.start("req-typed-001", "检查")
+    await _settle(turn, ("waiting",))
+    card = turn.public()["cards"][0]
+    assert card["risk"] == "high" and card["required_key"] == "approval"
+    assert card["approval_scope"] == "once"
+    for key in ("device", "invented"):
+        with pytest.raises(AppTurnError):
+            turns.decide(turn.rid, card["id"], True, card["digest"], key)
+    # 拒绝不应要求 Face ID。
+    turns.decide(turn.rid, card["id"], False, card["digest"], "device")
+    await _settle(turn, ("done",))
+    [entry] = list_audit(str(tmp_path))
+    assert entry["approval_outcome"] == "denied" and entry["decision_source"] == "user"
+    assert entry["required_key"] == "approval"
+    assert "只是查看" not in (tmp_path / ".vortocode/audit.log").read_text()
+
+
+def test_card_digest_binds_kind_taint_text_and_turn():
+    from src.gateway.app_turns import Card
+    card = Card("card-1", "操作", operation_kind="own_data")
+    original = card.digest("turn-1")
+    assert original != card.digest("turn-2")
+    card.operation_kind = "deliver"
+    assert original != card.digest("turn-1")
+    card.operation_kind = "own_data"
+    card.tainted = True
+    assert original != card.digest("turn-1")
+    card.tainted = False
+    card.text = "新操作"
+    assert original != card.digest("turn-1")
+
+
+async def test_deadline_checked_even_before_timer_runs_and_audited_once(tmp_path, shared_chat):
+    from src.gateway.audit import list_audit
+    now = [100.0]
+    turns, _ = _turns(tmp_path, ask="敏感私密正文", clock=lambda: now[0], card_timeout=60)
+    turn = turns.start("req-typed-002", "记一下")
+    await _settle(turn, ("waiting",))
+    [card] = turn.public()["cards"]
+    now[0] += 60
+    with pytest.raises(AppTurnError, match="过期"):
+        turns.decide(turn.rid, card["id"], True, card["digest"], "device")
+    await _settle(turn, ("done",))
+    assert turn.reply == "没有记"
+    turns._settle_card(turn, turn.cards[0], "approved", "user")  # 迟到的终态不能覆盖先前决定。
+    assert turn.cards[0].status == "expired"
+    [entry] = list_audit(str(tmp_path))
+    assert entry["approval_outcome"] == "expired" and entry["decision_source"] == "timeout"
+    assert "敏感私密正文" not in (tmp_path / ".vortocode/audit.log").read_text()
+
+
+async def test_cancelled_confirmation_closes_card_and_denies_late_response(tmp_path):
+    from src.gateway.app_turns import AppTurn
+    from src.gateway.audit import list_audit
+    turns, _ = _turns(tmp_path)
+    turn = AppTurn("app-typed-003", "req-typed-003", "记一下")
+    turns._current = turn
+    turns.turns[turn.rid] = turn
+    pending = asyncio.create_task(turns._confirm("记一下", "own_data"))
+    await asyncio.sleep(0)
+    [card] = turn.public()["cards"]
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert turn.cards[0].status == "cancelled" and turn.cards[0].future.cancelled()
+    with pytest.raises(AppTurnError):
+        turns.decide(turn.rid, card["id"], True, card["digest"], "device")
+    [entry] = list_audit(str(tmp_path))
+    assert entry["approval_outcome"] == entry["decision_source"] == "cancelled"
+
+
+async def test_kernel_category_and_taint_reach_app_card_together(tmp_path, shared_chat):
+    from src.agents.gate import make_confirm_gate
+    from src.agents.taint import mark_tainted, reset_taint
+    reset_taint()
+    try:
+        turns, _ = _turns(tmp_path, ask="记一下", ask_kind="own_data")
+        agent = turns._agent_for_turn()
+        agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True, trust_level="reads",
+                                          capability_profile="owner_device")
+        mark_tainted()
+        turn = turns.start("req-typed-004", "记一下")
+        await _settle(turn, ("waiting",))
+        [card] = turn.public()["cards"]
+        assert card["operation_kind"] == "own_data" and card["tainted"] is True
+        assert card["approval_scope"] == "once" and card["status"] == "pending"
+        turns.decide(turn.rid, card["id"], False, card["digest"], "device")
+        await _settle(turn, ("done",))
+        assert turn.reply == "没有记"
+    finally:
+        reset_taint()
+
+
+async def test_timeout_keeps_the_same_outcome_in_card_and_kernel_audits(tmp_path, shared_chat):
+    from src.agents.gate import make_confirm_gate
+    from src.gateway.audit import list_audit, record_decision_audit
+    turns, _ = _turns(tmp_path, ask="记一下", card_timeout=0.01)
+    agent = turns._agent_for_turn()
+    agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True,
+        on_decision=lambda op, ok, taint: record_decision_audit(str(tmp_path), session="kernel",
+            mode="build", operation=op, decision=ok, tainted=taint))
+    turn = turns.start("req-typed-005", "记一下")
+    await _settle(turn, ("done",))
+    entries = list_audit(str(tmp_path))
+    assert len(entries) == 2
+    assert all(e["approval_outcome"] == "expired" and e["decision_source"] == "timeout" for e in entries)
+
+
+async def test_app_preapproval_is_audited_without_copying_private_operation(tmp_path, shared_chat):
+    from src.agents.gate import make_confirm_gate
+    from src.agents.taint import reset_taint
+    from src.gateway.audit import list_audit
+    reset_taint()
+    turns, _ = _turns(tmp_path, ask="私人事项正文", ask_kind="own_data")
+    agent = turns._agent_for_turn()
+    agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True, trust_level="reads",
+        capability_profile="owner_device", on_decision=turns.audit_decision)
+    turn = turns.start("req-typed-006", "记一下")
+    await _settle(turn, ("done",))
+    assert not turn.cards and turn.reply == "已记下"
+    [entry] = list_audit(str(tmp_path))
+    assert entry["operation_kind"] == "own_data" and entry["decision_source"] == "preauthorized"
+    assert entry["approval_scope"] == "existing_trust" and entry["session"] == turn.rid
+    assert "私人事项正文" not in (tmp_path / ".vortocode/audit.log").read_text()
 
 
 async def test_busy_main_chat_is_reported_not_swallowed(tmp_path, monkeypatch):

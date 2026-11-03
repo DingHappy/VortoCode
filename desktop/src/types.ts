@@ -20,7 +20,7 @@ export interface RuntimeSnapshot {
   logs?: Array<Record<string, unknown>>;
 }
 
-export interface ProtocolEvent {
+export interface ProtocolEvent extends ApprovalMetadata {
   type: string;
   recorded_at?: string;
   rid?: string;
@@ -1242,7 +1242,16 @@ export interface RuntimeInboxSnapshot {
   counts: RuntimeInboxCounts;
 }
 
-export interface AuditEntry {
+export interface ApprovalMetadata {
+  operation_kind?: string;
+  risk?: string;
+  required_key?: string;
+  approval_scope?: string;
+  decision_source?: string;
+  approval_outcome?: string;
+}
+
+export interface AuditEntry extends ApprovalMetadata {
   id: string;
   ts?: string;
   category: "tool" | "decision" | "event" | "hook";
@@ -1371,7 +1380,7 @@ export interface JournalContinuation {
   stale_count: number;
 }
 
-export interface PendingConfirmation {
+export interface PendingConfirmation extends ApprovalMetadata {
   responseState?: import("./lib/confirm").ConfirmationReplyState;
   responseError?: string;
   id: string;

@@ -56,13 +56,15 @@ def turns():
         def build(confirm):
             return build_session(root, kind="web", confirm=confirm, can_ask_human=True,
                                  capability_profile="owner_device", workspace_scope="general",
-                                 trust_level=lambda: get_trust_level(root), with_dev=False)
+                                 trust_level=lambda: get_trust_level(root), with_dev=False,
+                                 on_decision=manager.audit_decision)
 
         async def notify(text: str):
             from src.gateway.mobile_push import push_owner
             await push_owner(root, text)
 
-        _turns = AppTurns(root, build, notify=notify)
+        manager = AppTurns(root, build, notify=notify)
+        _turns = manager
     return _turns
 
 

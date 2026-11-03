@@ -5,7 +5,7 @@
   写进主要聊天；Desktop 同一段对话里看得到。
 - 回合中途要人确认的动作变成**待批准卡**：App 轮询时看到，用设备钥匙签名批准或拒绝后回合继续。
   10 分钟没人处理按拒绝。阶段 A 里 ``owner_device`` 能触发的只有普通一类（你的事项、记忆），
-  所以卡片风险级别固定为 normal；对外发送等高风险类别要到阶段 B 才会出现在手机上。
+  类别由内核传入，所需签名级别由服务端决定；未知类别按加强确认，不扩展 owner_device 工具面。
 - 回合状态只在内存里：常驻助理重启后，进行中的回合按「结果待核对」处理，App 重新发起即可。
 
 本模块不导入前端（web / im），装配函数由 web 层传入。
@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import hashlib
+import json
 import logging
 import secrets
 import time
@@ -28,7 +29,7 @@ _MAX_TURNS = 64
 MAX_TEXT = 4000
 
 # build(confirm) -> agent：用 owner_device 档案装配一个 agent，确认走传入的 confirm
-AgentFactory = Callable[[Callable[[str], Awaitable[bool]]], Any]
+AgentFactory = Callable[[Callable[..., Awaitable[bool]]], Any]
 Notify = Callable[[str], Awaitable[Any]]
 
 
@@ -40,17 +41,34 @@ class AppTurnError(RuntimeError):
 class Card:
     id: str
     text: str
-    risk: str = "normal"
+    operation_kind: str = "unknown"
+    tainted: bool = False
     status: str = "pending"            # pending / approved / denied / expired
     created: float = field(default_factory=time.time)
     future: Optional[asyncio.Future] = field(default=None, repr=False)
 
+    @property
+    def risk(self) -> str:
+        from src.agents.confirmation_context import approval_details
+        return approval_details(self.operation_kind)["risk"]
+
+    @property
+    def required_key(self) -> str:
+        from src.agents.confirmation_context import approval_details
+        return approval_details(self.operation_kind)["required_key"]
+
     def digest(self, rid: str) -> str:
-        return hashlib.sha256(f"{rid}\n{self.id}\n{self.text}".encode()).hexdigest()
+        # 摘要版本、正文、类别、风险、所需钥匙、污点与本次范围都由服务端绑定。
+        payload = {"v": 2, "rid": rid, "id": self.id, "text": self.text,
+                   "operation_kind": self.operation_kind, "risk": self.risk,
+                   "required_key": self.required_key, "tainted": self.tainted, "approval_scope": "once"}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False,
+                                         separators=(",", ":")).encode()).hexdigest()
 
     def public(self, rid: str) -> dict:
         return {"id": self.id, "text": self.text, "risk": self.risk, "status": self.status,
-                "digest": self.digest(rid)}
+                "operation_kind": self.operation_kind, "required_key": self.required_key,
+                "tainted": self.tainted, "approval_scope": "once", "digest": self.digest(rid)}
 
 
 @dataclass
@@ -150,27 +168,41 @@ class AppTurns:
             turn.finished = self.clock()
             for card in turn.cards:
                 if card.status == "pending":
-                    card.status = "expired"
+                    self._settle_card(turn, card, "cancelled", "cancelled")
             if self.notify is not None and turn.finished - turn.started > 15:
                 await self._tell(f"助理回复了：{(turn.reply or turn.error)[:80]}")
 
     # —— 待批准卡 ——
 
-    async def _confirm(self, prompt: str) -> bool:
+    async def _confirm(self, prompt: str, kind: str | None = None) -> bool:
         turn = self._current
         if turn is None:                     # 不在 App 回合里（不该发生）：按拒绝
             return False
-        card = Card("card-" + secrets.token_hex(6), str(prompt)[:2000])
+        from src.agents.confirmation_context import approval_details
+        from src.agents.taint import is_tainted
+        card = Card("card-" + secrets.token_hex(6), str(prompt)[:2000],
+                    operation_kind=approval_details(kind)["operation_kind"], tainted=bool(is_tainted()),
+                    created=self.clock())
         card.future = asyncio.get_running_loop().create_future()
         turn.cards.append(card)
         turn.state = "waiting"
-        await self._tell(f"有一张卡等你处理：{card.text[:60]}")
         try:
-            return bool(await asyncio.wait_for(asyncio.shield(card.future), self.card_timeout))
+            await self._tell(f"有一张卡等你处理：{card.text[:60]}")
+            if card.future.done():
+                return bool(card.future.result())
+            remaining = max(0.0, self.card_timeout - (self.clock() - card.created))
+            return bool(await asyncio.wait_for(asyncio.shield(card.future), remaining))
         except asyncio.TimeoutError:
-            card.status = "expired"
-            return False
+            self._settle_card(turn, card, "expired", "timeout")
+            return card.status == "approved"
         finally:
+            if card.status == "pending":
+                self._settle_card(turn, card, "cancelled", "cancelled")
+            from src.agents.confirmation_context import record_approval_outcome
+            source = {"expired": "timeout", "cancelled": "cancelled"}.get(card.status, "user")
+            record_approval_outcome(card.status, source)
+            if card.future is not None and not card.future.done():
+                card.future.cancel()
             if turn.state == "waiting" and not any(c.status == "pending" for c in turn.cards):
                 turn.state = "running"
 
@@ -182,13 +214,38 @@ class AppTurns:
             raise KeyError(card_id)
         if card.status != "pending" or card.future is None or card.future.done():
             raise AppTurnError("这张卡已经处理过或已过期")
+        if type(approve) is not bool or key_kind not in ("device", "approval"):
+            raise AppTurnError("审批决定或钥匙级别无效")
+        if self.clock() - card.created >= self.card_timeout:
+            self._settle_card(turn, card, "expired", "timeout")
+            card.future.set_result(False)
+            raise AppTurnError("这张卡已经过期，请核对当前任务")
         if digest != card.digest(rid):
             raise AppTurnError("卡片内容已变化，请刷新后再确认")
-        if approve and card.risk != "normal" and key_kind != "approval":
+        if approve and card.required_key == "approval" and key_kind != "approval":
             raise AppTurnError("这一步需要 Face ID 批准")
-        card.status = "approved" if approve else "denied"
+        self._settle_card(turn, card, "approved" if approve else "denied", "user")
         card.future.set_result(bool(approve))
         return card.public(rid)
+
+    def _settle_card(self, turn: AppTurn, card: Card, outcome: str, source: str) -> None:
+        if card.status != "pending":
+            return
+        card.status = outcome
+        from src.gateway.audit import record_decision_audit
+        record_decision_audit(self.root, session=turn.rid, mode="build",
+            operation=f"App 审批卡 {card.id}", decision=outcome == "approved", tainted=card.tainted,
+            approval={"operation_kind": card.operation_kind, "risk": card.risk,
+                      "required_key": card.required_key, "approval_scope": "once",
+                      "decision_source": source, "approval_outcome": outcome})
+
+    def audit_decision(self, _operation: str, decision: bool, tainted: bool) -> None:
+        """内核决定也留痕（含已有授权）；手机正文不复制进审核记录。"""
+        turn = self._current
+        if turn is not None:
+            from src.gateway.audit import record_decision_audit
+            record_decision_audit(self.root, session=turn.rid, mode="build",
+                                  operation=f"App 回合操作 {turn.rid}", decision=decision, tainted=tainted)
 
     async def _tell(self, text: str) -> None:
         if self.notify is None:

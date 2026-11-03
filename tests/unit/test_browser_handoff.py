@@ -199,6 +199,8 @@ async def test_pending_handoff_replays_original_card_and_no_new_approval(flow, m
     await realtime._replay_history(reconnected)
     replayed = next(e for e in reconnected.events if e["type"] == "agent_confirm")
     assert replayed["id"] == card["id"] and replayed["website"] == card["website"]
+    for key, expected in {"operation_kind": "interact", "risk": "high", "required_key": "approval", "approval_scope": "once"}.items():
+        assert replayed[key] == stored[key] == card[key] == expected
     assert not task.done() and not browser.reads
     await answer(card, False, reconnected)
     assert "真人" in await task
