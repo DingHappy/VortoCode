@@ -6,7 +6,7 @@
 - 回合中途要人确认的动作变成**待批准卡**：App 轮询时看到，用设备钥匙签名批准或拒绝后回合继续。
   10 分钟没人处理按拒绝。阶段 A 里 ``owner_device`` 能触发的只有普通一类（你的事项、记忆），
   类别由内核传入，所需签名级别由服务端决定；未知类别按加强确认，不扩展 owner_device 工具面。
-- 回合状态只在内存里：常驻助理重启后，进行中的回合按「结果待核对」处理，App 重新发起即可。
+- 回合与 Future 只在内存里；原审计保留不可执行的等待提示。重启后先核对，再显式准备新请求，不恢复旧批准。
 
 本模块不导入前端（web / im），装配函数由 web 层传入。
 """
@@ -35,6 +35,10 @@ Notify = Callable[[str], Awaitable[Any]]
 
 class AppTurnError(RuntimeError):
     """请求不成立（文本、请求 id 不合法，或太多回合）。"""
+
+
+class AppRequestNeedsReview(AppTurnError):
+    """Known prior request: require human review instead of replaying it."""
 
 
 @dataclass
@@ -114,6 +118,14 @@ class AppTurns:
         existing = self.by_request.get(request_id)
         if existing in self.turns:
             return self.turns[existing]
+        from src.gateway.audit import audit_snapshot
+        from src.gateway.app_approval_journal import read_openings, request_ref
+        saved = audit_snapshot(self.root, 500)
+        if saved["status"] == "unavailable":
+            raise AppTurnError("审批记录暂时无法核对，未开始新回合，请稍后再试")
+        openings, _partial = read_openings(saved["entries"])
+        if any(item["request_ref"] == request_ref(request_id) for item in openings.values()):
+            raise AppRequestNeedsReview("这个请求留有审批记录，可能已经处理或中断。请先核对主聊天和审批记录，不要重复发送原请求")
         self._prune()
         if len(self.turns) >= _MAX_TURNS:
             raise AppTurnError("进行中的回合太多，请稍后再试")
@@ -125,6 +137,11 @@ class AppTurns:
 
     def get(self, rid: str) -> Optional[AppTurn]:
         return self.turns.get(rid) if isinstance(rid, str) else None
+
+    def pending_card_refs(self) -> set[str]:
+        from src.gateway.app_approval_journal import card_ref
+        return {card_ref(turn.rid, card.id) for turn in self.turns.values() for card in turn.cards
+                if card.status == "pending" and card.future is not None and not card.future.done()}
 
     def _prune(self) -> None:
         now = self.clock()
@@ -161,7 +178,7 @@ class AppTurns:
         except Exception as error:  # noqa: BLE001 —— 回合失败要告诉 App，不能静默
             busy = type(error).__name__ == "MainConversationBusy"
             turn.state = "busy" if busy else "failed"
-            turn.error = str(error)[:200] if busy else "这一轮没有完成，可能已有部分操作，请核对后再继续"
+            turn.error = str(error)[:200] if busy or isinstance(error, AppTurnError) else "这一轮没有完成，可能已有部分操作，请核对后再继续"
             if not busy:
                 logger.warning("App 回合失败：%s", type(error).__name__)
         finally:
@@ -183,6 +200,10 @@ class AppTurns:
         card = Card("card-" + secrets.token_hex(6), str(prompt)[:2000],
                     operation_kind=approval_details(kind)["operation_kind"], tainted=bool(is_tainted()),
                     created=self.clock())
+        from src.gateway.app_approval_journal import open_card
+        if not open_card(self.root, rid=turn.rid, cid=card.id, request_id=turn.request_id,
+                         kind=card.operation_kind, tainted=card.tainted):
+            raise AppTurnError("审批记录保存结果无法确认，未开放这张卡，请先核对再重试")
         card.future = asyncio.get_running_loop().create_future()
         turn.cards.append(card)
         turn.state = "waiting"
@@ -224,20 +245,26 @@ class AppTurns:
             raise AppTurnError("卡片内容已变化，请刷新后再确认")
         if approve and card.required_key == "approval" and key_kind != "approval":
             raise AppTurnError("这一步需要 Face ID 批准")
-        self._settle_card(turn, card, "approved" if approve else "denied", "user")
+        if not self._settle_card(turn, card, "approved" if approve else "denied", "user"):
+            raise AppTurnError("审批记录保存结果无法确认，未执行这次批准。请刷新核对后再处理")
         card.future.set_result(bool(approve))
         return card.public(rid)
 
-    def _settle_card(self, turn: AppTurn, card: Card, outcome: str, source: str) -> None:
+    def _settle_card(self, turn: AppTurn, card: Card, outcome: str, source: str) -> bool:
         if card.status != "pending":
-            return
-        card.status = outcome
+            return False
+        from src.gateway.app_approval_journal import card_ref
         from src.gateway.audit import record_decision_audit
-        record_decision_audit(self.root, session=turn.rid, mode="build",
+        saved = record_decision_audit(self.root, session=turn.rid, mode="build",
             operation=f"App 审批卡 {card.id}", decision=outcome == "approved", tainted=card.tainted,
             approval={"operation_kind": card.operation_kind, "risk": card.risk,
                       "required_key": card.required_key, "approval_scope": "once",
-                      "decision_source": source, "approval_outcome": outcome})
+                      "decision_source": source, "approval_outcome": outcome,
+                      "app_card_ref": card_ref(turn.rid, card.id)}, durable=True)
+        if outcome == "approved" and not saved:
+            return False
+        card.status = outcome
+        return True
 
     def audit_decision(self, _operation: str, decision: bool, tainted: bool) -> None:
         """只补记自动内核决定；人工、超时和取消已经由卡片闭合记录。"""

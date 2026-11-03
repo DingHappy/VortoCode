@@ -114,7 +114,7 @@ async def test_unknown_or_sensitive_category_cannot_be_downgraded_by_prompt(tmp_
     # 拒绝不应要求 Face ID。
     turns.decide(turn.rid, card["id"], False, card["digest"], "device")
     await _settle(turn, ("done",))
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == "denied" and entry["decision_source"] == "user"
     assert entry["required_key"] == "approval"
     assert "只是查看" not in (tmp_path / ".vortocode/audit.log").read_text()
@@ -149,7 +149,7 @@ async def test_deadline_checked_even_before_timer_runs_and_audited_once(tmp_path
     assert turn.reply == "没有记"
     turns._settle_card(turn, turn.cards[0], "approved", "user")  # 迟到的终态不能覆盖先前决定。
     assert turn.cards[0].status == "expired"
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == "expired" and entry["decision_source"] == "timeout"
     assert "敏感私密正文" not in (tmp_path / ".vortocode/audit.log").read_text()
 
@@ -170,7 +170,7 @@ async def test_cancelled_confirmation_closes_card_and_denies_late_response(tmp_p
     assert turn.cards[0].status == "cancelled" and turn.cards[0].future.cancelled()
     with pytest.raises(AppTurnError):
         turns.decide(turn.rid, card["id"], True, card["digest"], "device")
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == entry["decision_source"] == "cancelled"
 
 
@@ -205,7 +205,7 @@ async def test_timeout_keeps_the_same_outcome_in_card_and_kernel_audits(tmp_path
                                      on_decision=turns.audit_decision)
     turn = turns.start("req-typed-005", "记一下")
     await _settle(turn, ("done",))
-    entries = list_audit(str(tmp_path))
+    entries = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert len(entries) == 1
     assert all(e["approval_outcome"] == "expired" and e["decision_source"] == "timeout" for e in entries)
     assert entries[0]["operation"].startswith("App 审批卡 ")
@@ -223,7 +223,7 @@ async def test_app_user_decision_is_recorded_once_by_the_card(tmp_path, shared_c
     [card] = turn.public()["cards"]
     turns.decide(turn.rid, card["id"], approved, card["digest"], "device")
     await _settle(turn, ("done",))
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == ("approved" if approved else "denied")
     assert entry["decision_source"] == "user" and entry["operation"].startswith("App 审批卡 ")
 
@@ -241,7 +241,7 @@ async def test_app_automatic_decision_is_audited_once_without_private_operation(
     turn = turns.start("req-typed-006", "记一下")
     await _settle(turn, ("done",))
     assert not turn.cards and turn.reply == ("已记下" if approved else "没有记")
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["operation_kind"] == "own_data" and entry["decision_source"] == source
     assert entry["approval_scope"] == ("existing_trust" if approved else "none") and entry["session"] == turn.rid
     assert "私人事项正文" not in (tmp_path / ".vortocode/audit.log").read_text()

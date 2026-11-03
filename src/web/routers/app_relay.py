@@ -30,6 +30,12 @@ PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH, TIMELINE_PATH, A
 _turns = None
 
 
+def pending_card_refs(root: str) -> set[str]:
+    """Resident-process evidence only; reading never constructs an Agent or restores a wait."""
+    from pathlib import Path
+    return (_turns.pending_card_refs() if _turns is not None and Path(_turns.root).resolve() == Path(root).resolve() else set())
+
+
 def _guard(request: Request) -> None:
     from src.gateway.workspace_scope import GENERAL, current_workspace_scope
     from src.web.auth import ct_eq
@@ -94,10 +100,13 @@ def _opened(body: dict, expected: set):
 @router.post(TURN_PATH)
 async def start_turn(request: Request):
     _guard(request)
-    from src.gateway.app_turns import AppTurnError
+    from src.gateway.app_turns import AppTurnError, AppRequestNeedsReview
     _op, data, _kind = _opened(await _body(request), {"chat_send"})
     try:
         return turns().start(data.get("request_id"), data.get("text")).public()
+    except AppRequestNeedsReview as error:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": str(error), "code": "app_request_review_required"}, status_code=409)
     except AppTurnError as error:
         raise HTTPException(409, str(error)) from None
 
@@ -188,4 +197,5 @@ async def relay_timeline(request: Request):
 async def relay_access(request: Request):
     _guard(request)
     from src.gateway.owner_access import snapshot
-    return await asyncio.to_thread(snapshot, os.getcwd())
+    root = os.getcwd()
+    return await asyncio.to_thread(snapshot, root, live_cards=pending_card_refs(root))

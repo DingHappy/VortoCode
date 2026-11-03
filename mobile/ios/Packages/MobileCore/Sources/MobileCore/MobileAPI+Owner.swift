@@ -47,7 +47,11 @@ extension MobileAPI {
         case 401: throw signer == nil ? MobileError.unauthorized : OwnerWriteError.signatureRejected
         case 403: throw OwnerWriteError.writesDisabled
         case 400, 404, 409:
-            let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? String
+            let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let detail = response?["detail"] as? String
+            if http.statusCode == 409, path == "chat/send", response?["code"] as? String == "app_request_review_required" {
+                throw OwnerWriteError.requestNeedsReview(String((detail ?? "请先核对旧请求").prefix(200)))
+            }
             throw OwnerWriteError.rejected(String((detail ?? "请求没有被接受").prefix(200)))
         case 503:   // 对话没开通 / 常驻助理暂时连不上：照实说，不当成断网
             let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? String

@@ -140,12 +140,13 @@ public struct ChatTurn: Codable, Sendable, Equatable {
 
 /// 写入的失败要和读取分开：一次签名失败不该把人登出。
 public enum OwnerWriteError: Error, LocalizedError, Equatable {
-    case writesDisabled, signatureRejected, rejected(String), unavailable
+    case writesDisabled, signatureRejected, rejected(String), requestNeedsReview(String), unavailable
     public var errorDescription: String? {
         switch self {
         case .writesDisabled: return "这台助理没有开启手机写入。"
         case .signatureRejected: return "这次请求没有通过设备签名核对，请重试；仍失败就重新登录。"
         case .rejected(let detail): return detail
+        case .requestNeedsReview(let detail): return detail
         case .unavailable: return "暂时无法连接助手，这次操作没有提交。"
         }
     }

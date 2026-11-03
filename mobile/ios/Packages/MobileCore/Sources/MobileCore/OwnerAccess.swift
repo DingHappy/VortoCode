@@ -30,7 +30,7 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
         public let sources: [String: String]?
         public var unavailableLabels: [String] {
             (sources ?? [:]).filter { $0.value != "current" }.keys.sorted().map {
-                ["audit": "审批审计", "codex": "Codex 动作", "dispatches": "任务单"][$0] ?? "未知来源"
+                ["audit": "审批审计", "app_cards": "回合审批", "codex": "Codex 动作", "dispatches": "任务单"][$0] ?? "未知来源"
             }
         }
     }
@@ -53,6 +53,7 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
         public var recordLabel: String {
             switch recordType {
             case "card": return "卡片处理"
+            case "card_wait": return "审批等待记录"
             case "decision": return "内核决定"
             case "dispatch": return "任务单"
             case "codex_action": return domainKind == "message" ? "Codex 消息" : domainKind == "interrupt" ? "Codex 叫停" : "Codex 动作"
@@ -65,6 +66,11 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
         }
         public var sourceStatusLabel: String? {
             guard let sourceStatus else { return nil }
+            if recordType == "card_wait" {
+                return sourceStatus == "pending" ? "当前卡片仍在等你确认，请到对话中处理"
+                    : sourceStatus == "interrupted" ? "当前服务已无法接续旧卡，请先核对主聊天；不会重放批准或恢复执行"
+                    : "原审批等待状态无法核对，请先检查主聊天"
+            }
             let labels = recordType == "codex_action" ? [
                 "proposed": "待批准", "approved": "已批准，等待交给 Codex", "sending": "正在交给 Codex，回执待核对",
                 "sent": "Codex 已受理，执行结果仍需核对", "failed": "来源记录为未发送成功",
@@ -78,6 +84,8 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
         }
         public var outcomeLabel: String {
             switch approvalOutcome {
+            case "interrupted": return "审批等待已中断"
+            case "pending": return "仍待确认"
             case "expired": return "已过期，未放行"
             case "cancelled": return "已取消，未放行"
             case "approved": return "已允许"

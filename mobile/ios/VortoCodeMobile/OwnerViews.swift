@@ -38,6 +38,10 @@ struct ChatView: View {
             if !owner.note.isEmpty {
                 Text(owner.note).font(.footnote).foregroundStyle(.secondary).padding(.horizontal).padding(.top, 6)
             }
+            if owner.chatNeedsReview {
+                Button("已核对记录，准备新请求") { owner.prepareReviewedRequest() }
+                    .padding(.horizontal).accessibilityIdentifier("native-reviewed-new-request")
+            }
             composer
         }
         .navigationTitle("对话")
@@ -119,6 +123,7 @@ struct ChatView: View {
 
     private var canSend: Bool {
         owner.canWrite && !owner.sending && !owner.working && !waitingForCard
+            && (owner.captureOnly || !owner.chatNeedsReview)
             && (owner.captureOnly || (owner.turn?.isFinished ?? true))
             && !owner.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }

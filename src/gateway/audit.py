@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import uuid
@@ -71,7 +72,7 @@ def sanitize_audit_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
     return _clip_text(value)
 
 
-def append_audit(repo_root: str, record: Dict[str, Any]) -> bool:
+def append_audit(repo_root: str, record: Dict[str, Any], *, durable: bool = False) -> bool:
     """Append one bounded record. Audit failures never block product work."""
     payload = dict(record or {})
     payload.setdefault("id", "audit-" + uuid.uuid4().hex[:12])
@@ -85,6 +86,15 @@ def append_audit(repo_root: str, record: Dict[str, Any]) -> bool:
         line = json.dumps(payload, ensure_ascii=False) + "\n"
         with _LOCK, path.open("a", encoding="utf-8") as handle:
             handle.write(line)
+            if durable:
+                handle.flush()
+                os.fsync(handle.fileno())
+                if os.name != "nt":
+                    fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try:
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
         return True
     except (OSError, TypeError, ValueError):
         return False
@@ -118,6 +128,7 @@ def record_decision_audit(
     decision: bool,
     tainted: bool,
     approval: Dict[str, Any] | None = None,
+    durable: bool = False,
 ) -> bool:
     from src.agents.confirmation_context import approval_context
     metadata = approval if approval is not None else approval_context()
@@ -130,7 +141,7 @@ def record_decision_audit(
         "decision": "allowed" if decision else "denied",
         "tainted": bool(tainted),
         **details,
-    })
+    }, durable=durable)
 
 
 def _approval_fields(value: Dict[str, Any]) -> Dict[str, str]:
@@ -141,8 +152,12 @@ def _approval_fields(value: Dict[str, Any]) -> Dict[str, str]:
               "approval_scope": ("once", "existing_trust", "none", "unknown"),
               "decision_source": ("user", "preauthorized", "system", "timeout", "cancelled", "unknown"),
               "approval_outcome": ("approved", "denied", "expired", "cancelled", "unknown")}
-    return {key: value[key] if isinstance(value.get(key), str) and value[key] in allowed else "unknown"
-            for key, allowed in limits.items() if key in value}
+    fields = {key: value[key] if isinstance(value.get(key), str) and value[key] in allowed else "unknown"
+              for key, allowed in limits.items() if key in value}
+    ref = value.get("app_card_ref")
+    if isinstance(ref, str) and re.fullmatch(r"[0-9a-f]{64}", ref):
+        fields["app_card_ref"] = ref
+    return fields
 
 
 def record_event_audit(
