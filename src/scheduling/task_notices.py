@@ -9,6 +9,8 @@
 - 子任务读过外部内容（污点）时不带任务标题，只说「有结果待核对」：标题由主 agent 写，可能带着外部文字。
 - 不转述结果正文；结果要回到对话里由主 agent 核对后汇报。
 - 开发流水线任务没有 ``collaboration`` 记录，不在这里推（派活单另由 ``assistant_watch`` 跟进）。
+- 本进程没有地方可推（没开 IM、也没配转发地址，例如 Mac 上 Desktop 的本机 sidecar）就不推：
+  否则每条都会记成「未能推到 IM」并进补发队列。判据与 ``assistant_watch.watch_enabled`` 相同。
 """
 from __future__ import annotations
 
@@ -81,6 +83,10 @@ def notify_transition(root: str, task: Any, *, notify: Optional[Notify] = None) 
     text = message(task)
     if key is None or text is None:
         return False
+    if notify is None:
+        from src.scheduling.assistant_watch import watch_enabled
+        if not watch_enabled():
+            return False
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
