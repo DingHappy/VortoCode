@@ -178,3 +178,15 @@ it("首页建议是输入框下面的一排小按钮：显示短名字，整句�
   expect(html).toContain(">不再显示</button>");
   expect(renderToStaticMarkup(<AssistantStarterTips tips={[]} onPick={() => {}} onDismiss={() => {}} />)).toBe("");
 });
+
+it("an open team is the only current item; the main chat is not also marked", () => {
+  // 真机 2026-11-05：打开小组时「主要聊天」和小组两条同时显示选中
+  const props = { mainChat: { sid: "m" }, sideChats: [{ sid: "s1", title: "旁聊" }], onSelect: () => {}, onNewSideChat: () => {},
+    teams: [{ id: "t1", title: "比较三家向量数据库", status: "review" }] };
+  const inTeam = renderToStaticMarkup(<AssistantSidebar {...props} current="m" currentTeam="t1" />);
+  expect(inTeam.match(/aria-current="page"/g)).toHaveLength(1);
+  expect(inTeam).toMatch(/aria-current="page"[^>]*>.*?比较三家向量数据库/);
+  const inChat = renderToStaticMarkup(<AssistantSidebar {...props} current="m" />);
+  expect(inChat.match(/aria-current="page"/g)).toHaveLength(1);
+  expect(inChat).toMatch(/aria-current="page"[^>]*>.*?主要聊天/);
+});
