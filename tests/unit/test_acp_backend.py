@@ -48,6 +48,12 @@ FAKE = textwrap.dedent(r'''
         elif method == "session/cancel":
             with open(os.environ["FAKE_LOG"], "a") as log:
                 log.write(json.dumps({"cancel": params}) + "\n")
+        elif method == "session/prompt" and SCENARIO == "silent":
+            PROMPTS = globals().get("PROMPTS", 0) + 1
+            globals()["PROMPTS"] = PROMPTS
+            if PROMPTS > 1:
+                say(params["sessionId"], "第二次才交回：" + params["prompt"][0]["text"][:6])
+            send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
         elif method == "session/prompt":
             sid = params["sessionId"]
             print("not json, framework log line")
@@ -218,3 +224,13 @@ def test_framework_env_strips_tokens_and_isolates_home(tmp_path, monkeypatch):
     assert resident["HOME"] == str(tmp_path / "workers" / "opencode")
     assert resident["XDG_CONFIG_HOME"].startswith(resident["HOME"])
     assert (tmp_path / "workers" / "opencode" / ".config").is_dir()
+
+
+async def test_a_silent_turn_gets_one_followup_in_the_same_session(fake):
+    session = fake("silent")
+    result = await session.run("查一下", timeout=20, followup="你没交回内容")
+    assert result.text == "第二次才交回：你没交回内容" and result.followed_up is True
+    plain = await fake("silent").run("查一下", timeout=20)              # 不给 followup 就不追问
+    assert plain.text == "" and plain.followed_up is False
+    answered = await fake("plain").run("你好", timeout=20, followup="不该发")
+    assert answered.followed_up is False and answered.text == "收到：你好。"

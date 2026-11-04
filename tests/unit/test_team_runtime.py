@@ -232,3 +232,21 @@ async def test_a_coordinator_that_stops_without_a_next_step_is_nudged_until_it_w
     final = service.get(root.id)
     assert final.status == "waiting" and "没有新进展" in final.team["waiting_reason"]
     assert calls[0] == ["任务刚开始"] and calls[1] == [NUDGE] and len(calls) == 3
+
+
+async def test_reviewers_cannot_be_told_to_read_other_subtasks_and_cross_review_can_be_focused(tmp_path):
+    # 真机 2026-11-04：协调人让审查员「用 team_result 读 task-…」，审查员没有工具，只能空审
+    service, root = _root(tmp_path)
+    tools = team_coordinator.build_tools(str(tmp_path), root.id, kick=lambda _r: None)
+    await _tool(tools, "team_assign").handler({"member": "研究员", "instruction": "查价格", "expected": "价格表"})
+    child_id = service.get(root.id).team["children"][0]
+    work = service.collaboration(service.get(root.id))
+    work.start(child_id, 1)
+    work.finish(child_id, 1, "A 10 元，B 20 元")
+    refused = await _tool(tools, "team_assign").handler(
+        {"member": "审查员", "instruction": f"请读 {child_id} 的结果做终审", "expected": "问题清单"})
+    assert refused.startswith("未执行：") and "team_cross_review" in refused
+    assert len(service.get(root.id).team["children"]) == 1
+    await _tool(tools, "team_cross_review").handler({"task_id": child_id, "reviewer": "审查员", "focus": "只核 B 的价格"})
+    reviewer = service.collaboration(service.get(root.id)).get(service.get(root.id).team["children"][1])
+    assert "【这次只审这些】只核 B 的价格" in reviewer.prompt and "A 10 元，B 20 元" in reviewer.prompt

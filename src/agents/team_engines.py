@@ -56,6 +56,9 @@ ROLE_PROMPTS = {
 }
 ENGINE_LABELS = {"opencode": "OpenCode", "deepseek-harness": "DeepSeek Harness"}
 DEFAULT_MODEL = "deepseek-v4-flash"
+# 一轮结束却没交回文字时追问一次（被拒的动作不要再试，用允许的方式把结果交回来）
+FOLLOWUP = ("你这一轮没有交回任何内容。刚才被拒绝的动作不允许做，不要再试；用你被允许的方式继续，"
+            "然后直接把要交回的内容写出来。做不到就说明做到了哪里、卡在哪里。")
 _PROVIDER = "vorto"
 
 
@@ -222,7 +225,7 @@ async def run_external(engine: str, role: str, model: str, prompt: str, *, timeo
     scratch = None if workdir else _scratch_dir(child_id)
     try:
         session = session_factory(argv, cwd=str(workdir or scratch), env=env, decide=decide)
-        return await session.run(f"{ROLE_PROMPTS[role]}\n\n{prompt}", timeout=timeout)
+        return await session.run(f"{ROLE_PROMPTS[role]}\n\n{prompt}", timeout=timeout, followup=FOLLOWUP)
     finally:
         if scratch is not None:
             shutil.rmtree(scratch, ignore_errors=True)
