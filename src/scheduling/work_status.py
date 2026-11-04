@@ -75,6 +75,25 @@ def _codex(root: str, now: Optional[datetime]) -> List[str]:
     return lines[:_PER_SECTION]
 
 
+_TEAM_STATUS = {"active": "进行中", "waiting": "等你决定", "review": "待你验收"}
+
+
+def _teams(root: str) -> List[str]:
+    from src.workflow.tasks.team import LIVE, TeamService
+    service = TeamService(root)
+    lines = []
+    for task in service.list():
+        if task.status not in LIVE:
+            continue
+        view = service.view(task)
+        line = (f"- 任务小组「{_clip(view['objective'], 40)}」：{_TEAM_STATUS[task.status]}，"
+                f"子任务 {view['used']['tasks']}/{view['limits']['tasks']}、轮次 {view['used']['rounds']}/{view['limits']['rounds']}")
+        if task.status == "waiting" and view["waiting_reason"] and not view["tainted"]:
+            line += f"，在等：{_clip(view['waiting_reason'], 60)}"
+        lines.append(line + f"（id {task.id}）")
+    return lines[:_PER_SECTION]
+
+
 def _schedule_trouble(root: str) -> List[str]:
     from src.scheduling.assistant_watch import schedule_overview
     return [f"- 定时「{_clip(item.get('title'), 40)}」连续失败 {item['failures']} 次（id {item.get('id')}）"
@@ -93,7 +112,8 @@ def work_status(root: str, *, now: Optional[datetime] = None) -> str:
             return []
 
     waiting = read("等你处理", lambda: _attention(root))
-    live = (read("任务单", lambda: _dispatches(root)) + read("个人目标", lambda: _goals(root))
+    live = (read("任务小组", lambda: _teams(root)) + read("任务单", lambda: _dispatches(root))
+            + read("个人目标", lambda: _goals(root))
             + read("Codex", lambda: _codex(root, now)))
     trouble = read("定时", lambda: _schedule_trouble(root))
     parts = [f"等你处理（{len(waiting)}）：", *(waiting or ["- 没有"]),
@@ -102,7 +122,7 @@ def work_status(root: str, *, now: Optional[datetime] = None) -> str:
         parts += ["定时异常：", *trouble]
     if unavailable:
         parts.append(f"暂时读不到：{'、'.join(unavailable)}（不代表这些来源没有事）")
-    parts.append("每条带 id；要细节用对应工具查（list_dispatches / personal_goals / codex_status / schedule_list）。")
+    parts.append("每条带 id；要细节用对应工具查（team_open / list_dispatches / personal_goals / codex_status / schedule_list）。")
     return "\n".join(parts)
 
 

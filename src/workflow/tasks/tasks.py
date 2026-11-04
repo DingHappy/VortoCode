@@ -80,6 +80,7 @@ class BackgroundTask:
     dependencies: dict = field(default_factory=dict)  # Explicit read-task requirements and consumed versions.
     chain_budget: dict = field(default_factory=dict)  # Root execution allowances or a member's fixed root identity.
     goal_submission: dict = field(default_factory=dict)  # Snapshot-bound Goal submission; never replay enqueue.
+    team: dict = field(default_factory=dict)  # Task-context root (ADR-014): roster, limits, usage, owner inbox.
     log: List[str] = field(default_factory=list)   # 进度尾部
     created: str = ""
     updated: str = ""

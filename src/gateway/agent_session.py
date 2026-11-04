@@ -249,6 +249,11 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             # 在办汇总（ADR-013 G3）：上面几处来源一次读清，细节仍用各自的工具
             from src.scheduling.work_status import build_work_status_tool
             tools.append(build_work_status_tool(repo_root))
+            # 任务小组（ADR-014）：只在本进程装配了任务调度器（常驻助理）时给
+            from src.scheduling.team_runner import get_team_runner
+            if get_team_runner() is not None:
+                from src.agents.tools.team import build_team_tools
+                tools += build_team_tools(repo_root, confirm=gated_confirm, owner=task_owner or f"{kind}-owner")
             # 插件（日历等外部数据）：放了凭据才挂，带回来的内容按外部不可信处理；
             # 写入（存邮件草稿）每次过内核确认门
             from src.plugins import build_plugin_tools, enabled_plugins
