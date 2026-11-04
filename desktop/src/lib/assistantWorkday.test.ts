@@ -4,6 +4,56 @@ import { buildAssistantWorkday } from "./assistantWorkday";
 import executionWire from "../../../tests/fixtures/execution_observation_v1.json";
 import { vi } from "vitest";
 import { assistantWorkdayReads, startWorkdayClock } from "./assistantWorkdayReads";
+import { goalProgressFixture } from "./codexGoalSupervision.fixtures";
+
+function linkedInput() {
+  const data = input(), fixture = goalProgressFixture(now.getTime());
+  data.goals.data = [fixture.goal]; data.codex.data = fixture.snapshot;
+  const link = (fixture.snapshot.goal_supervision as Array<Record<string, unknown>>)[0];
+  return { data, ...fixture, link };
+}
+
+it("puts a goal awaiting user acceptance into decisions using its original target", () => {
+  const { data, goal } = linkedInput(), result = buildAssistantWorkday(data);
+  const item = result.today.find(i => i.id === `goal:${goal.id}`)!;
+  expect(item).toMatchObject({ state: "decision", target: { kind: "goal", id: goal.id } });
+  expect(item.detail).toContain("本轮已结束"); expect(item.detail).toContain("已判断 1 / 4 次");
+  expect(result.completed).toHaveLength(0);
+  expect(result.today.filter(i => i.target.kind === "goal")).toHaveLength(1);
+});
+it("does not claim Codex stopped merely because goal supervision paused", () => {
+  const { data, snapshot, link } = linkedInput();
+  link.state = "paused"; link.reason = "相同缺口连续两轮没有新证据";
+  snapshot.threads[0].status = "active"; snapshot.threads[0].turn!.status = "inProgress";
+  (snapshot.threads[0].execution as { state: string }).state = "running";
+  const result = buildAssistantWorkday(data);
+  expect(result.today.find(i => i.target.kind === "goal")!.state).toBe("decision");
+  expect(result.progress.find(i => i.target.kind === "codex")!.detail).toContain("相同缺口");
+});
+it("keeps an associated unfinished goal and idle Codex visible across days", () => {
+  const { data, snapshot, goal } = linkedInput();
+  goal.updated = yesterday; snapshot.threads[0].updated_at = Date.parse(yesterday) / 1000;
+  const result = buildAssistantWorkday(data);
+  expect(result.decisions.map(i => i.target.kind)).toEqual(["goal", "codex"]);
+});
+it.each(["disconnect", "stale report", "goal version"])("does not reuse an old waiting reason as current: %s", fault => {
+  const { data, snapshot, goal } = linkedInput();
+  if (fault === "disconnect") data.connected = false;
+  if (fault === "stale report") snapshot.received_at = yesterday;
+  if (fault === "goal version") goal.revision++;
+  const item = buildAssistantWorkday(data).today.find(i => i.target.kind === "goal")!;
+  expect(item.state).toBe("unknown"); expect(item.detail).not.toContain("本轮已结束");
+});
+it("never demotes independently confirmed goal evidence based on an unavailable Codex report", () => {
+  const { data, goal } = linkedInput();
+  goal.status = "achieved";
+  goal.acceptance_criteria.forEach((c, i) => {
+    c.status = "passed"; c.evidence_ids = [`e-${i}`];
+    goal.evidence.push({ id: `e-${i}`, criterion_id: c.id, kind: "personal_acceptance", source: "user_confirmation", summary: "用户已核对", passed: true });
+  });
+  data.codex.status = "unavailable" as typeof data.codex.status;
+  expect(buildAssistantWorkday(data).completed.map(i => i.id)).toEqual([`goal:${goal.id}`]);
+});
 
 const now = new Date(2026, 9, 23, 12), at = now.toISOString();
 const yesterday = new Date(2026, 9, 22, 12).toISOString();

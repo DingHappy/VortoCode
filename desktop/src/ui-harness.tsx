@@ -30,6 +30,7 @@ import {
   type UiStatus,
 } from "./components/ui";
 import { applyThemePreference, type ThemePreference } from "./lib/theme";
+import { GoalProgressHarness } from "./goal-progress-harness";
 
 const COLOR_ROLES = [
   "bg", "sidebar", "surface", "selected", "fill", "hover", "border", "divider",
@@ -209,6 +210,6 @@ function Harness() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Harness />
+    {new URLSearchParams(location.search).get("view") === "goal-progress" ? <GoalProgressHarness /> : <Harness />}
   </StrictMode>,
 );

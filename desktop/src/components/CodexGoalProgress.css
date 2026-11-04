@@ -1,0 +1,14 @@
+.codex-goal-progress { display: grid; gap: var(--vc-space-3); margin-top: var(--vc-space-4); padding: var(--vc-space-4); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-card); background: var(--vc-surface); color: var(--vc-text); font-size: var(--vc-size-small); overflow-wrap: anywhere; }
+.codex-goal-progress header { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--vc-space-2); justify-content: space-between; }
+.codex-goal-progress header strong { font-weight: var(--vc-weight-strong); }
+.codex-goal-progress header span { color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.codex-goal-progress.paused header span, .codex-goal-progress.awaiting_user header span { color: var(--vc-wait-text); }
+.codex-goal-progress.active header span { color: var(--vc-accent); }
+.codex-goal-progress.confirmed header span { color: var(--vc-done-text); }
+.codex-goal-progress p { margin: 0; white-space: pre-wrap; }
+.codex-goal-progress .codex-goal-allowance, .codex-goal-progress .codex-goal-note { color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.codex-goal-progress summary { cursor: pointer; }
+.codex-goal-progress ul { margin: var(--vc-space-2) 0 0; padding-left: var(--vc-space-5); }
+.codex-goal-progress button { justify-self: start; min-height: var(--vc-control-h); padding: var(--vc-space-2) var(--vc-space-3); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); background: var(--vc-fill); color: var(--vc-text); font: inherit; cursor: pointer; }
+.codex-goal-progress button:disabled { opacity: .5; cursor: default; }
+.codex-goal-progress button:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: var(--vc-space-1); }

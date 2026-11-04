@@ -5,6 +5,7 @@ import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
 import { codexActionOutcome } from "./codexActionOutcome";
 import { freshAt } from "./readFreshness";
 import { buildTaskBoard } from "./taskBoard";
+import { CODEX_REPORT_FRESH_MS, codexGoalProgress, codexProgressFresh, goalProgressSummary } from "./codexGoalSupervision";
 
 export interface WorkdaySource<T> {
   status: "loading" | "current" | "unavailable";
@@ -23,7 +24,6 @@ export interface AssistantWorkday {
   warnings: string[];
 }
 // Matches the resident Codex watch's STALE_AFTER; report time is shown separately.
-const CODEX_REPORT_FRESH_MS = 30 * 60_000;
 const time = (value?: string) => Date.parse(value ?? "");
 const today = (value: string, now: Date) => {
   const parsed = new Date(value);
@@ -85,24 +85,37 @@ export function buildAssistantWorkday(input: {
       at: task.updated_at || task.created_at, target: { kind: "dispatch", id: task.id } }, active);
   }
   const goalsFresh = input.connected && input.goals.status === "current" && freshAt(input.goals.checkedAt, ms);
+  const codexFresh = codexProgressFresh(input.codex, input.connected, ms);
+  const links = codexGoalProgress({ snapshot: input.codex.data, goals: input.goals.data,
+    codexCurrent: codexFresh, goalsCurrent: goalsFresh, now: ms });
+  result.warnings.push(...links.warnings);
   if (!goalsFresh) result.warnings.push(input.goals.status === "loading" ? "个人目标正在读取。" : "个人目标未能取得最新状态，完成记录暂不计入已核实。");
   for (const goal of input.goals.data) {
     const passed = hasConfirmedPersonalGoal(goal);
     const active = (goal.status !== "achieved" && goal.status !== "failed") || (goal.status === "achieved" && !passed);
     if (!active && !today(goal.updated || goal.created || "", now)) continue;
     const due = goal.overdue || goal.follow_up_due || goal.status === "blocked" || Boolean(goal.blocker);
-    const state: WorkdayItem["state"] = !goalsFresh || !["draft", "active", "blocked", "achieved", "failed"].includes(goal.status) ? "unknown" : passed ? "verified"
+    let state: WorkdayItem["state"] = !goalsFresh || !["draft", "active", "blocked", "achieved", "failed"].includes(goal.status) ? "unknown" : passed ? "verified"
       : goal.status === "achieved" ? "review" : due || goal.status === "failed" || goal.status === "draft" ? "decision" : "running";
-    const detail = !goalsFresh ? "上次记录，当前状态待核对" : passed ? "全部达标条件均有对应的通过记录"
+    let detail = !goalsFresh ? "上次记录，当前状态待核对" : passed ? "全部达标条件均有对应的通过记录"
       : goal.status === "achieved" ? "目标标为达成，但验收记录不完整，请核对"
       : goal.blocker || (goal.overdue ? "已过期限：" : goal.follow_up_due ? "到了跟进时间：" : "下一步：") + (goal.next_action || "请补充下一步");
+    const link = links.items.find(item => item.goalId === goal.id);
+    if (!passed && goalsFresh && link) {
+      if (link.state === "unknown") {
+        if (state === "running" || state === "review") state = "unknown";
+        detail += "；" + goalProgressSummary(link);
+      } else if (["paused", "awaiting_user"].includes(link.state)) {
+        state = "decision"; detail = goalProgressSummary(link);
+      }
+    }
     add({ id: `goal:${goal.id}`, title: goal.objective, detail, state, source: "个人目标",
       at: goal.updated || goal.created || "", target: { kind: "goal", id: goal.id } }, active);
   }
-  const codexFresh = input.connected && input.codex.status === "current" && freshAt(input.codex.checkedAt, ms)
-    && freshAt(time(input.codex.data?.received_at), ms, CODEX_REPORT_FRESH_MS);
   if (!codexFresh) result.warnings.push(input.codex.status === "loading" ? "Codex 进度正在读取。" : "Codex 尚无新鲜报告，无法确认 Mac 上的当前进展。");
   for (const thread of input.codex.data?.threads ?? []) {
+    const link = links.items.find(item => item.threadId === thread.id);
+    const ongoingGoal = link !== undefined && link.state !== "confirmed";
     const hasExecution = Object.prototype.hasOwnProperty.call(thread, "execution");
     const execution = hasExecution ? readExecutionObservation(thread.execution) : null;
     const executionValid = execution !== null && execution.ref.backend_id === "codex"
@@ -114,10 +127,10 @@ export function buildAssistantWorkday(input: {
     const updated = typeof thread.updated_at === "number" && Number.isFinite(thread.updated_at)
       && thread.updated_at > 0 && thread.updated_at * 1000 <= ms
       ? new Date(thread.updated_at * 1000).toISOString() : "";
-    if (!active && !today(updated, now)) continue;
+    if (!active && !ongoingGoal && !today(updated, now)) continue;
     const waiting = hasExecution ? executionValid && execution.state === "waiting_user"
       : thread.flags.includes("waitingOnApproval") || thread.flags.includes("waitingOnUserInput");
-    const state: WorkdayItem["state"] = !codexFresh ? "unknown" : hasExecution
+    let state: WorkdayItem["state"] = !codexFresh ? "unknown" : hasExecution
       ? !executionValid ? "unknown" : execution.state === "running" ? "running"
         : execution.state === "finished" ? "review"
         : ["waiting_user", "failed", "cancelled"].includes(execution.state) ? "decision" : "unknown"
@@ -125,14 +138,18 @@ export function buildAssistantWorkday(input: {
       : active ? thread.turn?.status === "inProgress" ? "running" : "unknown"
       : ["failed", "interrupted"].includes(thread.turn?.status ?? "") ? "decision"
       : thread.turn?.status === "completed" ? "review" : "unknown";
-    const detail = !codexFresh ? "报告已过期或连接不可用，请核对 Codex 当前状态"
+    let detail = !codexFresh ? "报告已过期或连接不可用，请核对 Codex 当前状态"
       : waiting ? "Codex 正在等你批准或回答，请到 Codex 处理"
       : state === "running" ? execution?.progress.summary || thread.turn?.plan || thread.turn?.request || "Codex 报告正在执行"
       : state === "unknown" ? "Codex 状态尚不能确认，请核对原会话"
       : state === "decision" ? thread.turn?.error || "Codex 本轮失败或中断，请决定下一步"
       : "Codex 本轮已结束；最终回复不作为完成验收依据";
+    if (link) {
+      if (state === "review" && ["paused", "awaiting_user"].includes(link.state)) state = "decision";
+      detail += `；目标「${link.title}」：${link.reason}`;
+    }
     add({ id: `codex:${thread.id}`, title: thread.name || "Codex 会话", detail, state, source: "Codex",
-      at: updated || input.codex.data?.received_at || "", target: { kind: "codex", id: thread.id } }, active);
+      at: updated || input.codex.data?.received_at || "", target: { kind: "codex", id: thread.id } }, active || ongoingGoal);
   }
   for (const action of input.codexActions) {
     if (!["proposed", "approved", "sending", "unknown", "failed"].includes(action.status)) continue;
