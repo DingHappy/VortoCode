@@ -9,6 +9,7 @@ import { CodexActionCard } from "./components/CodexActionCard";
 import { chatCodexActions } from "./lib/codexActionOutcome";
 import { AssistantWorkday } from "./components/AssistantWorkday";
 import { TeamChat } from "./components/TeamChat";
+import { TeamNoteActions } from "./components/TeamNoteActions";
 import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
@@ -2447,6 +2448,22 @@ function App() {
     setOpenTeamId(id); setMainView("team"); setInspectorOpen(false);
   };
 
+  // 主对话里「任务小组交付了」那条下面的「验收通过」：与群聊里同一个接口，成功后刷新侧栏的状态
+  const acceptTeamFromChat = async (id: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("还没连上常驻电脑");
+    await client.decideTeam(id, true, "");
+    try { setTeamList(await client.listTeams()); } catch { /* 下次轮询再刷 */ }
+  };
+  const teamNoteActions = useRef({ open: openTeamChat, accept: acceptTeamFromChat });
+  teamNoteActions.current = { open: openTeamChat, accept: acceptTeamFromChat };
+  // ChatHistory 是 memo 的：卡片渲染函数只随小组状态与连接变，流式输出时历史不重画
+  const renderChatCard = useCallback((message: ConversationMessage) => message.card?.kind === "team"
+    ? <TeamNoteActions card={message.card} status={teamList.find(team => team.id === message.card!.id)?.status}
+        connected={connection === "connected"} onOpen={id => teamNoteActions.current.open(id)}
+        onAccept={id => teamNoteActions.current.accept(id)} />
+    : null, [teamList, connection]);
+
   const openDispatch = async (id: string) => {
     setSelectedCodexAction(null);
     setSelectedDispatchId(id);
@@ -2802,7 +2819,8 @@ function App() {
             )}
 
             <ChatHistory messages={messages} activityGroups={activityGroups} busy={busy} activeTurnRid={activeTurnRid}
-              assistant={appMode === "assistant"} focusedRid={conversationLocation.rid} />
+              assistant={appMode === "assistant"} focusedRid={conversationLocation.rid}
+              renderCard={renderChatCard} />
 
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
               && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard

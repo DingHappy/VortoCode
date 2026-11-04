@@ -55,3 +55,11 @@ it("exposes exact turn anchors and highlights only the selected turn", () => {
   expect(html).toContain('data-turn-rid="r1" data-message-role="user"');
   expect(html).toContain('class="message user" data-turn-rid="r2"');
 });
+
+it("a team note is labelled as the team, not as a phone reply, and renders its card", () => {
+  const note: ConversationMessage = { id: "n1", role: "assistant", text: "🧩 任务小组「股市」交付了", source: "team",
+    card: { kind: "team", id: "task-1", status: "review" } };
+  const html = renderToStaticMarkup(<ChatHistory {...props} messages={[note]}
+    renderCard={message => <span>卡片 {message.card?.id}</span>} />);
+  expect(html).toContain("任务小组"); expect(html).not.toContain("回复在手机上"); expect(html).toContain("卡片 task-1");
+});

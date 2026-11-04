@@ -75,3 +75,14 @@ describe("replies", () => {
     expect(systemNotice("cancelled", event({ rid: "r1" }))).toMatchObject({ role: "system", text: "本回合已中断" });
   });
 });
+
+it("history keeps a known card and drops malformed ones", () => {
+  const messages = historyMessages(event({ type: "agent_history", items: [
+    { role: "assistant", text: "🧩 交付了", source: "team", card: { kind: "team", id: "task-1", status: "review", extra: "x" } },
+    { role: "assistant", text: "坏卡", card: { kind: "codex", id: "a" } },
+    { role: "assistant", text: "缺 id", card: { kind: "team", status: "review" } },
+  ] }), "sid1");
+  expect(messages[0].card).toEqual({ kind: "team", id: "task-1", status: "review" });
+  expect(messages[1].card).toBeUndefined();
+  expect(messages[2].card).toBeUndefined();
+});
