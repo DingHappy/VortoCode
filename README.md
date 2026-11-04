@@ -1,169 +1,199 @@
+<div align="center">
+
+<img src="desktop/src-tauri/icons/128x128@2x.png" alt="VortoCode" width="96" height="96">
+
 # VortoCode
 
-VortoCode 是一个本地优先、可以常驻运行的个人 AI Agent。它会记住你的工作背景和个人目标，你不在电脑前时也会继续跟进，可以协调不同的 Agent 框架完成较大的任务。需要你决定时，它会通过 Desktop、手机或 IM 找到你。
+**一个替你盯着事情的个人 AI Agent：它会记住、会跟进，还会带一支团队。**
 
-[下载 Desktop](https://github.com/DingHappy/VortoCode/releases/latest) · [上手指南](docs/GETTING_STARTED_DESKTOP.md) · [当前架构](docs/CURRENT_ARCHITECTURE.md) · [安全约定](SECURITY.md)
+它记得你在忙什么，你离开电脑后它还在跟进。遇到大任务，它会组一个小组，分派给不同的 Agent 去做。
+你只和它一个说话。看它们干活。关键的事，你来拍板。
 
-> **项目状态：公开预览。** VortoCode 仍在快速迭代，接口、命令和数据格式都可能变化。欢迎试用和反馈。对外暴露服务、配置凭据或使用自托管 runner 之前，请先阅读 [SECURITY.md](SECURITY.md)。
+[![Release](https://img.shields.io/github/v/release/DingHappy/VortoCode?label=release&color=1084fe)](https://github.com/DingHappy/VortoCode/releases/latest)
+![macOS](https://img.shields.io/badge/macOS-Apple%20silicon-111111?logo=apple&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+[![License](https://img.shields.io/badge/license-MIT-38d591)](LICENSE)
+![PRs](https://img.shields.io/badge/PRs-welcome-38d591)
 
-## 设计原则
+<br>
 
-- **你只面对一个主 Agent。** Desktop、手机和 Telegram 共用同一段主要对话。后台工作、任务小组和外部框架的结果，都回到这段对话里，由主 Agent 汇报。
-- **关键操作由人决定。** 写入、对外发送和不可逆操作都要经过同一个确认门。系统不会自行宣布完成：交付必须附上验收依据，由你来验收。
-- **外部内容不可信。** 读过网页、MCP 或 IM 消息的回合会被标记，标记期间所有免确认授权都失效。外部文字也不会原样写进长期记忆或主对话。
-- **数据留在你自己的机器上。** 会话、记忆、目标和任务记录都保存在本机或你自己的常驻主机上。模型服务可以用任意 OpenAI 兼容端点，包括本机模型。
+<a href="https://github.com/DingHappy/VortoCode/releases/latest">
+  <img src="https://img.shields.io/github/v/release/DingHappy/VortoCode?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%20%E4%B8%8B%E8%BD%BD%20Mac%20%E7%89%88%EF%BC%88Apple%20%E8%8A%AF%E7%89%87%EF%BC%89&labelColor=070707&color=1084fe" alt="下载 VortoCode Mac 版（Apple 芯片）" height="40">
+</a>
 
-## 主要能力
+<sub>签名并经 Apple 公证的 .dmg · 支持应用内更新 · [全部版本](https://github.com/DingHappy/VortoCode/releases) · [上手指南](docs/GETTING_STARTED_DESKTOP.md)</sub>
 
-### 对话与记忆
+</div>
 
-- 主 Agent 能对话、检索资料，在你授权的范围内读写文件，也能调用技能和 MCP 工具。
-- 长期记忆按写入策略分级保存。外部内容里的指令性文字和疑似凭据不会写进长期记忆。
-- Desktop 和手机发起的回合使用不同的能力档案。手机上只能做只读检索，以及修改你自己的事项和记忆。
+---
 
-### 目标与日常跟进
+> **公开预览。** VortoCode 每天都在迭代，接口和数据格式可能变化。欢迎试用和反馈。对外暴露服务之前，请先读 [SECURITY.md](SECURITY.md)。
 
-- 个人目标带有约束、非目标和验收标准。一项任务结束，不等于目标已经达成，两者分开记录。
-- 「今日工作」汇总当天的事项、进展、已核实完成的内容，以及等你决定的事。
-- 常驻主机上的定时任务、早晚报和巡检结果会推送到 Desktop、手机或 Telegram。安静时段内的通知会攒起来，结束后一次发出。
+## 为什么做 VortoCode
 
-### 任务小组（多框架协作）
+现在的 AI 助手大多只在你打开它的那一刻工作。你关掉窗口，它就把事情忘了。它不知道你这周在推进什么，也不会在结果出来时来找你。VortoCode 想做的是另一种形态：**一个一直在线、记得上下文、能调度别人干活的个人 Agent。**
 
-遇到较大的任务，主 Agent 会提议开一个**任务小组**。你批准后，主 Agent 担任协调人，把工作分派给职责明确的成员：
+- **一个对话，到处都在。** Desktop、手机和 Telegram 共用同一段对话。在电脑上聊到一半，出门用手机接着聊，它都记得。
+- **它会跟进，不只是回答。** 个人目标、定时任务、早晚报和巡检跑在你自己的常驻主机上。结果出来了，它会推送给你。安静时段内的通知会攒着，结束后一次发出。
+- **大任务交给一支小组。** 主 Agent 当协调人，把活分给不同框架的成员：内置 Agent、OpenCode、DeepSeek Harness…… 你在群聊里看着它们推进。
+- **该你决定的，一定问你。** 写文件、对外发送、合并代码都要你点头。交付时它必须附上验收证据，不能自己宣布「做完了」。
+- **数据和模型都由你选。** 记录存在你自己的机器上。模型可以用任何 OpenAI 兼容服务，包括本机运行的模型。
 
-- **成员可以用不同的框架和模型**，包括内置 Agent，以及通过 [ACP](https://agentclientprotocol.com/) 接入的 OpenCode、DeepSeek Harness 等。外部框架提出的权限请求，同样由 VortoCode 的确认门判定。
-- **开发成员只在一次性的 git worktree 里改代码。** 改完要跑测试，并和改动前的基线对比，结果落在一个本地分支上。是否合并始终由你决定。
-- **防止空转由代码保证，不依赖模型自觉。** 小组没有进展、反复遇到同一个错误，或者成员连续失败时，都会停下来问你。
-- **在 Desktop 上可以像群聊一样查看。** 侧栏列出每个小组，点开就能看到成员名单和按时间排列的全部经过。你可以在群里回复、验收或退回。小组交付时，主对话里也会出现一条消息。
+## 功能
 
-设计见 [任务上下文](docs/TASK_CONTEXT.md)，框架接入的边界见 [Agent 后端](docs/AGENT_BACKENDS.md)。
+<table>
+<tr>
+<td width="50%" valign="top">
 
-### Codex 监管
+### 💬 一个主 Agent，一段主要对话
 
-VortoCode 能观察你在 Mac 上运行的 Codex 会话，定时汇报进度。经你批准后，它可以补充指令或停止某一轮。注意：回执只表示指令已被受理，不代表任务已经完成。见 [Codex 目标监管](docs/CODEX_GOAL_SUPERVISION.md)。
+它能对话、查资料、读写你授权范围内的文件，也能调用技能和 MCP 工具。长期记忆按策略分级保存，外部内容里夹带的指令和疑似凭据都不会写进长期记忆。
 
-### 扩展
+</td>
+<td width="50%" valign="top">
 
-- **MCP**：只连接不需要凭据的 HTTP 服务，以及常驻助理里授权过的只读连接器。会在本机执行命令的 stdio 服务默认禁用。
-- **技能**：用 `SKILL.md` 定义，按需加载。加载技能不会扩大文件、命令或联网权限。
-- **Hook**：仓库里的 Hook 默认禁用，要在 Desktop 中审查并授权后才会运行。
+### 🧩 任务小组：像群聊一样协作
 
-详见 [扩展接入](docs/EXTENSIONS.md)。
+大任务由主 Agent 提议开一个小组，你批准后开工。侧栏里每个小组单独一条，点开能看到成员名单、谁在做什么、每一轮交回了什么。你可以直接在群里回复、验收或退回。
 
-## 运行形态
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-| 组件 | 说明 |
-| --- | --- |
-| **Desktop**（macOS，Apple 芯片） | 主要入口。内置本机引擎，单机就能用，也可以连接常驻主机。安装包经过 Apple 签名与公证，支持应用内更新。 |
-| **常驻主机**（Linux / macOS） | 运行 `vc server`，负责定时任务、推送、任务小组和外部框架成员。合上笔记本后也照常工作。 |
-| **手机** | iOS App 与手机网页入口正在开发中，按「主人终端」的权限档案接入。 |
-| **Telegram** | 接收通知，也能在主要对话里继续聊。来自 IM 的消息按外部内容处理。 |
-| **CLI** | `vc` 命令，用于常驻运维、自检和自动化脚本。 |
+### 🔀 成员用不同的框架和模型
 
-## 快速开始
+成员可以是内置 Agent，也可以是通过 [ACP](https://agentclientprotocol.com/) 接入的 OpenCode、DeepSeek Harness 等，每个成员单独选模型。外部框架想执行命令或改文件时，权限请求同样由 VortoCode 的确认门判定。
 
-### 使用 Desktop
+</td>
+<td width="50%" valign="top">
 
-1. 从 [Releases](https://github.com/DingHappy/VortoCode/releases/latest) 下载 `VortoCode_<版本>_aarch64.dmg`，把 VortoCode 拖进「应用程序」。
-2. 第一次打开时连接一个模型服务，可以是 OpenAI、DeepSeek 等云端服务，也可以是 Ollama 等本机模型。
-3. 想让它在你离开时继续工作，再参照 [运维指南](docs/OPS.md) 配一台常驻主机。
+### 🛠️ 开发成员只在隔离环境里动手
 
-完整步骤见 [只用 Desktop 上手](docs/GETTING_STARTED_DESKTOP.md)。
+开发成员在一次性的 git worktree 里改代码，跑测试，再和改动前的基线对比，改动前就失败的测试不算在它头上。结果落成一个本地分支。合不合并，由你决定。
 
-### 从源码运行
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-需要 Python 3.10 或更高版本。
+### 📋 今日工作与个人目标
 
-```bash
-git clone https://github.com/DingHappy/VortoCode.git
-cd VortoCode
-pip install -e '.[llm]'          # 开发依赖用 '.[dev]'，全部功能用 '.[all]'
-cp .env.example .env             # 填写模型服务的地址、Key 和模型名
-vc doctor                        # 自检：凭据、模型服务、权限文件、沙箱等
-vc server                        # 启动引擎，默认只监听 127.0.0.1:8080
-```
+今天有哪些事、推进到哪里、哪些已经核实完成、什么在等你决定，都在一页里。目标带有约束和验收标准；一项任务结束，不等于目标已经达成。
 
-模型配置示例（任意 OpenAI 兼容接口都可以）：
+</td>
+<td width="50%" valign="top">
 
-```bash
-OPENAI_API_BASE=https://api.openai.com/v1
-OPENAI_API_KEY=your-api-key
-DEFAULT_MODEL=gpt-4o-mini
-```
+### 👀 Codex 监管
 
-服务默认只监听本机回环地址。**对外暴露之前必须设置 `VORTOCODE_API_TOKEN`**，设置后所有 `/api/*` 和 `/ws` 请求都要鉴权。全部环境变量见 [环境变量](docs/ENVIRONMENT.md)，模型与角色路由见 [模型配置](docs/MODEL_CONFIGURATION.md)。
+它观察你在 Mac 上运行的 Codex 会话，每半小时汇报一次进度。经你批准，它可以补一句指令或停下某一轮。回执只表示指令已被受理，不代表事情已经办完，这一点它会说清楚。
 
-从源码构建 Desktop，见 [desktop/README.md](desktop/README.md)。
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-## 架构概览
+### 🙋 关键操作先问你
+
+需要你批准的操作会以卡片出现在对话里，批准或拒绝点一下即可。从手机发起的对话只能做只读检索，以及修改你自己的事项和记忆，不能执行命令、写文件或对外发送。
+
+</td>
+<td width="50%" valign="top">
+
+### 🛡️ 外部内容不可信
+
+读过网页、MCP 或 IM 消息的回合会被打上标记，标记期间所有免确认授权都失效。成员读过网页时，主对话里只告诉你状态，不转述原文，防止网页里的指令混进来。
+
+</td>
+</tr>
+</table>
+
+**还有：** 定时任务与早晚报 · 推送到 Desktop、手机和 Telegram · 免凭据的 MCP 服务与精选目录 · `SKILL.md` 技能 · 经审查授权才运行的 Hook · 操作系统级沙箱（Seatbelt / bubblewrap） · 本机模型（Ollama、oMLX）
+
+## 和常见做法有什么不同
+
+| | 聊天式 AI 助手 | 编码 CLI Agent | **VortoCode** |
+| --- | --- | --- | --- |
+| 你不在时 | 停下 | 停下 | 常驻主机上继续跟进，有结果就推送 |
+| 记忆 | 单次对话 | 当前仓库 | 跨入口的主要对话 + 分级长期记忆 |
+| 协作 | 一个模型 | 一个 Agent | 主 Agent 协调多个框架的成员 |
+| 怎样算完成 | 回复结束 | 这次任务跑完 | 按验收标准逐条附证据，由你验收 |
+| 数据在哪 | 服务商那边 | 你的机器 | 你的机器或你自己的常驻主机 |
+
+## 工作原理
+
+所有入口都连到同一个 Gateway，装配的是同一个主 Agent。各入口只声明自己的能力，比如有没有真人可以确认。要不要确认、能不能免确认，由安全内核统一判断，不在每个入口各写一遍。
 
 ```mermaid
 flowchart LR
-    U["你"] --> T["Desktop / 手机 / Telegram"]
-    T --> G["Gateway：会话、主要对话、事件流"]
-    G --> A["主 Agent"]
-    A --> K["安全内核：确认门 · 污点 · 能力档案 · 沙箱"]
-    A --> W["任务小组 · 后台任务 · Codex 监管"]
-    W --> M["成员：内置 Agent / OpenCode / DeepSeek Harness …"]
-    S["调度：定时 · 巡检 · 推送"] --> G
+    subgraph ends ["入口"]
+        D[Desktop]
+        P[手机]
+        TG[Telegram]
+    end
+    subgraph host ["你的电脑或常驻主机"]
+        G[Gateway<br/>主要对话 · 事件流] --> A[主 Agent]
+        A --> K[安全内核<br/>确认门 · 污点 · 能力档案 · 沙箱]
+        A --> W[任务小组 · 后台任务 · Codex 监管]
+        S[调度<br/>定时 · 巡检 · 推送] --> G
+    end
+    subgraph members ["成员"]
+        V[内置 Agent]
+        O[OpenCode]
+        H[DeepSeek Harness]
+    end
+    D & P & TG --> G
+    W --> V & O & H
+    O & H -- "权限请求" --> K
 ```
 
-- **一个运行时，多个入口。** 所有入口装配的是同一个主 Agent。各入口只声明自己的能力，比如有没有真人可以确认；要不要确认、能不能免确认，由内核统一判断。
-- **安全规则集中在内核。** 确认门、污点追踪、能力档案、记忆写入策略和沙箱策略各只有一份实现，并由契约测试锁定。
-- **任务状态只有一份权威记录。** 任务、协作和小组都记在同一套任务台账上。模型本身不保存状态，所以模型不可用时，你照样能查看、回答和停止。
+| 层 | 位置 | 做什么 |
+| --- | --- | --- |
+| 入口 | `desktop/` `mobile/` `src/im/` | Desktop（Tauri 2 + React）、手机、Telegram。只负责展示与输入，不自建任务状态 |
+| Gateway | `src/gateway/` | 会话装配、主要对话、回合排队、事件回放、审计 |
+| 主 Agent | `src/agents/` | 模型回合、工具运行层、安全内核，以及外部框架适配（ACP） |
+| 任务与小组 | `src/workflow/` | 任务台账、协作、任务小组、目标。模型不保存状态，模型不可用时你照样能查看和停止 |
+| 调度 | `src/scheduling/` | 定时任务、巡检、通知推送、任务小组调度 |
+| 模型 | `src/llm/` | 任意 OpenAI 兼容端点，按角色路由 |
 
-代码分层与模块边界见 [当前架构](docs/CURRENT_ARCHITECTURE.md)，重要决定和理由见 [技术决策记录](docs/DECISIONS.md)。
+更多见 [当前架构](docs/CURRENT_ARCHITECTURE.md)、[任务上下文](docs/TASK_CONTEXT.md)、[Agent 后端](docs/AGENT_BACKENDS.md)，重要决定和理由都记在 [技术决策记录](docs/DECISIONS.md)。
 
-## 目录结构
+## 快速开始
 
+### 只用 Desktop
+
+1. [下载](https://github.com/DingHappy/VortoCode/releases/latest) `VortoCode_<版本>_aarch64.dmg`，把 VortoCode 拖进「应用程序」。
+2. 打开后连接一个模型服务：OpenAI、DeepSeek、Kimi 等云端服务，或者 Ollama 这样的本机模型。
+3. 开始聊天。想让它在你离开时也继续工作，再参照 [运维指南](docs/OPS.md) 配一台常驻主机。
+
+完整步骤见 [只用 Desktop 上手](docs/GETTING_STARTED_DESKTOP.md)。
+
+### 在常驻主机上运行
+
+```bash
+git clone https://github.com/DingHappy/VortoCode.git && cd VortoCode
+pip install -e '.[llm]'      # 需要 Python 3.10+；全部功能用 '.[all]'
+cp .env.example .env         # 填模型服务地址、Key 和模型名
+vc doctor                    # 一屏自检：凭据、模型服务、权限、沙箱……
+vc server                    # 默认只监听 127.0.0.1:8080
 ```
-src/
-  agents/       主 Agent 循环、工具运行层、安全内核、外部框架适配（ACP 等）
-  gateway/      会话装配、主要对话、传输协议、审计
-  workflow/     任务台账、协作与任务小组、目标、评审交付
-  scheduling/   定时任务、巡检、通知推送、任务小组调度
-  memory/       会话存储、长期记忆与写入策略
-  llm/          模型客户端与角色路由
-  sandbox/      操作系统沙箱策略（Seatbelt / bubblewrap）
-  web/ im/      供 Desktop 使用的 HTTP / WebSocket 接口、IM 桥接
-desktop/        Desktop（Tauri 2 + React + TypeScript）
-mobile/         手机客户端
-tests/          单元、集成与路由契约测试
-docs/           设计文档与决策记录
-deploy/         常驻主机的服务单元与入口配置示例
-```
 
-## 开发
+> 对外暴露之前**必须**设置 `VORTOCODE_API_TOKEN`，设置后所有 `/api/*` 和 `/ws` 请求都要鉴权。全部配置见 [环境变量](docs/ENVIRONMENT.md) 和 [模型配置](docs/MODEL_CONFIGURATION.md)。
+
+## 参与开发
 
 ```bash
 pip install -e '.[dev]'
-python -m pytest tests/ -q       # 测试默认离线、结果确定，不调用真实模型
-./scripts/ci-local.sh            # 合并前门禁：ruff、mypy、pytest 与 Desktop 检查
+python -m pytest tests/ -q   # 离线、结果确定，不调用真实模型
+./scripts/ci-local.sh        # 合并前门禁：ruff · mypy · pytest · Desktop
 ```
 
-贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。修改 Web 接口、安全内核或 Agent 之前，请先读 [CLAUDE.md](CLAUDE.md) 里「安全内核」和「包布局」两节。
-
-## 文档
-
-| 主题 | 文档 |
-| --- | --- |
-| 产品方向与分层 | [当前架构](docs/CURRENT_ARCHITECTURE.md) · [技术决策记录](docs/DECISIONS.md) |
-| 上手与运维 | [只用 Desktop 上手](docs/GETTING_STARTED_DESKTOP.md) · [运维指南](docs/OPS.md) · [环境变量](docs/ENVIRONMENT.md) |
-| 任务与协作 | [任务上下文](docs/TASK_CONTEXT.md) · [Agent 后端](docs/AGENT_BACKENDS.md) · [执行观测合同](docs/EXECUTION_CONTRACT.md) |
-| 安全与扩展 | [安全约定](SECURITY.md) · [工具运行层](docs/TOOL_RUNTIME.md) · [扩展接入](docs/EXTENSIONS.md) |
-| 界面 | [Desktop 设计系统](docs/DESIGN_SYSTEM.md) |
-
-## 参与与反馈
-
-- 问题和建议请提交 [Issue](https://github.com/DingHappy/VortoCode/issues)，代码贡献请提交 Pull Request。
-- 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要公开提 Issue。
-- 参与本项目，即表示你同意遵守 [行为准则](CODE_OF_CONDUCT.md)。
+欢迎提 Issue 和 PR，流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。改安全内核、Web 接口或 Agent 之前，请先读 [CLAUDE.md](CLAUDE.md) 里的「安全内核」和「包布局」。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## 致谢
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)：Agent 循环与工具设计的重要参考
-- [Model Context Protocol](https://modelcontextprotocol.io/)：工具接入标准
-- [Agent Client Protocol](https://agentclientprotocol.com/)：外部 Agent 框架的接入协议
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（Agent 循环与工具设计）· [Model Context Protocol](https://modelcontextprotocol.io/)（工具接入）· [Agent Client Protocol](https://agentclientprotocol.com/)（外部框架接入）· [Tauri](https://tauri.app/)（Desktop）
 
 ## 许可证
 
