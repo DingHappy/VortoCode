@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { ASSISTANT_PAGES, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, BackToAssistant, PAGE_PANEL, PANEL_PAGE } from "./AssistantMode";
+import { AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, BackToAssistant, PAGE_PANEL, PANEL_PAGE } from "./AssistantMode";
 
 it("工作台已撤：没有模式切换，项目界面里只有「回到助理」", () => {
   const html = renderToStaticMarkup(<BackToAssistant onBack={() => {}} />);
@@ -8,20 +8,38 @@ it("工作台已撤：没有模式切换，项目界面里只有「回到助理�
   expect(html).not.toContain("工作台");
 });
 
-it("左侧：一级入口不超过 5 个，「动态」角标只计等你处理的件数", () => {
-  expect(ASSISTANT_PAGES.map(item => item.label)).toContain("动态");   // 与 App 同名（ADR-012）
-  expect(ASSISTANT_PAGES.length).toBeLessThanOrEqual(5);
-  const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" page="schedule" waiting={3}
+it("左侧只放会话（ADR-016）：没有动态 / 定时 / 目标等入口，等你处理的件数挂在主要聊天上", () => {
+  const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" waiting={3}
     onSelect={() => {}} onNewSideChat={() => {}} />);
-  expect(html).toContain('aria-label="3 件等你处理">3</span>');
-  expect(html.match(/aria-current="page"/g)).toHaveLength(1);   // 打开定时时，主要聊天不再同时高亮
-  expect(html).toMatch(/aria-current="page"[^>]*>.*?定时/);
+  for (const label of ["动态", "定时", "目标", "资料库", "定制"]) expect(html).not.toContain(`>${label}</span>`);
+  expect(html).toMatch(/主要聊天<\/span><span class="vc-nav-item__meta"><span class="vc-count" aria-label="3 件等你处理">3<\/span>/);
+  expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+  const onPage = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" page="library"
+    onSelect={() => {}} onNewSideChat={() => {}} />);
+  expect(onPage).not.toContain('aria-current="page"');          // 在看资料库时，主要聊天不同时高亮
   const uncertain = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" waiting={0} waitingUncertain
     onSelect={() => {}} onNewSideChat={() => {}} />);
   expect(uncertain).toContain('class="vc-count vc-count--unknown"');
   expect(uncertain).toContain(">?</span>");
-  const calm = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
+  const calm = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m", busy: true }} sideChats={[]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
   expect(calm).not.toContain("vc-count");
+  expect(calm).toContain("vc-live-dot");
+});
+
+it("会话分组：主要聊天 → 任务小组 → 旁聊；旁聊默认只列最近 5 条，正在看的那条总会露出来", async () => {
+  const { SIDE_CHAT_LIMIT } = await import("./AssistantMode");
+  const sides = Array.from({ length: 8 }, (_, index) => ({ sid: `s${index}`, title: `旁聊${index}` }));
+  const props = { mainChat: { sid: "m" }, sideChats: sides, onSelect: () => {}, onNewSideChat: () => {},
+    teams: [{ id: "t1", title: "比较三家向量数据库", status: "review" }] };
+  const html = renderToStaticMarkup(<AssistantSidebar {...props} current="m" />);
+  expect(html.indexOf("主要聊天")).toBeLessThan(html.indexOf("任务小组"));
+  expect(html.indexOf("任务小组")).toBeLessThan(html.indexOf(">旁聊<"));
+  expect(html.match(/>旁聊\d</g)).toHaveLength(SIDE_CHAT_LIMIT);
+  expect(html).toContain("显示全部 8 条");
+  const deep = renderToStaticMarkup(<AssistantSidebar {...props} current="s6" />);
+  expect(deep).toContain(">旁聊6<");
+  const searching = renderToStaticMarkup(<AssistantSidebar {...props} current="m" query="旁聊" />);
+  expect(searching.match(/>旁聊\d</g)).toHaveLength(8);
 });
 
 it("每个面板入口都对得上一个标签，审核记录不占一级入口", () => {
@@ -166,7 +184,7 @@ it("search narrows only the recent list", () => {
   expect(html).toContain("整理周报");
   expect(html).not.toContain("签到脚本");
   expect(html).not.toContain("主要聊天</span>");
-  expect(html).toContain("定时");   // 一级入口不受影响
+  expect(html).toContain("新对话");   // 新对话、搜索不受影响
 });
 
 it("首页建议是输入框下面的一排小按钮：显示短名字，整句话放在悬停提示里", async () => {
@@ -177,4 +195,16 @@ it("首页建议是输入框下面的一排小按钮：显示短名字，整句�
   expect(html).toContain('<button class="vc-starter-chip" title="帮我看看这周的日程，有冲突提醒我">看看这周的日程</button>');
   expect(html).toContain(">不再显示</button>");
   expect(renderToStaticMarkup(<AssistantStarterTips tips={[]} onPick={() => {}} onDismiss={() => {}} />)).toBe("");
+});
+
+it("an open team is the only current item; the main chat is not also marked", () => {
+  // 真机 2026-11-05：打开小组时「主要聊天」和小组两条同时显示选中
+  const props = { mainChat: { sid: "m" }, sideChats: [{ sid: "s1", title: "旁聊" }], onSelect: () => {}, onNewSideChat: () => {},
+    teams: [{ id: "t1", title: "比较三家向量数据库", status: "review" }] };
+  const inTeam = renderToStaticMarkup(<AssistantSidebar {...props} current="m" currentTeam="t1" />);
+  expect(inTeam.match(/aria-current="page"/g)).toHaveLength(1);
+  expect(inTeam).toMatch(/aria-current="page"[^>]*>.*?比较三家向量数据库/);
+  const inChat = renderToStaticMarkup(<AssistantSidebar {...props} current="m" />);
+  expect(inChat.match(/aria-current="page"/g)).toHaveLength(1);
+  expect(inChat).toMatch(/aria-current="page"[^>]*>.*?主要聊天/);
 });

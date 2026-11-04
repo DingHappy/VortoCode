@@ -68,3 +68,13 @@ it("avatar menu holds the set-once things: account, phone and devices, updates a
   const items = [...html.matchAll(/role="menuitem"[^>]*>.*?<span>(.*?)<\/span><\/button>/g)].map((match) => match[1].replace(/<[^>]+>/g, ""));
   expect(items).toEqual(["账号与会员", "手机与设备", "检查更新 · 诊断日志", "设置⌘,"]);
 });
+
+it("助理模式的头像菜单带资料库、插件与连接（ADR-016 从侧栏移来）；没给就不出现", () => {
+  const identity = { name: "丁", initial: "丁", title: "账号", detail: "" };
+  const withPages = renderToStaticMarkup(<SidebarFooter identity={identity} update={null} onOpenSettings={() => {}}
+    onLibrary={() => {}} onCustomize={() => {}} menuOpen />);
+  expect(withPages.indexOf("资料库")).toBeLessThan(withPages.indexOf("账号与会员"));
+  expect(withPages).toContain("插件与连接");
+  const plain = renderToStaticMarkup(<SidebarFooter identity={identity} update={null} onOpenSettings={() => {}} menuOpen />);
+  expect(plain).not.toContain("资料库");
+});

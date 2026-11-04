@@ -51,4 +51,13 @@ describe("stickToBottom", () => {
     stop();
     expect(resizers[0].targets).toHaveLength(0);
   });
+
+  it("容器重新挂上时，人原本在底部就直接回到底部；往上翻过的不动", () => {
+    const back: ScrollBox & { scrollHeight: number } = { scrollTop: 0, scrollHeight: 2400, children: [] };
+    stickToBottom(back, () => true, fakes().observers);
+    expect(back.scrollTop).toBe(2400);
+    const reading: ScrollBox & { scrollHeight: number } = { scrollTop: 0, scrollHeight: 2400, children: [] };
+    stickToBottom(reading, () => false, fakes().observers);
+    expect(reading.scrollTop).toBe(0);
+  });
 });

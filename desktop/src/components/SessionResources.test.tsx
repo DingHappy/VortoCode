@@ -41,3 +41,17 @@ it("keeps unopened inventory neutral and highlights actual handoff or uncertain 
   expect(render({ stale: false })).toContain("<small>需要核对</small>");
   expect(empty).not.toContain('<details class="session-resources" open');
 });
+
+it("助理模式下一切正常时不占位置，需要核对或断线时才出现；常驻电脑不写成「常驻电脑（常驻）」", async () => {
+  const { residentHostLabel } = await import("./SessionResources");
+  const calm = { ...snapshot, items: [{ ...snapshot.items[0], state: "loaded" as const }] };
+  const quiet = (view: Partial<ResourceView>, connected = true) => renderToStaticMarkup(<SessionResources view={{ ...emptyResourceView(), ...view }}
+    connected={connected} hostLabel="常驻电脑" onRefresh={() => {}} onFocusConfirmation={() => {}} onManage={() => {}} quietWhenOk />);
+  expect(quiet({ snapshot: calm })).toBe("");
+  expect(quiet({ snapshot })).toContain("需要核对");
+  expect(quiet({ snapshot: calm }, false)).toContain("连接中断");
+  expect(residentHostLabel("常驻电脑", true, true)).toBe("常驻电脑");
+  expect(residentHostLabel("家里的 NAS", true, true)).toBe("家里的 NAS（常驻）");
+  expect(residentHostLabel("实验室", true, false)).toBe("实验室（远端）");
+  expect(residentHostLabel(undefined, false, false)).toBe("本机运行端");
+});
