@@ -112,6 +112,21 @@
   gap: var(--vc-space-2);
 }
 
+/* 旁聊超过默认条数时的「显示全部 / 收起」 */
+.vc-side-more {
+  align-self: flex-start;
+  margin: var(--vc-space-1) 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--vc-muted);
+  font: inherit;
+  font-size: var(--vc-size-caption);
+  cursor: pointer;
+}
+.vc-side-more:hover { color: var(--vc-text); }
+.vc-side-more:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: 2px; border-radius: var(--vc-radius-inner); }
+
 .vc-side-hint {
   margin: var(--vc-space-1) 10px;
   color: var(--vc-muted);

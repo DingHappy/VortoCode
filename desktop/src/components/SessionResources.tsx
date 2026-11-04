@@ -7,16 +7,26 @@ const labels: Record<SessionResource["state"], string> = {
   connected: "已有连接观察", partial: "部分连接", error: "连接异常",
 };
 
-/** One disclosure in the current conversation; it never installs, connects or approves. */
-export function SessionResources({ view, connected, hostLabel, pendingId, onRefresh, onFocusConfirmation, onManage, onBrowserSettings }: {
+/** 输入框上方这一行写哪台运行端。常驻电脑登记名本身常叫「常驻电脑」，不再补「（常驻）」写成「常驻电脑（常驻）」。 */
+export function residentHostLabel(name: string | undefined, remote: boolean, resident: boolean): string {
+  if (!remote) return "本机运行端";
+  const base = name?.trim() || (resident ? "常驻电脑" : "已登记运行端");
+  if (resident) return base.includes("常驻") ? base : `${base}（常驻）`;
+  return `${base}（远端）`;
+}
+
+/** One disclosure in the current conversation; it never installs, connects or approves.
+ * quietWhenOk（助理模式，ADR-016）：一切正常时不占位置，只在需要核对或连接中断时出现；常驻电脑的状态平时看侧栏底部。 */
+export function SessionResources({ view, connected, hostLabel, pendingId, onRefresh, onFocusConfirmation, onManage, onBrowserSettings, quietWhenOk = false }: {
   view: ResourceView; connected: boolean; hostLabel: string; pendingId?: string;
   onRefresh: () => void; onFocusConfirmation: () => void; onManage: () => void;
-  onBrowserSettings?: () => void;
+  onBrowserSettings?: () => void; quietWhenOk?: boolean;
 }) {
   const snapshot = view.snapshot;
   const stale = view.stale || !connected;
   const attention = Boolean(view.error || snapshot?.items.some(item =>
     ["needs_human", "needs_reconciliation", "cleanup_pending", "error"].includes(item.state)));
+  if (quietWhenOk && connected && !attention) return null;
   return <details className="session-resources" onToggle={event => { if (event.currentTarget.open) onRefresh(); }}>
     <summary>{hostLabel} · 连接与能力 <small>{!connected ? "连接中断" : attention ? "需要核对" : view.busy ? "读取中" : !snapshot ? "按需查看" : stale ? "记录待核对" : "查看详情"}</small></summary>
     <div className="session-resource-actions">
