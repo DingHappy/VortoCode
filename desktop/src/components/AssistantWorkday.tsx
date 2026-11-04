@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, CheckCircle2, CircleHelp, ListChecks, LoaderCircle, RefreshCw } from "lucide-react";
 import type { GatewayClient } from "../gateway";
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary, DesktopRuntimeInbox, NoticeItem, OpsHeartbeat } from "../types";
+import type { TeamSummary, AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary, DesktopRuntimeInbox, NoticeItem, OpsHeartbeat } from "../types";
 import { buildAssistantWorkday, type AssistantWorkday as Workday, type WorkdayBucket, type WorkdayItem, type WorkdaySource, type WorkdayTarget } from "../lib/assistantWorkday";
 import { assistantWorkdayReads, startWorkdayClock } from "../lib/assistantWorkdayReads";
 import { startPolling } from "../lib/polling";
 import { CodexActionCard } from "./CodexActionCard";
 import { ResidentComputerCard } from "./ResidentComputerCard";
+import { TeamCard, type TeamClient } from "./TeamCard";
 import "./AssistantWorkday.css";
 
 const BUCKETS = [
@@ -50,7 +51,7 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
       <button className={`workday-item ${item.state}`} onClick={() => onOpen(item.target)} aria-label={`查看${item.title}`}>
         <span className="workday-item-top"><small>{item.source}</small><span>{STATE[item.state]}</span></span>
         <strong>{item.title}</strong><span className="workday-item-detail">{item.detail}</span>
-        <span className="workday-item-link">{item.target.kind === "goal" ? "查看目标与验收" : item.target.kind === "dispatch" ? "查看任务单" : item.target.kind === "confirmation" ? "查看原确认卡"
+        <span className="workday-item-link">{item.target.kind === "goal" ? "查看目标与验收" : item.target.kind === "dispatch" ? "查看任务单" : item.target.kind === "team" ? "查看小组进度与交付" : item.target.kind === "confirmation" ? "查看原确认卡"
           : item.target.kind === "schedule" ? "查看定时与运行记录" : item.target.kind === "memory" ? "去确认记忆"
           : item.target.kind === "session" ? "打开对话" : item.target.kind === "project" ? "去工作台任务"
           : item.target.kind === "ops" ? "查看报到详情" : item.target.kind === "notice" ? "查看全文" : "查看进度与建议"}<ArrowUpRight size={13} /></span>
@@ -66,9 +67,10 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
   </section>;
 }
 
-export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onSession, activeSid, mainSid, projectSources, onProjects, ops: withOps = false, onRefreshTasks, onCodexDecision }: {
+export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onSession, activeSid, mainSid, projectSources, onProjects, ops: withOps = false, onRefreshTasks, onCodexDecision, onPullTeamBranch }: {
   client: (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress">
-    & Partial<Pick<GatewayClient, "getResidentComputer" | "getAssistantSchedule" | "listMemoryProposals" | "listSessions" | "getOpsHeartbeats" | "listNotices">>) | null;
+    & Partial<Pick<GatewayClient, "getResidentComputer" | "getAssistantSchedule" | "listMemoryProposals" | "listSessions" | "getOpsHeartbeats" | "listNotices"
+      | "listTeams" | "getTeam" | "decideTeam" | "replyTeam" | "stopTeam">>) | null;
   scope: string; connected: boolean; resident?: boolean; dispatches: AssistantDispatch[];
   dispatchesLoaded: boolean; codexActions: CodexAction[];
   confirmation?: PendingConfirmation | null; onConfirmation?: () => void;
@@ -85,6 +87,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   /** 读运维报到和自愈记录（只在常驻助理上有意义）；详情在概览里原地展开 */
   ops?: boolean;
   onCodexDecision: (action: CodexAction, decision: "approve" | "cancel") => Promise<void>;
+  /** 把任务小组交付的分支拉回本机同名项目；不给 = 这台机器上拉不了（详情里如实说明） */
+  onPullTeamBranch?: (project: { name: string; repo_root: string; port: number | null }, branch: string) => Promise<string>;
 }) {
   const owner = useMemo(() => ({ client, scope }), [client, scope]);
   const identity = useRef({ owner, connected });
@@ -96,6 +100,7 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   const [sessionSnapshot, setSessions] = useState<{ owner: typeof owner; source: WorkdaySource<SessionSummary[]> } | null>(null);
   const [opsSnapshot, setOps] = useState<{ owner: typeof owner; source: WorkdaySource<OpsHeartbeat[]> } | null>(null);
   const [noticeSnapshot, setNotices] = useState<{ owner: typeof owner; source: WorkdaySource<NoticeItem[]> } | null>(null);
+  const [teamSnapshot, setTeams] = useState<{ owner: typeof owner; source: WorkdaySource<TeamSummary[]> } | null>(null);
   const withSchedule = Boolean(onSchedule), withMemory = Boolean(onMemory), withSessions = Boolean(onSession);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
@@ -115,7 +120,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
       proposals: withMemory ? source => { setProposals({ owner, source }); setNow(new Date()); } : undefined,
       sessions: withSessions ? source => { setSessions({ owner, source }); setNow(new Date()); } : undefined,
       ops: withOps ? source => { setOps({ owner, source }); setNow(new Date()); } : undefined,
-      notices: withOps ? source => { setNotices({ owner, source }); setNow(new Date()); } : undefined });
+      notices: withOps ? source => { setNotices({ owner, source }); setNow(new Date()); } : undefined,
+      teams: withOps ? source => { setTeams({ owner, source }); setNow(new Date()); } : undefined });
     const refresh = async () => {
       if (!current()) return;
       setNow(new Date()); setBusy(true);
@@ -132,9 +138,10 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   const proposals = !withMemory ? undefined : proposalSnapshot?.owner === owner ? proposalSnapshot.source : { status: "loading" as const, data: [] };
   const ops = !withOps ? undefined : opsSnapshot?.owner === owner ? opsSnapshot.source : { status: "loading" as const, data: [] };
   const notices = !withOps ? undefined : noticeSnapshot?.owner === owner ? noticeSnapshot.source : { status: "loading" as const, data: [] };
+  const teams = !withOps ? undefined : teamSnapshot?.owner === owner ? teamSnapshot.source : { status: "loading" as const, data: [] };
   const sessions = !withSessions ? undefined : sessionSnapshot?.owner === owner ? sessionSnapshot.source : { status: "loading" as const, data: [] };
   const model = buildAssistantWorkday({ dispatches, dispatchesLoaded, codexActions, confirmation, goals, codex, schedule, proposals,
-    sessions, activeSid, mainSid, projectSources, ops, notices, connected, now });
+    sessions, activeSid, mainSid, projectSources, ops, notices, teams, connected, now });
   const action = selected?.kind === "codex_action" ? codexActions.find(item => item.id === selected.id) : null;
   const thread = selected?.kind === "codex" ? codex.data?.threads.find(item => item.id === selected.id) : null;
   const opsRow = selected?.kind === "ops" ? ops?.data.find(item => item.source === selected.id) : null;
@@ -163,6 +170,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
       <p>上次报到：{opsRow.last_report ? new Date(opsRow.last_report).toLocaleString() : "没有记录"}；上次成功：{opsRow.last_ok ? new Date(opsRow.last_ok).toLocaleString() : "没有记录"}；约定每 {opsRow.expect_hours} 小时内一次。</p>
       <p>要到出问题的那台机器上处理；它下次报到成功后，这条会自己消失。</p>
     </article>}
+    {selected?.kind === "team" && client?.getTeam && <TeamCard key={selected.id} id={selected.id} client={client as TeamClient}
+      connected={connected} onPull={onPullTeamBranch} onChanged={() => void refreshRef.current?.()} />}
     {notice && <article className="assistant-task-card workday-codex-detail" aria-label="自愈记录">
       <header><strong>自动修复没有成功</strong></header>
       <p>{notice.ts ? new Date(notice.ts).toLocaleString() : ""} · {notice.source}</p>

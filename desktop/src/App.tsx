@@ -2424,6 +2424,21 @@ function App() {
     setAssistantTab(tab); setInspectorOpen(true); panelActions.tabOpened(tab);
   };
 
+  // 任务小组交付的分支：常驻电脑没有推送权限，由这台 Mac 用 SSH 拉回本机同名项目，再在本机审、开 PR（ADR-014 S3）
+  const pullTeamBranch = async (project: { name: string; repo_root: string; port: number | null }, branch: string) => {
+    const host = findAssistantHost(projects);
+    if (!host) throw new Error("还没有登记常驻电脑");
+    if (!project.port) throw new Error(`常驻电脑的登记表里没有「${project.name}」的端口`);
+    const remote = await invoke<DesktopProjectProfile>("remember_resident_project", {
+      hostProjectId: host.id, port: project.port, remoteRepoRoot: project.repo_root, name: project.name,
+    });
+    setProjects(previous => [remote, ...previous.filter(item => item.id !== remote.id)]);
+    const local = localTwin(remote, projects);
+    if (!local) throw new Error(`这台 Mac 上没有登记本机的「${project.name}」项目，拉不回来`);
+    const message = await invoke<string>("fetch_resident_branch", { residentProjectId: remote.id, localProjectId: local.id, branch });
+    return `${message}（${local.repoRoot}）。审完可在那里用 gh pr create --head ${branch} 开 PR。`;
+  };
+
   const openDispatch = async (id: string) => {
     setSelectedCodexAction(null);
     setSelectedDispatchId(id);
@@ -2938,6 +2953,7 @@ function App() {
                   connected={connection === "connected"} resident={onAssistantHost()} dispatches={dispatches}
                   dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
                   confirmation={pendingConfirm} onConfirmation={() => focusConfirmation()}
+                  onPullTeamBranch={pullTeamBranch}
                   onDispatch={id => void openDispatch(id)} onGoals={id => {
                     setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
                   }}

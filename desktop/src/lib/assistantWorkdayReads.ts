@@ -1,5 +1,5 @@
 import type { GatewayClient } from "../gateway";
-import type { AssistantScheduleItem, CodexProgressSnapshot, MemoryProposal, NoticeItem, OpsHeartbeat, PersonalGoal, SessionSummary } from "../types";
+import type { TeamSummary, AssistantScheduleItem, CodexProgressSnapshot, MemoryProposal, NoticeItem, OpsHeartbeat, PersonalGoal, SessionSummary } from "../types";
 import type { WorkdaySource } from "./assistantWorkday";
 import { startPolling } from "./polling";
 import { readPersonalGoalSnapshot } from "./personalGoalSnapshot";
@@ -14,7 +14,7 @@ export function startWorkdayClock(update: (now: Date) => void,
 
 export function assistantWorkdayReads(deps: {
   client: () => (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress">
-    & Partial<Pick<GatewayClient, "getAssistantSchedule" | "listMemoryProposals" | "listSessions" | "getOpsHeartbeats" | "listNotices">>) | null;
+    & Partial<Pick<GatewayClient, "getAssistantSchedule" | "listMemoryProposals" | "listSessions" | "getOpsHeartbeats" | "listNotices" | "listTeams">>) | null;
   current: () => boolean;
   goals: (source: WorkdaySource<PersonalGoal[]>) => void;
   codex: (source: WorkdaySource<CodexProgressSnapshot | null>) => void;
@@ -28,6 +28,8 @@ export function assistantWorkdayReads(deps: {
   ops?: (source: WorkdaySource<OpsHeartbeat[]>) => void;
   /** 通知台账：只用来找「自愈未成功」 */
   notices?: (source: WorkdaySource<NoticeItem[]>) => void;
+  /** 任务小组（常驻助理） */
+  teams?: (source: WorkdaySource<TeamSummary[]>) => void;
   now?: () => number;
 }) {
   let epoch = 0, pending: Promise<void> | null = null;
@@ -39,6 +41,7 @@ export function assistantWorkdayReads(deps: {
   let sessions: WorkdaySource<SessionSummary[]> = { status: "loading", data: [] };
   let ops: WorkdaySource<OpsHeartbeat[]> = { status: "loading", data: [] };
   let notices: WorkdaySource<NoticeItem[]> = { status: "loading", data: [] };
+  let teams: WorkdaySource<TeamSummary[]> = { status: "loading", data: [] };
   const refresh = () => {
     const client = deps.client();
     if (!client || !deps.current()) return Promise.resolve();
@@ -47,6 +50,7 @@ export function assistantWorkdayReads(deps: {
       goals = { status: "loading", data: [] }; codex = { status: "loading", data: null };
       schedule = { status: "loading", data: [] }; proposals = { status: "loading", data: [] };
       sessions = { status: "loading", data: [] }; ops = { status: "loading", data: [] }; notices = { status: "loading", data: [] };
+      teams = { status: "loading", data: [] };
     }
     if (pending) return pending;
     const version = epoch;
@@ -111,6 +115,15 @@ export function assistantWorkdayReads(deps: {
           if (current()) deps.notices!(notices = { status: "current", data, checkedAt: checked() });
         });
       }).catch(() => { if (current()) deps.notices?.(notices = { ...notices, status: "unavailable" }); }),
+      Promise.resolve().then(() => {
+        if (!deps.teams) return;
+        if (!client.listTeams) throw new Error("unsupported");
+        return client.listTeams().then(data => {
+          if (!Array.isArray(data) || data.some(item => !item || typeof item.id !== "string" || typeof item.objective !== "string"
+              || typeof item.status !== "string" || !Array.isArray(item.children) || !item.used || !item.limits)) throw new Error("Invalid teams");
+          if (current()) deps.teams!(teams = { status: "current", data, checkedAt: checked() });
+        });
+      }).catch(() => { if (current()) deps.teams?.(teams = { ...teams, status: "unavailable" }); }),
     ]).then(() => {}).finally(() => { if (pending === task) pending = null; });
     pending = task;
     return task;
