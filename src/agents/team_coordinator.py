@@ -59,12 +59,18 @@ def event_message(events: List[str], inbox: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def notifying_service(repo_root: str) -> Any:
+    """接上主人通知的 TeamService：协调人的「交验收」「问主人」和无进展转「等你」都要推给主人。
+    真机 2026-11-04：协调人这里自己 new 的 TeamService 没接钩子，小组交付了主人收不到任何通知。"""
+    from src.scheduling.task_notices import notify_transition
+    from src.workflow.tasks.team import TeamService
+    return TeamService(repo_root, on_update=lambda task: notify_transition(repo_root, task))
+
+
 def build_tools(repo_root: str, root_id: str, *, kick: Callable[[str], None]) -> List[Tool]:
     from src.agents.taint import mark_tainted
     from src.workflow.tasks.errors import CollaborationConflict
-    from src.workflow.tasks.team import TeamService
-
-    service = TeamService(repo_root)
+    service = notifying_service(repo_root)
 
     def guarded(action):
         async def handler(args: dict) -> str:
@@ -183,9 +189,9 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
                            llm: Any = None, agent_factory: Callable[..., Any] = MainAgent) -> Optional[str]:
     """协调人醒来处理一次新情况。根不在进行中时 ``begin_wake`` 抛出，调用方停止。返回出错说明（没出错为 None）。"""
     from src.agents.taint import merge_nested_taint
-    from src.workflow.tasks.team import TeamService, load_history, save_history
+    from src.workflow.tasks.team import load_history, save_history
 
-    service = TeamService(repo_root)
+    service = notifying_service(repo_root)
     root = service.begin_wake(root_id)
     agent = build_coordinator(repo_root, root, kick=kick, llm=llm, agent_factory=agent_factory)
     agent.history = load_history(repo_root, root_id)

@@ -296,3 +296,24 @@ def test_three_member_failures_in_a_row_hand_the_team_back_to_the_owner(tmp_path
         final = service.note_member_result(root.id, work.finish(child.id, 1, "", error="超过单轮时限 600 秒"))
     assert final.status == "waiting" and "成员连续 3 次没有交回结果" in final.team["waiting_reason"]
     assert "超过单轮时限" in final.team["waiting_reason"]
+
+
+async def test_the_coordinators_submit_ask_and_stall_notify_the_owner(tmp_path, monkeypatch):
+    # 真机 2026-11-04：协调人自己 new 的 TeamService 没接通知钩子，小组交付了主人收不到任何通知
+    seen = []
+    monkeypatch.setattr("src.scheduling.task_notices.notify_transition",
+                        lambda root, task: seen.append((task.id, task.status)))
+    service, root = _root(tmp_path)
+    tools = team_coordinator.build_tools(str(tmp_path), root.id, kick=lambda _r: None)
+    await _tool(tools, "team_assign").handler({"member": "研究员", "instruction": "查价格", "expected": "价格表"})
+    child_id = service.get(root.id).team["children"][0]
+    work = service.collaboration(service.get(root.id))
+    work.start(child_id, 1)
+    work.finish(child_id, 1, "A 10 元")
+    await _tool(tools, "team_ask_owner").handler({"question": "要比较几家？"})
+    assert (root.id, "waiting") in seen
+    service.owner_reply(root.id, "三家")
+    await _tool(tools, "team_review").handler({"task_id": child_id, "verdict": "accept", "note": "有来源"})
+    submitted = await _tool(tools, "team_submit").handler({"summary": "推荐 A", "evidence": [
+        {"criterion": 0, "evidence": "价格表"}, {"criterion": 1, "evidence": "A 最便宜"}]})
+    assert "已交主人验收" in submitted and (root.id, "review") in seen
