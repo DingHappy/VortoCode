@@ -23,6 +23,8 @@
 - Codex 观察员的 `execute_action` 实际调用该控制入口。自动监管建议绑定产生建议的轮次；停止始终绑定原轮次。用户在自己的对话中明确要求发消息，仍可发到该会话的最新轮次。
 - 只有主人交接过的会话才能拟动作（ADR-010）：其余会话只汇报、只提醒。目标按会话 id 定位，同名时拒绝。交接后主人自己在 Codex 里发起的那一轮，监管不拟下一步。
 
+- `backends/acp.py`（ADR-014 S2 第一步）：Agent Client Protocol 通用客户端，一个适配器覆盖 DeepSeek Harness（`dsh --profile acp`）、OpenCode（`opencode acp`）等。一次会话只发一条提示：框架的每个权限请求交给宿主注入的判定函数，放行只选 `allow_once`、判定出错按拒绝；文件读写只在宿主给的根目录内，写入另需判定；不声明终端能力；出现非本地类别的工具调用即记为可能联网（宿主据此标污点）；超时先发 `session/cancel` 再结束进程组。子进程环境剥离操作密钥与 GitHub 令牌，常驻模式下 HOME / XDG 指到 `VORTOCODE_WORKER_HOME/<框架>`。尚未接入任务上下文成员。
+
 `ControlReceipt` 只代表核心接受请求。`turn/interrupt` 返回成功不等于进程已停止，`turn/start` 返回成功不等于任务已完成；后续状态和证据需要另行核对。
 
 ## 失败与并发边界

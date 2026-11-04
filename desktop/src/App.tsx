@@ -19,7 +19,7 @@ import { useStickToBottom } from "./hooks/useStickToBottom";
 import { startPolling } from "./lib/polling";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, BackToAssistant, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
 import { TaskPill } from "./components/TaskPill";
 import { AssistantGoals } from "./components/AssistantGoals";
 import { assistantFeed, isPhoneSession, taskFeedItem } from "./lib/activityFeed";
@@ -301,10 +301,8 @@ function App() {
   const [workbenchLauncher, setWorkbenchLauncher] = useState(false);
   const [feedScope, setFeedScope] = useState<"all" | "session">("all");
   // 助理模式（参考 Muse 个人助理）：一个常驻「主要聊天」+ 旁聊；右侧是助理本人与它做过的事。
-  const [appMode, setAppMode] = useState<AppMode>(() => {
-    // 默认进助理模式（ADR-012：个人 Agent 是主入口）；选过工作台的照旧
-    try { return localStorage.getItem(STORAGE_KEYS.appMode) === "work" ? "work" : "assistant"; } catch { return "assistant"; }
-  });
+  // 启动一律进助理（ADR-015 撤掉工作台）；项目界面只从「打开派出的项目任务」等跳转进入，不再记住上次的模式。
+  const [appMode, setAppMode] = useState<AppMode>("assistant");
   const appModeRef = useRef(appMode);
   appModeRef.current = appMode;
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
@@ -1790,7 +1788,6 @@ function App() {
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
     if (localRuntimeControls.isOperating()) { setBanner("正在核对本机引擎，请等待操作完成后再切换"); return; }
     setAppMode(mode);
-    try { localStorage.setItem(STORAGE_KEYS.appMode, mode); } catch { /* 只影响下次启动记不住 */ }
     if (mode !== "assistant") {
       // 回到进助理模式前的那个项目；没有就回本机通用工作区（工作台不在常驻电脑上干活）。
       const back = workProjects(known).find((project) => project.id === workReturnRef.current && !project.missing);
@@ -2472,7 +2469,6 @@ function App() {
         onConnected: (_profile, id) => {
           workReturnRef.current = null;
           setAppMode("work");
-          try { localStorage.setItem(STORAGE_KEYS.appMode, "work"); } catch { /* The current navigation still works. */ }
           focusTask(id);
         },
         onReview: openTaskBranchReview,
@@ -2572,7 +2568,7 @@ function App() {
         {sidebarCollapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeft />} onClick={() => setSidebarCollapsed(false)} />}
         <aside className="sidebar vc-sidebar">
           <SidebarBrand onCollapse={() => setSidebarCollapsed(true)} />
-          <ModeSwitch mode={appMode} onChange={(mode) => void changeAppMode(mode)} />
+          {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
@@ -3407,7 +3403,6 @@ function App() {
             if (!await switchManagedScope(scope) || !leavingAssistant) return;
             workReturnRef.current = null;
             setAppMode("work");
-            try { localStorage.setItem(STORAGE_KEYS.appMode, "work"); } catch { /* next launch only */ }
           })()}
         >
           {activeScope === "project" && (

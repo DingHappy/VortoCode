@@ -1,11 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { ASSISTANT_PAGES, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, ModeSwitch, PAGE_PANEL, PANEL_PAGE } from "./AssistantMode";
+import { ASSISTANT_PAGES, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, BackToAssistant, PAGE_PANEL, PANEL_PAGE } from "./AssistantMode";
 
-it("模式切换：两个选项，当前项 aria-checked", () => {
-  const html = renderToStaticMarkup(<ModeSwitch mode="assistant" onChange={() => {}} />);
-  expect(html).toContain('aria-checked="true">助理');
-  expect(html).toContain('aria-checked="false">工作台');
+it("工作台已撤：没有模式切换，项目界面里只有「回到助理」", () => {
+  const html = renderToStaticMarkup(<BackToAssistant onBack={() => {}} />);
+  expect(html).toContain("回到助理");
+  expect(html).not.toContain("工作台");
 });
 
 it("左侧：一级入口不超过 5 个，「动态」角标只计等你处理的件数", () => {

@@ -11,12 +11,10 @@ export { PhoneChatDialog } from "./PhoneChatDialog";
 
 export type AppMode = "assistant" | "work";
 
-/** 左上角模式切换：助理（个人助理，一个常驻主聊天）/ 工作台（按项目开对话写代码）。全局只有这一处模式切换。 */
-export function ModeSwitch({ mode, onChange }: { mode: AppMode; onChange: (mode: AppMode) => void }) {
-  return <div className="vc-segmented" role="radiogroup" aria-label="界面模式">
-    <button role="radio" aria-checked={mode === "assistant"} onClick={() => onChange("assistant")}>助理</button>
-    <button role="radio" aria-checked={mode === "work"} onClick={() => onChange("work")}>工作台</button>
-  </div>;
+/** 工作台已撤（ADR-015）：不再有模式切换。只剩「打开派出的项目任务审分支」等少数跳转会进项目界面，
+ * 在那里给一个回到助理的按钮。 */
+export function BackToAssistant({ onBack }: { onBack: () => void }) {
+  return <Button variant="text" className="vc-back-assistant" icon={<ArrowLeft aria-hidden="true" />} onClick={onBack}>回到助理</Button>;
 }
 
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
