@@ -36,13 +36,13 @@ def build_web_tools() -> list[Tool]:
                  "抓取一个公网 http(s) 网址的正文（查文档/issue/报错页/API 说明）：限 http/https、"
                  "拒私网与环回(SSRF 防护)、下载封顶、HTML 自动转正文。只读、无需确认",
                  {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True,
-                 untrusted_source=True, external_content=True),
+                 untrusted_source=True, external_content=True, required_args=('url',), argument_schema={'url': {'type': 'string'}}),
             Tool("web_search",
                  "联网搜索（DuckDuckGo/Bing，无需 key）：给查询返回若干「标题/URL/摘要」，再用 web_fetch "
                  "深读链接并核对来源与发布时间。查最新信息时参考本轮日期，不凭训练知识添加过时年份；"
                  "用户指定历史年份则保留范围。搜索失败或无结果不代表已核实。只读、无需确认",
                  {"query": "搜索关键词/问题"}, _web_search, read_only=True,
-                 untrusted_source=True, external_content=True)]
+                 untrusted_source=True, external_content=True, required_args=('query',), argument_schema={'query': {'type': 'string'}})]
 
 
 def build_screenshot_tool(repo_root: str) -> list[Tool]:
@@ -132,4 +132,4 @@ def build_screenshot_tool(repo_root: str) -> list[Tool]:
                  "给网址截一张页面图并落盘，返回路径。web_fetch 只拿得到文字；图表、仪表盘、"
                  "排版、'这页长什么样'要用它。拒私网/环回(SSRF 防护)、超时封顶。只读、无需确认",
                  {"url": "要截图的 http(s) 网址", "full_page": "可选，默认 true=整页；false=仅首屏"},
-                 _shot, read_only=True, untrusted_source=True, external_content=True)]
+                 _shot, read_only=True, untrusted_source=True, external_content=True, required_args=('url',), argument_schema={'url': {'type': 'string'}, 'full_page': {'type': 'boolean'}})]
