@@ -18,6 +18,7 @@ from src.agents.capabilities import EXTERNAL_PROFILE, SessionCapabilities
 from src.agents.notice import housekeeping
 from src.agents.taint import mark_tainted
 from src.agents.tool import Tool, ToolTurnYield, tool_definitions
+from src.agents.tool_calls import ToolCallError, argument_object
 from src.agents.wait_clock import minus_wait, waited
 from src.agents.tools._common import _max_tool_result
 from src.llm.hard_budget import claim_check_tool
@@ -104,6 +105,8 @@ class ToolRuntime:
             mark_tainted()
 
     async def execute(self, name: str, args: dict, mode: str = "plan") -> ToolOutcome:
+        if not isinstance(name, str) or not name.strip():
+            return ToolOutcome("[invalid_name] 工具名必须是非空字符串；未执行。", "blocked", "")
         tool = self.tools().get(name)
         if tool is None:
             return ToolOutcome(f"没有名为 {name} 的工具。可用：{', '.join(self.tools())}", "blocked", "")
@@ -130,7 +133,7 @@ class ToolRuntime:
         self._emit("start", {
             "id": call_id,
             "name": name,
-            "args": dict(args or {}),
+            "args": dict(args) if isinstance(args, dict) and all(isinstance(key, str) for key in args) else {},
             "mode": mode,
         })
 
@@ -138,7 +141,7 @@ class ToolRuntime:
             self._emit("finish", {
                 "id": call_id,
                 "name": name,
-                "args": dict(args or {}),
+                "args": dict(args) if isinstance(args, dict) and all(isinstance(key, str) for key in args) else {},
                 "mode": mode,
                 "status": status,
                 "result": str(result),
@@ -146,6 +149,10 @@ class ToolRuntime:
             })
             return ToolOutcome(result, status, call_id)
 
+        try:
+            argument_object(args)
+        except ToolCallError as error:
+            return finish("blocked", f"{error} 工具未执行。")
         if mode not in {"plan", "build"}:
             return finish("blocked", "未知工具执行模式，已拒绝执行")
         if ctx.capabilities is not None:

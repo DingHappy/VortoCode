@@ -30,6 +30,10 @@ from dataclasses import replace
 from typing import Any, Awaitable, Callable, Optional
 
 from src.agents.tool import Tool, ToolTurnYield, function_schemas
+from src.agents.tool_calls import (
+    ToolCallError, parse_tool_call as parse_tool_call, parse_tool_calls, parse_native_tool_calls,
+    _strip_fences, _first_json_object,  # noqa: F401 - compatibility exports
+)
 from src.agents.backends.execution import (
     ExecutionFailure, ExecutionProgress, ExecutionRef, ExecutionResult, ExecutionSnapshot,
     ExecutionState, new_run_id, process_instance,
@@ -128,77 +132,6 @@ def _normalize_context_policy(value: Any) -> str:
     policy = aliases.get(policy, policy)
     return policy if policy in {"auto", *_CONTEXT_POLICY_PROFILES} else "auto"
 
-
-def _strip_fences(text: str) -> str:
-    """去掉 ```json ... ``` 围栏。"""
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", t)
-        t = re.sub(r"\s*```$", "", t)
-    return t.strip()
-
-
-def _first_json_object(text: str) -> Optional[str]:
-    """返回首个"平衡花括号"子串（容忍 JSON 前后夹带杂质/说明文字）。"""
-    start = text.find("{")
-    if start == -1:
-        return None
-    depth, in_str, esc = 0, False, False
-    for i in range(start, len(text)):
-        c = text[i]
-        if in_str:
-            if esc:
-                esc = False
-            elif c == "\\":
-                esc = True
-            elif c == '"':
-                in_str = False
-        elif c == '"':
-            in_str = True
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
-    return None
-
-
-def parse_tool_call(text: str) -> Optional[tuple[str, dict]]:
-    """从模型输出解析工具调用，返回 (name, args)；若不是工具调用则 None（当作最终回复）。"""
-    body = _strip_fences(text)
-    candidate = body if body.startswith("{") and body.endswith("}") else _first_json_object(body)
-    if not candidate:
-        return None
-    try:
-        obj = json.loads(candidate)
-    except Exception:  # noqa: BLE001
-        return None
-    if isinstance(obj, dict) and isinstance(obj.get("tool"), str):
-        args = obj.get("args")
-        return obj["tool"], (args if isinstance(args, dict) else {})
-    return None
-
-
-def parse_tool_calls(text: str) -> Optional[list[tuple[str, dict]]]:
-    """解析一个或多个工具调用（仿 Claude Code 的并行工具）：模型可输出单个 {"tool",...}，
-    也可输出一个 JSON 数组 [{"tool",...}, ...] 一次调多个（如并行读几个文件）。都不是则 None。"""
-    body = _strip_fences(text)
-    if body.startswith("[") and body.endswith("]"):     # 数组：一批工具
-        try:
-            arr = json.loads(body)
-        except Exception:  # noqa: BLE001
-            arr = None
-        if isinstance(arr, list):
-            calls = []
-            for obj in arr:
-                if isinstance(obj, dict) and isinstance(obj.get("tool"), str):
-                    a = obj.get("args")
-                    calls.append((obj["tool"], a if isinstance(a, dict) else {}))
-            if calls:
-                return calls
-    single = parse_tool_call(text)                       # 退回单个对象
-    return [single] if single else None
 
 
 def _tool_results_msg(results: list) -> str:
@@ -1840,6 +1773,21 @@ class MainAgent:
             for appended in self.history[start:]:
                 mark_message_external(appended)
 
+    def _repair_tool_call(self, error: ToolCallError, *, retry: bool,
+                          say: Callable[[str], None], emit: Callable[[str], None]) -> bool:
+        """One bounded format correction; rejected batches cannot trigger mode escalation."""
+        self.history.append({"role": "user", "content": (
+            "【运行时调用校验反馈，不是用户的新请求】本批工具调用全部未执行。"
+            f"{error} 请依据现有工具合同重新构造调用，不要假设已经取得结果或产生了副作用。"
+        )})
+        say(housekeeping("工具调用格式不合法，本批未执行。"))
+        if retry:
+            return True
+        message = "工具调用格式不合法，本批未执行；本次尝试已停止，此前已有结果保留。"
+        self.history.append({"role": "assistant", "content": message})
+        emit(message)
+        return False
+
     async def _run_turn_body(
         self,
         user_text: str,
@@ -1866,6 +1814,7 @@ class MainAgent:
         await self._prepare_turn(user_text, mode, say, images, audio, auto_continues)
 
         nudged = False                         # 本轮是否已纠偏过一次（空收尾/残缺工具 JSON → 只重试一次）
+        call_format_error = False             # Rejected calls must not fall back into automatic continuation.
         stream_shown: list[str] = []           # 本回合已回显的正文（回合级累加器→保证 stream_cb 单调、CLI 不错位）
         steps = 0
         tool_calls_used = 0
@@ -1904,19 +1853,20 @@ class MainAgent:
                             reasoning_cb(str(resp["reasoning"]))
                         except Exception:  # noqa: BLE001
                             pass
-                    tcs = resp.get("tool_calls") or []
+                    tcs = resp.get("tool_calls")
                     content = (resp.get("content") or "").strip()
-                    calls = []                     # 执行模型给出的**全部** tool_calls（CC 式并行，不再只取第一个）
-                    for tc in tcs:
-                        try:
-                            a = json.loads(tc.get("arguments") or "{}")
-                        except Exception:  # noqa: BLE001
-                            a = {}
-                        calls.append((tc.get("name", ""), a if isinstance(a, dict) else {}))
-                    # 兼容端点可能接受原生 tools 参数，却仍把工具调用放在 content 的提示式 JSON 里。
-                    # 这里把它提升为真正调用；_native_complete 同时负责抑制这段 JSON 的流式回显。
-                    if not calls:
-                        calls = parse_tool_calls(content) or []
+                    try:
+                        calls = parse_native_tool_calls(tcs)
+                        # Some compatible endpoints return prompted JSON despite accepting tools.
+                        if not calls:
+                            calls = parse_tool_calls(content, strict=True) or []
+                    except ToolCallError as error:
+                        call_format_error = True
+                        if self._repair_tool_call(error, retry=not nudged and steps < self._step_budget(mode),
+                                                  say=say, emit=emit):
+                            nudged = True
+                            continue
+                        return ""
                     if not calls:                  # 最终回复
                         if not nudged and _is_weak_final(content):   # 空收尾 → 纠偏重试一次
                             nudged = True
@@ -1924,6 +1874,10 @@ class MainAgent:
                                 _FOREIGN_NUDGE if _looks_like_foreign_tool_call(content) else _NUDGE)})
                             continue
                         if _is_weak_final(content):  # 第二次仍空：交给无工具强制收尾，不展示「(无回复)」
+                            if call_format_error:
+                                self._repair_tool_call(ToolCallError("invalid_response", "修正后仍未给出有效调用或回答。"),
+                                                       retry=False, say=say, emit=emit)
+                                return ""
                             break
                         final_message = {"role": "assistant", "content": content}
                         reasoning = resp.get("reasoning_content") or resp.get("reasoning")
@@ -1944,6 +1898,7 @@ class MainAgent:
                         calls, recorded, resp.get("reasoning_content") or resp.get("reasoning"),
                         mode, say)
                     nudged = False                  # 工具结果带来了新信息，允许最终收尾再纠偏一次
+                    call_format_error = False
                     if budget_exhausted:
                         break
                     continue
@@ -1962,7 +1917,15 @@ class MainAgent:
                                                  "Connection", "Timeout", "timed out")) else ""
                 emit(f"对话出错: {type(e).__name__}: {detail}{hint}")
                 return ""
-            calls = parse_tool_calls(content)      # 单个或一批（JSON 数组）工具调用
+            try:
+                calls = parse_tool_calls(content, strict=True)
+            except ToolCallError as error:
+                call_format_error = True
+                if self._repair_tool_call(error, retry=not nudged and steps < self._step_budget(mode),
+                                          say=say, emit=emit):
+                    nudged = True
+                    continue
+                return ""
             if not calls:                          # 最终回复
                 if not nudged and _is_weak_final(content):   # 空/残缺工具 JSON 当结论 → 纠偏重试一次
                     nudged = True
@@ -1971,6 +1934,10 @@ class MainAgent:
                         _FOREIGN_NUDGE if _looks_like_foreign_tool_call(content) else _NUDGE)})
                     continue
                 if _is_weak_final(content):        # 第二次仍空：转无工具强制收尾，绝不展示「(无回复)」
+                    if call_format_error:
+                        self._repair_tool_call(ToolCallError("invalid_response", "修正后仍未给出有效调用或回答。"),
+                                               retry=False, say=say, emit=emit)
+                        return ""
                     break
                 shown = _strip_inline_tool_noise(content)
                 if not shown:                      # 整条都是协议噪音 → 交给强制收尾重写一条
@@ -1986,6 +1953,7 @@ class MainAgent:
                 if budget_exhausted else content
             await self._dispatch_calls(calls, recorded, None, mode, say)
             nudged = False                         # 新工具结果后重新给收尾一次纠偏机会
+            call_format_error = False
             if budget_exhausted:
                 break
 
@@ -2023,8 +1991,12 @@ class MainAgent:
         except Exception:  # noqa: BLE001
             emit(self._budget_exhausted_message(mode, finish_error=True))
             return ""
-        if parse_tool_call(content) is not None:    # 模型仍想调工具：放弃，给降级提示
-            content = ""
+        try:
+            if parse_tool_calls(content, strict=True) is not None:
+                content = ""  # Tools are disabled during this final synthesis.
+        except ToolCallError as error:
+            self._repair_tool_call(error, retry=False, say=say, emit=emit)
+            return ""
         # 收尾这一轮也可能夹带自创的行内工具语法；它是协议噪音，不该出现在人看到的回答里。
         content = _strip_inline_tool_noise(content)
         if not content and not self._web_budget_exhausted and await self._try_budget_escalation(mode):
