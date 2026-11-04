@@ -222,3 +222,26 @@ async def test_only_desktop_sessions_can_open_a_developer_team(tmp_path, project
         assert root.team["project"]["repo_root"] == str(project)
     finally:
         team_runner.set_team_runner(None)
+
+
+def test_verification_discounts_failures_that_also_fail_before_the_change(tmp_path, project, monkeypatch):
+    from src.agents import worktree
+    path = team_delivery.prepare(str(project), "task-x", 1)
+    try:
+        (path / "app.py").write_text("VALUE = 2\n")
+        red = {"ok": False, "cmd": "python -m pytest -q tests/unit",
+               "output": "FAILED tests/unit/test_a.py::test_x - boom\n1 failed, 9 passed in 1.00s"}
+        monkeypatch.setattr(worktree, "run_tests", lambda *a, **k: dict(red))
+        monkeypatch.setattr(worktree, "retry_failed", lambda p, result: result)
+        monkeypatch.setattr(worktree, "compare_with_base", lambda root, base, result: {
+            **result, "ok": True, "baseline": {"base": base, "preexisting": ["tests/unit/test_a.py::test_x"], "new": []}})
+        delivery = team_delivery.finish_round(str(project), path, child_id="task-x", number=1, objective="改")
+        assert delivery["verified"] is True and delivery["preexisting_failures"] == 1
+        assert "另有 1 个测试在改动前的代码上同样失败" in team_delivery.describe(delivery, "Proj")
+
+        # 输出被截断：汇总说 3 个失败，只解析出 1 个——不改判
+        truncated = {**red, "output": "FAILED tests/unit/test_a.py::test_x - boom\n3 failed, 7 passed in 1.00s"}
+        monkeypatch.setattr(worktree, "run_tests", lambda *a, **k: dict(truncated))
+        assert team_delivery._verify(str(project), path, ["pytest"])["ok"] is False
+    finally:
+        team_delivery.cleanup(str(project), path)

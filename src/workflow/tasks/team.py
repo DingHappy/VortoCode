@@ -450,7 +450,8 @@ class TeamService:
             child = self.ledger.load(child_id)
             if child is None:
                 raise CollaborationConflict("子任务不存在")
-            keep = ("branch", "round", "files", "verified", "verify_cmd", "verify_output", "error")
+            keep = ("branch", "round", "files", "verified", "verify_cmd", "verify_output", "error",
+                    "preexisting_failures", "flaky")
             child.collaboration["delivery"] = {key: delivery[key] for key in keep if key in delivery}
             if not self.ledger.save(child):
                 raise OSError("交付记录未能保存")

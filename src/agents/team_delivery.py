@@ -11,6 +11,7 @@ VortoCode 收集改动、在 OS 沙箱里跑项目的验证配置 → 改动落�
 """
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -73,6 +74,31 @@ def _verify_command(repo_root: str, files: List[str]) -> Optional[List[str]]:
     return argv
 
 
+_SUMMARY_COUNT = re.compile(r"(\d+) (?:failed|errors?)\b")
+_SUMMARY_LINE = re.compile(r"\d+ (?:failed|passed|errors?)\b.* in [\d.]+s")
+
+
+def _verify(repo_root: str, path: Any, cmd: List[str], run_tests: Any = None) -> Dict[str, Any]:
+    """跑验证；红了先原样重跑一次（排除不稳定的），再把仍失败的拿到改动前的代码上对照（排除本来就红的）。
+
+    与隔离开发流水线同一套判定（``worktree.retry_failed`` / ``compare_with_base``）。解析出的失败数和 pytest
+    汇总对不上（输出被截断等）时不改判，宁可误判红。"""
+    from src.agents import worktree
+    if run_tests is not None:                       # 测试注入：不做对照
+        return run_tests(path, cmd)
+    base = _git(path, "rev-parse", "HEAD").stdout.strip()
+    result = worktree.run_tests(path, cmd, output_limit=40000)
+    if result.get("ok"):
+        return result
+    output = str(result.get("output") or "")
+    summary = next((line for line in reversed(output.splitlines()) if _SUMMARY_LINE.search(line)), "")
+    reported = sum(int(n) for n in _SUMMARY_COUNT.findall(summary))
+    if reported and reported != len(worktree.failed_test_ids(output)):
+        return result
+    judged = worktree.compare_with_base(repo_root, base, worktree.retry_failed(path, result))
+    return judged
+
+
 def finish_round(repo_root: str, path: Any, *, child_id: str, number: int, objective: str,
                  run_tests: Any = None) -> Dict[str, Any]:
     """收集改动、跑验证、落分支。返回交付记录（不抛：失败写在 ``error`` 里）。"""
@@ -86,9 +112,14 @@ def finish_round(repo_root: str, path: Any, *, child_id: str, number: int, objec
     if cmd is None:
         delivery.update(verified=None, verify_cmd="", verify_output="项目没有匹配这些文件的验证配置，没有跑测试")
     else:
-        outcome = (run_tests or worktree.run_tests)(path, cmd)
+        outcome = _verify(repo_root, path, cmd, run_tests)
         delivery.update(verified=bool(outcome.get("ok")), verify_cmd=str(outcome.get("cmd") or " ".join(cmd)),
                         verify_output=str(outcome.get("output") or "")[-_OUTPUT_TAIL:])
+        preexisting = (outcome.get("baseline") or {}).get("preexisting") or []
+        if preexisting:
+            delivery["preexisting_failures"] = len(preexisting)
+        if outcome.get("flaky"):
+            delivery["flaky"] = len(outcome["flaky"])
     branch = branch_name(child_id, number)
     message = f"team({child_id}): 第 {number} 轮\n\n{objective[:500]}"
     landed = worktree.apply_diff_to_branch(repo_root, branch, diff, message)
@@ -117,7 +148,10 @@ def describe(delivery: Dict[str, Any], project: str) -> str:
     status = "通过" if verified is True else "没通过" if verified is False else "没跑"
     lines = [f"【交付】分支 {delivery.get('branch')}（常驻电脑上 {project} 仓库的本地分支，未推送、未合并）",
              f"改动文件（{len(files)}）：{shown}",
-             f"验证：{status}" + (f"（{delivery['verify_cmd']}）" if delivery.get("verify_cmd") else "")]
+             f"验证：{status}" + (f"（{delivery['verify_cmd']}）" if delivery.get("verify_cmd") else "")
+             + (f"；另有 {delivery['preexisting_failures']} 个测试在改动前的代码上同样失败，不计入本次改动"
+                if delivery.get("preexisting_failures") else "")
+             + (f"；{delivery['flaky']} 个测试第一次失败、重跑通过（不稳定）" if delivery.get("flaky") else "")]
     if verified is not True and delivery.get("verify_output"):
         lines.append("验证输出（末尾）：\n" + str(delivery["verify_output"]))
     return "\n".join(lines)
