@@ -203,7 +203,8 @@ class TeamService:
                 "limits": normalize_limits(limits), "used": {key: 0 for key in _USAGE_KEYS},
                 "children": [], "coordinator": {"kind": "main_agent", "model": ""},
                 "events": 0, "log": [], "inbox": [], "waiting_reason": "", "submission": None, "tainted": False,
-                "wake": {"open": False, "cuts": 0, "events_at_start": 0, "idle": 0, "last_error": "", "same_error": 0},
+                "wake": {"open": False, "cuts": 0, "events_at_start": 0, "idle": 0, "last_error": "", "same_error": 0,
+                         "seen_results": {}},
             }
             self._event(root, "created", objective)
             return self._save(root)
@@ -324,13 +325,44 @@ class TeamService:
             return root
 
     # ── 协调人醒来 ─────────────────────────────────────────────────────
+    def _result_snapshot(self, root: BackgroundTask) -> Dict[str, dict]:
+        return {child.id: {"round": child.collaboration["round"], "status": child.status}
+                for child in self.children(root)
+                if child.status in {"done", "failed", "cancelled", "interrupted"}
+                and child.collaboration.get("review") != "accepted"}
+
+    def _initialize_seen_results(self, root: BackgroundTask) -> bool:
+        if "seen_results" in root.team["wake"]:
+            return False
+        # Older completed wakes have no delivery cursor. Do not manufacture new
+        # events out of their old terminal records on every upgrade/restart.
+        # An interrupted wake still takes the explicit recovery/recheck path.
+        legacy_completed = root.team["used"].get("wakes", 0) > 0 and not root.team["wake"]["open"]
+        root.team["wake"]["seen_results"] = self._result_snapshot(root) if legacy_completed else {}
+        return True
+
+    def unseen_member_results(self, root_id: str) -> List[BackgroundTask]:
+        """Return receipts not delivered in a saved coordinator turn, irrespective of acceptance."""
+        with _LOCK:
+            root = self.get(root_id)
+            if self._initialize_seen_results(root):
+                self._save(root)
+            seen = root.team["wake"]["seen_results"]
+            snapshot = self._result_snapshot(root)
+            return [child for child in self.children(root)
+                    if child.id in snapshot and seen.get(child.id) != snapshot[child.id]]
+
     def begin_wake(self, root_id: str) -> BackgroundTask:
         """协调人每次醒来前调用：记一次唤醒并标记回合进行中。"""
         with _LOCK:
             root = self._live(root_id)
+            self._initialize_seen_results(root)
             self._charge(root, {"wakes": 1})
             wake = root.team["wake"]
-            wake.update(open=True, events_at_start=root.team["events"])
+            snapshot = self._result_snapshot(root)
+            wake.update(open=True, events_at_start=root.team["events"],
+                        result_snapshot={key: value for key, value in snapshot.items()
+                                         if wake["seen_results"].get(key) != value})
             return self._save(root)
 
     def note_said(self, root_id: str, text: str, *, tainted: bool = False) -> None:
@@ -429,13 +461,21 @@ class TeamService:
                 self._save(root)
             return [dict(item) for item in root.team["inbox"]]
 
-    def acknowledge_inbox(self, root_id: str, message_ids: List[str]) -> None:
-        """Consume only a delivered snapshot; concurrent arrivals, even identical text, remain."""
+    def acknowledge_inbox(self, root_id: str, message_ids: List[str], *, seen_results: Optional[dict] = None) -> None:
+        """Acknowledge saved input snapshots atomically; later arrivals remain unseen."""
         with _LOCK:
             root = self.get(root_id)
             ids = set(message_ids)
             kept = [item for item in root.team["inbox"] if item.get("id") not in ids]
-            if len(kept) != len(root.team["inbox"]):
+            changed = len(kept) != len(root.team["inbox"])
+            if seen_results:
+                seen = root.team["wake"].setdefault("seen_results", {})
+                for key, value in seen_results.items():
+                    previous = seen.get(key)
+                    if previous is None or value["round"] >= previous["round"]:
+                        seen[key] = dict(value)
+                        changed = True
+            if changed:
                 root.team["inbox"] = kept
                 self._save(root)
 

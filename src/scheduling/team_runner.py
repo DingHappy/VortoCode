@@ -186,9 +186,7 @@ class TeamRunner:
                 continue
             if outcome == "failed" or root.status != "active":
                 continue
-            cut = [child for child in self.service.children(root)
-                   if child.status == "interrupted" or (child.status in {"done", "failed", "cancelled"}
-                                                        and child.collaboration.get("review") != "accepted")]
+            cut = self.service.unseen_member_results(root.id)
             if cut:
                 self.wake(root.id, "；".join(describe(child) for child in cut))
             elif root.team.get("inbox"):

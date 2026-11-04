@@ -282,3 +282,93 @@ async def test_recovery_does_not_wake_accepted_receipts_or_owner_stopped_work(tm
     await runner.recover()
     await runner.close()
     assert calls == [] and service.get(root.id).team["used"]["wakes"] == 0
+
+
+@pytest.mark.parametrize("status", ["done", "failed", "cancelled", "interrupted"])
+async def test_saved_coordinator_turn_does_not_recover_seen_but_unaccepted_receipts(tmp_path, status):
+    service, root = setup_team(tmp_path)
+    child = service.assign(root.id, "审查员", "核对 A", "依据")
+    work = service.collaboration(root)
+    work.start(child.id, 1)
+    if status == "interrupted":
+        work.abort(child.id, 1, error="restart")
+        child = work.get(child.id)
+        child.status = "interrupted"
+        service.ledger.save(child)
+    else:
+        work.finish(child.id, 1, "有结果" if status == "done" else "", error="failed" if status == "failed" else "",
+                    cancelled=status == "cancelled")
+    assert service.unseen_member_results(root.id)
+    await team_coordinator.coordinator_turn(str(tmp_path), root.id, [], kick=lambda _id: None, agent_factory=Agent)
+    assert work.get(child.id).collaboration.get("review") != "accepted"
+    for _ in range(2):
+        runner = TeamRunner(str(tmp_path), Pool(), coordinator=no_coordinator)
+        await runner.recover()
+        assert not runner._driving and not runner._pending
+        await runner.close()
+    assert service.get(root.id).team["used"]["wakes"] == 1
+
+
+async def test_receipt_arriving_during_a_wake_stays_unseen_after_saving_that_wake(tmp_path):
+    service, root = setup_team(tmp_path)
+    first = service.assign(root.id, "审查员", "A", "依据")
+    second = service.assign(root.id, "审查员", "B", "依据")
+    work = service.collaboration(root)
+    work.start(first.id, 1); work.finish(first.id, 1, "A")
+    work.start(second.id, 1)
+
+    class DuringTurn(Agent):
+        async def run_turn(self, prompt, mode="build"):
+            assert first.id in prompt and second.id not in prompt
+            work.finish(second.id, 1, "B")
+            return await super().run_turn(prompt, mode)
+
+    await team_coordinator.coordinator_turn(str(tmp_path), root.id, [], kick=lambda _id: None, agent_factory=DuringTurn)
+    assert [child.id for child in service.unseen_member_results(root.id)] == [second.id]
+    await team_coordinator.coordinator_turn(str(tmp_path), root.id, [], kick=lambda _id: None, agent_factory=Agent)
+    assert service.unseen_member_results(root.id) == []
+
+
+async def test_failed_history_save_does_not_acknowledge_member_receipts(tmp_path, monkeypatch):
+    service, root = setup_team(tmp_path)
+    child = service.assign(root.id, "审查员", "A", "依据")
+    work = service.collaboration(root)
+    work.start(child.id, 1); work.finish(child.id, 1, "A")
+    def fail(*_args):
+        raise OSError("save failed")
+    import src.workflow.tasks.team as domain
+    monkeypatch.setattr(domain, "save_history", fail)
+    await team_coordinator.coordinator_turn(str(tmp_path), root.id, [], kick=lambda _id: None, agent_factory=Agent)
+    assert [item.id for item in service.unseen_member_results(root.id)] == [child.id]
+    assert service.get(root.id).status == "waiting"
+
+
+async def test_legacy_completed_team_with_six_old_failures_does_not_wake_on_each_restart(tmp_path):
+    service, root = setup_team(tmp_path)
+    work = service.collaboration(root)
+    for i in range(6):
+        child = service.assign(root.id, "审查员", f"A{i}", "依据")
+        work.start(child.id, 1); work.finish(child.id, 1, "", error="old failure")
+    root = service.get(root.id)
+    root.team["wake"].pop("seen_results")
+    root.team["used"]["wakes"] = 6
+    service.ledger.save(root)
+    for _ in range(2):
+        runner = TeamRunner(str(tmp_path), Pool(), coordinator=no_coordinator)
+        await runner.recover()
+        assert not runner._driving and not runner._pending
+        await runner.close()
+    assert service.get(root.id).team["used"]["wakes"] == 6
+
+
+def test_seen_receipt_does_not_hide_a_new_rework_round(tmp_path):
+    service, root = setup_team(tmp_path)
+    child = service.assign(root.id, "审查员", "A", "依据")
+    work = service.collaboration(root)
+    work.start(child.id, 1); work.finish(child.id, 1, "first")
+    snapshot = service.begin_wake(root.id).team["wake"]["result_snapshot"]
+    service.acknowledge_inbox(root.id, [], seen_results=snapshot)
+    service.end_wake(root.id)
+    service.review(root.id, child.id, "rework", "next")
+    work.start(child.id, 2); work.finish(child.id, 2, "second")
+    assert [(c.id, c.collaboration["round"]) for c in service.unseen_member_results(root.id)] == [(child.id, 2)]

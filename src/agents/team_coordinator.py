@@ -203,7 +203,11 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
         agent.history = load_history(repo_root, root_id)
         history_loaded = True
         inbox = service.checkout_inbox(root_id)
-        message = event_message(events, inbox)
+        # The exact receipt identities acknowledged below are included in this
+        # request. A result arriving during the model turn is not in this batch.
+        receipts = [f"成员回执 {child_id}（第 {item['round']} 轮，{item['status']}），用 team_result 核对"
+                    for child_id, item in root.team["wake"].get("result_snapshot", {}).items()]
+        message = event_message(events + receipts, inbox)
         with merge_nested_taint() as nested:
             said = str(await agent.run_turn(message, mode="build") or "")
         tainted = nested.child_tainted
@@ -221,7 +225,8 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
             if agent is not None and history_loaded:
                 save_history(repo_root, root_id, list(getattr(agent, "history", []) or []))
                 if completed:
-                    service.acknowledge_inbox(root_id, [item["id"] for item in inbox])
+                    service.acknowledge_inbox(root_id, [item["id"] for item in inbox],
+                                             seen_results=root.team["wake"].get("result_snapshot", {}))
         except Exception as failure:
             error = f"协调记录或留言回执保存失败：{type(failure).__name__}: {str(failure)[:200]}"
             try:
