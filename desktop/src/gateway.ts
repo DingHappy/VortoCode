@@ -8,6 +8,7 @@ import type {
   AssistantDispatch,
   TeamDetail,
   TeamSummary,
+  TeamTranscript,
   AssistantAvatar,
   AssistantConnector,
   AssistantPlugin,
@@ -761,6 +762,14 @@ export class GatewayClient {
     return this.request(`/api/teams/${encodeURIComponent(id)}/reply`, {
       method: "POST", body: JSON.stringify({ text }),
     });
+  }
+
+  async getTeamTranscript(id: string): Promise<TeamTranscript> {
+    return this.request(`/api/teams/${encodeURIComponent(id)}/transcript`);
+  }
+
+  async messageTeam(id: string, text: string): Promise<TeamTranscript> {
+    return this.request(`/api/teams/${encodeURIComponent(id)}/message`, { method: "POST", body: JSON.stringify({ text }) });
   }
 
   async stopTeam(id: string): Promise<TeamDetail> {

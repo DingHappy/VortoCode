@@ -67,7 +67,7 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
   </section>;
 }
 
-export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onSession, activeSid, mainSid, projectSources, onProjects, ops: withOps = false, onRefreshTasks, onCodexDecision, onPullTeamBranch }: {
+export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onSession, activeSid, mainSid, projectSources, onProjects, ops: withOps = false, onRefreshTasks, onCodexDecision, onPullTeamBranch, onTeam }: {
   client: (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress">
     & Partial<Pick<GatewayClient, "getResidentComputer" | "getAssistantSchedule" | "listMemoryProposals" | "listSessions" | "getOpsHeartbeats" | "listNotices"
       | "listTeams" | "getTeam" | "decideTeam" | "replyTeam" | "stopTeam">>) | null;
@@ -89,6 +89,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   onCodexDecision: (action: CodexAction, decision: "approve" | "cancel") => Promise<void>;
   /** 把任务小组交付的分支拉回本机同名项目；不给 = 这台机器上拉不了（详情里如实说明） */
   onPullTeamBranch?: (project: { name: string; repo_root: string; port: number | null }, branch: string) => Promise<string>;
+  /** 打开小组的群聊（给了就跳过去，不在这里原地展开） */
+  onTeam?: (id: string) => void;
 }) {
   const owner = useMemo(() => ({ client, scope }), [client, scope]);
   const identity = useRef({ owner, connected });
@@ -150,6 +152,7 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
     <AssistantWorkdayView model={model} now={now} connected={connected} busy={busy}
       onRefresh={() => { void refreshRef.current?.(); void onRefreshTasks(); }}
       onOpen={target => { if (target.kind === "dispatch") onDispatch(target.id);
+        else if (target.kind === "team" && onTeam) onTeam(target.id);
         else if (target.kind === "goal") onGoals(target.id); else if (target.kind === "confirmation") onConfirmation?.();
         else if (target.kind === "schedule") onSchedule?.(target.id); else if (target.kind === "memory") onMemory?.();
         else if (target.kind === "session") onSession?.(target.id); else if (target.kind === "project") onProjects?.();

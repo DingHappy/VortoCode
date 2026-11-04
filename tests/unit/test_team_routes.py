@@ -92,3 +92,45 @@ def test_team_routes_are_reachable_on_the_resident_assistant():
     for path in ("/api/teams", "/api/teams/task-1", "/api/teams/task-1/decide", "/api/teams/task-1/reply",
                  "/api/teams/task-1/stop"):
         assert http_workspace_requirement(path, GENERAL) is None, path
+
+
+async def test_the_transcript_reads_like_a_group_chat_and_lists_the_members(setup):
+    runner, _ = setup
+    service = runner.service
+    root = service.create("sid-main", objective="比较方案", acceptance=["给推荐"],
+                          members=[{"name": "研究员", "role": "web-researcher", "engine": "opencode"},
+                                   {"name": "审查员", "role": "reviewer"}])
+    child = service.assign(root.id, "研究员", "查三家的价格", "价格表")
+    work = service.collaboration(service.get(root.id))
+    work.start(child.id, 1)
+    work.finish(child.id, 1, "A 10 元，来源 https://a.example", tainted=True)
+    service.review(root.id, child.id, "rework", "缺 C")
+    service.note_said(root.id, "研究员交回了，缺 C，已退回返工", tainted=True)
+    other = service.assign(root.id, "审查员", "审一下", "问题清单")
+    service.collaboration(service.get(root.id)).start(other.id, 1)
+    service.ask_owner(root.id, "要不要算自建成本？")
+    data = await teams.team_transcript(root.id)
+    rows = [(row["speaker"], row["kind"], row.get("member") or row.get("mention") or "") for row in data["messages"]]
+    assert rows[:4] == [("system", "created", ""), ("coordinator", "assigned", "研究员"),
+                        ("member", "result", "研究员"), ("coordinator", "rework", "研究员")]
+    assert ("coordinator", "said", "") in rows and ("coordinator", "ask_owner", "owner") in rows
+    result = next(row for row in data["messages"] if row["kind"] == "result")
+    assert result["tainted"] is True and result["engine"] == "opencode" and result["text"].startswith("A 10 元")
+    members = {item["name"]: item for item in data["members"]}
+    assert members["研究员"]["engine"] == "opencode" and members["研究员"]["state"] == "queued"   # 返工排队中
+    assert members["研究员"]["delivered"] == 1 and members["审查员"]["state"] == "working"
+    assert data["team"]["status"] == "waiting" and data["team"]["acceptance"] == ["给推荐"]
+
+
+async def test_the_owner_can_talk_in_the_group_but_not_after_delivery(setup):
+    runner, audits = setup
+    service = runner.service
+    root = service.create("sid-main", objective="比较方案", acceptance=["给推荐"], members=MEMBERS)
+    data = await teams.message_team(root.id, teams.TeamMessage(text="也看看 D 家"))
+    assert runner.woken[-1] == (root.id, "主人在群里说话了")
+    assert data["messages"][-1]["speaker"] == "owner" and data["messages"][-1]["text"] == "也看看 D 家"
+    assert service.get(root.id).team["inbox"][-1]["text"] == "也看看 D 家"     # 协调人下回合会读到
+    service.submit(root.id, "推荐 A", [{"criterion": 0, "evidence": "A 最便宜"}])
+    with pytest.raises(HTTPException) as delivered:
+        await teams.message_team(root.id, teams.TeamMessage(text="再改改"))
+    assert delivered.value.status_code == 409 and "验收" in delivered.value.detail

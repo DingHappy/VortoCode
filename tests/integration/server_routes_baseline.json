@@ -684,6 +684,12 @@
     ]
   },
   {
+    "path": "/api/teams/{team_id}/message",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/teams/{team_id}/reply",
     "methods": [
       "POST"
@@ -693,6 +699,12 @@
     "path": "/api/teams/{team_id}/stop",
     "methods": [
       "POST"
+    ]
+  },
+  {
+    "path": "/api/teams/{team_id}/transcript",
+    "methods": [
+      "GET"
     ]
   },
   {

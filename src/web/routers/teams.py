@@ -140,3 +140,32 @@ async def stop_team(team_id: str):
     root = _conflict(lambda: runner.stop(team_id, "主人在 Desktop 上停止"))
     _audit(root, "停止")
     return _detail(_get(team_id))
+
+
+@router.get("/api/teams/{team_id}/transcript")
+async def team_transcript(team_id: str):
+    """群聊视图：成员名单（角色、框架、在不在做）+ 按时间排的经过。"""
+    from src.workflow.tasks.team import member_states, transcript
+    root = _get(team_id)
+    service = _service()
+    view = service.view(root)
+    return {"team": {key: view[key] for key in ("id", "objective", "status", "mode", "waiting_reason", "used", "project", "tainted")}
+            | {"acceptance": list(root.team["acceptance"]), "updated_at": root.updated},
+            "members": member_states(service, root), "messages": transcript(service, root)}
+
+
+class TeamMessage(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/api/teams/{team_id}/message")
+async def message_team(team_id: str, body: TeamMessage):
+    """主人在群里说话：小组在等你时就是回复；在做时转给协调人，它下一回合醒来看到。交付后请用验收 / 退回。"""
+    runner = _runner()
+    root = _get(team_id)
+    if root.status == "review":
+        raise HTTPException(status_code=409, detail="小组已交付：请点验收通过，或写明要改什么再退回")
+    root = _conflict(lambda: runner.service.owner_reply(team_id, body.text))
+    _audit(root, "在群里回复")
+    runner.wake(team_id, "主人在群里说话了" if root.status == "active" else "主人回复了")
+    return await team_transcript(team_id)
