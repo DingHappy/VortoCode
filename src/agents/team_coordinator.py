@@ -196,15 +196,22 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
     agent = build_coordinator(repo_root, root, kick=kick, llm=llm, agent_factory=agent_factory)
     agent.history = load_history(repo_root, root_id)
     message = event_message(events, service.take_inbox(root_id))
-    error = ""
+    error, said, tainted = "", "", False
     try:
         with merge_nested_taint() as nested:
-            await agent.run_turn(message, mode="build")
-        if nested.child_tainted:
+            said = str(await agent.run_turn(message, mode="build") or "")
+        tainted = nested.child_tainted
+        if tainted:
             service.mark_tainted(root_id)
     except Exception as failure:  # noqa: BLE001 —— 一次协调失败记成错误，同一错误反复出现由 end_wake 判定
         error = f"{type(failure).__name__}: {str(failure)[:200]}"
     finally:
         save_history(repo_root, root_id, list(getattr(agent, "history", []) or []))
         service.end_wake(root_id, error=error)
+    if said.strip():
+        # 群聊里协调人说的话；在 end_wake 之后记，不算进展。污点回合说的话标外部内容
+        try:
+            service.note_said(root_id, said, tainted=tainted or bool(service.get(root_id).team.get("tainted")))
+        except Exception:  # noqa: BLE001 —— 记不上不影响小组推进
+            pass
     return error or None

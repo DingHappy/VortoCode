@@ -46,8 +46,14 @@ _USAGE_KEYS = ("tasks", "rounds", "steps", "timeout_seconds", "wakes")
 STALL_WAKES = 3
 _MAX_MEMBERS = 6
 _MAX_INBOX = 20
+_MAX_LOG = 200                    # 群聊记录要看得到整个过程（2026-11-04 起；之前只留 50 条）
 _MAX_INSTRUCTION = 16000          # 交叉审查开发成员的改动时，要求里带着 diff
 _LOCK = TASK_STATE_LOCK
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _text(value: object, limit: int = 2000) -> str:
@@ -151,11 +157,11 @@ class TeamService:
         return root
 
     @staticmethod
-    def _event(root: BackgroundTask, kind: str, text: str = "") -> None:
+    def _event(root: BackgroundTask, kind: str, text: str = "", *, limit: int = 300, **extra: Any) -> None:
         root.team["events"] = int(root.team.get("events", 0)) + 1
         log = root.team.setdefault("log", [])
-        log.append({"kind": kind, "text": _text(text, 300), "seq": root.team["events"]})
-        root.team["log"] = log[-50:]
+        log.append({"kind": kind, "text": _text(text, limit), "seq": root.team["events"], "at": _now(), **extra})
+        root.team["log"] = log[-_MAX_LOG:]
 
     # ── 建根（主人批准之后由调用方调用） ────────────────────────────────
     def create(self, owner: str, *, objective: str, acceptance: List[str], members: List[dict],
@@ -326,6 +332,16 @@ class TeamService:
             wake.update(open=True, events_at_start=root.team["events"])
             return self._save(root)
 
+    def note_said(self, root_id: str, text: str, *, tainted: bool = False) -> None:
+        """协调人一回合结束时对主人说的话，记进群聊（不算进展：在 end_wake 之后调用）。"""
+        text = _text(text, 1500)
+        if not text:
+            return
+        with _LOCK:
+            root = self.get(root_id)
+            self._event(root, "said", text, limit=1500, tainted=bool(tainted))
+            self._save(root)
+
     def note_member_result(self, root_id: str, child: BackgroundTask) -> BackgroundTask:
         """成员这一轮的结果（交回 / 失败）。连续 STALL_WAKES 次失败就转「等你」：协调人每次都会重新派活，
         按「醒来有没有新动作」判不出这种空转（真机 2026-11-04：研究员连续多轮没交回，小组跑了四十分钟）。"""
@@ -473,6 +489,83 @@ class TeamService:
                               **({"delivery": child.collaboration["delivery"]} if child.collaboration.get("delivery") else {})}
                              for child in children],
                 "tainted": bool(root.team.get("tainted")) or any(child.collaboration.get("tainted") for child in children)}
+
+
+# ── 群聊视图（ADR-014 S3：主人像看群聊一样看小组） ─────────────────────────
+_ROOT_SPEAKERS = {"ask_owner": "coordinator", "submitted": "coordinator", "said": "coordinator",
+                  "owner_reply": "owner", "accepted": "owner", "returned": "owner",
+                  "stalled": "system", "failed": "system", "stopped": "system"}
+
+
+def member_states(service: "TeamService", root: BackgroundTask) -> List[Dict[str, Any]]:
+    """成员名单：角色、执行框架、模型，以及现在在不在做、做了几轮、失败几次（都按记录算）。"""
+    children = service.children(root)
+    out = []
+    for item in root.team["members"]:
+        mine = [child for child in children if child.collaboration.get("assignee") == item["name"]]
+        messages = [message for child in mine for message in child.collaboration.get("messages") or []]
+        busy = next((child for child in mine if child.status in ("running", "queued")), None)
+        out.append({"name": item["name"], "role": item["role"], "title": ROLES[item["role"]]["title"],
+                    "engine": item.get("engine", "vortocode"), "model": item.get("model", ""),
+                    "state": "working" if busy is not None and busy.status == "running"
+                    else "queued" if busy is not None else "idle",
+                    "current": busy.id if busy is not None else "",
+                    "rounds": sum(1 for message in messages if message.get("kind") == "started"),
+                    "delivered": sum(1 for message in messages if message.get("kind") == "submitted"),
+                    "failures": sum(1 for message in messages if message.get("kind") in ("failed", "interrupted"))})
+    return out
+
+
+def transcript(service: "TeamService", root: BackgroundTask) -> List[Dict[str, Any]]:
+    """把小组的经过排成一条群聊：协调人派活 / 接受 / 返工 / 问你 / 交付 / 说的话，成员交回或失败，你的回复与验收，
+    系统事件。全部来自记录（成员子任务的消息带时间；小组事件 2026-11-04 起带时间，更早的只能排在最后）。
+    含外部内容的标 ``tainted``，前端只当纯文本显示。"""
+    roles = {item["name"]: item for item in root.team["members"]}
+    rows: List[Dict[str, Any]] = [{"at": root.created, "speaker": "system", "kind": "created",
+                                   "text": f"小组开工：{root.team['objective']}", "order": 0}]
+    for child in service.children(root):
+        member = child.collaboration.get("assignee") or ""
+        meta = roles.get(member, {})
+        tainted = bool(child.collaboration.get("tainted"))
+        messages = list(child.collaboration.get("messages") or [])
+        last_submitted = max((index for index, message in enumerate(messages) if message.get("kind") == "submitted"),
+                             default=-1)
+        for index, message in enumerate(messages):
+            kind, body, at = message.get("kind"), str(message.get("body") or ""), message.get("created") or ""
+            base = {"at": at, "child_id": child.id, "round": message.get("round"), "member": member,
+                    "role": meta.get("role", ""), "engine": meta.get("engine", "vortocode"), "order": 1}
+            if kind == "assigned":
+                rows.append({**base, "speaker": "coordinator", "kind": "assigned", "mention": member, "text": body,
+                             "tainted": tainted})
+            elif kind == "submitted":
+                full = child.result if index == last_submitted and child.status == "done" and child.result else body
+                rows.append({**base, "speaker": "member", "kind": "result", "text": full, "tainted": tainted})
+            elif kind in ("failed", "interrupted", "cancelled"):
+                rows.append({**base, "speaker": "member", "kind": kind, "text": body})
+            elif kind in ("accept", "rework"):
+                rows.append({**base, "speaker": "coordinator", "kind": kind, "mention": member, "text": body,
+                             "tainted": tainted})
+    submission = root.team.get("submission") if isinstance(root.team.get("submission"), dict) else None
+    for event in root.team.get("log") or []:
+        speaker = _ROOT_SPEAKERS.get(event.get("kind"))
+        if speaker is None:
+            continue
+        row = {"at": event.get("at") or "", "speaker": speaker, "kind": event["kind"], "text": event.get("text", ""),
+               "seq": event.get("seq", 0), "order": 2,
+               "tainted": bool(event.get("tainted")) or (event["kind"] == "submitted" and bool(root.team.get("tainted")))}
+        if event["kind"] == "ask_owner":
+            row["mention"] = "owner"
+        if event["kind"] == "submitted" and submission:
+            row["text"] = submission.get("summary") or row["text"]
+            row["evidence"] = [{"criterion": item.get("criterion"), "text": item.get("text", ""),
+                                "evidence": item.get("evidence", "")} for item in submission.get("evidence") or []]
+        rows.append(row)
+    dated = sorted((row for row in rows if row["at"]), key=lambda row: (row["at"], row["order"], row.get("seq", 0)))
+    undated = sorted((row for row in rows if not row["at"]), key=lambda row: row.get("seq", 0))
+    for row in dated + undated:
+        row.pop("order", None)
+        row.pop("seq", None)
+    return dated + undated
 
 
 # ── 协调记录（与主对话分开；只存协调人自己的上下文） ─────────────────────────

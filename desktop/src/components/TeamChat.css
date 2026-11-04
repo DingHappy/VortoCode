@@ -1,0 +1,47 @@
+/* 任务小组群聊（ADR-014 S3）。只用 tokens.css 里的变量；颜色只表达状态（docs/DESIGN_SYSTEM.md） */
+.team-chat-page { min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--vc-bg); }
+.team-chat { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--vc-text); }
+.team-chat-head { padding: var(--vc-space-4) var(--vc-page-pad) var(--vc-space-3); border-bottom: 1px solid var(--vc-divider); }
+.team-chat-title { display: flex; align-items: center; gap: var(--vc-space-2); font-size: var(--vc-size-title); }
+.team-chat-title svg { width: var(--vc-icon); height: var(--vc-icon); color: var(--vc-muted); flex: none; }
+.team-chat-title strong { font-weight: var(--vc-weight-medium); overflow-wrap: anywhere; }
+.team-chat-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--vc-space-2); margin-top: var(--vc-space-2);
+  color: var(--vc-muted); font-size: var(--vc-size-small); }
+.team-chat-status { padding: 0 var(--vc-space-2); border-radius: var(--vc-radius-full); background: var(--vc-fill); color: var(--vc-text-secondary); }
+.team-chat-status-waiting, .team-chat-status-review { background: var(--vc-wait-bg); color: var(--vc-wait-text); }
+.team-chat-status-done { background: var(--vc-done-bg); color: var(--vc-done-text); }
+.team-chat-status-failed { background: var(--vc-danger-bg); color: var(--vc-danger-text); }
+.team-chat-toggle { margin-left: auto; border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); background: var(--vc-surface);
+  color: var(--vc-text-secondary); font-size: var(--vc-size-small); padding: 0 var(--vc-space-2); cursor: pointer; }
+.team-chat-members { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); list-style: none; margin: var(--vc-space-3) 0 0; padding: 0; }
+.team-chat-members li { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--vc-space-2) var(--vc-space-3);
+  border: 1px solid var(--vc-border); border-radius: var(--vc-radius-card); background: var(--vc-surface); }
+.team-chat-members strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
+.team-chat-members small { color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.team-chat-dot { display: inline-block; width: 6px; height: 6px; margin-right: var(--vc-space-1); border-radius: var(--vc-radius-full); background: var(--vc-border); }
+.team-chat-member-working .team-chat-dot, .team-chat-member-queued .team-chat-dot { background: var(--vc-wait-dot); }
+.team-chat-waiting { margin: var(--vc-space-3) 0 0; padding: var(--vc-space-2) var(--vc-space-3); border-radius: var(--vc-radius-card);
+  background: var(--vc-wait-bg); color: var(--vc-wait-text); font-size: var(--vc-size-body); }
+.team-chat-log { flex: 1; min-height: 0; overflow: auto; list-style: none; margin: 0; padding: var(--vc-space-4) var(--vc-page-pad); }
+.team-chat-log > li { max-width: var(--vc-chat-max-w); margin: 0 auto var(--vc-space-3); }
+.team-chat-message { padding: var(--vc-space-3); border-radius: var(--vc-radius-bubble); background: var(--vc-surface); border: 1px solid var(--vc-border); }
+.team-chat-coordinator { background: var(--vc-paper); }
+.team-chat-owner { background: var(--vc-selected); }
+.team-chat-failed { border-color: var(--vc-danger-border); }
+.team-chat-message header { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--vc-space-2); margin-bottom: var(--vc-space-1); }
+.team-chat-message header strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
+.team-chat-message header small, .team-chat-message header time { color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.team-chat-message header time { margin-left: auto; }
+.team-chat-external { padding: 0 var(--vc-space-1); border-radius: var(--vc-radius-inner); background: var(--vc-unknown-bg); color: var(--vc-unknown-text); }
+.team-chat-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--vc-size-chat); line-height: 1.7; }
+.team-chat-lead { color: var(--vc-text-secondary); font-weight: var(--vc-weight-medium); }
+.team-chat-more { margin-top: var(--vc-space-1); border: 0; background: transparent; color: var(--vc-accent); font-size: var(--vc-size-small); cursor: pointer; padding: 0; }
+.team-chat-evidence { margin: var(--vc-space-2) 0 0; padding-left: var(--vc-space-5); font-size: var(--vc-size-body); }
+.team-chat-system { display: flex; justify-content: center; gap: var(--vc-space-2); color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.team-chat-overview { margin: 0 var(--vc-page-pad); padding: var(--vc-space-2) 0; border-top: 1px solid var(--vc-divider); font-size: var(--vc-size-small); }
+.team-chat-overview > summary { cursor: pointer; color: var(--vc-text-secondary); }
+.team-chat-compose { padding: var(--vc-space-3) var(--vc-page-pad) var(--vc-space-4); border-top: 1px solid var(--vc-divider); }
+.team-chat-compose textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--vc-border); border-radius: var(--vc-radius-input);
+  background: var(--vc-surface); color: var(--vc-text); font: inherit; font-size: var(--vc-size-chat); padding: var(--vc-space-2) var(--vc-space-3); resize: vertical; }
+.team-chat-closed { margin: 0; color: var(--vc-muted); font-size: var(--vc-size-body); }
+.vc-team-badge { color: var(--vc-wait-text); font-size: var(--vc-size-caption); }
