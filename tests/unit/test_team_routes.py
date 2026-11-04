@@ -84,3 +84,11 @@ async def test_without_a_team_runner_writes_are_refused(tmp_path, monkeypatch):
         await teams.stop_team(root.id)
     assert refused.value.status_code == 409
     assert (await teams.list_teams())["teams"][0]["id"] == root.id   # 读照样可以
+
+
+def test_team_routes_are_reachable_on_the_resident_assistant():
+    # 真机 2026-11-04：常驻助理是 General 范围，/api/teams 被范围闸挡成 workspace_required
+    from src.gateway.workspace_scope import GENERAL, http_workspace_requirement
+    for path in ("/api/teams", "/api/teams/task-1", "/api/teams/task-1/decide", "/api/teams/task-1/reply",
+                 "/api/teams/task-1/stop"):
+        assert http_workspace_requirement(path, GENERAL) is None, path
