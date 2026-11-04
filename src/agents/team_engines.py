@@ -5,9 +5,11 @@
 
 - **角色 → 允许的动作类别**（封闭枚举）：研究员只允许读、搜索、联网抓取和思考；审查员只允许读和思考。
   执行命令、改文件、删除、移动、其它类别一律拒绝。放行只选「本次允许」（见 ``backends.acp``）。
-- **框架自己的配置也设成「都要问」**：OpenCode 用 ``OPENCODE_CONFIG_CONTENT`` 注入（优先级高于项目里的
-  ``opencode.json``），所有权限 ``ask``，子代理、向人提问、工作目录外访问直接 ``deny``；DeepSeek Harness 用
-  ``DSH_PERMISSION_MODE=read-only``（只读沙箱、审批走 ACP）。
+- **框架自己的配置也收窄**：OpenCode 用 ``OPENCODE_CONFIG_CONTENT`` 注入（优先级高于项目里的
+  ``opencode.json``），所有权限 ``ask``，子代理、向人提问、工作目录外访问直接 ``deny``。DeepSeek Harness 的审批
+  只管越出沙箱的动作——联网、只读命令不来问（2026-11-04 真机：``web_fetch`` 直接执行，类别报 ``other``），
+  所以对它在**工具面**上收窄：启动时用 ``--patch`` 按角色关掉命令、子代理、工作流、技能和文件工具，审查员再关掉
+  联网工具；沙箱另设只读（``DSH_PERMISSION_MODE=read-only``）。
 - **工作目录**是这条子任务专用的空目录，结束即删。不给项目、记忆、目标或任何私人资料。
 - **模型走中转站**：端点与令牌取自默认模型配置，只放进子进程环境，不写进任何文件。OpenCode 以 OpenAI 兼容
   服务商接入；DeepSeek Harness 走 Messages 兼容端点（中转站同一根地址）。
@@ -118,6 +120,36 @@ def engine_env(engine: str, model: str) -> Dict[str, str]:
     return env
 
 
+# DeepSeek Harness 按角色关掉的工具行（`dsh --profile acp --dump-config` 里的 id）。
+_DSH_ALWAYS_OFF = ("tool-bash", "tool-pwsh", "tool-jobs", "tool-subagent", "tool-subagent-fork", "tool-subagent-control",
+                   "tool-subagent-list-agents", "tool-workflow", "tool-skill", "tool-fs", "tool-fs-search",
+                   "tool-plugin-manager")
+_DSH_ROLE_OFF = {"web-researcher": (), "reviewer": ("tool-web",)}
+
+
+def dsh_patch(role: str) -> str:
+    rows = _DSH_ALWAYS_OFF + _DSH_ROLE_OFF[role]
+    return "# VortoCode 任务小组成员：按角色关掉的工具（agents/team_engines.py 生成，每次启动覆盖）\n" + "".join(
+        f"- id: {row}\n  disabled: true\n" for row in rows)
+
+
+def _dsh_patch_file(role: str) -> Path:
+    from src.agents.external_workers import worker_home
+    home = worker_home()
+    directory = (home / "deepseek-harness-patches") if home is not None else Path(tempfile.gettempdir()) / "vortocode-dsh-patches"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / f"{role}.yml"
+    path.write_text(dsh_patch(role), encoding="utf-8")
+    return path
+
+
+def command_for(engine: str, role: str) -> list:
+    argv = list(ENGINE_COMMANDS[engine])
+    if engine == "deepseek-harness":
+        argv[1:1] = ["--patch", str(_dsh_patch_file(role))]      # 启动器参数，排在应用参数之前
+    return argv
+
+
 def decide_for(role: str) -> Callable[[PermissionAsk], bool]:
     allowed = ROLE_KINDS.get(role)
     if allowed is None:
@@ -141,7 +173,7 @@ async def run_external(engine: str, role: str, model: str, prompt: str, *, timeo
     """在专用空目录里跑一次外部框架回合。框架没装 / 没配端点时抛 ``EngineUnavailable``。"""
     decide = decide_for(role)
     env = engine_env(engine, model)
-    argv = list(ENGINE_COMMANDS[engine])
+    argv = command_for(engine, role)
     binary = resolve_binary(argv[0])
     if binary is None:
         raise EngineUnavailable(f"常驻电脑上没有装 {argv[0]}")

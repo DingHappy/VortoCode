@@ -172,3 +172,15 @@ def test_the_approval_card_names_the_external_engine():
                  {"tasks": 8, "rounds": 12, "timeout_seconds": 3600, "wakes": 16, "parallel": 2})
     assert "外援（联网查资料，由 DeepSeek Harness 执行）" in card
     assert "研究员（联网查资料）" in card
+
+
+def test_deepseek_harness_tools_are_cut_by_role(engine_home):
+    # 它的审批只管越出沙箱的动作，联网和只读命令不来问：只能在工具面上关掉
+    reviewer = team_engines.command_for("deepseek-harness", "reviewer")
+    researcher = team_engines.command_for("deepseek-harness", "web-researcher")
+    assert reviewer[:2] == ["dsh", "--patch"] and reviewer[-2:] == ["--profile", "acp"]
+    reviewer_patch, researcher_patch = (open(argv[2], encoding="utf-8").read() for argv in (reviewer, researcher))
+    for row in ("tool-bash", "tool-subagent", "tool-workflow", "tool-fs", "tool-skill"):
+        assert f"- id: {row}\n  disabled: true" in reviewer_patch and f"- id: {row}\n  disabled: true" in researcher_patch
+    assert "- id: tool-web\n" in reviewer_patch and "- id: tool-web\n" not in researcher_patch
+    assert team_engines.command_for("opencode", "reviewer") == ["opencode", "acp"]
