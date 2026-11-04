@@ -32,7 +32,7 @@ import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
 import { websiteConfirmation } from "./lib/websiteConfirmation";
 import { useSessionResources } from "./hooks/useSessionResources";
-import { SessionResources } from "./components/SessionResources";
+import { SessionResources, residentHostLabel } from "./components/SessionResources";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
@@ -728,6 +728,8 @@ function App() {
         }
       };
       if (["agent_tool", "agent_confirm", "agent_confirm_closed", "agent_cancelled", "agent_done"].includes(event.type)) sessionResources.changed();
+      // 回合结束后重读一次：助理模式下这一行平时不显示（ADR-016），要靠最新状态判断有没有需要核对的
+      if (event.type === "agent_done") sessionResources.refresh();
       switch (event.type) {
         case "runtime_disconnected":
           setConnection("error");
@@ -972,7 +974,7 @@ function App() {
           break;
       }
     },
-    [acceptTaskEvent, activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, settleWorkspaceSave, snapshotTodayJournal, updateActiveTurnRid, sessionResources.receive, sessionResources.changed],
+    [acceptTaskEvent, activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, settleWorkspaceSave, snapshotTodayJournal, updateActiveTurnRid, sessionResources.receive, sessionResources.changed, sessionResources.refresh],
   );
 
   const disconnect = useCallback(async () => {
@@ -2557,7 +2559,11 @@ function App() {
         const host = findAssistantHost(known);
         const placed = host ? onAssistantHost() && remoteProjectRef.current === host.id : !remoteProjectRef.current && activeScope === "general";
         if (!placed) void changeAppMode("assistant", known);
-        else setInspectorOpen(true);
+        else {
+          setInspectorOpen(true);
+          // ADR-016：打开 App 直接进主要聊天，不停在上次的旁聊或空的新对话上
+          if (mainChatSid && activeSid !== mainChatSid) void openMainChat();
+        }
       });
     }
   // 只在首次连上时检查一次；changeAppMode 每次渲染都是新函数，故不列入依赖。
@@ -2632,7 +2638,7 @@ function App() {
               sideChats={sessions.filter((session) => session.sid !== mainChatSid && !isPhoneSession(session.sid) && (session.messages > 0 || session.sid === activeSid))
                 .map((session) => ({ sid: session.sid, title: session.title, busy: session.status === "working" }))}
               current={activeSid}
-              page={assistantPage}
+              page={assistantPage === "library" || assistantPage === "customize" ? assistantPage : null}
               search={sidebarSearch("搜索聊天")}
               query={sidebarQuery}
               waiting={assistantWaiting}
@@ -2717,6 +2723,8 @@ function App() {
                 onClick: () => connection === "connected" ? openAssistantPage("tasks") : void changeAppMode("assistant") }
               : { state: "local", onClick: () => findAssistantHost(projects) ? void changeAppMode("assistant") : setRemoteDialogOpen("assistant") }}
             onOpenSettings={(target) => { setSettingsSection(target?.section); setSettingsAnchor(target?.anchor); setSettingsOpen(true); }}
+            onLibrary={appMode === "assistant" ? () => openAssistantPage("library") : undefined}
+            onCustomize={appMode === "assistant" ? () => openAssistantPage("customize") : undefined}
           />
         </aside>
 
@@ -2846,7 +2854,9 @@ function App() {
           </div>
           <div className="composer-wrap">
             <SessionResources view={sessionResources.view} connected={connection === "connected"}
-              hostLabel={remoteProjectRef.current ? `${projects.find(item => item.id === remoteProjectRef.current)?.name || "已登记运行端"}（${onAssistantHost() ? "常驻" : "远端"}）` : "本机运行端"}
+              hostLabel={residentHostLabel(remoteProjectRef.current ? projects.find(item => item.id === remoteProjectRef.current)?.name : undefined,
+                Boolean(remoteProjectRef.current), onAssistantHost())}
+              quietWhenOk={appMode === "assistant"}
               pendingId={pendingConfirm?.id} onRefresh={sessionResources.refresh}
               onFocusConfirmation={() => focusConfirmation(pendingConfirm?.id)}
               onManage={() => setMainView(appMode === "assistant" ? "customize" : "plugins")}
@@ -2921,7 +2931,7 @@ function App() {
                 onRemove={(item) => setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item)))} />
               <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}
                 placeholder={appMode !== "assistant" ? undefined : onAssistantHost()
-                  ? "交代一件事，它会在常驻电脑上接着做，做完了在右侧「动态」里回报…" : "交代一件事，做完了在右侧「动态」里回报…"}
+                  ? "交代一件事，它会在常驻电脑上接着做，做完了回到这里告诉你…" : "交代一件事，做完了回到这里告诉你…"}
                 disabled={runtimeStarting || projectSwitching} onSend={() => void sendPrompt()}
                 onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files); } }}
                 onAction={(command) => {

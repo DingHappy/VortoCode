@@ -1,6 +1,6 @@
 // 侧栏底部：常驻电脑的状态（助理模式）、有新版时的「更新并重启」、账号。
-// 点账号弹出头像菜单：账号与会员、手机与设备、检查更新 · 诊断日志、设置（docs/DESIGN_SYSTEM.md 第 2 节「头像菜单与设置」）。
-import { CircleUser, Laptop, RefreshCw, Server, Settings2, Smartphone, UserRound } from "lucide-react";
+// 点账号弹出头像菜单：资料库、插件与连接（ADR-016 从侧栏移来），账号与会员、手机与设备、检查更新 · 诊断日志、设置。
+import { Archive, CircleUser, Laptop, Puzzle, RefreshCw, Server, Settings2, Smartphone, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { errorText } from "../lib/errorText";
@@ -21,13 +21,16 @@ const RESIDENT_STATE: Record<SidebarResident["state"], { word: string; title: st
 /** 打开设置；可指定分区和要滚到的条目（settingsNavigation 里的条目 id） */
 export type OpenSettings = (target?: { section: SettingsSection; anchor?: string }) => void;
 
-export function SidebarFooter({ identity, update, resident, onOpenSettings, install = installUpdate, menuOpen: initialMenuOpen = false }: {
+export function SidebarFooter({ identity, update, resident, onOpenSettings, onLibrary, onCustomize, install = installUpdate, menuOpen: initialMenuOpen = false }: {
   identity: SidebarIdentity;
   /** 启动时自动检查到的新版；null = 没有新版或没查 */
   update: UpdateCheck | null;
   /** 只在助理模式给 */
   resident?: SidebarResident;
   onOpenSettings: OpenSettings;
+  /** 助理模式：资料库、插件与连接两个整页 */
+  onLibrary?: () => void;
+  onCustomize?: () => void;
   /** 测试替身；默认走 Rust 侧的下载、验签、安装和重启 */
   install?: () => Promise<unknown>;
   /** 测试和验收页用：一开始就展开头像菜单 */
@@ -78,6 +81,9 @@ export function SidebarFooter({ identity, update, resident, onOpenSettings, inst
       )}
       <div className="vc-side-account-row" ref={rowRef}>
         {menuOpen && <Menu className="vc-side-menu" aria-label="账号菜单">
+          {onLibrary && <MenuItem icon={<Archive />} label="资料库" onClick={() => { setMenuOpen(false); onLibrary(); }} />}
+          {onCustomize && <MenuItem icon={<Puzzle />} label="插件与连接" onClick={() => { setMenuOpen(false); onCustomize(); }} />}
+          {(onLibrary || onCustomize) && <MenuSeparator />}
           <MenuItem icon={<CircleUser />} label="账号与会员" onClick={() => pick({ section: "account", anchor: "account" })} />
           <MenuItem icon={<Smartphone />} label="手机与设备" onClick={() => pick({ section: "account", anchor: "mobile-account" })} />
           <MenuItem icon={<RefreshCw />} label="检查更新 · 诊断日志" onClick={() => pick({ section: "advanced", anchor: "version" })} />

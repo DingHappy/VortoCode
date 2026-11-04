@@ -17,8 +17,8 @@ export function BackToAssistant({ onBack }: { onBack: () => void }) {
 
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
 
-/** 侧栏一级入口（docs/DESIGN_SYSTEM.md 第 2 节）：最多 5 个，「动态」的角标只计等你处理的件数。
- * 与手机 App 同构（ADR-012）：对话在中间，动态 / 目标 / 资料库在侧栏。 */
+/** 助理的几个页面。ADR-016 起侧栏只放会话：动态 / 定时 / 目标是右侧助理面板的标签，资料库、定制在头像菜单里。
+ * 这里保留入口定义给面板标签、头像菜单和 ⌘K 搜索共用。 */
 export type AssistantPage = "tasks" | "schedule" | "goals" | "library" | "customize";
 
 export const ASSISTANT_PAGES: Array<{ id: AssistantPage; label: string; icon: ReactNode; hint: string }> = [
@@ -40,9 +40,12 @@ function matches(title: string, query: string): boolean {
   return !q || title.toLowerCase().includes(q);
 }
 
-/** 助理模式左侧：新对话、搜索、一级入口，下面是「最近」：主要聊天置顶带星标，手机和本机的聊天在右侧注明来源。 */
+/** 旁聊默认只列最近几条，其余点「显示全部」 */
+export const SIDE_CHAT_LIMIT = 5;
+
+/** 助理模式左侧（ADR-016）：只放会话。新对话、搜索；主要聊天置顶（角标 = 等你的件数）；任务小组；旁聊（含手机、本机的）。 */
 export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
-  search, query = "", onSelect, onPage, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam }: {
+  search, query = "", onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
   /** 手机上和助理的聊天：点开只读查看 */
@@ -52,15 +55,17 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   offlineChats?: Array<{ sid: string; title: string }>;
   onOpenOfflineChat?: (sid: string) => void;
   current: string;
-  /** 当前打开的一级入口；null = 在看对话 */
+  /** 正在看的整页（资料库、定制）；null = 在看对话 */
   page?: AssistantPage | null;
-  /** 等你处理的件数：「任务」的角标 */
+  /** 等你处理的件数：「主要聊天」的角标 */
   waiting?: number;
+  /** 有来源还没读到：角标写「N+」或「?」，不冒充全部 */
   waitingUncertain?: boolean;
-  /** 「搜索 ⌘K」项；搜索词只筛「最近」 */
+  /** 「搜索 ⌘K」项；搜索词只筛会话 */
   search?: ReactNode;
   query?: string;
   onSelect: (sid: string) => void;
+  /** 旧入口已移走，保留参数兼容调用方 */
   onPage?: (page: AssistantPage) => void;
   onNewSideChat: () => void;
   /** 任务小组（ADR-014）：每个小组像一个群聊，点开在中间看经过和成员 */
@@ -68,35 +73,40 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   currentTeam?: string;
   onOpenTeam?: (id: string) => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
   const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
-  const sides = sideChats.filter((chat) => matches(chat.title || "新的旁聊", query));
-  const phones = phoneChats.filter((chat) => matches(chat.title, query));
-  const offline = offlineChats.filter((chat) => matches(chat.title || "本机对话", query));
+  const inChat = !page && !currentTeam;
   const groups = teams.filter((team) => matches(team.title, query));
+  const others = [
+    ...sideChats.filter((chat) => matches(chat.title || "新的旁聊", query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title || "新的旁聊"} current={inChat && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />),
+    ...phoneChats.filter((chat) => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title.replace(/^📱\s*/, "")} title="手机上和助理的聊天（这里只读，在手机上回复）" onClick={() => onOpenPhoneChat?.(chat.sid)} meta="手机" />),
+    ...offlineChats.filter((chat) => matches(chat.title || "本机对话", query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title || "本机对话"} title="常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）" onClick={() => onOpenOfflineChat?.(chat.sid)} meta="本机" />),
+  ];
+  // 正在看的旁聊即使排在后面也要露出来；搜索时全列
+  const activeIndex = sideChats.findIndex((chat) => chat.sid === current);
+  const limit = query || showAll ? others.length : Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
   return <>
     <nav className="vc-side-nav" aria-label="助理">
       <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
       {search}
-      <span className="vc-side-gap" aria-hidden="true" />
-      {ASSISTANT_PAGES.map((item) => <NavItem key={item.id} icon={item.icon} label={item.label} title={item.hint}
-        current={page === item.id} onClick={() => onPage?.(item.id)}
-        meta={item.id === "tasks" && badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
-          aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span> : undefined} />)}
     </nav>
     <div className="vc-side-recent">
-      <GroupTitle>最近</GroupTitle>
-      {matches("主要聊天", query) && <NavItem className="vc-nav-item--recent" icon={<Star aria-hidden="true" />} label="主要聊天"
-        title={mainChat.preview || "主要聊天"} current={!page && !currentTeam && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
-        meta={mainChat.busy ? <LiveDot /> : undefined} />}
+      {matches("主要聊天", query) && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
+        title={mainChat.preview || "主要聊天"} current={inChat && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
+        meta={badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
+          aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span>
+          : mainChat.busy ? <LiveDot /> : undefined} />}
+      {groups.length > 0 && <GroupTitle>任务小组</GroupTitle>}
       {groups.map((team) => <NavItem key={team.id} className="vc-nav-item--recent vc-nav-item--team" icon={<Users aria-hidden="true" />}
         label={team.title} title={`任务小组：${team.title}`} current={currentTeam === team.id} onClick={() => onOpenTeam?.(team.id)}
         meta={team.status === "active" ? <LiveDot /> : TEAM_BADGE[team.status] ? <span className="vc-team-badge">{TEAM_BADGE[team.status]}</span> : undefined} />)}
-      {sides.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title || "新的旁聊"}
-        current={!page && !currentTeam && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />)}
-      {phones.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title.replace(/^📱\s*/, "")}
-        title="手机上和助理的聊天（这里只读，在手机上回复）" onClick={() => onOpenPhoneChat?.(chat.sid)} meta="手机" />)}
-      {offline.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title || "本机对话"}
-        title="常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）" onClick={() => onOpenOfflineChat?.(chat.sid)} meta="本机" />)}
+      {others.length > 0 && <GroupTitle>旁聊</GroupTitle>}
+      {others.slice(0, limit)}
+      {others.length > limit && <button type="button" className="vc-side-more" onClick={() => setShowAll(true)}>显示全部 {others.length} 条</button>}
+      {showAll && !query && others.length > SIDE_CHAT_LIMIT && <button type="button" className="vc-side-more" onClick={() => setShowAll(false)}>收起</button>}
       {!query && sideChats.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
     </div>
   </>;

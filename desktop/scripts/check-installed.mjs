@@ -17,7 +17,8 @@ export const RUNTIME_BINARY = `${APP}/Contents/Resources/runtime/vortocode-runti
 export const LATEST_URL = "https://github.com/DingHappy/VortoCode/releases/latest/download/latest.json";
 
 export const MANUAL_CHECKS = [
-  "打开就是助理：侧栏顶部没有「助理 / 工作台」切换，「最近」里置顶「主要聊天」，点一条旁聊能打开",
+  "打开就进「主要聊天」并停在最新一条；侧栏只有会话：主要聊天（等你的件数挂在它上面）、任务小组、旁聊，没有「动态 / 定时 / 目标」入口",
+  "点账号头像，菜单里有「资料库」「插件与连接」，都能打开；从那里点回主要聊天，仍停在最新一条",
   "新开一个对话，发一句话，能收到回复（没接模型时输入框右下角显示「未连接模型」）",
   "右侧助理面板的「动态 / 定时 / 身份」三个标签都能打开",
   "设置 → 高级 →「更新」里显示的版本号就是这次装的版本",
