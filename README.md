@@ -13,7 +13,7 @@
 ![macOS](https://img.shields.io/badge/macOS-Apple%20silicon-111111?logo=apple&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
-[![License](https://img.shields.io/badge/license-MIT-38d591)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-38d591)](LICENSE)
 ![PRs](https://img.shields.io/badge/PRs-welcome-38d591)
 
 <br>
@@ -197,4 +197,4 @@ python -m pytest tests/ -q   # 离线、结果确定，不调用真实模型
 
 ## 许可证
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)。v0.2.46 及以前的版本按 MIT 协议发布。

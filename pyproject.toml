@@ -7,7 +7,7 @@ name = "vortocode"
 version = "0.2.46"
 description = "本地优先、可常驻运行的个人 AI Agent"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 authors = [
     {name = "VortoCode Team"}
