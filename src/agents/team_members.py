@@ -94,9 +94,51 @@ async def _run_external(work: Any, child: Any, number: int, dispatch: dict, engi
     return work.finish(child.id, number, text, error=error, tainted=tainted)
 
 
+def _previous_branch(child: Any) -> str:
+    delivery = child.collaboration.get("delivery") or {}
+    return str(delivery.get("branch") or "")
+
+
+async def _run_developer(service: Any, root: Any, work: Any, child: Any, number: int, dispatch: dict, engine: str,
+                         tainted: bool, *, run_external: Optional[Callable[..., Any]] = None,
+                         run_tests: Optional[Callable[..., Any]] = None) -> Any:
+    """开发成员（ADR-014 S2）：一次性 worktree 里改代码 → VortoCode 验证 → 落分支。见 ``team_delivery``。"""
+    from src.agents import team_delivery, team_engines
+    project = root.team.get("project") or {}
+    repo_root = str(project.get("repo_root") or "")
+    if not repo_root:
+        return work.finish(child.id, number, "", error="小组没有登记项目，开发成员无处可改", tainted=tainted)
+    runner = run_external or team_engines.run_external
+    path = None
+    try:
+        path = await asyncio.to_thread(team_delivery.prepare, repo_root, child.id, number, _previous_branch(child))
+        result = await runner(engine, "developer", dispatch.get("model", ""), member_prompt(child),
+                              timeout=dispatch["timeout_seconds"], child_id=child.id, workdir=str(path))
+        tainted = tainted or result.networked
+        if result.error:
+            return work.finish(child.id, number, str(result.text or ""), tainted=tainted,
+                               error=f"{team_engines.ENGINE_LABELS.get(engine, engine)}：{result.error}")
+        delivery = await asyncio.to_thread(team_delivery.finish_round, repo_root, path, child_id=child.id,
+                                           number=number, objective=child.prompt, run_tests=run_tests)
+        service.record_delivery(root.id, child.id, delivery)
+        text = (str(result.text or "").strip() + "\n\n" + team_delivery.describe(delivery, project.get("name", ""))).strip()
+        return work.finish(child.id, number, text, error=delivery.get("error", ""), tainted=tainted)
+    except team_engines.EngineUnavailable as error:
+        return work.finish(child.id, number, "", error=str(error)[:300], tainted=tainted)
+    except asyncio.CancelledError:
+        work.finish(child.id, number, "", cancelled=True, tainted=tainted)
+        raise
+    except Exception as error:  # noqa: BLE001
+        return work.finish(child.id, number, "", error=f"{type(error).__name__}: {str(error)[:300]}", tainted=tainted)
+    finally:
+        if path is not None:
+            await asyncio.to_thread(team_delivery.cleanup, repo_root, path)
+
+
 async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = None,
                      agent_factory: Callable[..., Any] = MainAgent,
-                     run_external: Optional[Callable[..., Any]] = None) -> Any:
+                     run_external: Optional[Callable[..., Any]] = None,
+                     run_tests: Optional[Callable[..., Any]] = None) -> Any:
     """执行一条成员子任务并把结果写回。返回写回后的子任务。"""
     from src.agents.taint import merge_nested_taint
     from src.utils.async_ops import timeout_scope
@@ -113,6 +155,9 @@ async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = 
     tainted = bool(ROLES_WITH_WEB.get(dispatch["role"]))
 
     engine = dispatch.get("engine") or "vortocode"
+    if dispatch["role"] == "developer":
+        return await _run_developer(service, root, work, child, number, dispatch, engine, tainted,
+                                    run_external=run_external, run_tests=run_tests)
     if engine != "vortocode":
         return await _run_external(work, child, number, dispatch, engine, tainted, run_external=run_external)
 

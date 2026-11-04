@@ -366,7 +366,7 @@ def _parallel_pytest(cmd: list) -> list:
 
 
 def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = None, *,
-              require_isolation: bool = True) -> dict:
+              require_isolation: bool = True, output_limit: int = 4000) -> dict:
     """在 worktree 里跑测试做逐件验证；生成代码默认必须在 OS 沙箱中执行。
 
     ``VORTOCODE_SANDBOX=off`` 是可信环境的显式宿主机 escape hatch。结果携带
@@ -405,7 +405,7 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = Non
                            capture_output=True, text=True, timeout=timeout)
         warning = decision.reason if not decision.isolated else ""
         combined = r.stdout + r.stderr + (("\n" + warning) if warning else "")
-        return {"ok": r.returncode == 0, "output": combined[-4000:],
+        return {"ok": r.returncode == 0, "output": combined[-output_limit:],
                 "cmd": shown, "sandbox": evidence, "warning": warning}
     except subprocess.TimeoutExpired:
         warning = decision.reason if not decision.isolated else ""
