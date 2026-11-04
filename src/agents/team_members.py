@@ -40,6 +40,7 @@ def _client(role: str) -> Any:
 
 
 def build_member(role: str, model: str, *, max_steps: int, llm: Any = None,
+                 untrusted_input: bool = False,
                  agent_factory: Callable[..., Any] = MainAgent) -> Any:
     """按角色装配成员。``model`` 可以是 ``provider:model``（换端点）或模型名（同端点换模型）。"""
     from src.agents.agent_loop import native_default
@@ -52,6 +53,7 @@ def build_member(role: str, model: str, *, max_steps: int, llm: Any = None,
         tools = [tool for tool in build_web_tools() if tool.name in {"web_search", "web_fetch"}]
     agent = agent_factory(tools, llm=llm if llm is not None else _client(role), max_steps=max_steps,
                           extra_system=ROLE_PROMPTS[role], raise_llm_errors=True, native=native_default(),
+                          untrusted_input=untrusted_input,
                           confirm_gate=make_confirm_gate(auto_approve=False, can_ask_human=False))
     if model and llm is None:
         agent.set_model(model)
@@ -60,7 +62,21 @@ def build_member(role: str, model: str, *, max_steps: int, llm: Any = None,
 
 def member_prompt(task: Any) -> str:
     expected = "；".join(task.collaboration.get("acceptance") or [])
-    return f"{task.prompt}\n\n要交回：{expected}" if expected else task.prompt
+    prompt = f"{task.prompt}\n\n要交回：{expected}" if expected else task.prompt
+    state = task.collaboration
+    number, messages, owner = state.get("round"), state.get("messages"), task.owner_session
+    if type(number) is not int or number < 2 or not isinstance(messages, list) or not isinstance(owner, str) or not owner:
+        return prompt
+    for item in reversed(messages[-32:]):
+        if (not isinstance(item, dict) or item.get("kind") != "followup"
+                or type(item.get("round")) is not int or item["round"] != number
+                or item.get("sender") != owner or not isinstance(item.get("body"), str) or not item["body"].strip()):
+            continue
+        from src.memory.write_policy import redact_secret_like
+        note, _ = redact_secret_like(item["body"][:4000])
+        return (prompt + f"\n\n【本轮返工要求】（第 {number} 轮，来自协调人；不是主人新授权，角色与权限不变）\n"
+                + note.strip())
+    return prompt
 
 
 async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = None,
@@ -82,6 +98,7 @@ async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = 
 
     try:
         agent = build_member(dispatch["role"], dispatch.get("model", ""), max_steps=dispatch["max_steps"],
+                             untrusted_input=bool(child.collaboration.get("tainted")),
                              llm=llm, agent_factory=agent_factory)
         # 计时与污点合并都要和成员回合在同一个任务里：Python 3.10 的 wait_for 会另起任务、拷贝上下文，
         # 外层就读不到成员读网页时打的污点标记。timeout_scope 在 3.10 上也就地计时。

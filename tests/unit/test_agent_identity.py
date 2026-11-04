@@ -35,3 +35,19 @@ def test_profile_edit_requires_new_assembly_and_cannot_grant_owner_device_permis
     project = build_session(root, kind="web", workspace_scope="project")
     assert "Project 项目会话" in project._system("build")
     assert "工作背景 B" not in project._system("build")
+
+
+def test_work_and_team_guidance_follow_the_actual_tool_set(monkeypatch):
+    from src.agents import agent_loop
+    names = ("work_status", "team_propose", "team_open", "team_reply", "team_decide", "team_add_budget")
+    agent = MainAgent([Tool(name, "测试工具", {}, lambda _: "") for name in names])
+    prompt = agent._system("build")
+    assert "【在办工作】" in prompt and "【任务协调】" in prompt
+    assert "主人验收" in prompt and "未知偏好" in prompt
+    original = agent.behavior_fingerprint()
+    monkeypatch.setitem(agent_loop._ACTION_GUIDANCE, "team_propose", "改过的协调说明")
+    assert agent.behavior_fingerprint() != original
+    agent.remove_tools(names)
+    minimal = agent._system("build")
+    assert "【在办工作】" not in minimal and "【任务协调】" not in minimal
+    assert all(name not in minimal for name in names)

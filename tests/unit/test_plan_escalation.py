@@ -71,7 +71,7 @@ async def test_declined_escalation_keeps_the_turn_read_only(tmp_path):
     asked = _Asked(False)
     agent = _agent(tmp_path, "im", asked)
     out = await agent.tools["request_build"].handler({"reason": "r", "next_action": "n"})
-    assert agent._escalated is False and "拒绝" in out
+    assert agent._escalated is False and "本次未获授权" in out
 
 
 async def test_escalation_is_this_turn_only(tmp_path):
@@ -115,7 +115,7 @@ async def test_declined_write_tool_says_declined_not_go_flip_a_switch(tmp_path):
     agent = _agent(tmp_path, "im", _Asked(False))
     out = str(await agent._run_tool("cron_add", {"name": "x", "schedule": "at 09:00",
                                                  "prompt": "p"}, "plan", lambda *_a: None))
-    assert "拒绝" in out and "Tab" not in out
+    assert "本次未获授权" in out and "Tab" not in out
     assert "/mode build" not in out, "被拒后不该继续劝他改模式"
 
 
@@ -176,7 +176,7 @@ async def test_escalation_fails_closed_without_a_human(tmp_path):
     """问不到人 → 拒。绝不能因为"没人可问"就放行。"""
     agent = build_session(str(tmp_path), kind="im", confirm=None, can_ask_human=False)
     out = await agent.tools["request_build"].handler({"reason": "r", "next_action": "n"})
-    assert agent._escalated is False and "拒绝" in out
+    assert agent._escalated is False and "本次未获授权" in out
 
 
 async def test_taint_voids_auto_approve_for_escalation(tmp_path):

@@ -145,6 +145,9 @@ General 的措辞对应个人事项；Project 才追加仓库与开发约定；�
 衡量漏召回、过时事实误用、重复解释次数、执行结果正确率及请求成本。
 本轮未调用真实模型，也未修改真实角色或记忆数据。
 
+主 Agent 的后续改善已对照 Claude Code 的实际提示组装与条件编排路径，补充当前目标、
+协调策略、成员返工输入与授权原因合同，见 [Claude Code 主 Agent 学习记录](CLAUDE_MAIN_AGENT_LEARNING.md)。
+
 ### 本 PR 的只读导出合同
 
 `GET /api/assistant/memory-snapshot` 仅在 General 使用，沿用原 API 鉴权。用 SQLite `mode=ro`

@@ -25,11 +25,59 @@ from src.llm.hard_budget import claim_check_tool
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class EscalationDecision:
+    approved: bool
+    reason: str
+    note: str
+
+
 @dataclass
 class ToolTurnState:
     escalated: bool = False
     media_ingested: bool = False
     external_ingested: bool = False
+    escalation_result: EscalationDecision | None = None
+    _escalation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _escalation_epoch: int = field(default=0, repr=False)
+
+    def reset_escalation(self) -> None:
+        self.escalated = False
+        self.escalation_result = None
+        self._escalation_epoch += 1
+
+    async def request_escalation(self, callback, name: str, args: dict) -> EscalationDecision:
+        """One trusted mode decision per human turn, including parallel requests.
+
+        Transport failure is not a user decision; cancellation propagates.
+        """
+        epoch = self._escalation_epoch
+        stale = EscalationDecision(False, "authorization_stale", "回合已变化，旧确认结果不再适用，未取得本次执行授权。")
+        async with self._escalation_lock:
+            if epoch != self._escalation_epoch:
+                return stale
+            if self.escalation_result is not None:
+                if not self.escalation_result.approved or self.escalated:
+                    return self.escalation_result
+                # Hosts that reset the original public mode flag must not reuse
+                # a former turn's positive decision, including after ingestion.
+                self.escalation_result = None
+            if callback is None:
+                result = EscalationDecision(False, "authorization_unavailable", "当前入口没有授权通道，未取得执行授权。")
+            else:
+                try:
+                    approved = bool(await callback(name, args))
+                except (TimeoutError, asyncio.TimeoutError):
+                    result = EscalationDecision(False, "authorization_timeout", "确认等待超时，未取得执行授权；这不代表用户拒绝。")
+                except Exception:
+                    result = EscalationDecision(False, "authorization_error", "确认通道异常，未取得执行授权；这不代表用户拒绝。")
+                else:
+                    result = EscalationDecision(approved, "authorized" if approved else "authorization_not_granted",
+                        "已取得本回合执行授权。" if approved else "本次未获授权；保持只读。")
+            if epoch != self._escalation_epoch:
+                return stale
+            self.escalation_result = result
+            return result
 
 
 @dataclass(frozen=True)
@@ -37,6 +85,7 @@ class ToolOutcome:
     text: str
     status: str
     call_id: str
+    reason: str | None = None
 
 
 def _text_result(raw: object) -> str:
@@ -134,17 +183,18 @@ class ToolRuntime:
             "mode": mode,
         })
 
-        def finish(status: str, result: str) -> ToolOutcome:
+        def finish(status: str, result: str, reason: str | None = None) -> ToolOutcome:
             self._emit("finish", {
                 "id": call_id,
                 "name": name,
                 "args": dict(args or {}),
                 "mode": mode,
                 "status": status,
+                **({"reason": reason} if reason else {}),
                 "result": str(result),
                 "duration_ms": int(minus_wait(time.monotonic() - started, waited_before) * 1000),
             })
-            return ToolOutcome(result, status, call_id)
+            return ToolOutcome(result, status, call_id, reason)
 
         if mode not in {"plan", "build"}:
             return finish("blocked", "未知工具执行模式，已拒绝执行")
@@ -174,23 +224,13 @@ class ToolRuntime:
             args = {**args, "_mode": effective}
         if effective == "plan" and not tool.read_only:
             # plan 想用写/重型工具：有 on_escalate 就问用户"切 build 并继续？"；同意则升级执行。
-            ok = False
-            if ctx.on_escalate is not None:
-                try:
-                    ok = await ctx.on_escalate(name, args)
-                except Exception:  # noqa: BLE001
-                    ok = False
-            if not ok:
-                # 两种情况**别说成同一句话**（真机 2026-07-27）：原文一律是"请切到 build 模式（Tab）"，
-                # 于是①钉钉用户被指去按一个不存在的键；②用户明明刚点了"拒绝"，却又被劝去开权限。
-                # 模型只会照着工具结果转述，所以这句话说错了，用户看到的就是错的。
-                if ctx.on_escalate is None:
-                    how = (f"请{ctx.mode_switch_hint}" if ctx.mode_switch_hint
-                           else "请让用户切到 build 模式")
-                    detail = f"当前入口没有授权通道，{how}后再试。"
-                else:
-                    detail = "用户拒绝了本次授权——保持只读，给方案即可，别再重复请求。"
-                return finish("blocked", f"工具 {name} 在 plan 模式下不可用（只读/提案）。{detail}")
+            decision = await ctx.state.request_escalation(ctx.on_escalate, name, args)
+            ctx.check_execution()
+            if not decision.approved:
+                detail = decision.note + "本次工具未执行，本回合不再重复请求授权。"
+                if decision.reason == "authorization_unavailable" and ctx.mode_switch_hint:
+                    detail += f" 本端支持的切换方式：{ctx.mode_switch_hint}。"
+                return finish("blocked", f"工具 {name} 在 plan 模式下不可用（只读/提案）。{detail}", decision.reason)
             ctx.state.escalated = True
         if ctx.on_hook is not None:       # PRE_TOOL_USE：钩子可阻止该工具（should_stop）
             block = await self._hook("pre_tool_use", {"tool": name, "args": args}, stoppable=True)
@@ -199,6 +239,7 @@ class ToolRuntime:
                 return finish("blocked", block)
         ctx.say(housekeeping(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]"))
         status = "succeeded"
+        outcome_reason = None
         yielded = None
         ctx.check_execution()
         try:
@@ -211,6 +252,8 @@ class ToolRuntime:
             if isinstance(raw, dict) and raw.get("images"):
                 ctx.state.media_ingested = True
             result = ctx.consume_result(raw)
+            if name == "request_build" and effective == "plan" and ctx.state.escalation_result is not None and not ctx.state.escalation_result.approved:
+                status, outcome_reason = "blocked", ctx.state.escalation_result.reason
         except asyncio.CancelledError:
             finish("cancelled", "工具执行已取消")
             raise
@@ -235,7 +278,7 @@ class ToolRuntime:
                 ctx.on_result(name, args, result)
             except Exception:  # noqa: BLE001 —— 审计失败不影响工具结果，但不能无声地丢掉审计
                 logger.warning("工具结果的审计回调失败：%s", name, exc_info=True)
-        outcome = finish(status, result)
+        outcome = finish(status, result, outcome_reason)
         if yielded is not None:
             raise yielded
         return outcome
