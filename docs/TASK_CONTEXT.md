@@ -190,7 +190,7 @@
 
 1. **S1 只读小组（General 范围）**：任务卡提议与批准；`kind="team"` 根与协调记录；协调人工具；研究员和审查员
    两种角色卡；唤醒、预算、无进展判定；`work_status` 与 G2 推送接上。不装外部 CLI。
-2. **S2 外部框架成员**（§5.1；2026-11-04 进度：ACP 客户端 #742；OpenCode、DeepSeek Harness 接成研究员 / 审查员，开发角色与 Pi 未做）：先做 ACP 通用适配器（一次覆盖 DeepSeek Harness、OpenCode 等），再把 Codex /
+2. **S2 外部框架成员**（§5.1；2026-11-04 进度：ACP 客户端 #742；OpenCode、DeepSeek Harness 接成研究员 / 审查员 #747；开发成员（只 OpenCode，private 档位，只在 Desktop 开，改动在一次性 worktree、由 VortoCode 沙箱验证并落本地分支）；Pi 未做）：先做 ACP 通用适配器（一次覆盖 DeepSeek Harness、OpenCode 等），再把 Codex /
    Claude Code 的 `external_workers` 接成成员，最后是 Pi。只在登记项目的一次性 worktree 中写，交付是分支和 PR。
    前提：常驻电脑装好对应 CLI 并登录专用账号（部署配置变更，每种单独征求主人同意）。S2 上线后，开发流水线与
    项目运行时按 ADR-015 退役。
