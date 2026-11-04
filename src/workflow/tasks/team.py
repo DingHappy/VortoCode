@@ -29,6 +29,11 @@ ROLES: Dict[str, Dict[str, Any]] = {
     "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 300},
 }
 
+# 成员的执行框架（ADR-014 S2）。vortocode = 进程内自有 agent；其余经 ACP 起外部框架，权限按角色逐次判定。
+ENGINES: Dict[str, str] = {"vortocode": "VortoCode", "opencode": "OpenCode", "deepseek-harness": "DeepSeek Harness"}
+# 还不能按成员换模型的框架（DeepSeek Harness 用它 ACP 档案里的默认模型）
+_ENGINES_WITHOUT_MODEL = ("deepseek-harness",)
+
 DEFAULT_LIMITS = {"tasks": 8, "rounds": 12, "steps": 96, "timeout_seconds": 3600, "wakes": 16, "parallel": 2}
 MAX_LIMITS = {"tasks": 32, "rounds": 48, "steps": 512, "timeout_seconds": 28800, "wakes": 64, "parallel": 4}
 _USAGE_KEYS = ("tasks", "rounds", "steps", "timeout_seconds", "wakes")
@@ -75,8 +80,14 @@ def _members(value: Any, mode: str) -> List[dict]:
             raise CollaborationConflict(f"未知角色：{role}（可用：{'、'.join(ROLES)}）")
         if mode == "private" and ROLES[role]["web"]:
             raise CollaborationConflict("private 任务上下文不能有联网成员：私人资料和出网成员不能放在一起")
+        engine = str(item.get("engine") or "vortocode")
+        if engine not in ENGINES:
+            raise CollaborationConflict(f"未知执行框架：{engine}（可用：{'、'.join(ENGINES)}）")
+        model = _text(item.get("model"), 80)
+        if model and engine in _ENGINES_WITHOUT_MODEL:
+            raise CollaborationConflict(f"{ENGINES[engine]} 成员暂不支持指定模型")
         names.add(name)
-        members.append({"name": name, "role": role, "model": _text(item.get("model"), 80)})
+        members.append({"name": name, "role": role, "model": model, "engine": engine})
     return members
 
 
@@ -203,7 +214,8 @@ class TeamService:
             child = self.collaboration(root).create(
                 _text(instruction, 4000), member, [_text(expected, 500)],
                 dispatch={"source": KIND, "root": root.id, "member": member, "role": entry["role"],
-                          "model": entry["model"], "max_steps": role["max_steps"],
+                          "model": entry["model"], "engine": entry.get("engine", "vortocode"),
+                          "max_steps": role["max_steps"],
                           "timeout_seconds": role["timeout_seconds"]})
             if tainted:
                 child.collaboration["tainted"] = True
@@ -418,7 +430,8 @@ class TeamService:
         return {"id": root.id, "objective": root.team["objective"], "status": root.status, "mode": root.team["mode"],
                 "waiting_reason": root.team["waiting_reason"], "used": dict(root.team["used"]),
                 "limits": dict(root.team["limits"]),
-                "members": [{"name": item["name"], "role": item["role"]} for item in root.team["members"]],
+                "members": [{"name": item["name"], "role": item["role"], "engine": item.get("engine", "vortocode")}
+                            for item in root.team["members"]],
                 "children": [{"id": child.id, "member": child.collaboration.get("assignee"), "status": child.status,
                               "review": child.collaboration.get("review"), "round": child.collaboration.get("round"),
                               "tainted": bool(child.collaboration.get("tainted"))} for child in children],
