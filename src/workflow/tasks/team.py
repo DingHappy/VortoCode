@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from src.workflow.tasks.collaboration import CollaborationService
@@ -407,19 +408,36 @@ class TeamService:
             raise CollaborationConflict("回复不能为空")
         with _LOCK:
             root = self._live(root_id, statuses=("active", "waiting"))
-            root.team["inbox"] = (root.team["inbox"] + [{"from": "owner", "text": text}])[-_MAX_INBOX:]
+            root.team["inbox"] = (root.team["inbox"] + [{"id": uuid.uuid4().hex, "from": "owner", "text": text}])[-_MAX_INBOX:]
             root.status, root.team["waiting_reason"] = "active", ""
             root.team["wake"].update(idle=0, same_error=0, last_error="")
             self._event(root, "owner_reply", text)
             return self._save(root)
 
-    def take_inbox(self, root_id: str) -> List[dict]:
-        """协调人读走主人的留言（读一次就清）。"""
+    def checkout_inbox(self, root_id: str) -> List[dict]:
+        """Snapshot owner messages without consuming them; identify older queued messages in place."""
         with _LOCK:
             root = self.get(root_id)
-            items, root.team["inbox"] = list(root.team["inbox"]), []
-            self._save(root)
-            return items
+            seen, changed = set(), False
+            for item in root.team["inbox"]:
+                identity = item.get("id")
+                if not isinstance(identity, str) or not identity or identity in seen:
+                    identity = item["id"] = uuid.uuid4().hex
+                    changed = True
+                seen.add(identity)
+            if changed:
+                self._save(root)
+            return [dict(item) for item in root.team["inbox"]]
+
+    def acknowledge_inbox(self, root_id: str, message_ids: List[str]) -> None:
+        """Consume only a delivered snapshot; concurrent arrivals, even identical text, remain."""
+        with _LOCK:
+            root = self.get(root_id)
+            ids = set(message_ids)
+            kept = [item for item in root.team["inbox"] if item.get("id") not in ids]
+            if len(kept) != len(root.team["inbox"]):
+                root.team["inbox"] = kept
+                self._save(root)
 
     def decide(self, root_id: str, accept: bool, note: str = "") -> BackgroundTask:
         """主人验收：通过即完成；退回则带着意见回到进行中。"""
@@ -432,7 +450,7 @@ class TeamService:
                 if not note.strip():
                     raise CollaborationConflict("退回要写明原因")
                 root.status, root.team["submission"] = "active", None
-                root.team["inbox"] = (root.team["inbox"] + [{"from": "owner", "text": _text(note, 2000)}])[-_MAX_INBOX:]
+                root.team["inbox"] = (root.team["inbox"] + [{"id": uuid.uuid4().hex, "from": "owner", "text": _text(note, 2000)}])[-_MAX_INBOX:]
                 root.team["wake"].update(idle=0, same_error=0, last_error="")
                 self._event(root, "returned", note)
             return self._save(root)
