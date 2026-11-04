@@ -106,6 +106,7 @@ files = [
     "src/gateway/mobile_push.py",  # 给主人 App 的加密推送
     "src/agents/tool.py",          # Agent 无关的工具定义和 schema 适配
     "src/agents/tool_runtime.py",  # 各 Agent 共用的工具执行边界
+    "src/agents/tool_arguments.py", # 本机显式参数约束的纯校验
     "src/agents/backends",         # Agent 核心控制合同与协议适配
     "src/gateway/turn_bindings.py", # 各端回合回调换绑点：未绑定时确认必须拒绝
 ]

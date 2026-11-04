@@ -21,6 +21,15 @@ from src.agents.tools._common import (_image_exts, _max_image_bytes, _max_read_f
                                       _truthy)
 
 
+def _write_argument_schema(*, edit: bool) -> dict[str, dict]:
+    schema = {"path": {"type": "string", "minLength": 1}}
+    if edit:
+        schema.update(old={"type": "string", "minLength": 1}, new={"type": "string"})
+    else:
+        schema["content"] = {"type": "string"}
+    return schema
+
+
 def _glob_to_regex(pattern: str) -> "re.Pattern":
     """把含 '/' 的 glob 译成正则（真·glob 语义）：`**/`=任意层目录(含零层)、`**`=跨 / 任意、
     `*`=段内任意(不跨 /)、`?`=段内单字符。比 fnmatch 强在 `src/**/*.ts` 能匹配 src 下任意深度。"""
@@ -729,9 +738,11 @@ def build_write_tools(root: str) -> list[Tool]:
              "replace_all=true 一次替换全部（批量改名/统一字面量省去逐处加上下文）。在隔离工作区改文件",
              {"path": "相对路径", "old": "要替换的原文", "new": "替换为",
               "replace_all": "可选，true=替换全部出现处（默认仅在唯一时替 1 处）"},
-             _edit_file, read_only=False),
+             _edit_file, read_only=False, argument_schema=_write_argument_schema(edit=True),
+             required_args=("path", "old", "new")),
         Tool("write_file", "新建或覆盖文件；在隔离工作区改文件",
-             {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False),
+             {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False,
+             argument_schema=_write_argument_schema(edit=False), required_args=("path", "content")),
     ]
 
 
@@ -864,7 +875,9 @@ def build_confirmed_write_tools(root: str, confirm, on_diff=None) -> list["Tool"
              "直接改当前工作区的文件，写盘前会把 diff 交给人确认",
              {"path": "相对路径", "old": "要替换的原文", "new": "替换为",
               "replace_all": "可选，true=替换全部出现处（默认仅在唯一时替 1 处）"},
-             _edit_file, read_only=False),
+             _edit_file, read_only=False, argument_schema=_write_argument_schema(edit=True),
+             required_args=("path", "old", "new")),
         Tool("write_file", "新建或覆盖当前工作区的文件；写盘前会把 diff 交给人确认",
-             {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False),
+             {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False,
+             argument_schema=_write_argument_schema(edit=False), required_args=("path", "content")),
     ]

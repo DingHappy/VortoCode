@@ -29,7 +29,7 @@ import time
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Optional
 
-from src.agents.tool import Tool, ToolTurnYield, function_schemas
+from src.agents.tool import Tool, ToolTurnYield, function_schemas, tool_definitions
 from src.agents.tool_calls import (
     ToolCallError, parse_tool_call as parse_tool_call, parse_tool_calls, parse_native_tool_calls,
     _strip_fences, _first_json_object,  # noqa: F401 - compatibility exports
@@ -315,8 +315,8 @@ def _tool_catalog(tools: list[Tool]) -> str:
         a = "，".join(f"{k}（{desc}）" for k, desc in t.args.items()) or "无"
         kind = "只读" if t.read_only else "写/重型"
         lines.append(f"- {t.name}（{kind}）：{t.description}  参数：{a}")
-        if t.input_schema is not None:
-            lines.append("  参数合同：" + json.dumps(t.input_schema, ensure_ascii=False, sort_keys=True))
+        if t.input_schema is not None or t.argument_schema or t.required_args:
+            lines.append("  参数合同：" + json.dumps(tool_definitions([t])[0]["input_schema"], ensure_ascii=False, sort_keys=True))
     return "\n".join(lines)
 
 
