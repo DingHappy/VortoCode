@@ -110,3 +110,31 @@ async def run_external_turn(root: str, *, source: str, user_text: str, rid: str,
     host, key = target
     return await host(key=key, source=source, user_text=user_text, rid=rid, run=run,
                       activities=activities if activities is not None else [])
+
+
+# ── 代码写的状态消息（任务小组交付 / 等你 / 失败）────────────────────────────
+# 不开模型回合：显示给主人的一条（transcript，可带结构化 ``card``）+ 给主 agent 看的一句系统说明
+# （history，标明是程序生成、不是主人说的）。与回合同一个槽位轮流写，正在跑的回合结束后再落。
+
+
+class MainNoteHost(Protocol):
+    async def __call__(self, *, key: str, rid: str, source: str, text: str, history_note: str,
+                       card: Optional[dict]) -> bool: ...
+
+
+_NOTE_HOST: Optional[MainNoteHost] = None
+
+
+def set_main_note_host(host: Optional[MainNoteHost]) -> None:
+    global _NOTE_HOST
+    _NOTE_HOST = host
+
+
+async def post_main_note(root: str, *, rid: str, source: str, text: str, history_note: str,
+                         card: Optional[dict] = None) -> bool:
+    """往主要聊天里写一条代码拼的消息；本进程没有宿主或主要聊天没登记就返回 False（不写）。"""
+    key = main_chat_key(root)
+    if _NOTE_HOST is None or key is None:
+        return False
+    return bool(await _NOTE_HOST(key=key, rid=rid, source=source, text=text,
+                                 history_note=history_note, card=card))

@@ -1,7 +1,7 @@
 // App.tsx 抽出的对话记录映射族（与 activities.ts 同一做法，只搬家不改行为）。
 // 把 agent_history / agent_queue / agent_say / agent_emit 等事件折叠进消息列表与活动时间线，
 // 纯函数、无副作用；事件总线（handleProtocolEvent）仍留在 App.tsx，只是调用这些映射器。
-import type { ConversationMessage, PromptQueueItem, ProtocolEvent, TurnActivity } from "../types";
+import type { ChatCard, ConversationMessage, PromptQueueItem, ProtocolEvent, TurnActivity } from "../types";
 import { upsertActivity } from "./activities";
 
 export function messageId(prefix: string): string {
@@ -33,13 +33,25 @@ export function promptQueueFromEvent(event: ProtocolEvent): { queued: PromptQueu
 
 /** agent_history：服务端存的对话记录换成界面消息；id 带上会话，换会话不会撞 key。 */
 export function historyMessages(event: ProtocolEvent, sid: string): ConversationMessage[] {
-  return ((event.items ?? []) as Array<{ role?: string; text?: string; rid?: string; source?: string }>).map((item, index) => ({
-    id: `history-${index}-${sid}`,
-    role: item.role === "user" ? "user" : "assistant",
-    text: String(item.text ?? ""),
-    rid: item.rid,
-    ...(typeof item.source === "string" && item.source ? { source: item.source } : {}),
-  }));
+  return ((event.items ?? []) as Array<{ role?: string; text?: string; rid?: string; source?: string; card?: unknown }>).map((item, index) => {
+    const card = chatCard(item.card);
+    return {
+      id: `history-${index}-${sid}`,
+      role: item.role === "user" ? "user" : "assistant",
+      text: String(item.text ?? ""),
+      rid: item.rid,
+      ...(typeof item.source === "string" && item.source ? { source: item.source } : {}),
+      ...(card ? { card } : {}),
+    };
+  });
+}
+
+/** 只认识的卡片才留下（目前只有任务小组）；字段不对就当普通消息。 */
+export function chatCard(value: unknown): ChatCard | null {
+  if (!value || typeof value !== "object") return null;
+  const card = value as Record<string, unknown>;
+  if (card.kind !== "team" || typeof card.id !== "string" || !card.id || typeof card.status !== "string") return null;
+  return { kind: "team", id: card.id, status: card.status };
 }
 
 /** 「正在分析任务」阶段：同一回合只占一行，后续阶段事件按 id 覆盖它。 */

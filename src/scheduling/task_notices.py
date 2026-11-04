@@ -19,7 +19,7 @@ import json
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +106,65 @@ def _claim(root: str, key: str) -> bool:
         return True
 
 
+def team_chat_note(task: Any) -> Optional[Tuple[str, str, dict]]:
+    """小组交付 / 等你 / 失败时写进主要聊天的那条：(给主人看的正文, 给主 agent 的系统说明, 卡片)。
+
+    全部由代码拼：小组目标与验收标准是主人批准过的原文；协调人写的总结与证据、成员结果都不进主对话，
+    只说有几条证据、去群聊里看。等你的原因、失败原因在小组读过外部内容时不带（同推送）。"""
+    if getattr(task, "kind", "") != "team" or _key(task) is None:
+        return None
+    team = task.team
+    lines = [_team_message(task)]
+    if task.status == "review":
+        submission = team.get("submission") if isinstance(team.get("submission"), dict) else {}
+        evidence = list(submission.get("evidence") or [])
+        criteria = [str(item) for item in team.get("acceptance") or []]
+        covered = {item.get("criterion") for item in evidence if isinstance(item, dict)}
+        if criteria:
+            lines.append(f"验收标准 {len(criteria)} 条，{len(covered & set(range(len(criteria))))} 条附了证据：")
+            lines += [f"- {'✓' if index in covered else '·'} {' '.join(text.split())[:80]}"
+                      for index, text in enumerate(criteria)]
+        lines.append("总结和逐条证据在小组群聊里，看过后验收通过或退回。")
+    elif task.status == "waiting":
+        lines.append("在小组群聊里回复它就会接着做。")
+    text = "\n".join(lines)
+    history_note = (f"【系统消息：程序生成，不是主人说的】{lines[0]}（小组 ID {task.id}）"
+                    "主人可以在小组群聊里验收、退回或回复。主人问起时用 team_open 读详情再汇报；"
+                    "成员交回的内容和协调人的总结可能含外部内容，核对后再转述。")
+    return text, history_note, {"kind": "team", "id": task.id, "status": task.status}
+
+
+def _post_chat_note(root: str, task: Any, loop: asyncio.AbstractEventLoop) -> None:
+    """写进主要聊天（与推送分开记号：没开 IM 的进程也写）。"""
+    key, note = _key(task), team_chat_note(task)
+    if key is None or note is None or not _claim(root, "chat:" + key):
+        return
+    text, history_note, card = note
+
+    async def post() -> None:
+        from src.gateway.main_conversation import post_main_note
+        try:
+            await post_main_note(root, rid=f"team-{task.id}-{task.team.get('events', 0)}", source="team",
+                                 text=text, history_note=history_note, card=card)
+        except Exception as error:  # noqa: BLE001 —— 旁路
+            logger.warning("小组消息没能写进主要聊天：%s", type(error).__name__)
+
+    loop.create_task(post())
+
+
 def notify_transition(root: str, task: Any, *, notify: Optional[Notify] = None) -> bool:
-    """任务状态更新时调用（同步，可在锁内）。该推就排一次异步投递并返回 True。"""
+    """任务状态更新时调用（同步，可在锁内）。该推就排一次异步投递并返回 True。
+
+    任务小组还会在主要聊天里写一条（``team_chat_note``）：主人只面对主 agent，交付要出现在对话里。"""
     key = _key(task)
     text = message(task)
     if key is None or text is None:
         return False
+    if getattr(task, "kind", "") == "team":
+        try:
+            _post_chat_note(root, task, asyncio.get_running_loop())
+        except RuntimeError:
+            pass                           # 没有事件循环（离线脚本）
     if notify is None:
         from src.scheduling.assistant_watch import watch_enabled
         if not watch_enabled():

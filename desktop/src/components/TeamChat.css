@@ -45,3 +45,8 @@
   background: var(--vc-surface); color: var(--vc-text); font: inherit; font-size: var(--vc-size-chat); padding: var(--vc-space-2) var(--vc-space-3); resize: vertical; }
 .team-chat-closed { margin: 0; color: var(--vc-muted); font-size: var(--vc-size-body); }
 .vc-team-badge { color: var(--vc-wait-text); font-size: var(--vc-size-caption); }
+
+/* 主对话里「任务小组交付了」那条下面的按钮 */
+.team-note-actions { margin-top: var(--vc-space-2); display: grid; gap: var(--vc-space-1); }
+.team-note-actions small { color: var(--vc-muted); }
+.team-note-actions .task-actions { margin: 0; }
