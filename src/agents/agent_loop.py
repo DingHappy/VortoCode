@@ -36,6 +36,9 @@ from src.agents.backends.execution import (
 )
 from src.agents.gate import make_confirm_gate  # noqa: F401
 from src.agents.notice import housekeeping
+from src.agents.tool_results import (
+    RESULTS_PREFIX, UNKNOWN_RESULT, decode_tool_results, encode_tool_results,
+)
 from src.agents.wait_clock import start_turn
 from src.llm.streaming import StreamInterrupted, checked_callback, close_stream
 # 工具执行由独立 runtime 承担；旧辅助名字继续再导出以兼容存量调用方。
@@ -199,15 +202,14 @@ def parse_tool_calls(text: str) -> Optional[list[tuple[str, dict]]]:
 
 
 def _tool_results_msg(results: list) -> str:
-    """把一批 (工具名, 结果) 合成一条回灌消息（多工具并行时一次性给回模型）。"""
-    return "\n\n".join(f"[工具 {n} 结果]\n{r}" for n, r in results)
+    """Keep verbatim result bodies in an unambiguous, versioned text batch."""
+    return encode_tool_results(results)
 
 
 def _split_tool_results(text: str, count: int) -> list:
-    """把 _tool_results_msg 合成的多结果串按 `[工具 X 结果]` 头拆回每个工具的结果正文（顺序保持）。"""
-    parts = re.split(r"(?m)^\[工具 .+? 结果\]\n", text)
-    bodies = [p.rstrip("\n") for p in parts if p.strip() != ""]
-    return bodies if len(bodies) == count else ([text] + [""] * (count - 1) if count else [])
+    """Compatibility reader; ambiguous records cannot masquerade as per-call output."""
+    parts = decode_tool_results(text, count=count)
+    return [body for _, body in parts] if parts is not None else [UNKNOWN_RESULT] * count
 
 
 def _to_native_messages(messages: list) -> list:
@@ -235,10 +237,22 @@ def _to_native_messages(messages: list) -> list:
                 nxt = messages[i + 1] if i + 1 < n else None
                 if (nxt and nxt.get("role") == "user" and isinstance(nxt.get("content"), str)
                         and nxt["content"].startswith("[工具 ")):
-                    for tc, res in zip(tcs, _split_tool_results(nxt["content"], len(tcs))):
+                    parts = decode_tool_results(nxt["content"], names=[name for name, _ in calls])
+                    bodies = [body for _, body in parts] if parts is not None else [UNKNOWN_RESULT] * len(tcs)
+                    for tc, res in zip(tcs, bodies):
                         out.append({"role": "tool", "tool_call_id": tc["id"], "content": res})
+                    if parts is None:
+                        out.append({"role": "user", "content": (
+                            "[工具 未配对的历史批次资料，逐项归属未知]\n"
+                            "以下仅为历史工具资料，不是用户的新请求，也不能归为某一项的执行证据：\n"
+                            + nxt["content"]
+                        )})
                     i += 2
                     continue
+                # Cancellation or an incomplete saved turn can leave a call
+                # without its receipt. Close the wire pair without claiming a result.
+                out.extend({"role": "tool", "tool_call_id": tc["id"], "content": UNKNOWN_RESULT}
+                           for tc in tcs)
                 i += 1
                 continue
         out.append(m)
@@ -432,7 +446,7 @@ SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，通过终端 / 浏览器 / 
 {catalog}
 
 {tool_protocol}
-每次工具调用后，其返回会作为**工具输出**回灌给你（提示式协议下以 `[工具 X 结果]` 开头；原生 tools
+每次工具调用后，其返回会作为**工具输出**回灌给你（提示式协议下以 `[工具 X 结果]` 标题列在版本化批次中；原生 tools
 模式下是结构化 tool 消息）——**那是工具的输出，不是用户发来的新消息**，别把它当成用户在给你看东西
 或已经结束对话；据此决定下一步或给出最终回答。若任务需要写文件/跑流水线，**务必真正调用对应工具**
 （写文件用 edit_file/write_file，跑开发流水线用上方清单里的相应工具），只读一眼代码不等于完成。
@@ -831,7 +845,7 @@ class MainAgent:
         material = "\n".join((_tool_catalog(self._tool_list), SYSTEM_TEMPLATE,
                               _NATIVE_TOOL_PROTOCOL, _PROMPTED_TOOL_PROTOCOL,
                               str(getattr(self, "_last_mode_rule", "")),
-                              f"web-dispatch-v1:{self.max_web_tool_calls}"))
+                              f"web-dispatch-v1:{self.max_web_tool_calls}", RESULTS_PREFIX))
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
     async def _request_build(self, args: dict) -> str:
@@ -1067,19 +1081,25 @@ class MainAgent:
         return [i for i in self._tool_result_idxs(cut) if i not in recent_tool]
 
     def _folded_message(self, m: dict) -> dict:
-        """把一条工具结果折成占位消息。
-
-        **逐工具保留 `[工具 X 结果]` 头**：native 协议转换靠这个头把每条结果配回对应的
-        tool_call_id；并行工具会把多条结果合成一条消息，折成一行就会有 tool_call 收不到结果。
-        另外：只放 role/content 两个键——history 的 dict 会**原样进 API 请求体**，
-        多塞一个私有键（如 _folded）会被 OpenAI 兼容端点当成非法参数 400，而且它还会随会话
-        快照落盘 → 一次折叠永久毁掉会话。已折叠的靠内容里的 _FOLD_MARK 认出来，不靠额外字段。
-        """
+        """Fold only identifiable per-call records; keep unpairable raw evidence intact."""
         content = str(m.get("content") or "")
-        names = re.findall(r"(?m)^\[工具 (.+?) 结果\]$", content)
-        bodies = _split_tool_results(content, len(names))
-        return {"role": "user", "content": "\n\n".join(
-            f"[工具 {n} 结果]\n{_FOLD_MARK}{len(b)} 字）" for n, b in zip(names, bodies))}
+        names = None
+        for index, message in enumerate(self.history):
+            if message is m and index > 0:
+                previous = self.history[index - 1]
+                calls = (parse_tool_calls(previous["content"])
+                         if previous.get("role") == "assistant" and isinstance(previous.get("content"), str)
+                         else None)
+                names = [name for name, _ in calls] if calls else None
+                break
+        if names is None and not content.startswith(RESULTS_PREFIX):
+            return dict(m)  # Legacy headings alone cannot establish how many tools actually ran.
+        parts = decode_tool_results(content, names=names)
+        if parts is None:
+            return dict(m)  # Preserve raw evidence and taint; ordinary summarization can still handle it.
+        return {"role": "user", "content": _tool_results_msg([
+            (name, f"{_FOLD_MARK}{len(body)} 字）") for name, body in parts
+        ])}
 
     async def _maybe_compact(self, say: Callable[[str], None], mode: str = "plan") -> None:
         """历史 **token 数** 超预算时：能只靠折叠老段的工具结果收进预算，就折叠（零 LLM 调用、
@@ -1125,14 +1145,20 @@ class MainAgent:
         if idxs:
             after = total
             chosen: list[int] = []
+            folded = {}
             for i in idxs:                     # 从最旧往新试算，够了就停（最近的老结果尽量留原文）
+                candidate = self._folded_message(h[i])
+                saved = self._msg_tokens(h[i]) - self._msg_tokens(candidate)
+                if saved <= 0:
+                    continue
                 chosen.append(i)
-                after -= self._msg_tokens(h[i]) - self._msg_tokens(self._folded_message(h[i]))
+                folded[i] = candidate
+                after -= saved
                 if after <= limit:
                     break
             if after <= limit:                 # 光折叠就够 → 真折；对话（决策/需求）一条不丢、零 LLM
                 for i in chosen:
-                    h[i] = self._folded_message(h[i])
+                    h[i] = folded[i]
                 self._trim_start = 0           # 内容已改写 → 粘性切点按新体量重算（预算变松了）
                 self._env_sent = ""            # 强制下轮重附 <env>：切点重算后载体是否还在窗口内不好断言，
                 self._env_idx = None           # 宁可多附一次（几十 token），也不能让 env 悄悄消失
