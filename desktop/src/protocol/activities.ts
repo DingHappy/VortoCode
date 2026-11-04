@@ -77,11 +77,15 @@ export function finishRunningActivities(
 ): TurnActivity[] {
   return previous.map((activity) => {
     if (activity.status !== "running" || (rid && activity.rid !== rid)) return activity;
+    // Turn termination says nothing about an unfinished tool/hook. Its own
+    // receipt may be missing, or the operation may already have taken effect.
+    // Keep identity/context and allow a later explicit finish frame to settle it.
+    if (activity.kind !== "phase") return { ...activity, status: "unknown" };
     const label = status === "completed"
       ? activity.label.replace(/^正在/, "已")
       : status === "cancelled"
-        ? `${activity.kind === "tool" ? "工具调用" : activity.kind === "hook" ? "Hook" : "任务"}已取消`
-        : `${activity.kind === "tool" ? "工具调用" : activity.kind === "hook" ? "Hook" : "任务"}失败`;
+        ? "任务已取消"
+        : "任务失败";
     return { ...activity, status, label };
   });
 }

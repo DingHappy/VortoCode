@@ -7,11 +7,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from copy import deepcopy
-from typing import Awaitable, Callable, Iterable
+from typing import Awaitable, Callable, Iterable, Literal
 
 
 class ToolTurnYield(Exception):
     """A trusted tool durably suspended work; return control to its caller."""
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """Explicit text outcome from a trusted handler; never inferred from prose.
+
+    Legacy strings and {text, images, ok} results remain supported. This value
+    reports the invocation outcome, not acceptance of the user's whole task.
+    """
+    text: str
+    status: Literal["succeeded", "failed", "blocked", "cancelled"] = "succeeded"
+
+    def __post_init__(self) -> None:
+        if self.status not in {"succeeded", "failed", "blocked", "cancelled"}:
+            raise ValueError("Unknown tool result status")
 
 
 @dataclass(frozen=True)

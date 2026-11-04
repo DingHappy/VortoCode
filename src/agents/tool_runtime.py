@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from src.agents.capabilities import EXTERNAL_PROFILE, SessionCapabilities
 from src.agents.notice import housekeeping
 from src.agents.taint import mark_tainted
-from src.agents.tool import Tool, ToolTurnYield, tool_definitions
+from src.agents.tool import Tool, ToolResult, ToolTurnYield, tool_definitions
 from src.agents.tool_calls import ToolCallError, argument_object
 from src.agents.tool_arguments import ToolArgumentError, validate_arguments
 from src.agents.wait_clock import minus_wait, waited
@@ -264,6 +264,8 @@ class ToolRuntime:
         ctx.check_execution()
         try:
             raw = await tool.handler(args)
+            if isinstance(raw, ToolResult):
+                status, raw = raw.status, raw.text
             # 工具可以**正常返回**却表示失败（隔离实现没过、预检不通过…）。没有这条，台账把
             # 一条以 ❌ 开头的结果记成 succeeded，UI 上一片绿、人得逐条读正文才知道哪步真挂了
             # （真机 2026-09-17：dev_isolated 三轮全败，工具事件却都是 succeeded）。

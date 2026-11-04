@@ -15,7 +15,7 @@ import stat
 from pathlib import Path
 from typing import Any, Optional
 
-from src.agents.tool import Tool
+from src.agents.tool import Tool, ToolResult
 from src.utils.async_ops import await_thread
 from src.agents.tools._common import (_image_exts, _max_image_bytes, _max_read_file,
                                       _truthy)
@@ -754,7 +754,7 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
     让它 implement→test→fix 自我迭代——产出的 diff 是"已经自己跑通的"，而不是盲改后才发现没过。
     命令按仓库类型自动探测（pytest/npm/go/cargo/make），不再写死 pytest；autonomous 也只跑测试、不乱执行。
     """
-    async def _handler(args: dict) -> str:
+    async def _handler(args: dict) -> ToolResult:
         from src.agents.test_detect import detect_test_cmd, is_pytest_cmd
         from src.agents.worktree import run_tests
         from src.utils.python_exe import pytest_argv
@@ -767,7 +767,10 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
             cmd = list(base)
         res = await await_thread(run_tests, root, cmd)
         tag = "通过 ✓" if res["ok"] else "未过 ✗"
-        return f"测试{tag}（{res['cmd']}）。输出尾部：\n{res['output'][-2500:]}"
+        return ToolResult(
+            f"测试{tag}（{res['cmd']}）。输出尾部：\n{res['output'][-2500:]}",
+            "succeeded" if res["ok"] else "failed",
+        )
 
     return Tool("run_tests",
                 "在当前隔离工作区跑测试自测（命令按仓库类型自动探测；pytest 可传 test 选择器 narrow，"

@@ -216,7 +216,7 @@ async def test_known_dangerous_command_is_rejected_before_even_asking(tmp_path, 
     async def must_not_ask(_):
         pytest.fail("hard denial cannot be overridden by an approval")
     result = await build_command_tool(str(tmp_path), must_not_ask)[0].handler({"command":"rm -rf /"})
-    assert "拒绝执行" in result
+    assert result.status == "blocked" and "拒绝执行" in result.text
 
 
 @pytest.mark.asyncio
@@ -243,4 +243,4 @@ async def test_supervision_confirms_even_read_only_shell(tmp_path, monkeypatch):
     gate.supervised = True
     monkeypatch.setattr(sandbox,"resolve_sandbox",lambda:SimpleNamespace(allowed=True,reason="fixture",isolated=True))
     result = await build_command_tool(str(tmp_path),gate)[0].handler({"command":"pwd"})
-    assert len(asked) == 1 and "用户拒绝" in result
+    assert len(asked) == 1 and result.status == "blocked" and "未获授权" in result.text

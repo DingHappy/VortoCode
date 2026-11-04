@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 
-from src.agents.tool import Tool
+from src.agents.tool import Tool, ToolResult
 from src.agents.tools._common import _truthy
 
 
@@ -29,22 +29,22 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
             repo_root, before_state, source="agent", tool=tool,
         )
 
-    async def _run(args: dict) -> str:
+    async def _run(args: dict) -> ToolResult:
         import asyncio
         from src.sandbox.policy import resolve_sandbox
         from src.agents.shell import (is_dangerous, is_read_only, run_command,
                                       run_command_background)
         cmd = str(args.get("command") or args.get("cmd") or "").strip()
         if not cmd:
-            return "run_command 需要 command。"
+            return ToolResult("run_command 需要 command。", "blocked")
         why = is_dangerous(cmd)
         if why:
-            return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
+            return ToolResult(f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。", "blocked")
         bg = _truthy(args.get("background"))
         label = "后台启动命令" if bg else "执行命令"
         decision = resolve_sandbox()
         if not decision.allowed:
-            return f"拒绝执行：{decision.reason}"
+            return ToolResult(f"拒绝执行：{decision.reason}", "blocked")
         sandbox_notice = f"\n{decision.reason}" if not decision.isolated else ""
         # 污点警示由内核的 confirm gate 统一加（make_confirm_gate）——这里不再各自拼前缀，
         # 否则新加的确认点又会漏（此前 9 个确认点里只有 2 个记得加）。
@@ -52,7 +52,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         # 一个待遇。判不出来按执行面算（fail-closed），见 src/agents/shell.py:is_read_only。
         kind = EXECUTE if getattr(confirm, "supervised", False) else READ if is_read_only(cmd) else EXECUTE
         if not await request(confirm, f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}", kind):
-            return f"用户拒绝了命令：{cmd}"
+            return ToolResult(f"本次命令未获授权，未执行：{cmd}", "blocked")
         from src.workflow.review.change_sources import capture_workspace_state
         before_state = capture_workspace_state(repo_root)
         # 若预判时不是已确认的 auto fallback，执行阶段必须继续要求隔离，避免 backend/policy
@@ -63,18 +63,22 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
                 run_command_background, repo_root, cmd, require_isolation=require_isolation
             )
             if not res.get("ok"):
-                return f"后台启动失败：{res.get('error')}"
+                return ToolResult(f"后台启动失败：{res.get('error')}", "failed")
             _record_command_effects(before_state)
             background_sources[str(res["id"])] = capture_workspace_state(repo_root) or before_state
             warning = (f"\n{res.get('warning')}\n" if res.get("warning") else "")
-            return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。{warning}"
-                    f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
+            return ToolResult(f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。{warning}"
+                    f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。"
+                    "启动回执不代表命令已执行完成。")
         res = await asyncio.to_thread(
             run_command, repo_root, cmd, require_isolation=require_isolation
         )
         _record_command_effects(before_state)
         warning = (f"{res.get('warning')}\n" if res.get("warning") else "")
-        return f"命令 `{cmd}` 退出码 {res['code']}。\n{warning}输出尾部：\n{res['output'][-3000:]}"
+        return ToolResult(
+            f"命令 `{cmd}` 退出码 {res['code']}。\n{warning}输出尾部：\n{res['output'][-3000:]}",
+            "succeeded" if res["ok"] else "failed",
+        )
 
     async def _read_output(args: dict) -> str:
         import asyncio

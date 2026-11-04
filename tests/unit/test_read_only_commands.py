@@ -99,4 +99,4 @@ async def test_run_command_declares_read_for_a_read(tmp_path):
 
     result = await run.handler({"command": "ls -la"})
     assert len(asked) == 1, asked            # 只读的这条没再问
-    assert "用户拒绝" not in result
+    assert result.status == "succeeded"
