@@ -42,7 +42,6 @@ describe("STORAGE_KEYS", () => {
       sid: "vortocode.desktop.sid",
       repoRoot: "vortocode.desktop.repoRoot",
       generalSid: "vortocode.desktop.generalSid",
-      appMode: "vortocode.desktop.appMode",
       mainChatSid: "vortocode.desktop.mainChatSid",
       scratchSid: "vortocode.desktop.scratchSid",
       notificationsEnabled: "vortocode.desktop.notificationsEnabled",

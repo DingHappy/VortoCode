@@ -43,42 +43,10 @@
   height: 30px;
 }
 
-/* 助理 / 工作台：分段切换 */
-.vc-segmented {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+/* 项目界面（只从派出任务等跳转进入）回到助理的按钮；工作台模式切换已撤（ADR-015） */
+.vc-back-assistant {
+  justify-content: flex-start;
   margin: 0 14px var(--vc-space-2);
-  padding: 3px;
-  border-radius: var(--vc-radius-control);
-  background: var(--vc-selected);
-}
-
-.vc-segmented button {
-  height: 28px;
-  border: 0;
-  border-radius: var(--vc-radius-inner);
-  background: transparent;
-  color: var(--vc-muted);
-  font-family: var(--vc-font-sans);
-  font-size: var(--vc-size-body);
-  font-weight: var(--vc-weight-regular);
-  cursor: pointer;
-}
-
-.vc-segmented button:hover:not([aria-checked="true"]) {
-  color: var(--vc-text);
-}
-
-.vc-segmented button[aria-checked="true"] {
-  background: var(--vc-surface);
-  color: var(--vc-text);
-  font-weight: var(--vc-weight-medium);
-  box-shadow: var(--vc-shadow-raised);
-}
-
-.vc-segmented button:focus-visible {
-  outline: 2px solid var(--vc-focus-ring);
-  outline-offset: 1px;
 }
 
 .vc-side-nav {
