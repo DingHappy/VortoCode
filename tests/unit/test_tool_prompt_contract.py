@@ -72,6 +72,9 @@ def test_builtin_contracts_advertise_executable_types_and_only_existing_required
         assert schemas[name]["properties"][field]["type"] == kind
     assert schemas["read_conversation_excerpt"]["properties"]["offset"]["minimum"] == 0
     assert schemas["cron_add"]["properties"]["budget"]["minimum"] == 0
+    member = schemas["team_propose"]["properties"]["members"]["items"]
+    assert member["required"] == ["name", "role"]
+    assert member["properties"]["engine"]["enum"] == ["vortocode", "opencode", "deepseek-harness"]
     limits = schemas["team_propose"]["properties"]["limits"]
     assert set(limits["properties"]) == set(MAX_LIMITS)
     assert all(spec["type"] == "integer" for spec in limits["properties"].values())

@@ -17,9 +17,9 @@ export const RUNTIME_BINARY = `${APP}/Contents/Resources/runtime/vortocode-runti
 export const LATEST_URL = "https://github.com/DingHappy/VortoCode/releases/latest/download/latest.json";
 
 export const MANUAL_CHECKS = [
-  "侧栏能看到「最近」和「项目」，点一条旧会话能打开",
+  "打开就是助理：侧栏顶部没有「助理 / 工作台」切换，「最近」里置顶「主要聊天」，点一条旁聊能打开",
   "新开一个对话，发一句话，能收到回复（没接模型时输入框右下角显示「未连接模型」）",
-  "切到助理模式，右侧面板的「动态 / 定时 / 身份」三个标签都能打开",
+  "右侧助理面板的「动态 / 定时 / 身份」三个标签都能打开",
   "设置 → 高级 →「更新」里显示的版本号就是这次装的版本",
 ];
 

@@ -14,12 +14,15 @@ from typing import Any, List
 from src.agents.tool import Tool
 
 _ROLE_TEXT = {"web-researcher": "联网查资料", "reviewer": "只看交给它的材料"}
+_ENGINE_TEXT = {"opencode": "OpenCode", "deepseek-harness": "DeepSeek Harness"}
 
 
 def _card(objective: str, acceptance: List[str], members: List[dict], mode: str, limits: dict) -> str:
     lines = ["开一个任务小组？", f"目标：{objective}", "验收标准："]
     lines += [f"  {index + 1}. {text}" for index, text in enumerate(acceptance)]
     lines.append("成员：" + "、".join(f"{item.get('name')}（{_ROLE_TEXT.get(item.get('role'), item.get('role'))}"
+                                      + (f"，由 {_ENGINE_TEXT.get(item['engine'], item['engine'])} 执行"
+                                         if item.get("engine") not in (None, "", "vortocode") else "")
                                       + (f"，模型 {item['model']}" if item.get("model") else "") + "）" for item in members))
     lines.append("档位：" + ("open（成员可联网，小组看不到你的记忆、目标和对话）" if mode == "open"
                             else "private（成员不能联网）"))
@@ -124,15 +127,18 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str) -> List[Tool]:
     return [
         Tool("team_propose",
              "大任务（需要多个角色、多轮，例如先查资料再审查、比较方案）时提议开一个任务小组，由主人确认后开工。"
-             "成员角色可选：web-researcher（联网查资料）、reviewer（审查材料）。小任务直接自己做，不要开小组。",
+             "成员角色可选：web-researcher（联网查资料）、reviewer（审查材料）。"
+             "执行框架 engine 默认 vortocode；主人要求时可选 opencode 或 deepseek-harness（外部框架，同样只能做该角色允许的事）。"
+             "小任务直接自己做，不要开小组。",
              {"objective": "目标", "acceptance": "验收标准列表（1–10 条）",
-              "members": "成员列表，每项 {name, role, model 可选}", "mode": "open（默认）或 private",
+              "members": "成员列表，每项 {name, role, engine 可选, model 可选}", "mode": "open（默认）或 private",
               "limits": "可选额度 {tasks, rounds, steps, timeout_seconds, wakes, parallel}"},
              guarded(propose), read_only=False, serial=True, required_args=("objective", "acceptance", "members"),
              argument_schema={"acceptance": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}},
                               "mode": {"type": "string", "enum": ["open", "private"]},
                               "members": {"type": "array", "items": {"type": "object", "properties": {
                                   "name": {"type": "string"}, "role": {"type": "string", "enum": ["web-researcher", "reviewer"]},
+                                  "engine": {"type": "string", "enum": ["vortocode", "opencode", "deepseek-harness"]},
                                   "model": {"type": "string"}}, "required": ["name", "role"]}},
                               "limits": {"type": "object", "additionalProperties": False, "properties": {
                                   key: {"type": "integer", "minimum": 1, "maximum": limit}

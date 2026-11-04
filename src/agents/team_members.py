@@ -7,11 +7,12 @@
 - ``reviewer``：没有工具，只看交给它的材料。
 - 确认门固定为「问不到人」：成员手里没有需要确认的工具，万一出现也一律拒绝。
 - 结果、失败、超时、取消都写回协作子任务；不交回内容算失败。
+- 成员的执行框架不是 vortocode（OpenCode、DeepSeek Harness）时，改经 ACP 起外部框架，见 ``team_engines``。
 """
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from src.agents.agent_loop import MainAgent
 
@@ -79,8 +80,39 @@ def member_prompt(task: Any) -> str:
     return prompt
 
 
+async def _run_external(work: Any, child: Any, number: int, dispatch: dict, engine: str, tainted: bool,
+                        *, run_external: Optional[Callable[..., Any]] = None) -> Any:
+    """外部框架成员（ADR-014 S2）：经 ACP 跑一回合，权限按角色判定，见 ``team_engines``。"""
+    from src.agents import team_engines
+    runner = run_external or team_engines.run_external
+    try:
+        result = await runner(engine, dispatch["role"], dispatch.get("model", ""), member_prompt(child),
+                              timeout=dispatch["timeout_seconds"], child_id=child.id)
+    except team_engines.EngineUnavailable as error:
+        return work.finish(child.id, number, "", error=str(error)[:300], tainted=tainted)
+    except asyncio.CancelledError:
+        work.finish(child.id, number, "", cancelled=True, tainted=tainted)
+        raise
+    except Exception as error:  # noqa: BLE001
+        return work.finish(child.id, number, "", error=f"{type(error).__name__}: {str(error)[:300]}", tainted=tainted)
+    tainted = tainted or result.networked
+    text = str(result.text or "")
+    if result.error:
+        error = f"{team_engines.ENGINE_LABELS.get(engine, engine)}：{result.error}"
+    elif not text.strip():
+        error = "成员没有交回内容"
+    else:
+        error = ""
+    if result.permissions:
+        denied = [item["title"] for item in result.permissions if not item["allowed"]]
+        if denied and text.strip():
+            text += "\n\n（执行框架请求过但被拒绝的动作：" + "；".join(denied[:5]) + "）"
+    return work.finish(child.id, number, text, error=error, tainted=tainted)
+
+
 async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = None,
-                     agent_factory: Callable[..., Any] = MainAgent) -> Any:
+                     agent_factory: Callable[..., Any] = MainAgent,
+                     run_external: Optional[Callable[..., Any]] = None) -> Any:
     """执行一条成员子任务并把结果写回。返回写回后的子任务。"""
     from src.agents.taint import merge_nested_taint
     from src.utils.async_ops import timeout_scope
@@ -95,6 +127,10 @@ async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = 
     child = work.start(child_id, number)
     # 读不到污点状态时（超时、取消、异常）按角色保守处理：联网角色记为污点
     tainted = bool(ROLES_WITH_WEB.get(dispatch["role"]))
+
+    engine = dispatch.get("engine") or "vortocode"
+    if engine != "vortocode":
+        return await _run_external(work, child, number, dispatch, engine, tainted, run_external=run_external)
 
     try:
         agent = build_member(dispatch["role"], dispatch.get("model", ""), max_steps=dispatch["max_steps"],

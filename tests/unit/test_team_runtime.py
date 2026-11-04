@@ -250,3 +250,28 @@ async def test_restart_reruns_a_cut_coordinator_turn_and_stop_cancels_members(tm
     await asyncio.sleep(0.05)
     assert stopped.status == "cancelled" and not pool.is_active(child.id)
     assert service.collaboration(stopped).get(child.id).status == "cancelled"
+
+
+async def test_a_coordinator_that_stops_without_a_next_step_is_nudged_until_it_waits_for_the_owner(tmp_path):
+    # 真机 2026-11-04：协调人读完审查结果就结束回合，没人在跑、没等主人，小组永远停在「进行中」
+    from src.scheduling.team_runner import NUDGE
+    service, root = _root(tmp_path)
+    calls = []
+
+    async def coordinator(repo_root, root_id, events, *, kick):
+        calls.append(list(events))
+        live = TeamService(repo_root)
+        live.begin_wake(root_id)
+        live.end_wake(root_id)                          # 什么都没做
+
+    async def idle(task, progress):
+        return ""
+    runner = TeamRunner(str(tmp_path), TaskRunner(str(tmp_path), idle), coordinator=coordinator)
+    runner.wake(root.id, "任务刚开始")
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if service.get(root.id).status == "waiting":
+            break
+    final = service.get(root.id)
+    assert final.status == "waiting" and "没有新进展" in final.team["waiting_reason"]
+    assert calls[0] == ["任务刚开始"] and calls[1] == [NUDGE] and len(calls) == 3
