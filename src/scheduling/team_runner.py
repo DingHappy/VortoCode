@@ -77,6 +77,7 @@ class TeamRunner:
     def _member_job(self, root_id: str, child_id: str) -> Callable[[], Awaitable[None]]:
         async def job() -> None:
             child = await self._member(self.repo_root, root_id, child_id)
+            self._note(root_id, child)
             self.wake(root_id, describe(child))
         return job
 
@@ -90,10 +91,17 @@ class TeamRunner:
                 if child.status in {"queued", "running"}:
                     child = work.abort(child_id, child.collaboration["round"], cancelled=cancelled,
                                        error=error[:300] or ("" if cancelled else "成员执行异常"))
+                self._note(root_id, child)
                 self.wake(root_id, describe(child))
             except Exception as failure:  # noqa: BLE001
                 logger.warning("成员子任务 %s 收尾失败：%s", child_id, type(failure).__name__)
         return stopped
+
+    def _note(self, root_id: str, child: Any) -> None:
+        try:
+            self.service.note_member_result(root_id, child)
+        except Exception as error:  # noqa: BLE001 —— 记不上不影响叫醒协调人
+            logger.warning("任务上下文 %s 记录成员结果失败：%s", root_id, type(error).__name__)
 
     # ── 协调人 ────────────────────────────────────────────────────────
     def wake(self, root_id: str, event: str) -> None:

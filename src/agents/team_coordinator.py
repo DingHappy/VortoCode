@@ -18,7 +18,8 @@ from src.agents.agent_loop import MainAgent
 from src.agents.tool import Tool
 
 _RULES = """【规则】
-- 成员之间不直接交流。需要一个成员看另一个成员的结果，用 team_cross_review。
+- 成员之间不直接交流，也看不到别的子任务。需要一个成员看另一个成员的结果，用 team_cross_review（原文会附给它）；
+  只想复核其中几点，写在 focus 里，不要用 team_assign 让它「自己去读」。
 - 每次派活写清做什么、交回什么；成员只能做角色卡上的本职。
 - 拿不准主人的偏好或缺信息时用 team_ask_owner，不要猜。做到验收标准就交，不要无谓地多派。
 - 你不能宣布完成：每条验收标准都有证据后，用 team_submit 交主人验收，逐条给出证据。
@@ -26,6 +27,7 @@ _RULES = """【规则】
 - 每次被叫醒只处理新情况；暂时没事可做就用一句话说明在等什么，然后结束本回合。"""
 
 
+_NO_TOOL_ROLES = ("reviewer",)
 _DUTY = {"web-researcher": "，只查公开资料并附来源", "reviewer": "，只审查交给它的材料",
          "developer": "，在项目的一次性副本里改代码（不能执行命令、不能联网）"}
 _DEV_RULES = """
@@ -92,8 +94,15 @@ def build_tools(repo_root: str, root_id: str, *, kick: Callable[[str], None]) ->
                            "external_content": bool(child.collaboration.get("tainted"))}, ensure_ascii=False)
 
     async def assign(args: dict) -> str:
-        child = service.assign(root_id, str(args.get("member") or ""), str(args.get("instruction") or ""),
-                               str(args.get("expected") or ""))
+        member, instruction = str(args.get("member") or ""), str(args.get("instruction") or "")
+        root = service.get(root_id)
+        role = next((item["role"] for item in root.team["members"] if item["name"] == member), "")
+        cited = [child_id for child_id in root.team.get("children", []) if child_id in instruction]
+        if role in _NO_TOOL_ROLES and cited:
+            # 真机 2026-11-04：协调人让审查员「用 team_result 读 task-…」，审查员没有工具，只能空审
+            raise CollaborationConflict(f"{member} 看不到别的子任务（{cited[0]}）。要它审，用 team_cross_review，"
+                                        "需要收窄范围就写在 focus 里")
+        child = service.assign(root_id, member, instruction, str(args.get("expected") or ""))
         kick(root_id)
         return f"已派给 {child.collaboration['assignee']}：{child.id}。结果交回后你会被叫醒。"
 
@@ -109,7 +118,10 @@ def build_tools(repo_root: str, root_id: str, *, kick: Callable[[str], None]) ->
         child = owned_child(str(args.get("task_id") or ""))
         if child.status != "done":
             raise CollaborationConflict("只能审已经交回结果的子任务")
-        instruction = (f"审查下面这份结果是否满足要求。\n【原要求】{child.prompt}\n"
+        focus = str(args.get("focus") or "").strip()[:1500]
+        instruction = (f"审查下面这份结果是否满足要求。\n"
+                       + (f"【这次只审这些】{focus}\n" if focus else "")
+                       + f"【原要求】{child.prompt}\n"
                        f"【要交回的】{'；'.join(child.collaboration.get('acceptance') or [])}\n【交回的结果】\n{child.result}")
         branch = str((child.collaboration.get("delivery") or {}).get("branch") or "")
         project = service.get(root_id).team.get("project") or {}
@@ -141,8 +153,9 @@ def build_tools(repo_root: str, root_id: str, *, kick: Callable[[str], None]) ->
         Tool("team_review", "接受（accept）或退回返工（rework）一条交回的结果；note 写理由或返工要求。",
              {"task_id": "子任务 ID", "verdict": "accept 或 rework", "note": "理由或返工要求"},
              guarded(review), read_only=False, serial=True),
-        Tool("team_cross_review", "请另一个成员审查某条已交回的结果。",
-             {"task_id": "被审的子任务 ID", "reviewer": "审查成员名"}, guarded(cross_review), read_only=False, serial=True),
+        Tool("team_cross_review", "请另一个成员审查某条已交回的结果（结果原文会附给它）。要收窄审查范围就写 focus。",
+             {"task_id": "被审的子任务 ID", "reviewer": "审查成员名", "focus": "可选：这次只审哪几点"},
+             guarded(cross_review), read_only=False, serial=True),
         Tool("team_ask_owner", "向主人提一个问题（缺信息或要主人拍板时用），任务暂停等回复。",
              {"question": "一句话的问题"}, guarded(ask_owner), read_only=False, serial=True),
         Tool("team_submit", "所有验收标准都有证据后交主人验收。evidence 是列表，每项 {criterion: 编号, evidence: 证据}。",

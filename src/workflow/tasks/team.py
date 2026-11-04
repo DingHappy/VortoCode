@@ -26,7 +26,8 @@ CLOSED = ("done", "failed", "cancelled")
 # 成员角色。工具面是封闭枚举；每轮按角色的单轮合同（步数、时限）执行。
 ROLES: Dict[str, Dict[str, Any]] = {
     "web-researcher": {"title": "研究员", "tools": "web_read", "web": True, "max_steps": 12, "timeout_seconds": 600},
-    "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 300},
+    # 审查员要读完整份材料：真机 2026-11-04 八千字的材料 300 秒没审完
+    "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 600},
     # 开发成员：在登记项目的一次性 worktree 里读写代码，不执行命令、不联网；验证与落分支由 VortoCode 做。
     # 只能由外部框架担任（自有 agent 改代码走隔离开发流水线），小组必须是 private 档位。
     "developer": {"title": "开发", "tools": "code_write", "web": False, "max_steps": 40, "timeout_seconds": 1800,
@@ -323,6 +324,26 @@ class TeamService:
             self._charge(root, {"wakes": 1})
             wake = root.team["wake"]
             wake.update(open=True, events_at_start=root.team["events"])
+            return self._save(root)
+
+    def note_member_result(self, root_id: str, child: BackgroundTask) -> BackgroundTask:
+        """成员这一轮的结果（交回 / 失败）。连续 STALL_WAKES 次失败就转「等你」：协调人每次都会重新派活，
+        按「醒来有没有新动作」判不出这种空转（真机 2026-11-04：研究员连续多轮没交回，小组跑了四十分钟）。"""
+        with _LOCK:
+            root = self.get(root_id)
+            wake = root.team["wake"]
+            if child.status == "done":
+                wake["member_failures"] = 0
+            elif child.status in ("failed", "interrupted"):
+                wake["member_failures"] = int(wake.get("member_failures", 0)) + 1
+                if root.status == "active" and wake["member_failures"] >= STALL_WAKES:
+                    reason = (f"成员连续 {STALL_WAKES} 次没有交回结果（最近一次：{child.collaboration.get('assignee')}"
+                              f"：{_text(child.error, 120) or '没有说明'}）")
+                    root.status, root.team["waiting_reason"] = "waiting", reason
+                    wake["member_failures"] = 0
+                    self._event(root, "stalled", reason)
+            else:
+                return root
             return self._save(root)
 
     def end_wake(self, root_id: str, *, error: str = "") -> BackgroundTask:
