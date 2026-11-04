@@ -7,7 +7,7 @@ from src.agents import taint
 from src.agents import team_coordinator, team_members
 from src.scheduling.team_runner import TeamRunner
 from src.workflow.tasks.tasks import TaskRunner
-from src.workflow.tasks.team import TeamService, load_history
+from src.workflow.tasks.team import STALL_WAKES, TeamService, load_history
 
 MEMBERS = [{"name": "研究员", "role": "web-researcher"}, {"name": "审查员", "role": "reviewer"}]
 
@@ -250,3 +250,49 @@ async def test_reviewers_cannot_be_told_to_read_other_subtasks_and_cross_review_
     await _tool(tools, "team_cross_review").handler({"task_id": child_id, "reviewer": "审查员", "focus": "只核 B 的价格"})
     reviewer = service.collaboration(service.get(root.id)).get(service.get(root.id).team["children"][1])
     assert "【这次只审这些】只核 B 的价格" in reviewer.prompt and "A 10 元，B 20 元" in reviewer.prompt
+
+
+def test_a_rework_round_carries_the_previous_result_and_the_rework_note(tmp_path):
+    # 真机 2026-11-04：返工时成员只拿到最初的要求，每轮从头重查
+    service, root = _root(tmp_path)
+    child = service.assign(root.id, "研究员", "查三家的价格", "价格表")
+    work = service.collaboration(service.get(root.id))
+    work.start(child.id, 1)
+    work.finish(child.id, 1, "A 10 元，B 20 元")
+    service.review(root.id, child.id, "rework", "缺 C 的价格")
+    second = service.collaboration(service.get(root.id)).get(child.id)
+    prompt = team_members.member_prompt(second)
+    assert prompt.startswith("查三家的价格") and "第 2 轮" in prompt
+    assert "【你上一轮交回的】\nA 10 元，B 20 元" in prompt and "【这次要改的】\n缺 C 的价格" in prompt
+    work = service.collaboration(service.get(root.id))
+    work.start(child.id, 2)
+    work.finish(child.id, 2, "", error="超过单轮时限")
+    service.review(root.id, child.id, "rework", "再试一次")
+    third = team_members.member_prompt(service.collaboration(service.get(root.id)).get(child.id))
+    assert "【上一轮没有交回内容】" in third and "A 10 元" not in third and "再试一次" in third
+    fresh = service.assign(root.id, "审查员", "审一下", "清单")
+    assert team_members.member_prompt(fresh) == "审一下\n\n要交回：清单"          # 第一轮不加东西
+
+
+def test_three_member_failures_in_a_row_hand_the_team_back_to_the_owner(tmp_path):
+    # 协调人每次都重新派活，按「醒来有没有新动作」判不出空转
+    service, root = _root(tmp_path)
+    outcomes = []
+    for number in range(STALL_WAKES):
+        child = service.assign(root.id, "研究员", f"查第 {number} 次", "价格")
+        work = service.collaboration(service.get(root.id))
+        work.start(child.id, 1)
+        if number == 0:
+            done = work.finish(child.id, 1, "A 10 元")
+            outcomes.append(service.note_member_result(root.id, done).status)
+            continue
+        failed = work.finish(child.id, 1, "", error="成员没有交回内容")
+        outcomes.append(service.note_member_result(root.id, failed).status)
+    assert outcomes == ["active", "active", "active"]                    # 中间有一次交回：重新计数
+    for number in range(STALL_WAKES - 2):
+        child = service.assign(root.id, "研究员", f"再查 {number}", "价格")
+        work = service.collaboration(service.get(root.id))
+        work.start(child.id, 1)
+        final = service.note_member_result(root.id, work.finish(child.id, 1, "", error="超过单轮时限 600 秒"))
+    assert final.status == "waiting" and "成员连续 3 次没有交回结果" in final.team["waiting_reason"]
+    assert "超过单轮时限" in final.team["waiting_reason"]

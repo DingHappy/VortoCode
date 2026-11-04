@@ -326,6 +326,26 @@ class TeamService:
             wake.update(open=True, events_at_start=root.team["events"])
             return self._save(root)
 
+    def note_member_result(self, root_id: str, child: BackgroundTask) -> BackgroundTask:
+        """成员这一轮的结果（交回 / 失败）。连续 STALL_WAKES 次失败就转「等你」：协调人每次都会重新派活，
+        按「醒来有没有新动作」判不出这种空转（真机 2026-11-04：研究员连续多轮没交回，小组跑了四十分钟）。"""
+        with _LOCK:
+            root = self.get(root_id)
+            wake = root.team["wake"]
+            if child.status == "done":
+                wake["member_failures"] = 0
+            elif child.status in ("failed", "interrupted"):
+                wake["member_failures"] = int(wake.get("member_failures", 0)) + 1
+                if root.status == "active" and wake["member_failures"] >= STALL_WAKES:
+                    reason = (f"成员连续 {STALL_WAKES} 次没有交回结果（最近一次：{child.collaboration.get('assignee')}"
+                              f"：{_text(child.error, 120) or '没有说明'}）")
+                    root.status, root.team["waiting_reason"] = "waiting", reason
+                    wake["member_failures"] = 0
+                    self._event(root, "stalled", reason)
+            else:
+                return root
+            return self._save(root)
+
     def end_wake(self, root_id: str, *, error: str = "") -> BackgroundTask:
         """协调回合结束：按记录里的事实判断有没有进展，连续没进展或同一错误反复出现就转「等你」。"""
         with _LOCK:

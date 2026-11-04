@@ -60,8 +60,27 @@ def build_member(role: str, model: str, *, max_steps: int, llm: Any = None,
 
 
 def member_prompt(task: Any) -> str:
+    """成员的要求。返工轮附上上一轮交回的内容和返工意见：成员每轮都是全新会话，记不得上一轮。
+    真机 2026-11-04：返工时只给了最初的要求，研究员每轮从头重查、反复超时。"""
     expected = "；".join(task.collaboration.get("acceptance") or [])
-    return f"{task.prompt}\n\n要交回：{expected}" if expected else task.prompt
+    base = f"{task.prompt}\n\n要交回：{expected}" if expected else task.prompt
+    number = int(task.collaboration.get("round") or 1)
+    if number <= 1:
+        return base
+    messages = list(task.collaboration.get("messages") or [])
+    last = lambda kinds, rounds: next((item for item in reversed(messages)           # noqa: E731
+                                       if item.get("kind") in kinds and item.get("round") in rounds), None)
+    previous = last(("submitted", "failed", "interrupted"), (number - 1,))
+    note = last(("followup",), (number,))
+    parts = [base, f"\n\n这是第 {number} 轮（返工）。你记不得上一轮，下面是上一轮的情况。"]
+    if previous and previous.get("kind") == "submitted" and str(previous.get("body") or "").strip():
+        parts.append(f"【你上一轮交回的】\n{previous['body']}")
+    else:
+        parts.append("【上一轮没有交回内容】" + (f"：{previous.get('body')}" if previous and previous.get("body") else ""))
+    if note and str(note.get("body") or "").strip():
+        parts.append(f"【这次要改的】\n{note['body']}")
+    parts.append("在上一轮的基础上修改，不要从头重做；最后直接写出完整的交回内容。")
+    return "\n\n".join(parts)
 
 
 async def _run_external(work: Any, child: Any, number: int, dispatch: dict, engine: str, tainted: bool,
