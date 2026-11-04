@@ -45,20 +45,22 @@ class Tool:
     input_schema: dict | None = None  # Full external JSON Schema; native/provided tools retain types and required fields.
     serial: bool = False  # Read-only tools that may ask for approval must not race confirmation cards.
     resource: ToolResource | None = None
+    required_args: tuple[str, ...] = ()  # Canonical model arguments; legacy handlers retain their own validation.
 
 
 def tool_definitions(tools: Iterable[Tool]) -> list[dict]:
     """Export declarations only; handlers and local policy never cross the wire.
 
-    Full provider schemas retain their types/required fields. Legacy args keep
-    their existing optional-string contract. Each export is an independent copy.
+    Full provider schemas retain their types/required fields. Legacy args are
+    optional strings unless the trusted factory declares types/required_args.
+    Each export is an independent copy; this is not runtime validation.
     """
     return [{"name": tool.name, "description": tool.description, "input_schema":
              deepcopy(tool.input_schema) if tool.input_schema is not None else {
                  "type": "object", "properties": {
                      name: {"type": "string", "description": description,
                             **deepcopy(tool.argument_schema.get(name, {}))}
-                     for name, description in tool.args.items()}, "required": []}}
+                     for name, description in tool.args.items()}, "required": list(tool.required_args)}}
             for tool in tools]
 
 

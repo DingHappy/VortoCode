@@ -35,7 +35,7 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str) -> List[Tool]:
     from src.scheduling.task_notices import notify_transition
     from src.scheduling.team_runner import get_team_runner
     from src.workflow.tasks.errors import CollaborationConflict
-    from src.workflow.tasks.team import DEFAULT_LIMITS, LIVE, TeamService, normalize_limits
+    from src.workflow.tasks.team import DEFAULT_LIMITS, MAX_LIMITS, LIVE, TeamService, normalize_limits
 
     def service() -> TeamService:
         return TeamService(repo_root, on_update=lambda task: notify_transition(repo_root, task))
@@ -128,23 +128,28 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str) -> List[Tool]:
              {"objective": "目标", "acceptance": "验收标准列表（1–10 条）",
               "members": "成员列表，每项 {name, role, model 可选}", "mode": "open（默认）或 private",
               "limits": "可选额度 {tasks, rounds, steps, timeout_seconds, wakes, parallel}"},
-             guarded(propose), read_only=False, serial=True,
-             argument_schema={"acceptance": {"type": "array", "items": {"type": "string"}},
+             guarded(propose), read_only=False, serial=True, required_args=("objective", "acceptance", "members"),
+             argument_schema={"acceptance": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string"}},
+                              "mode": {"type": "string", "enum": ["open", "private"]},
                               "members": {"type": "array", "items": {"type": "object", "properties": {
                                   "name": {"type": "string"}, "role": {"type": "string", "enum": ["web-researcher", "reviewer"]},
-                                  "model": {"type": "string"}}}},
-                              "limits": {"type": "object"}}),
+                                  "model": {"type": "string"}}, "required": ["name", "role"]}},
+                              "limits": {"type": "object", "additionalProperties": False, "properties": {
+                                  key: {"type": "integer", "minimum": 1, "maximum": limit}
+                                  for key, limit in MAX_LIMITS.items()
+                              }}}),
         Tool("team_list", "列出进行中的任务小组：状态、成员、子任务、额度用量。", {}, guarded(overview), read_only=True),
         Tool("team_open", "查看一个任务小组的详情；交付了的会带上协调人的总结和逐条证据。",
-             {"team_id": "小组 ID"}, guarded(open_one), read_only=True),
+             {"team_id": "小组 ID"}, guarded(open_one), read_only=True, required_args=("team_id",)),
         Tool("team_reply", "把主人的回答转给正在等主人的任务小组。", {"team_id": "小组 ID", "text": "主人的原话"},
-             guarded(reply), read_only=False, serial=True),
+             guarded(reply), read_only=False, serial=True, required_args=("team_id", "text")),
         Tool("team_decide", "主人对小组的交付做决定：accept=true 验收通过，false 退回并写明原因。",
              {"team_id": "小组 ID", "accept": "true/false", "note": "退回原因"}, guarded(decide), read_only=False, serial=True,
-             argument_schema={"accept": {"type": "boolean"}}),
+             required_args=("team_id", "accept"), argument_schema={"accept": {"type": "boolean"}}),
         Tool("team_add_budget", "主人同意后给小组加预算。extra 例如 {\"wakes\": 8, \"rounds\": 4}。",
              {"team_id": "小组 ID", "extra": "要加的额度"}, guarded(add_budget), read_only=False, serial=True,
-             argument_schema={"extra": {"type": "object"}}),
+             required_args=("team_id", "extra"),
+             argument_schema={"extra": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}}}),
         Tool("team_stop", "停止一个任务小组，取消在跑的成员。", {"team_id": "小组 ID", "reason": "可选原因"},
-             guarded(stop), read_only=False, serial=True),
+             guarded(stop), read_only=False, serial=True, required_args=("team_id",)),
     ]

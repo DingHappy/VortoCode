@@ -454,11 +454,11 @@ async def _noop(args):
 
 def test_orchestration_hint_adapts_to_tools():
     # 无相关工具（如 research 子 agent）→ 不给编排指引，不被诱导嵌套
-    assert "怎么干大活" not in MainAgent([])._system("build")
+    assert "【多步任务】" not in MainAgent([])._system("build")
     # 只有 update_plan → 有计划指引、无并行实现指引
     only_plan = MainAgent([], plan_tool=True)._system("build")
-    assert "怎么干大活" in only_plan and "update_plan" in only_plan
-    assert "dev_parallel" not in only_plan
+    assert "【多步任务】" in only_plan and "update_plan" in only_plan
+    assert "dev_parallel" not in only_plan and "【开发工具】" not in only_plan
     # 有隔离/并行实现工具 → 给出"先计划、再并行隔离实现+验证"的完整编排
     full = MainAgent([
         Tool("dev_isolated", "d", {}, _noop, read_only=False),

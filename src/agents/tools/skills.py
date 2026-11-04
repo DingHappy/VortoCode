@@ -151,8 +151,8 @@ def build_skill_tools(repo_root: str, confirm, *, registry: SkillRegistry | None
         registry.load()                              # 原地重扫：当前 agent 立刻能 use_skill 到它
         return f"已保存技能 {name} 到 .vortocode/skills/{name}/SKILL.md。"
 
-    return [Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
-                 {"name": "技能名"}, _use_skill, read_only=True, untrusted_source=True),
+    return [Tool("use_skill", "读取匹配技能(SKILL.md)的完整指令与来源；后续动作仍限于当前工具和权限",
+                 {"name": "技能名"}, _use_skill, read_only=True, untrusted_source=True, required_args=("name",)),
             Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
                  {"name": "技能名", "description": "一句话描述", "instructions": "技能正文（自然语言步骤）"},
-                 _save_skill, read_only=False)]
+                 _save_skill, read_only=False, required_args=("name", "instructions"))]
