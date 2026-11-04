@@ -87,7 +87,7 @@ def _teams(root: str) -> List[str]:
             continue
         view = service.view(task)
         line = (f"- 任务小组「{_clip(view['objective'], 40)}」：{_TEAM_STATUS[task.status]}，"
-                f"子任务 {view['used']['tasks']}/{view['limits']['tasks']}、轮次 {view['used']['rounds']}/{view['limits']['rounds']}")
+                f"已派 {view['used'].get('tasks', 0)} 个子任务、{view['used'].get('rounds', 0)} 轮")
         if task.status == "waiting" and view["waiting_reason"] and not view["tainted"]:
             line += f"，在等：{_clip(view['waiting_reason'], 60)}"
         lines.append(line + f"（id {task.id}）")

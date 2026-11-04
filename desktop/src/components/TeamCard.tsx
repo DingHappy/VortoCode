@@ -54,9 +54,7 @@ export function TeamCard({ id, client, connected, onPull, onChanged, initial = n
     {team.waiting_reason && team.status === "waiting" && <p className="assistant-task-text">{team.waiting_reason}</p>}
     {team.error && <p className="task-error">{team.error}</p>}
     <p>成员：{team.members.map(item => `${item.name}（${ROLE[item.role] ?? item.role}${item.engine !== "vortocode" ? `，${ENGINE[item.engine] ?? item.engine}` : ""}）`).join("、")}</p>
-    <p>额度：子任务 {team.used.tasks ?? 0}/{team.limits.tasks}，轮次 {team.used.rounds ?? 0}/{team.limits.rounds}，
-      累计时限 {Math.round((team.used.timeout_seconds ?? 0) / 60)}/{Math.round((team.limits.timeout_seconds ?? 0) / 60)} 分钟，
-      协调人醒来 {team.used.wakes ?? 0}/{team.limits.wakes} 次</p>
+    <p>用量：已派 {team.used.tasks ?? 0} 个子任务、{team.used.rounds ?? 0} 轮，协调人醒来 {team.used.wakes ?? 0} 次（不设额度）</p>
     <details>
       <summary>验收标准</summary>
       <ol>{team.acceptance.map((line, index) => <li key={index}>{line}</li>)}</ol>
@@ -103,7 +101,6 @@ export function TeamCard({ id, client, connected, onPull, onChanged, initial = n
         {team.status === "review" && <button disabled={busy || !connected || !note.trim()} onClick={() => void act(() => client.decideTeam(team.id, false, note.trim()))}>退回</button>}
         {team.status === "waiting" && <button disabled={busy || !connected || !note.trim()} onClick={() => void act(() => client.replyTeam(team.id, note.trim()))}>回复小组</button>}
       </div>
-      {team.status === "waiting" && <small>要加预算，在对话里跟助理说，它会弹确认卡。</small>}
     </>}
     <div className="task-actions">
       <button disabled={busy || !connected} onClick={() => void act(async () => { await load(); return "已核对最新状态"; })}>核对状态</button>

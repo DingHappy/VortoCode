@@ -99,7 +99,7 @@ export function buildAssistantWorkday(input: {
       else if (team.status === "active") {
         state = "running";
         detail = running ? `${running} 个成员在做` : "协调人在安排下一步";
-        detail += `；已用 ${team.used.rounds ?? 0}/${team.limits.rounds ?? "?"} 轮`;
+        detail += `；已进行 ${team.used.rounds ?? 0} 轮`;
       } else if (team.status === "waiting") { state = "decision"; detail = team.waiting_reason || "小组在等你决定"; }
       else if (team.status === "review") { state = "review"; detail = "小组交付了，等你验收"; }
       else if (team.status === "done") { state = "verified"; detail = "你已验收"; }

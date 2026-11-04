@@ -424,7 +424,7 @@ it("任务小组：等你决定和待验收进「等你决定」，在做的进�
     tainted: false, updated_at: now.toISOString() };
   const teams = [
     { ...base, id: "a", objective: "查资料", status: "active" as const, children: [{ id: "c", member: "研究员", status: "running", tainted: false }] },
-    { ...base, id: "w", objective: "等我", status: "waiting" as const, waiting_reason: "要加预算吗" },
+    { ...base, id: "w", objective: "等我", status: "waiting" as const, waiting_reason: "要不要换个思路" },
     { ...base, id: "r", objective: "交付了", status: "review" as const, project: "VortoCode" },
     { ...base, id: "x", objective: "停了", status: "cancelled" as const },
   ];
