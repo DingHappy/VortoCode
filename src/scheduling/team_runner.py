@@ -17,6 +17,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _RUNNER: Optional["TeamRunner"] = None
+STALL_NUDGES = 3          # 同一次推进里最多补叫这么多次（正常情况下 end_wake 先把它转成「等你」）
+NUDGE = ("上一回合结束时没有成员在跑，也没有等主人或提交验收，之后不会再有事件叫醒你。"
+         "现在决定下一步：派活或返工、交叉审查、team_ask_owner 问主人，或者 team_submit 提交验收。")
 
 
 def set_team_runner(runner: Optional["TeamRunner"]) -> None:
@@ -101,8 +104,10 @@ class TeamRunner:
 
     async def _drive(self, root_id: str) -> None:
         from src.workflow.tasks.errors import CollaborationConflict
+        nudges = 0
         while root_id in self._pending:
             events = self._pending.pop(root_id)
+            nudges = nudges + 1 if events == [NUDGE] else 0
             self.kick(root_id)
             try:
                 root = self.service.get(root_id)
@@ -119,6 +124,20 @@ class TeamRunner:
                 logger.warning("任务上下文 %s 协调回合异常：%s", root_id, type(error).__name__)
                 return
             self.kick(root_id)
+            if root_id not in self._pending and nudges < STALL_NUDGES and self._stuck(root_id):
+                # 回合结束时既没人在跑、也没等主人或交验收：不会再有事件叫醒它，这里补一次。
+                # 连续没进展由 TeamService.end_wake 转「等你」，唤醒额度另有上限，不会空转下去。
+                self._pending[root_id] = [NUDGE]
+
+    def _stuck(self, root_id: str) -> bool:
+        try:
+            root = self.service.get(root_id)
+            if root.status != "active":
+                return False
+            children = self.service.children(root)
+        except Exception:  # noqa: BLE001
+            return False
+        return not any(child.status in {"queued", "running"} or self.runner.is_active(child.id) for child in children)
 
     # ── 启动与停止 ─────────────────────────────────────────────────────
     async def recover(self) -> None:

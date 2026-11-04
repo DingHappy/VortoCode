@@ -28,7 +28,9 @@ def system_prompt(root: Any) -> str:
     from src.workflow.tasks.team import ROLES
     team = root.team
     criteria = "\n".join(f"{index}. {text}" for index, text in enumerate(team["acceptance"]))
-    members = "\n".join(f"- {item['name']}（{item['role']}）：{ROLES[item['role']]['title']}"
+    members = "\n".join(f"- {item['name']}（{item['role']}"
+                        + (f"，{item['engine']} 执行" if item.get("engine", "vortocode") != "vortocode" else "")
+                        + f"）：{ROLES[item['role']]['title']}"
                         + ("，只查公开资料并附来源" if ROLES[item["role"]]["web"] else "，只审查交给它的材料")
                         for item in team["members"])
     return ("你是主人的个人助理，现在在一个独立的任务上下文里担任协调人。主人只和你对接，你负责把这个任务做成。\n"
