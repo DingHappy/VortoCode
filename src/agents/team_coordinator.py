@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 import json
 from typing import Any, Callable, List, Optional
 
@@ -24,6 +26,14 @@ _RULES = """【规则】
 - 每次被叫醒只处理新情况；暂时没事可做就用一句话说明在等什么，然后结束本回合。"""
 
 
+_DUTY = {"web-researcher": "，只查公开资料并附来源", "reviewer": "，只审查交给它的材料",
+         "developer": "，在项目的一次性副本里改代码（不能执行命令、不能联网）"}
+_DEV_RULES = """
+- 开发成员每轮交回一个分支和 VortoCode 跑的验证结果（【交付】一段是代码拼的事实）。验证没通过或没交付，就用
+  team_review 返工并写清要改什么；返工会在上一轮分支的基础上继续。需要别人看改动时，用 team_cross_review 请审查员审。
+- 交付是常驻电脑上的本地分支，不推送、不合并；team_submit 的证据里写明分支名和验证结果，由主人去审。"""
+
+
 def system_prompt(root: Any) -> str:
     from src.workflow.tasks.team import ROLES
     team = root.team
@@ -31,11 +41,12 @@ def system_prompt(root: Any) -> str:
     members = "\n".join(f"- {item['name']}（{item['role']}"
                         + (f"，{item['engine']} 执行" if item.get("engine", "vortocode") != "vortocode" else "")
                         + f"）：{ROLES[item['role']]['title']}"
-                        + ("，只查公开资料并附来源" if ROLES[item["role"]]["web"] else "，只审查交给它的材料")
+                        + _DUTY.get(item["role"], "")
                         for item in team["members"])
     return ("你是主人的个人助理，现在在一个独立的任务上下文里担任协调人。主人只和你对接，你负责把这个任务做成。\n"
             f"【任务】{team['objective']}\n【验收标准】（team_submit 时按编号给证据）\n{criteria}\n"
-            f"【成员】\n{members}\n{_RULES}")
+            f"【成员】\n{members}\n{_RULES}"
+            + (_DEV_RULES if any(item["role"] == "developer" for item in team["members"]) else ""))
 
 
 def event_message(events: List[str], inbox: List[dict]) -> str:
@@ -100,6 +111,12 @@ def build_tools(repo_root: str, root_id: str, *, kick: Callable[[str], None]) ->
             raise CollaborationConflict("只能审已经交回结果的子任务")
         instruction = (f"审查下面这份结果是否满足要求。\n【原要求】{child.prompt}\n"
                        f"【要交回的】{'；'.join(child.collaboration.get('acceptance') or [])}\n【交回的结果】\n{child.result}")
+        branch = str((child.collaboration.get("delivery") or {}).get("branch") or "")
+        project = service.get(root_id).team.get("project") or {}
+        if branch and project.get("repo_root"):
+            from src.agents.team_delivery import branch_diff
+            diff = await asyncio.to_thread(branch_diff, project["repo_root"], branch)
+            instruction += f"\n【分支 {branch} 相对项目主线的改动】\n{diff}"
         reviewer = str(args.get("reviewer") or "")
         task = service.assign(root_id, reviewer, instruction, "问题清单；没有问题就写没有问题",
                               tainted=bool(child.collaboration.get("tainted")))

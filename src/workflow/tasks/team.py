@@ -27,6 +27,10 @@ CLOSED = ("done", "failed", "cancelled")
 ROLES: Dict[str, Dict[str, Any]] = {
     "web-researcher": {"title": "研究员", "tools": "web_read", "web": True, "max_steps": 12, "timeout_seconds": 600},
     "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 300},
+    # 开发成员：在登记项目的一次性 worktree 里读写代码，不执行命令、不联网；验证与落分支由 VortoCode 做。
+    # 只能由外部框架担任（自有 agent 改代码走隔离开发流水线），小组必须是 private 档位。
+    "developer": {"title": "开发", "tools": "code_write", "web": False, "max_steps": 40, "timeout_seconds": 1800,
+                  "engines": ("opencode",)},
 }
 
 # 成员的执行框架（ADR-014 S2）。vortocode = 进程内自有 agent；其余经 ACP 起外部框架，权限按角色逐次判定。
@@ -40,6 +44,7 @@ _USAGE_KEYS = ("tasks", "rounds", "steps", "timeout_seconds", "wakes")
 STALL_WAKES = 3
 _MAX_MEMBERS = 6
 _MAX_INBOX = 20
+_MAX_INSTRUCTION = 16000          # 交叉审查开发成员的改动时，要求里带着 diff
 _LOCK = TASK_STATE_LOCK
 
 
@@ -83,6 +88,9 @@ def _members(value: Any, mode: str) -> List[dict]:
         engine = str(item.get("engine") or "vortocode")
         if engine not in ENGINES:
             raise CollaborationConflict(f"未知执行框架：{engine}（可用：{'、'.join(ENGINES)}）")
+        allowed_engines = ROLES[role].get("engines")
+        if allowed_engines and engine not in allowed_engines:
+            raise CollaborationConflict(f"{ROLES[role]['title']}成员只能由 {'、'.join(ENGINES[e] for e in allowed_engines)} 担任")
         model = _text(item.get("model"), 80)
         if model and engine in _ENGINES_WITHOUT_MODEL:
             raise CollaborationConflict(f"{ENGINES[engine]} 成员暂不支持指定模型")
@@ -147,7 +155,7 @@ class TeamService:
     # ── 建根（主人批准之后由调用方调用） ────────────────────────────────
     def create(self, owner: str, *, objective: str, acceptance: List[str], members: List[dict],
                mode: str = "open", limits: Optional[dict] = None, private_refs: Optional[List[str]] = None,
-               tid: Optional[str] = None) -> BackgroundTask:
+               tid: Optional[str] = None, project: Optional[dict] = None) -> BackgroundTask:
         if not owner:
             raise CollaborationConflict("任务上下文必须属于一个会话")
         objective = _text(objective, 2000)
@@ -162,6 +170,14 @@ class TeamService:
         if refs and mode != "private":
             raise CollaborationConflict("只有 private 任务上下文可以带私人资料")
         roster = _members(members, mode)
+        developers = [item for item in roster if item["role"] == "developer"]
+        if developers and mode != "private":
+            raise CollaborationConflict("带开发成员的小组必须是 private 档位：项目代码不能和联网成员放在同一个小组")
+        if developers and not (isinstance(project, dict) and project.get("name")
+                               and str(project.get("repo_root") or "").startswith("/")):
+            raise CollaborationConflict("带开发成员的小组要指定一个登记过的常驻项目")
+        if project and not developers:
+            project = None
         with _LOCK:
             root = BackgroundTask.new(KIND, objective, tid=tid, owner_session=owner)
             if self.ledger.load(root.id) is not None:
@@ -171,6 +187,7 @@ class TeamService:
                 "version": 1, "mode": mode, "objective": objective,
                 "acceptance": [_text(item, 300) for item in acceptance],
                 "members": roster, "private_refs": refs,
+                "project": {"name": _text(project["name"], 100), "repo_root": str(project["repo_root"])} if project else None,
                 "limits": normalize_limits(limits), "used": {key: 0 for key in _USAGE_KEYS},
                 "children": [], "coordinator": {"kind": "main_agent", "model": ""},
                 "events": 0, "log": [], "inbox": [], "waiting_reason": "", "submission": None, "tainted": False,
@@ -212,7 +229,7 @@ class TeamService:
                                 "timeout_seconds": role["timeout_seconds"]})
             self._save(root)
             child = self.collaboration(root).create(
-                _text(instruction, 4000), member, [_text(expected, 500)],
+                _text(instruction, _MAX_INSTRUCTION), member, [_text(expected, 500)], prompt_limit=_MAX_INSTRUCTION,
                 dispatch={"source": KIND, "root": root.id, "member": member, "role": entry["role"],
                           "model": entry["model"], "engine": entry.get("engine", "vortocode"),
                           "max_steps": role["max_steps"],
@@ -424,17 +441,36 @@ class TeamService:
         slots = max(0, root.team["limits"]["parallel"] - running)
         return [child for child in children if child.status == "queued"][:slots]
 
+    def record_delivery(self, root_id: str, child_id: str, delivery: Dict[str, Any]) -> BackgroundTask:
+        """开发成员这一轮的交付（分支、改动文件、验证结果），由执行层在落分支后写入。只记事实，不改状态。"""
+        with _LOCK:
+            root = self.get(root_id)
+            if child_id not in root.team["children"]:
+                raise CollaborationConflict("这条子任务不属于本任务上下文")
+            child = self.ledger.load(child_id)
+            if child is None:
+                raise CollaborationConflict("子任务不存在")
+            keep = ("branch", "round", "files", "verified", "verify_cmd", "verify_output", "error",
+                    "preexisting_failures", "flaky")
+            child.collaboration["delivery"] = {key: delivery[key] for key in keep if key in delivery}
+            if not self.ledger.save(child):
+                raise OSError("交付记录未能保存")
+            return child
+
     def view(self, root: BackgroundTask) -> Dict[str, Any]:
         """由代码拼的结构化视图：主对话与 work_status 用它，不读协调人写的文字。"""
         children = self.children(root)
         return {"id": root.id, "objective": root.team["objective"], "status": root.status, "mode": root.team["mode"],
                 "waiting_reason": root.team["waiting_reason"], "used": dict(root.team["used"]),
                 "limits": dict(root.team["limits"]),
+                "project": (root.team.get("project") or {}).get("name"),
                 "members": [{"name": item["name"], "role": item["role"], "engine": item.get("engine", "vortocode")}
                             for item in root.team["members"]],
                 "children": [{"id": child.id, "member": child.collaboration.get("assignee"), "status": child.status,
                               "review": child.collaboration.get("review"), "round": child.collaboration.get("round"),
-                              "tainted": bool(child.collaboration.get("tainted"))} for child in children],
+                              "tainted": bool(child.collaboration.get("tainted")),
+                              **({"delivery": child.collaboration["delivery"]} if child.collaboration.get("delivery") else {})}
+                             for child in children],
                 "tainted": bool(root.team.get("tainted")) or any(child.collaboration.get("tainted") for child in children)}
 
 

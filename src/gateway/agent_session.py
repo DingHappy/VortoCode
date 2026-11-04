@@ -253,7 +253,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             from src.scheduling.team_runner import get_team_runner
             if get_team_runner() is not None:
                 from src.agents.tools.team import build_team_tools
-                tools += build_team_tools(repo_root, confirm=gated_confirm, owner=task_owner or f"{kind}-owner")
+                # 带开发成员的小组只在 Desktop 会话里开：手机（owner_device）与 IM 都不行（ADR-014 §6.2）
+                tools += build_team_tools(repo_root, confirm=gated_confirm, owner=task_owner or f"{kind}-owner",
+                                          allow_developers=(kind == "web" and capabilities.profile != "owner_device"
+                                                            and not untrusted_input))
             # 插件（日历等外部数据）：放了凭据才挂，带回来的内容按外部不可信处理；
             # 写入（存邮件草稿）每次过内核确认门
             from src.plugins import build_plugin_tools, enabled_plugins

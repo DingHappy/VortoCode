@@ -83,7 +83,8 @@ class CollaborationService:
     def create(self, prompt: str, assignee: str = "", acceptance: list[str] | None = None, *,
                task_id: str | None = None, dispatch: dict | None = None,
                dependencies: dict | None = None, chain_limits: dict | None = None,
-               task_type: str = "analysis") -> BackgroundTask:
+               task_type: str = "analysis", prompt_limit: int = 4000) -> BackgroundTask:
+        """``prompt_limit``：要求的长度上限。任务小组交叉审查开发改动时要带 diff，会传更大的值（≤16000）。"""
         from src.workflow.tasks.model_evidence import TASK_TYPES
         if not isinstance(task_type, str) or task_type not in TASK_TYPES:
             raise CollaborationConflict("任务类型无效")
@@ -97,7 +98,7 @@ class CollaborationService:
         with _LOCK:
             if task_id and (not typed_id(task_id, "task") or self.ledger.load(task_id) is not None):
                 raise CollaborationConflict("任务 ID 无效或已存在")
-            task = BackgroundTask.new("delegation", _text(prompt), tid=task_id,
+            task = BackgroundTask.new("delegation", _text(prompt, max(1, min(int(prompt_limit), 16000))), tid=task_id,
                                       owner_session=self.owner_identity())
             task.collaboration = {
                 "assignee": assignee, "round": 1, "review": "not_submitted",
