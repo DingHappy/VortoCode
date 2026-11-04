@@ -232,6 +232,26 @@ async def test_cancelled_delivery_is_kept_and_a_fresh_runner_can_recover_it(tmp_
     assert service.checkout_inbox(root.id) == []
 
 
+@pytest.mark.parametrize("status", ["done", "failed", "cancelled"])
+async def test_fresh_runner_recovers_a_persisted_member_receipt_without_an_in_memory_wake(tmp_path, status):
+    service, root = setup_team(tmp_path)
+    child = service.assign(root.id, "审查员", "核对 A", "依据")
+    work = service.collaboration(root)
+    work.start(child.id, 1)
+    work.finish(child.id, 1, "有结果" if status == "done" else "",
+                error="成员失败" if status == "failed" else "", cancelled=status == "cancelled")
+    delivered, events = asyncio.Event(), []
+    async def coordinator(repo_root, root_id, current_events, *, kick):
+        events.extend(current_events)
+        delivered.set()
+    runner = TeamRunner(str(tmp_path), Pool(), coordinator=coordinator)
+    await runner.recover()
+    await asyncio.wait_for(delivered.wait(), timeout=2)
+    await runner.close()
+    assert any(child.id in event for event in events)
+    assert work.get(child.id).status == status and work.get(child.id).collaboration["round"] == 1
+
+
 def test_older_owner_messages_get_stable_delivery_ids_without_being_consumed(tmp_path):
     service, root = setup_team(tmp_path)
     root.team["inbox"] = [{"from": "owner", "text": "旧格式留言"}]
@@ -240,3 +260,25 @@ def test_older_owner_messages_get_stable_delivery_ids_without_being_consumed(tmp
     assert snapshot == service.checkout_inbox(root.id) and snapshot[0]["id"]
     service.acknowledge_inbox(root.id, [snapshot[0]["id"]])
     assert service.checkout_inbox(root.id) == []
+
+
+@pytest.mark.parametrize("disposition", ["accepted", "cancelled", "waiting"])
+async def test_recovery_does_not_wake_accepted_receipts_or_owner_stopped_work(tmp_path, disposition):
+    service, root = setup_team(tmp_path)
+    child = service.assign(root.id, "审查员", "核对 A", "依据")
+    work = service.collaboration(root)
+    work.start(child.id, 1)
+    work.finish(child.id, 1, "有结果")
+    if disposition == "accepted":
+        service.review(root.id, child.id, "accept", "已核对")
+    elif disposition == "cancelled":
+        service.stop(root.id, "主人停止")
+    else:
+        service.ask_owner(root.id, "需要主人决定")
+    calls = []
+    async def coordinator(*args, **kwargs):
+        calls.append(args)
+    runner = TeamRunner(str(tmp_path), Pool(), coordinator=coordinator)
+    await runner.recover()
+    await runner.close()
+    assert calls == [] and service.get(root.id).team["used"]["wakes"] == 0
