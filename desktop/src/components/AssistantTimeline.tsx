@@ -15,6 +15,24 @@ function when(at: string): string {
   return Number.isNaN(date.getTime()) ? "时间待核对" : date.toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+/** 例行巡视：没有待决定动作、标题写着「巡视」的通知。正常时只留最新一条，其余折叠；展开历史时全列。 */
+export function isRoutine(item: TimelineItem): boolean {
+  return item.kind === "notice" && /巡视/.test(item.title) && !item.actions.some(action => action.type !== "undo")
+    && !/失败|出错|拒绝|核对/.test(item.status);
+}
+
+export function foldRoutine(items: TimelineItem[], expanded: boolean): { items: TimelineItem[]; folded: number } {
+  if (expanded) return { items, folded: 0 };
+  let kept = false, folded = 0;
+  const result = items.filter(item => {
+    if (!isRoutine(item)) return true;
+    if (!kept) { kept = true; return true; }
+    folded += 1;
+    return false;
+  });
+  return { items: result, folded };
+}
+
 /** 同一个聚合接口；操作仍走既有撤销和恢复接口。只在动态页打开时轮询。 */
 export function AssistantTimeline({ client, connected, version, onOpen, onChanged }: {
   client: TimelineClient | null | undefined; connected: boolean; version?: number;
@@ -76,9 +94,10 @@ export function AssistantTimeline({ client, connected, version, onOpen, onChange
   }
 
   if (!client || !connected) return null;
-  // 正常历史默认折叠，暂停、待决定和异常始终可见。
+  // 正常历史默认折叠，暂停、待决定和异常始终可见。例行巡视（如 Codex 半小时进度）只留最新一条（ADR-016）。
   const important = (item: TimelineItem) => item.actions.some(a => a.type !== "undo") || /失败|出错|拒绝|核对/.test(item.status);
-  const shown = data?.items.filter((item, index) => expanded || index < 8 || important(item)) ?? [];
+  const { items: visible, folded } = foldRoutine(data?.items ?? [], expanded);
+  const shown = visible.filter((item, index) => expanded || index < 8 || important(item));
   return <section className="assistant-section assistant-timeline" aria-label="动态时间线">
     <header><h5>时间线</h5><button onClick={() => void refresh()}>刷新时间线</button></header>
     {error && <p role="status">{error}</p>}
@@ -100,6 +119,7 @@ export function AssistantTimeline({ client, connected, version, onOpen, onChange
             <button key={action.type} onClick={() => onOpen(action.type as "decide_dispatch" | "decide_codex", action.id)}>查看并决定</button> : null)}
       </li>)}
     </ul>
-    {data && data.items.length > 8 && <button onClick={() => setExpanded(!expanded)}>{expanded ? "收起历史" : "展开近期历史"}</button>}
+    {folded > 0 && <p className="assistant-attention-note">另有 {folded} 条例行巡视已折叠，展开近期历史可看。</p>}
+    {data && (data.items.length > 8 || folded > 0) && <button onClick={() => setExpanded(!expanded)}>{expanded ? "收起历史" : "展开近期历史"}</button>}
   </section>;
 }
