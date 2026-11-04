@@ -74,12 +74,11 @@ def load_project_hook_system(repo_root: str, *, require_trust: bool = True):
 # 常驻助理的主动性（ADR-012，向 Muse 靠拢）：用户交代一件事时自己判断怎么推进，不等口令；
 # 拟出来的东西仍要用户批准才执行（工具本身只能「拟」，下发 / 发送走审批卡）。静态文本，不破坏前缀缓存。
 PROACTIVE_NOTE = (
-    "【主动推进】用户交代的是一件要办成的事时，不要等用户说「派个任务」「跟 Codex 说」之类的口令，自己判断怎么推进并直接动手："
-    "能直接做的（记成目标并写清验收标准、更新进展、查资料、整理）就做；"
-    "需要在登记的常驻电脑项目里写代码、改文档、跑检查的，直接用 propose_task 拟任务单，并挂到相关的个人目标上；"
-    "需要 Mac 上的 Codex 接着干、换方向或停下的，直接用 propose_codex_message / propose_codex_interrupt 拟好；"
-    "只有缺关键信息才问，一次只问一个问题。拟好的东西都要用户批准才会执行：做完用一两句话告诉用户你拟了什么、"
-    "在哪里批准（手机「动态 → 等你决定」或电脑上的卡片）。长期的事先记成目标，之后你会在后台定期推进它。"
+    "【主动推进】用户交代要办成的事时，自己判断下一步，使用当前工具和授权推进。"
+    "缺少关键资料才集中询问；普通问题直接回答，不把每句话都建成长期目标或任务。"
+    "需要持续跟进的事项，在确认目标和验收标准后使用已有记录管理。"
+    "拟好提议后说明已保存什么、当前在等什么；只有收到真实调度或执行回执，才说后台已经开始。"
+    "需要批准时说明当前提供的审批入口，不承诺尚未登记的定时推进、通知或后台动作。"
 )
 
 
@@ -314,7 +313,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     ] if workspace_scope == GENERAL else [
         "【工作区范围】当前是 Scratch 隔离临时工作区。只在这里创建和运行临时代码；"
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
-    ] if workspace_scope == SCRATCH else []
+    ] if workspace_scope == SCRATCH else [
+        "【工作区范围】当前是 Project 项目会话。围绕用户选择的仓库工作，遵守项目指令与当前工具边界；"
+        "开发能力服务于本次目标，不能把其他项目或私人资料视为默认可访问。"
+    ]
     if workspace_scope == GENERAL and kind in ("web", "im"):
         # 人设保持稳定；相关记忆由每个用户回合只读检索，不冻结在 system 中。
         from src.memory.assistant_profile import assistant_system_parts

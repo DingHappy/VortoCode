@@ -454,11 +454,11 @@ async def _noop(args):
 
 def test_orchestration_hint_adapts_to_tools():
     # 无相关工具（如 research 子 agent）→ 不给编排指引，不被诱导嵌套
-    assert "怎么干大活" not in MainAgent([])._system("build")
+    assert "【多步任务】" not in MainAgent([])._system("build")
     # 只有 update_plan → 有计划指引、无并行实现指引
     only_plan = MainAgent([], plan_tool=True)._system("build")
-    assert "怎么干大活" in only_plan and "update_plan" in only_plan
-    assert "dev_parallel" not in only_plan
+    assert "【多步任务】" in only_plan and "update_plan" in only_plan
+    assert "dev_parallel" not in only_plan and "【开发工具】" not in only_plan
     # 有隔离/并行实现工具 → 给出"先计划、再并行隔离实现+验证"的完整编排
     full = MainAgent([
         Tool("dev_isolated", "d", {}, _noop, read_only=False),
@@ -574,7 +574,7 @@ def test_system_prompt_frames_tool_results_and_forbids_fabrication():
     """dogfood 发现：mimo 曾把 [工具 X 结果] 误当用户消息、编造未做的分支/测试。系统提示须明确框定。"""
     s = MainAgent([])._system("plan")
     assert "不是用户发来的新消息" in s                # 工具结果 = 工具输出，非用户新消息
-    assert "只读一眼代码不等于完成" in s              # 只 read 不算做完
+    assert "只完成分析不能当作已经执行" in s           # 普通事项和开发任务遵循同一证据边界
     assert "绝不编造分支名或测试结果" in s            # 反幻觉：没做的别说做了
     assert "提示式协议下" in s                        # 框定对两种协议都准确（native 是结构化 tool 消息）
     # codex 审：模板不再硬编码只有 TUI 才有的 run_dev_workflow；也不点名各端不一的 dev_* 工具
@@ -984,7 +984,7 @@ async def test_request_build_refused_keeps_plan_and_blocks_write_tool():
     out, say, emit = _capture()
     await agent.run_turn("分析后动手", mode="plan", say=say, emit=emit)
     assert ran == []
-    assert any("拒绝切换 build" in m["content"] for m in agent.history)
+    assert any("本次未获授权" in m["content"] for m in agent.history)
     assert out["emit"] == ["那先给方案。"]
 
 
@@ -1000,7 +1000,8 @@ def test_trimmed_history_keeps_first_user_anchor():
     trimmed = agent._trimmed_history()
     # 首次裁剪裁到低水位（< max_history，给后续追加留余量、保持切点粘性），但绝不超上限
     assert 2 <= len(trimmed) <= 6
-    assert trimmed[0]["content"] == "原始任务：实现 X"          # 第一条锚点保留
+    assert trimmed[0]["content"].endswith("原始任务：实现 X")
+    assert "仅历史背景" in trimmed[0]["content"]              # 保留原文，但不是再次发出的指令
     assert trimmed[-1] == agent.history[-1]                    # 末尾是最近的
 
 
@@ -1013,7 +1014,7 @@ def test_trimmed_history_anchor_strips_multimodal():
     for i in range(10):
         agent.history.append({"role": "assistant", "content": f"x{i}"})
     trimmed = agent._trimmed_history()
-    assert trimmed[0]["content"] == "看这张图实现[图片]"        # 纯文本锚，无 base64
+    assert trimmed[0]["content"].endswith("看这张图实现[图片]")  # 纯文本锚，无 base64
     assert "AAAA" not in trimmed[0]["content"]
 
 
@@ -1243,7 +1244,8 @@ def test_trimmed_history_token_budget_trims_huge_messages():
     trimmed = agent._trimmed_history()
     assert len(trimmed) < len(agent.history)                  # 条数没超，但 token 超了 → 仍裁剪
     assert sum(agent._msg_tokens(m) for m in trimmed) <= agent.max_context_tokens + 500  # 收进预算(+锚点余量)
-    assert trimmed[0]["content"] == "原始任务：实现 X"          # 原始任务锚点仍在
+    assert trimmed[0]["content"].endswith("原始任务：实现 X")
+    assert "仅历史背景" in trimmed[0]["content"]
 
 
 def test_trimmed_history_many_tiny_messages_not_trimmed():
@@ -1721,7 +1723,7 @@ def test_anchor_strips_stale_env_and_plan_tail():
     assert agent._anchor_text() == "修复登录 bug"               # 锚点 = 纯任务文本
     trimmed = agent._trimmed_history("plan")
     heads = [str(m.get("content")) for m in trimmed[:2]]
-    assert any(h == "修复登录 bug" for h in heads)              # 注入的锚点干净
+    assert any(h.endswith("修复登录 bug") and "仅历史背景" in h for h in heads)
     assert sum("修复登录 bug" in str(m.get("content")) for m in trimmed) == 1   # 不重复塞
 
 
@@ -2222,7 +2224,7 @@ async def test_request_build_still_asks_in_plan_mode():
     out = await agent._request_build({"reason": "要动手", "next_action": "改文件", "_mode": "plan"})
 
     assert asked == ["request_build"], "plan 模式下必须问人"
-    assert "拒绝" in out
+    assert "本次未获授权" in out  # false 也可能来自内核策略，不能冒充用户拒绝
 
 
 # ---------------------------------------------------------------- 别家工具语法不能被当成回答

@@ -259,7 +259,11 @@ async def test_main_agent_can_correct_invalid_arguments_using_the_same_contract(
                 assert schema["properties"]["round"]["type"] == "integer"
                 assert schema["required"] == ["round", "verdict"]
                 return {"content": "", "tool_calls": [{"name": "review", "arguments": json.dumps(args)}]}
-            assert '"round"' in messages[0]["content"] and '"minimum": 1' in messages[0]["content"]
+            contracts = [json.loads(line.strip().removeprefix("参数合同："))
+                         for line in messages[0]["content"].splitlines()
+                         if line.strip().startswith("参数合同：")]
+            assert contracts[0]["properties"]["round"]["minimum"] == 1
+            assert contracts[0]["required"] == ["round", "verdict"]
             return {"content": json.dumps({"tool": "review", "args": args})}
 
     tool = Tool("review", "", {"round": "Round", "verdict": "Decision"}, handler, read_only=False,
