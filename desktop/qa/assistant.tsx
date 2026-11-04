@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowUp, Cpu, Paperclip, Search, Settings } from "lucide-react";
 import { ActivityFeed } from "../src/components/ActivityFeed";
-import { AssistantAudit, AssistantAvatarImage, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, ModeSwitch, type AppMode } from "../src/components/AssistantMode";
+import { AssistantAudit, AssistantAvatarImage, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar } from "../src/components/AssistantMode";
 import { MarkdownMessage } from "../src/components/MarkdownMessage";
 import { taskFeedItem, turnFeedItem } from "../src/lib/activityFeed";
 import type { AgentTurn, TaskItem } from "../src/types";
@@ -50,7 +50,6 @@ function sampleAvatar(): import("../src/types").AssistantAvatar | null {
 
 function Fixture() {
   const [avatar, setAvatar] = useState(sampleAvatar);
-  const [mode, setMode] = useState<AppMode>("assistant");
   const [current, setCurrent] = useState("main");
   const [tab, setTab] = useState<import("../src/components/AssistantMode").AssistantTab>("feed");
   const [panel, setPanel] = useState(true);
@@ -60,7 +59,6 @@ function Fixture() {
     <div className={`workbench ${panel ? "inspector-open" : "inspector-closed"}`}>
       <aside className="sidebar">
         <div className="sidebar-brand"><strong>VortoCode</strong><Search size={16} /></div>
-        <ModeSwitch mode={mode} onChange={setMode} />
         <AssistantSidebar mainChat={{ sid: "main", preview: "已完成静态审查并归档记录", busy: true }}
           sideChats={[{ sid: "side-1", title: "整理周报" }, { sid: "side-2", title: "MCP 接入" }]}
           current={current} onSelect={setCurrent} onNewSideChat={() => {}} />

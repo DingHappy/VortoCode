@@ -1,6 +1,6 @@
 // 工作台侧栏 + 任务页验收：合成数据，不连引擎。?theme=dark 看深色，?tab=goals 看目标页。
 import { createRoot } from "react-dom/client";
-import { ModeSwitch } from "../src/components/AssistantMode";
+import { BackToAssistant } from "../src/components/AssistantMode";
 import { ManagementHead, ManagementNav } from "../src/components/ManagementNav";
 import { RuntimeInboxPanel } from "../src/components/RuntimeInboxPanel";
 import { SidebarBrand, SidebarSectionTitle, WorkNav } from "../src/components/SidebarChrome";
@@ -49,7 +49,7 @@ createRoot(document.getElementById("root")!).render(
   <div className="app-shell"><div className="workbench vc-mode-work inspector-closed">
     <aside className="sidebar vc-sidebar">
       <SidebarBrand onCollapse={noop} />
-      <ModeSwitch mode="work" onChange={noop} />
+      <BackToAssistant onBack={noop} />
       <WorkNav page={tab === "goals" ? "goals" : "tasks"} connected waiting={1} onNewChat={noop} onPage={noop} />
       <SidebarSectionTitle label="项目" className="project-section-title sidebar-first-section" open onToggle={noop} />
       <SidebarProjects activeScope="project" runtimeProcesses={[]} runtimeRecoveries={[]} projects={projects} query=""
