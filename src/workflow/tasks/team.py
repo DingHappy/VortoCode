@@ -4,7 +4,7 @@
 
 - 根是 ``TaskLedger`` 里 ``kind="team"`` 的任务，小组状态记在 ``task.team``；成员每次派活是一条协作子任务
   （``CollaborationService``，``dispatch.source == "team"``），归属 ``team-<根 id>``。
-- 额度记在根上：子任务数、轮数、步数、累计时限、协调人唤醒次数。先落盘预留再执行，预留不退款。
+- 不设额度（主人 2026-11-04 定）：用量只计数给主人看，不拦。防空转只靠无进展判定；每轮成员各有执行时限。
 - 协调人每次醒来前后调用 ``begin_wake`` / ``end_wake``：没有新进展或同一错误反复出现就转「等你」，不靠模型自述。
 - 协调人不能宣布完成：``submit`` 只把根交到「待你验收」，并要求每条验收标准都给证据。
 - 根的状态不用 ``running``：启动恢复扫描会把残留的 ``running`` 改标 ``interrupted``；协调回合被重启打断的
@@ -23,7 +23,7 @@ MODES = ("open", "private")
 LIVE = ("active", "waiting", "review")
 CLOSED = ("done", "failed", "cancelled")
 
-# 第一个切片的两种成员角色。工具面是封闭枚举；每次派活按角色的单轮合同扣额度。
+# 成员角色。工具面是封闭枚举；每轮按角色的单轮合同（步数、时限）执行。
 ROLES: Dict[str, Dict[str, Any]] = {
     "web-researcher": {"title": "研究员", "tools": "web_read", "web": True, "max_steps": 12, "timeout_seconds": 600},
     "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 300},
@@ -38,8 +38,9 @@ ENGINES: Dict[str, str] = {"vortocode": "VortoCode", "opencode": "OpenCode", "de
 # 还不能按成员换模型的框架（DeepSeek Harness 用它 ACP 档案里的默认模型）
 _ENGINES_WITHOUT_MODEL = ("deepseek-harness",)
 
-DEFAULT_LIMITS = {"tasks": 8, "rounds": 12, "steps": 96, "timeout_seconds": 3600, "wakes": 16, "parallel": 2}
-MAX_LIMITS = {"tasks": 32, "rounds": 48, "steps": 512, "timeout_seconds": 28800, "wakes": 64, "parallel": 4}
+# 只剩并发：同时在跑的成员数（排队，不拒绝）。子任务数、轮数、时长、唤醒次数都不设上限，只计数。
+DEFAULT_LIMITS = {"parallel": 2}
+MAX_LIMITS = {"parallel": 4}
 _USAGE_KEYS = ("tasks", "rounds", "steps", "timeout_seconds", "wakes")
 STALL_WAKES = 3
 _MAX_MEMBERS = 6
@@ -63,10 +64,13 @@ def is_team_child(task: Any) -> bool:
 
 
 def normalize_limits(value: Optional[dict]) -> dict:
+    """只认并发 ``parallel``；旧版的额度键（tasks、rounds 等）不再生效，忽略。"""
     limits = dict(DEFAULT_LIMITS)
     for key, number in (value or {}).items():
-        if key not in MAX_LIMITS or type(number) is not int or not 1 <= number <= MAX_LIMITS[key]:
-            raise CollaborationConflict(f"额度 {key} 无效（1–{MAX_LIMITS.get(key, '?')}）")
+        if key not in MAX_LIMITS:
+            continue
+        if type(number) is not int or not 1 <= number <= MAX_LIMITS[key]:
+            raise CollaborationConflict(f"{key} 无效（1–{MAX_LIMITS[key]}）")
         limits[key] = number
     return limits
 
@@ -156,7 +160,7 @@ class TeamService:
     def create(self, owner: str, *, objective: str, acceptance: List[str], members: List[dict],
                mode: str = "open", limits: Optional[dict] = None, private_refs: Optional[List[str]] = None,
                tid: Optional[str] = None, project: Optional[dict] = None) -> BackgroundTask:
-        if not owner:
+        if not isinstance(owner, str) or not owner:
             raise CollaborationConflict("任务上下文必须属于一个会话")
         objective = _text(objective, 2000)
         if not objective:
@@ -196,15 +200,12 @@ class TeamService:
             self._event(root, "created", objective)
             return self._save(root)
 
-    # ── 额度 ──────────────────────────────────────────────────────────
+    # ── 用量（只计数，不拦） ────────────────────────────────────────────
     @staticmethod
     def _charge(root: BackgroundTask, cost: Dict[str, int]) -> None:
-        used, limits = root.team["used"], root.team["limits"]
-        over = [key for key, value in cost.items() if used[key] + value > limits[key]]
-        if over:
-            raise CollaborationConflict(f"任务上下文额度不足（{'、'.join(over)}）；需要主人加预算")
+        used = root.team.setdefault("used", {})
         for key, value in cost.items():
-            used[key] += value
+            used[key] = int(used.get(key, 0)) + value
 
     @staticmethod
     def _member(root: BackgroundTask, name: str) -> dict:
@@ -216,7 +217,7 @@ class TeamService:
     # ── 协调人的动作 ───────────────────────────────────────────────────
     def assign(self, root_id: str, member: str, instruction: str, expected: str, *,
                tainted: bool = False) -> BackgroundTask:
-        """给成员派一件事：预留额度并落盘根，再建子任务。子任务建失败时预留不退。
+        """给成员派一件事：先记用量并落盘根，再建子任务。
 
         ``tainted``：要求里带着别的成员交回的外部内容（例如请审查员审研究员的结果），这条子任务一开始就是污点。"""
         if not instruction.strip() or not expected.strip():
@@ -245,7 +246,7 @@ class TeamService:
             return child
 
     def review(self, root_id: str, child_id: str, verdict: str, note: str) -> BackgroundTask:
-        """接受或返工一条成员结果；返工预留下一轮额度。"""
+        """接受或返工一条成员结果；返工即下一轮。"""
         with _LOCK:
             root = self._live(root_id)
             if child_id not in root.team["children"]:
@@ -316,16 +317,10 @@ class TeamService:
 
     # ── 协调人醒来 ─────────────────────────────────────────────────────
     def begin_wake(self, root_id: str) -> BackgroundTask:
-        """协调人每次醒来前调用：扣一次唤醒额度并标记回合进行中。额度用完转「等你」。"""
+        """协调人每次醒来前调用：记一次唤醒并标记回合进行中。"""
         with _LOCK:
             root = self._live(root_id)
-            try:
-                self._charge(root, {"wakes": 1})
-            except CollaborationConflict:
-                root.status, root.team["waiting_reason"] = "waiting", "协调人唤醒次数用完；要继续需要加预算"
-                self._event(root, "budget", root.team["waiting_reason"])
-                self._save(root)
-                raise
+            self._charge(root, {"wakes": 1})
             wake = root.team["wake"]
             wake.update(open=True, events_at_start=root.team["events"])
             return self._save(root)
@@ -389,21 +384,6 @@ class TeamService:
             self._save(root)
             return items
 
-    def add_budget(self, root_id: str, extra: Dict[str, int]) -> BackgroundTask:
-        """主人批准加预算后调用：上调额度并恢复进行中。"""
-        with _LOCK:
-            root = self._live(root_id, statuses=("active", "waiting"))
-            limits = dict(root.team["limits"])
-            for key, number in extra.items():
-                if key not in _USAGE_KEYS or type(number) is not int or number < 1:
-                    raise CollaborationConflict(f"加预算项无效：{key}")
-                limits[key] = min(MAX_LIMITS[key], limits[key] + number)
-            root.team["limits"] = limits
-            root.status, root.team["waiting_reason"] = "active", ""
-            root.team["wake"].update(idle=0, same_error=0, last_error="")
-            self._event(root, "budget_added", ", ".join(f"{k}+{v}" for k, v in extra.items()))
-            return self._save(root)
-
     def decide(self, root_id: str, accept: bool, note: str = "") -> BackgroundTask:
         """主人验收：通过即完成；退回则带着意见回到进行中。"""
         with _LOCK:
@@ -438,7 +418,7 @@ class TeamService:
             return []
         children = self.children(root)
         running = sum(1 for child in children if child.status == "running")
-        slots = max(0, root.team["limits"]["parallel"] - running)
+        slots = max(0, int(root.team.get("limits", {}).get("parallel", DEFAULT_LIMITS["parallel"])) - running)
         return [child for child in children if child.status == "queued"][:slots]
 
     def record_delivery(self, root_id: str, child_id: str, delivery: Dict[str, Any]) -> BackgroundTask:

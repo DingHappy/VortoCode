@@ -84,7 +84,7 @@ def _tool(tools, name):
 
 
 async def test_coordinator_tools_go_through_the_domain_rules(tmp_path):
-    service, root = _root(tmp_path, limits={"tasks": 2})
+    service, root = _root(tmp_path)
     kicked = []
     tools = team_coordinator.build_tools(str(tmp_path), root.id, kick=kicked.append)
     text = await _tool(tools, "team_assign").handler({"member": "研究员", "instruction": "查价格", "expected": "价格表"})
@@ -100,8 +100,8 @@ async def test_coordinator_tools_go_through_the_domain_rules(tmp_path):
     reviewer_task = service.collaboration(service.get(root.id)).get(service.get(root.id).team["children"][1])
     assert "已请 审查员" in review and reviewer_task.collaboration["tainted"] is True
     assert "A 10 元" in reviewer_task.prompt
-    refused = await _tool(tools, "team_assign").handler({"member": "研究员", "instruction": "再查", "expected": "x"})
-    assert refused.startswith("未执行：") and "额度不足" in refused
+    refused = await _tool(tools, "team_assign").handler({"member": "开发", "instruction": "再查", "expected": "x"})
+    assert refused.startswith("未执行：") and "没有名为 开发 的成员" in refused
     early = await _tool(tools, "team_submit").handler({"summary": "推荐 A", "evidence": [{"criterion": 0, "evidence": "价格表"}]})
     assert early.startswith("未执行：") and "还没有证据" in early
     foreign = await _tool(tools, "team_result").handler({"task_id": "task-elsewhere"})

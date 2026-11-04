@@ -47,7 +47,7 @@ async def test_opening_a_team_asks_the_owner_with_a_full_card_and_then_starts_it
     card, kind = asked[0]
     assert kind == "execute"
     for expected in ("比较三家向量数据库", "1. 列出价格", "研究员（联网查资料）", "模型 relay:other",
-                     "open（成员可联网", "协调人醒来 10 次"):
+                     "open（成员可联网", "不设额度"):
         assert expected in card
     [root] = TeamService(str(tmp_path)).list()
     assert root.owner_session == "sid-main" and "小组已开工" in text
@@ -75,8 +75,7 @@ async def test_reply_decide_budget_and_stop_reach_the_service(tmp_path, runner):
     service.submit(root.id, "推荐 A", [{"criterion": 0, "evidence": "A 最便宜"}])
     await tools["team_decide"].handler({"team_id": root.id, "accept": False, "note": "没算自建成本"})
     assert service.get(root.id).status == "active" and "退回" in runner.woken[-1][1]
-    await tools["team_add_budget"].handler({"team_id": root.id, "extra": {"wakes": 4}})
-    assert service.get(root.id).team["limits"]["wakes"] == 20 and asked[-1][1] == "execute"
+    assert "team_add_budget" not in tools                 # 不设额度，也就没有加预算
     stopped = await tools["team_stop"].handler({"team_id": root.id})
     assert "已停止" in stopped and runner.stopped == [root.id] and service.get(root.id).status == "cancelled"
 
@@ -111,7 +110,8 @@ def test_general_assistant_gets_team_tools_and_the_phone_may_use_them(tmp_path, 
     names = set(agent.tools) if isinstance(agent.tools, dict) else {tool.name for tool in agent.tools}
     assert {"team_propose", "team_list", "team_open", "team_reply", "team_decide", "team_stop"} <= names
     from src.agents.capabilities import OWNER_DEVICE_WRITE_TOOLS
-    assert {"team_propose", "team_reply", "team_decide", "team_add_budget", "team_stop"} <= OWNER_DEVICE_WRITE_TOOLS
+    assert {"team_propose", "team_reply", "team_decide", "team_stop"} <= OWNER_DEVICE_WRITE_TOOLS
+    assert "team_add_budget" not in OWNER_DEVICE_WRITE_TOOLS and "team_add_budget" not in names
 
 
 def test_work_status_lists_live_teams_without_tainted_text(tmp_path):
@@ -125,3 +125,14 @@ def test_work_status_lists_live_teams_without_tainted_text(tmp_path):
     text = work_status(str(tmp_path))
     assert "任务小组「比较方案」：等你决定" in text and "在等：预算多少？" in text
     assert "任务小组「整理网页需求」：等你决定" in text and "evil" not in text
+
+
+async def test_a_lazy_session_owner_is_resolved_before_saving(tmp_path, runner):
+    # 真机 2026-11-04：Desktop 会话把「取当前会话 ID」的函数当 owner 传进来，原样存盘失败（未能保存）
+    async def confirm(message, kind=None):
+        return True
+    tools = {tool.name: tool for tool in build_team_tools(str(tmp_path), confirm=confirm, owner=lambda: "sid-live")}
+    text = await tools["team_propose"].handler({"objective": "查资料", "acceptance": ["给结论"], "members": MEMBERS})
+    assert "小组已开工" in text
+    [root] = TeamService(str(tmp_path)).list()
+    assert root.owner_session == "sid-live"

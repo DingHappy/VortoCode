@@ -346,6 +346,7 @@ export interface TeamChild {
 export interface TeamMember { name: string; role: string; engine: string; model?: string }
 export interface TeamSummary {
   id: string; objective: string; status: TeamStatus; mode: string; waiting_reason: string;
+  /** 用量只计数（不设额度）；limits 只剩并发 parallel */
   used: Record<string, number>; limits: Record<string, number>; project?: string | null;
   members: TeamMember[]; children: TeamChild[]; tainted: boolean; updated_at?: string;
 }
