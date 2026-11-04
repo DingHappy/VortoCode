@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-websocket";
+import { parseMemorySnapshot, type MemorySnapshot } from "./lib/memorySnapshot";
 
 import type {
   AgentTurn,
@@ -651,6 +652,10 @@ export class GatewayClient {
   async listAssistantMemories(): Promise<AssistantMemory[]> {
     const payload = await this.request<{ memories?: AssistantMemory[] }>("/api/assistant/memories");
     return Array.isArray(payload.memories) ? payload.memories : [];
+  }
+
+  async getMemorySnapshot(): Promise<MemorySnapshot> {
+    return parseMemorySnapshot(await this.request<unknown>("/api/assistant/memory-snapshot"));
   }
 
   /** 连接的服务（GitHub 等）。 */

@@ -173,5 +173,18 @@ export function assistantPanelActions(deps: AssistantPanelDeps) {
     }
   };
 
-  return { tabOpened, scheduleRefresh, scheduleToggle, scheduleHistory, avatar, connector, decideProposal, deleteMemory };
+  const memorySnapshot = async () => {
+    const client = deps.client(), scope = deps.renderScope;
+    if (!client || deps.scope() !== scope) return null;
+    const current = sameAs(client, scope);
+    try {
+      const snapshot = await client.getMemorySnapshot();
+      return current() ? snapshot : null;
+    } catch (error) {
+      if (current()) throw error;
+      return null;
+    }
+  };
+
+  return { tabOpened, scheduleRefresh, scheduleToggle, scheduleHistory, avatar, connector, decideProposal, deleteMemory, memorySnapshot };
 }

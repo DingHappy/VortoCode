@@ -2,7 +2,9 @@ import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
 import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, Users, X } from "lucide-react";
 import { Button, GroupTitle, IconButton, NavItem } from "./ui";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
+import type { MemorySnapshot } from "../lib/memorySnapshot";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import type { AssistantAvatar, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal } from "../types";
 export { PhoneChatDialog } from "./PhoneChatDialog";
@@ -193,7 +195,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   </aside>;
 }
 
-/** 「记忆」页：它记住的关于你的事，可以删。新记住的事从下一个对话起自动带上。 */
+/** 「记忆」页：已确认的事实；后续回合按相关性召回，可以删除。 */
 export function AssistantMemories({ memories, onDelete }: { memories: AssistantMemory[]; onDelete: (memory: AssistantMemory) => void }) {
   if (memories.length === 0) {
     return <p className="assistant-memory-empty">还没有记住什么。聊天时说「记住……」，或者它觉得重要时会问你要不要记下来。</p>;
@@ -320,7 +322,7 @@ export function MemoryProposals({ proposals, onDecide }: {
   </>;
 }
 
-export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal, initialMemories = false }: {
+export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal, onMemorySnapshot, initialMemories = false }: {
   profile: AssistantProfile;
   /** 头像：选了文件就换，null 恢复成名字首字 */
   avatar?: AssistantAvatar | null;
@@ -331,16 +333,38 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   onEdit: () => void;
   onDeleteMemory: (memory: AssistantMemory) => void;
   onDecideProposal?: (proposal: MemoryProposal, approve: boolean, replace?: string[]) => void;
+  onMemorySnapshot?: () => Promise<MemorySnapshot | null>;
   /** 从今日概览「去确认记忆」进来：直接打开记忆页 */
   initialMemories?: boolean;
 }) {
   const [showMemories, setShowMemories] = useState(initialMemories);
+  const [preview, setPreview] = useState(false);
+  const [snapshot, setSnapshot] = useState<MemorySnapshot | null>(null);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [snapshotError, setSnapshotError] = useState("");
+  const snapshotRead = useRef(0);
+  useEffect(() => () => { snapshotRead.current += 1; }, []);
+  const readSnapshot = async () => {
+    const serial = ++snapshotRead.current;
+    setPreview(true); setSnapshot(null); setSnapshotError(""); setSnapshotBusy(true);
+    try {
+      const result = await onMemorySnapshot?.();
+      if (serial !== snapshotRead.current) return;
+      if (result) setSnapshot(result);
+      else setSnapshotError("连接已变化，请关闭后重新读取。");
+    } catch (error) {
+      if (serial === snapshotRead.current) setSnapshotError(error instanceof Error ? error.message : "读取记忆失败，请重试");
+    } finally { if (serial === snapshotRead.current) setSnapshotBusy(false); }
+  };
   const fileRef = useRef<HTMLInputElement>(null);
   if (showMemories) {
     return <section className="assistant-section">
       <h5><button className="assistant-back" aria-label="返回身份" onClick={() => setShowMemories(false)}><ArrowLeft size={14} /></button>记忆</h5>
+      {onMemorySnapshot && <p className="assistant-memory-empty"><button onClick={() => void readSnapshot()} disabled={snapshotBusy}>预览与导出记忆</button></p>}
       <MemoryProposals proposals={proposals} onDecide={onDecideProposal} />
       <AssistantMemories memories={memories} onDelete={onDeleteMemory} />
+      {preview && <MemorySnapshotDialog snapshot={snapshot} busy={snapshotBusy} error={snapshotError} onRetry={() => void readSnapshot()}
+        onClose={() => { snapshotRead.current += 1; setPreview(false); setSnapshotBusy(false); setSnapshot(null); }} />}
     </section>;
   }
   const latest = memories[0]?.created_at?.slice(5, 10).replace("-", ".");
