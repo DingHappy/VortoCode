@@ -36,5 +36,8 @@ export function stickToBottom(node: ScrollBox, shouldStick: () => boolean, obser
   const mutation = new kinds.mutation(() => { watch(); follow(); });
   watch();
   mutation.observe(node, { childList: true });
+  // 容器重新挂上（从小组、资料库等页面切回对话）时滚动位置从顶部开始；人原本就在底部，就先回到底部，
+  // 否则只等内容再变高才跟，视野会停在最早的消息上（真机 2026-11-05：从小组切回主要聊天停在 10 月的旧消息）。
+  if (shouldStick()) node.scrollTop = node.scrollHeight;
   return () => { resize.disconnect(); mutation.disconnect(); };
 }

@@ -86,13 +86,13 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
     <div className="vc-side-recent">
       <GroupTitle>最近</GroupTitle>
       {matches("主要聊天", query) && <NavItem className="vc-nav-item--recent" icon={<Star aria-hidden="true" />} label="主要聊天"
-        title={mainChat.preview || "主要聊天"} current={!page && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
+        title={mainChat.preview || "主要聊天"} current={!page && !currentTeam && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
         meta={mainChat.busy ? <LiveDot /> : undefined} />}
       {groups.map((team) => <NavItem key={team.id} className="vc-nav-item--recent vc-nav-item--team" icon={<Users aria-hidden="true" />}
         label={team.title} title={`任务小组：${team.title}`} current={currentTeam === team.id} onClick={() => onOpenTeam?.(team.id)}
         meta={team.status === "active" ? <LiveDot /> : TEAM_BADGE[team.status] ? <span className="vc-team-badge">{TEAM_BADGE[team.status]}</span> : undefined} />)}
       {sides.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title || "新的旁聊"}
-        current={!page && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />)}
+        current={!page && !currentTeam && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />)}
       {phones.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title.replace(/^📱\s*/, "")}
         title="手机上和助理的聊天（这里只读，在手机上回复）" onClick={() => onOpenPhoneChat?.(chat.sid)} meta="手机" />)}
       {offline.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title || "本机对话"}
