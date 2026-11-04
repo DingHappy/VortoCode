@@ -333,6 +333,29 @@ export interface CodexProgressSnapshot {
   }>;
 }
 
+/** 任务小组（ADR-014）：常驻助理 /api/teams 的结构化视图，由服务端代码拼，不是协调人写的文字。 */
+export type TeamStatus = "active" | "waiting" | "review" | "done" | "failed" | "cancelled";
+export interface TeamDelivery {
+  branch?: string; round?: number; files?: string[]; verified?: boolean | null;
+  verify_cmd?: string; verify_output?: string; error?: string; preexisting_failures?: number; flaky?: number;
+}
+export interface TeamChild {
+  id: string; member: string; status: string; review?: string; round?: number; tainted: boolean;
+  delivery?: TeamDelivery; request?: string; result?: string; error?: string; updated_at?: string;
+}
+export interface TeamMember { name: string; role: string; engine: string; model?: string }
+export interface TeamSummary {
+  id: string; objective: string; status: TeamStatus; mode: string; waiting_reason: string;
+  used: Record<string, number>; limits: Record<string, number>; project?: string | null;
+  members: TeamMember[]; children: TeamChild[]; tainted: boolean; updated_at?: string;
+}
+export interface TeamDetail extends Omit<TeamSummary, "project"> {
+  acceptance: string[]; created_at?: string; error?: string;
+  project: { name: string; repo_root: string; port: number | null } | null;
+  events: Array<{ kind: string; text: string; seq: number }>;
+  submission: { summary: string; evidence: Array<{ criterion: number; evidence: string; text?: string }>; tainted: boolean } | null;
+}
+
 export interface AssistantDispatch {
   id: string;
   project: string;

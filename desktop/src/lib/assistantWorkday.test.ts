@@ -417,3 +417,28 @@ it("self-heal failures from the last 24 hours need a decision; successes and old
   expect(model.decisions.map(item => item.title)).toEqual(["自动修复没有成功"]);
   expect(model.decisions[0].detail).toBe("[restart]：端口仍不通");
 });
+
+it("任务小组：等你决定和待验收进「等你决定」，在做的进「正在推进」，读不到就待核对", () => {
+  const now = new Date(2026, 10, 4, 12);
+  const base = { mode: "open", waiting_reason: "", used: { rounds: 1 }, limits: { rounds: 12 }, members: [], children: [],
+    tainted: false, updated_at: now.toISOString() };
+  const teams = [
+    { ...base, id: "a", objective: "查资料", status: "active" as const, children: [{ id: "c", member: "研究员", status: "running", tainted: false }] },
+    { ...base, id: "w", objective: "等我", status: "waiting" as const, waiting_reason: "要加预算吗" },
+    { ...base, id: "r", objective: "交付了", status: "review" as const, project: "VortoCode" },
+    { ...base, id: "x", objective: "停了", status: "cancelled" as const },
+  ];
+  const model = buildAssistantWorkday({ dispatches: [], dispatchesLoaded: true, codexActions: [], connected: true, now,
+    goals: { status: "current", data: [], checkedAt: now.getTime() }, codex: { status: "current", data: null, checkedAt: now.getTime() },
+    teams: { status: "current", data: teams, checkedAt: now.getTime() } });
+  expect(model.progress.map(item => item.id)).toEqual(["team:a"]);
+  expect(model.progress[0].detail).toContain("1 个成员在做");
+  expect(model.decisions.filter(item => item.id.startsWith("team:")).map(item => [item.id, item.state])).toEqual([["team:w", "decision"], ["team:r", "review"]]);
+  expect(model.decisions.find(item => item.id === "team:r")?.source).toBe("任务小组 · VortoCode");
+  expect(model.today.some(item => item.id === "team:x")).toBe(false);
+  const stale = buildAssistantWorkday({ dispatches: [], dispatchesLoaded: true, codexActions: [], connected: true, now,
+    goals: { status: "current", data: [], checkedAt: now.getTime() }, codex: { status: "current", data: null, checkedAt: now.getTime() },
+    teams: { status: "unavailable", data: teams } });
+  expect(stale.warnings).toContain("任务小组未能取得最新状态。");
+  expect(stale.decisions.find(item => item.id === "team:a")?.state).toBe("unknown");
+});

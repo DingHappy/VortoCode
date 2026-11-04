@@ -1,4 +1,4 @@
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, NoticeItem, OpsHeartbeat, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
+import type { TeamSummary, AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, NoticeItem, OpsHeartbeat, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
 import { progressLine } from "./assistantTask";
 import { readExecutionObservation } from "./executionObservation";
 import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
@@ -11,7 +11,7 @@ export interface WorkdaySource<T> {
   data: T;
   checkedAt?: number;
 }
-export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory" | "session" | "project" | "ops" | "notice"; id: string };
+export type WorkdayTarget = { kind: "dispatch" | "team" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory" | "session" | "project" | "ops" | "notice"; id: string };
 export interface WorkdayItem {
   id: string; title: string; detail: string; source: string; at: string;
   state: "running" | "decision" | "review" | "verified" | "unknown";
@@ -44,6 +44,8 @@ export function buildAssistantWorkday(input: {
   projectSources?: DesktopRuntimeInbox[];
   /** 运维报到状态；notices 只用来找 24 小时内「自愈未成功」的记录 */
   ops?: WorkdaySource<OpsHeartbeat[]>; notices?: WorkdaySource<NoticeItem[]>;
+  /** 任务小组（ADR-014）；不传 = 这一版还没接 */
+  teams?: WorkdaySource<TeamSummary[]>;
   connected: boolean; now: Date;
 }): AssistantWorkday {
   const { now } = input, ms = now.getTime();
@@ -83,6 +85,29 @@ export function buildAssistantWorkday(input: {
     } else detail = task.error || (task.status === "stopped" ? "任务已停下，请决定下一步" : "执行失败，请核对原因");
     add({ id: `dispatch:${task.id}`, title: task.title, detail, state, source: task.project,
       at: task.updated_at || task.created_at, target: { kind: "dispatch", id: task.id } }, active);
+  }
+  if (input.teams) {
+    const fresh = input.connected && input.teams.status === "current" && freshAt(input.teams.checkedAt, ms);
+    if (input.teams.status === "unavailable") result.warnings.push("任务小组未能取得最新状态。");
+    for (const team of input.teams.data) {
+      if (team.status === "cancelled") continue;
+      const live = ["active", "waiting", "review"].includes(team.status);
+      if (!live && !today(team.updated_at || "", now)) continue;
+      const running = team.children.filter(child => child.status === "running" || child.status === "queued").length;
+      let state: WorkdayItem["state"], detail: string;
+      if (!fresh) { state = "unknown"; detail = "上次记录，当前状态待核对"; }
+      else if (team.status === "active") {
+        state = "running";
+        detail = running ? `${running} 个成员在做` : "协调人在安排下一步";
+        detail += `；已用 ${team.used.rounds ?? 0}/${team.limits.rounds ?? "?"} 轮`;
+      } else if (team.status === "waiting") { state = "decision"; detail = team.waiting_reason || "小组在等你决定"; }
+      else if (team.status === "review") { state = "review"; detail = "小组交付了，等你验收"; }
+      else if (team.status === "done") { state = "verified"; detail = "你已验收"; }
+      else { state = "decision"; detail = "小组失败了，请查看原因"; }
+      add({ id: `team:${team.id}`, title: team.objective, detail, state,
+        source: team.project ? `任务小组 · ${team.project}` : "任务小组",
+        at: team.updated_at || "", target: { kind: "team", id: team.id } }, live);
+    }
   }
   const goalsFresh = input.connected && input.goals.status === "current" && freshAt(input.goals.checkedAt, ms);
   if (!goalsFresh) result.warnings.push(input.goals.status === "loading" ? "个人目标正在读取。" : "个人目标未能取得最新状态，完成记录暂不计入已核实。");

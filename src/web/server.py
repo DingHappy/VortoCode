@@ -103,6 +103,7 @@ from src.web.routers.mobile_owner import router as mobile_owner_router
 from src.web.routers.phone_keys import router as phone_keys_router
 from src.web.routers.app_relay import router as app_relay_router
 from src.web.routers.timeline import router as timeline_router
+from src.web.routers.teams import router as teams_router
 
 for _router in (
     pages_router, git_router, context_router,
@@ -111,7 +112,7 @@ for _router in (
     journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
     pipelines_router, trust_router, resident_router, assistant_router, personal_goals_router, voice_router, ops_heartbeat_router,
     codex_router, mobile_router, mobile_pages_router, account_access_router, mobile_browser_router, mobile_native_router, mobile_owner_router,
-    phone_keys_router, app_relay_router, timeline_router,
+    phone_keys_router, app_relay_router, timeline_router, teams_router,
 ):
     app.include_router(_router)
 

@@ -666,6 +666,36 @@
     ]
   },
   {
+    "path": "/api/teams",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/teams/{team_id}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/teams/{team_id}/decide",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/teams/{team_id}/reply",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/teams/{team_id}/stop",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/terminals",
     "methods": [
       "GET"

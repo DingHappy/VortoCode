@@ -6,6 +6,8 @@ import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-
 import type {
   AgentTurn,
   AssistantDispatch,
+  TeamDetail,
+  TeamSummary,
   AssistantAvatar,
   AssistantConnector,
   AssistantPlugin,
@@ -740,6 +742,31 @@ export class GatewayClient {
   }
 
   /** 常驻助理的任务单（顺带刷新已下发任务的状态）。 */
+  async listTeams(): Promise<TeamSummary[]> {
+    const payload = await this.request<{ teams?: TeamSummary[] }>("/api/teams");
+    return Array.isArray(payload.teams) ? payload.teams : [];
+  }
+
+  async getTeam(id: string): Promise<TeamDetail> {
+    return this.request(`/api/teams/${encodeURIComponent(id)}`);
+  }
+
+  async decideTeam(id: string, accept: boolean, note = ""): Promise<TeamDetail> {
+    return this.request(`/api/teams/${encodeURIComponent(id)}/decide`, {
+      method: "POST", body: JSON.stringify({ accept, note }),
+    });
+  }
+
+  async replyTeam(id: string, text: string): Promise<TeamDetail> {
+    return this.request(`/api/teams/${encodeURIComponent(id)}/reply`, {
+      method: "POST", body: JSON.stringify({ text }),
+    });
+  }
+
+  async stopTeam(id: string): Promise<TeamDetail> {
+    return this.request(`/api/teams/${encodeURIComponent(id)}/stop`, { method: "POST" });
+  }
+
   async listDispatches(refreshId?: string): Promise<AssistantDispatch[]> {
     const payload = await this.request<{ dispatches?: AssistantDispatch[] }>(`/api/dispatches${refreshId ? `?refresh_id=${encodeURIComponent(refreshId)}` : ""}`);
     return Array.isArray(payload.dispatches) ? payload.dispatches : [];
