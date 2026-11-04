@@ -86,6 +86,7 @@ class AcpResult:
     networked: bool = False
     tool_calls: List[Dict[str, str]] = field(default_factory=list)
     permissions: List[Dict[str, Any]] = field(default_factory=list)
+    followed_up: bool = False
 
 
 def _deny(_ask: PermissionAsk) -> bool:
@@ -116,14 +117,25 @@ class AcpSession:
         self._write_lock = asyncio.Lock()
 
     # ── 对外 ──────────────────────────────────────────────────────────
-    async def run(self, prompt: str, *, timeout: float) -> AcpResult:
+    async def run(self, prompt: str, *, timeout: float, followup: Optional[str] = None) -> AcpResult:
+        """``followup``：第一条提示做完却没交回任何文字时，在同一个会话里再发这一条（只发一次，共用时限）。
+        真机 2026-11-04：OpenCode 某个动作被拒后直接结束本轮，什么都没交回。"""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         try:
             await self._start()
             await asyncio.wait_for(self._handshake(), timeout=min(timeout, 60))
             try:
-                response = await asyncio.wait_for(self._request("session/prompt", {
-                    "sessionId": self._session_id, "prompt": [{"type": "text", "text": prompt}]}), timeout=timeout)
-                self.result.stop_reason = str((response or {}).get("stopReason") or "")
+                for index, text in enumerate([prompt, followup]):
+                    if index and (not text or self.result.text.strip() or self.result.stop_reason != "end_turn"):
+                        break
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError
+                    response = await asyncio.wait_for(self._request("session/prompt", {
+                        "sessionId": self._session_id, "prompt": [{"type": "text", "text": text}]}), timeout=remaining)
+                    self.result.stop_reason = str((response or {}).get("stopReason") or "")
+                    self.result.followed_up = bool(index)
             except asyncio.TimeoutError:
                 self.result.error = "超过单轮时限"
                 await self._cancel_turn()

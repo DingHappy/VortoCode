@@ -4,7 +4,7 @@
 
 - 根是 ``TaskLedger`` 里 ``kind="team"`` 的任务，小组状态记在 ``task.team``；成员每次派活是一条协作子任务
   （``CollaborationService``，``dispatch.source == "team"``），归属 ``team-<根 id>``。
-- 额度记在根上：子任务数、轮数、步数、累计时限、协调人唤醒次数。先落盘预留再执行，预留不退款。
+- 不设额度（主人 2026-11-04 定）：用量只计数给主人看，不拦。防空转只靠无进展判定；每轮成员各有执行时限。
 - 协调人每次醒来前后调用 ``begin_wake`` / ``end_wake``：没有新进展或同一错误反复出现就转「等你」，不靠模型自述。
 - 协调人不能宣布完成：``submit`` 只把根交到「待你验收」，并要求每条验收标准都给证据。
 - 根的状态不用 ``running``：启动恢复扫描会把残留的 ``running`` 改标 ``interrupted``；协调回合被重启打断的
@@ -23,10 +23,11 @@ MODES = ("open", "private")
 LIVE = ("active", "waiting", "review")
 CLOSED = ("done", "failed", "cancelled")
 
-# 第一个切片的两种成员角色。工具面是封闭枚举；每次派活按角色的单轮合同扣额度。
+# 成员角色。工具面是封闭枚举；每轮按角色的单轮合同（步数、时限）执行。
 ROLES: Dict[str, Dict[str, Any]] = {
     "web-researcher": {"title": "研究员", "tools": "web_read", "web": True, "max_steps": 12, "timeout_seconds": 600},
-    "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 300},
+    # 审查员要读完整份材料：真机 2026-11-04 八千字的材料 300 秒没审完
+    "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 600},
     # 开发成员：在登记项目的一次性 worktree 里读写代码，不执行命令、不联网；验证与落分支由 VortoCode 做。
     # 只能由外部框架担任（自有 agent 改代码走隔离开发流水线），小组必须是 private 档位。
     "developer": {"title": "开发", "tools": "code_write", "web": False, "max_steps": 40, "timeout_seconds": 1800,
@@ -38,14 +39,21 @@ ENGINES: Dict[str, str] = {"vortocode": "VortoCode", "opencode": "OpenCode", "de
 # 还不能按成员换模型的框架（DeepSeek Harness 用它 ACP 档案里的默认模型）
 _ENGINES_WITHOUT_MODEL = ("deepseek-harness",)
 
-DEFAULT_LIMITS = {"tasks": 8, "rounds": 12, "steps": 96, "timeout_seconds": 3600, "wakes": 16, "parallel": 2}
-MAX_LIMITS = {"tasks": 32, "rounds": 48, "steps": 512, "timeout_seconds": 28800, "wakes": 64, "parallel": 4}
+# 只剩并发：同时在跑的成员数（排队，不拒绝）。子任务数、轮数、时长、唤醒次数都不设上限，只计数。
+DEFAULT_LIMITS = {"parallel": 2}
+MAX_LIMITS = {"parallel": 4}
 _USAGE_KEYS = ("tasks", "rounds", "steps", "timeout_seconds", "wakes")
 STALL_WAKES = 3
 _MAX_MEMBERS = 6
 _MAX_INBOX = 20
+_MAX_LOG = 200                    # 群聊记录要看得到整个过程（2026-11-04 起；之前只留 50 条）
 _MAX_INSTRUCTION = 16000          # 交叉审查开发成员的改动时，要求里带着 diff
 _LOCK = TASK_STATE_LOCK
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _text(value: object, limit: int = 2000) -> str:
@@ -63,10 +71,13 @@ def is_team_child(task: Any) -> bool:
 
 
 def normalize_limits(value: Optional[dict]) -> dict:
+    """只认并发 ``parallel``；旧版的额度键（tasks、rounds 等）不再生效，忽略。"""
     limits = dict(DEFAULT_LIMITS)
     for key, number in (value or {}).items():
-        if key not in MAX_LIMITS or type(number) is not int or not 1 <= number <= MAX_LIMITS[key]:
-            raise CollaborationConflict(f"额度 {key} 无效（1–{MAX_LIMITS.get(key, '?')}）")
+        if key not in MAX_LIMITS:
+            continue
+        if type(number) is not int or not 1 <= number <= MAX_LIMITS[key]:
+            raise CollaborationConflict(f"{key} 无效（1–{MAX_LIMITS[key]}）")
         limits[key] = number
     return limits
 
@@ -146,17 +157,17 @@ class TeamService:
         return root
 
     @staticmethod
-    def _event(root: BackgroundTask, kind: str, text: str = "") -> None:
+    def _event(root: BackgroundTask, kind: str, text: str = "", *, limit: int = 300, **extra: Any) -> None:
         root.team["events"] = int(root.team.get("events", 0)) + 1
         log = root.team.setdefault("log", [])
-        log.append({"kind": kind, "text": _text(text, 300), "seq": root.team["events"]})
-        root.team["log"] = log[-50:]
+        log.append({"kind": kind, "text": _text(text, limit), "seq": root.team["events"], "at": _now(), **extra})
+        root.team["log"] = log[-_MAX_LOG:]
 
     # ── 建根（主人批准之后由调用方调用） ────────────────────────────────
     def create(self, owner: str, *, objective: str, acceptance: List[str], members: List[dict],
                mode: str = "open", limits: Optional[dict] = None, private_refs: Optional[List[str]] = None,
                tid: Optional[str] = None, project: Optional[dict] = None) -> BackgroundTask:
-        if not owner:
+        if not isinstance(owner, str) or not owner:
             raise CollaborationConflict("任务上下文必须属于一个会话")
         objective = _text(objective, 2000)
         if not objective:
@@ -196,15 +207,12 @@ class TeamService:
             self._event(root, "created", objective)
             return self._save(root)
 
-    # ── 额度 ──────────────────────────────────────────────────────────
+    # ── 用量（只计数，不拦） ────────────────────────────────────────────
     @staticmethod
     def _charge(root: BackgroundTask, cost: Dict[str, int]) -> None:
-        used, limits = root.team["used"], root.team["limits"]
-        over = [key for key, value in cost.items() if used[key] + value > limits[key]]
-        if over:
-            raise CollaborationConflict(f"任务上下文额度不足（{'、'.join(over)}）；需要主人加预算")
+        used = root.team.setdefault("used", {})
         for key, value in cost.items():
-            used[key] += value
+            used[key] = int(used.get(key, 0)) + value
 
     @staticmethod
     def _member(root: BackgroundTask, name: str) -> dict:
@@ -216,7 +224,7 @@ class TeamService:
     # ── 协调人的动作 ───────────────────────────────────────────────────
     def assign(self, root_id: str, member: str, instruction: str, expected: str, *,
                tainted: bool = False) -> BackgroundTask:
-        """给成员派一件事：预留额度并落盘根，再建子任务。子任务建失败时预留不退。
+        """给成员派一件事：先记用量并落盘根，再建子任务。
 
         ``tainted``：要求里带着别的成员交回的外部内容（例如请审查员审研究员的结果），这条子任务一开始就是污点。"""
         if not instruction.strip() or not expected.strip():
@@ -245,7 +253,7 @@ class TeamService:
             return child
 
     def review(self, root_id: str, child_id: str, verdict: str, note: str) -> BackgroundTask:
-        """接受或返工一条成员结果；返工预留下一轮额度。"""
+        """接受或返工一条成员结果；返工即下一轮。"""
         with _LOCK:
             root = self._live(root_id)
             if child_id not in root.team["children"]:
@@ -316,18 +324,42 @@ class TeamService:
 
     # ── 协调人醒来 ─────────────────────────────────────────────────────
     def begin_wake(self, root_id: str) -> BackgroundTask:
-        """协调人每次醒来前调用：扣一次唤醒额度并标记回合进行中。额度用完转「等你」。"""
+        """协调人每次醒来前调用：记一次唤醒并标记回合进行中。"""
         with _LOCK:
             root = self._live(root_id)
-            try:
-                self._charge(root, {"wakes": 1})
-            except CollaborationConflict:
-                root.status, root.team["waiting_reason"] = "waiting", "协调人唤醒次数用完；要继续需要加预算"
-                self._event(root, "budget", root.team["waiting_reason"])
-                self._save(root)
-                raise
+            self._charge(root, {"wakes": 1})
             wake = root.team["wake"]
             wake.update(open=True, events_at_start=root.team["events"])
+            return self._save(root)
+
+    def note_said(self, root_id: str, text: str, *, tainted: bool = False) -> None:
+        """协调人一回合结束时对主人说的话，记进群聊（不算进展：在 end_wake 之后调用）。"""
+        text = _text(text, 1500)
+        if not text:
+            return
+        with _LOCK:
+            root = self.get(root_id)
+            self._event(root, "said", text, limit=1500, tainted=bool(tainted))
+            self._save(root)
+
+    def note_member_result(self, root_id: str, child: BackgroundTask) -> BackgroundTask:
+        """成员这一轮的结果（交回 / 失败）。连续 STALL_WAKES 次失败就转「等你」：协调人每次都会重新派活，
+        按「醒来有没有新动作」判不出这种空转（真机 2026-11-04：研究员连续多轮没交回，小组跑了四十分钟）。"""
+        with _LOCK:
+            root = self.get(root_id)
+            wake = root.team["wake"]
+            if child.status == "done":
+                wake["member_failures"] = 0
+            elif child.status in ("failed", "interrupted"):
+                wake["member_failures"] = int(wake.get("member_failures", 0)) + 1
+                if root.status == "active" and wake["member_failures"] >= STALL_WAKES:
+                    reason = (f"成员连续 {STALL_WAKES} 次没有交回结果（最近一次：{child.collaboration.get('assignee')}"
+                              f"：{_text(child.error, 120) or '没有说明'}）")
+                    root.status, root.team["waiting_reason"] = "waiting", reason
+                    wake["member_failures"] = 0
+                    self._event(root, "stalled", reason)
+            else:
+                return root
             return self._save(root)
 
     def end_wake(self, root_id: str, *, error: str = "") -> BackgroundTask:
@@ -389,21 +421,6 @@ class TeamService:
             self._save(root)
             return items
 
-    def add_budget(self, root_id: str, extra: Dict[str, int]) -> BackgroundTask:
-        """主人批准加预算后调用：上调额度并恢复进行中。"""
-        with _LOCK:
-            root = self._live(root_id, statuses=("active", "waiting"))
-            limits = dict(root.team["limits"])
-            for key, number in extra.items():
-                if key not in _USAGE_KEYS or type(number) is not int or number < 1:
-                    raise CollaborationConflict(f"加预算项无效：{key}")
-                limits[key] = min(MAX_LIMITS[key], limits[key] + number)
-            root.team["limits"] = limits
-            root.status, root.team["waiting_reason"] = "active", ""
-            root.team["wake"].update(idle=0, same_error=0, last_error="")
-            self._event(root, "budget_added", ", ".join(f"{k}+{v}" for k, v in extra.items()))
-            return self._save(root)
-
     def decide(self, root_id: str, accept: bool, note: str = "") -> BackgroundTask:
         """主人验收：通过即完成；退回则带着意见回到进行中。"""
         with _LOCK:
@@ -438,7 +455,7 @@ class TeamService:
             return []
         children = self.children(root)
         running = sum(1 for child in children if child.status == "running")
-        slots = max(0, root.team["limits"]["parallel"] - running)
+        slots = max(0, int(root.team.get("limits", {}).get("parallel", DEFAULT_LIMITS["parallel"])) - running)
         return [child for child in children if child.status == "queued"][:slots]
 
     def record_delivery(self, root_id: str, child_id: str, delivery: Dict[str, Any]) -> BackgroundTask:
@@ -472,6 +489,83 @@ class TeamService:
                               **({"delivery": child.collaboration["delivery"]} if child.collaboration.get("delivery") else {})}
                              for child in children],
                 "tainted": bool(root.team.get("tainted")) or any(child.collaboration.get("tainted") for child in children)}
+
+
+# ── 群聊视图（ADR-014 S3：主人像看群聊一样看小组） ─────────────────────────
+_ROOT_SPEAKERS = {"ask_owner": "coordinator", "submitted": "coordinator", "said": "coordinator",
+                  "owner_reply": "owner", "accepted": "owner", "returned": "owner",
+                  "stalled": "system", "failed": "system", "stopped": "system"}
+
+
+def member_states(service: "TeamService", root: BackgroundTask) -> List[Dict[str, Any]]:
+    """成员名单：角色、执行框架、模型，以及现在在不在做、做了几轮、失败几次（都按记录算）。"""
+    children = service.children(root)
+    out = []
+    for item in root.team["members"]:
+        mine = [child for child in children if child.collaboration.get("assignee") == item["name"]]
+        messages = [message for child in mine for message in child.collaboration.get("messages") or []]
+        busy = next((child for child in mine if child.status in ("running", "queued")), None)
+        out.append({"name": item["name"], "role": item["role"], "title": ROLES[item["role"]]["title"],
+                    "engine": item.get("engine", "vortocode"), "model": item.get("model", ""),
+                    "state": "working" if busy is not None and busy.status == "running"
+                    else "queued" if busy is not None else "idle",
+                    "current": busy.id if busy is not None else "",
+                    "rounds": sum(1 for message in messages if message.get("kind") == "started"),
+                    "delivered": sum(1 for message in messages if message.get("kind") == "submitted"),
+                    "failures": sum(1 for message in messages if message.get("kind") in ("failed", "interrupted"))})
+    return out
+
+
+def transcript(service: "TeamService", root: BackgroundTask) -> List[Dict[str, Any]]:
+    """把小组的经过排成一条群聊：协调人派活 / 接受 / 返工 / 问你 / 交付 / 说的话，成员交回或失败，你的回复与验收，
+    系统事件。全部来自记录（成员子任务的消息带时间；小组事件 2026-11-04 起带时间，更早的只能排在最后）。
+    含外部内容的标 ``tainted``，前端只当纯文本显示。"""
+    roles = {item["name"]: item for item in root.team["members"]}
+    rows: List[Dict[str, Any]] = [{"at": root.created, "speaker": "system", "kind": "created",
+                                   "text": f"小组开工：{root.team['objective']}", "order": 0}]
+    for child in service.children(root):
+        member = child.collaboration.get("assignee") or ""
+        meta = roles.get(member, {})
+        tainted = bool(child.collaboration.get("tainted"))
+        messages = list(child.collaboration.get("messages") or [])
+        last_submitted = max((index for index, message in enumerate(messages) if message.get("kind") == "submitted"),
+                             default=-1)
+        for index, message in enumerate(messages):
+            kind, body, at = message.get("kind"), str(message.get("body") or ""), message.get("created") or ""
+            base = {"at": at, "child_id": child.id, "round": message.get("round"), "member": member,
+                    "role": meta.get("role", ""), "engine": meta.get("engine", "vortocode"), "order": 1}
+            if kind == "assigned":
+                rows.append({**base, "speaker": "coordinator", "kind": "assigned", "mention": member, "text": body,
+                             "tainted": tainted})
+            elif kind == "submitted":
+                full = child.result if index == last_submitted and child.status == "done" and child.result else body
+                rows.append({**base, "speaker": "member", "kind": "result", "text": full, "tainted": tainted})
+            elif kind in ("failed", "interrupted", "cancelled"):
+                rows.append({**base, "speaker": "member", "kind": kind, "text": body})
+            elif kind in ("accept", "rework"):
+                rows.append({**base, "speaker": "coordinator", "kind": kind, "mention": member, "text": body,
+                             "tainted": tainted})
+    submission = root.team.get("submission") if isinstance(root.team.get("submission"), dict) else None
+    for event in root.team.get("log") or []:
+        speaker = _ROOT_SPEAKERS.get(event.get("kind"))
+        if speaker is None:
+            continue
+        row = {"at": event.get("at") or "", "speaker": speaker, "kind": event["kind"], "text": event.get("text", ""),
+               "seq": event.get("seq", 0), "order": 2,
+               "tainted": bool(event.get("tainted")) or (event["kind"] == "submitted" and bool(root.team.get("tainted")))}
+        if event["kind"] == "ask_owner":
+            row["mention"] = "owner"
+        if event["kind"] == "submitted" and submission:
+            row["text"] = submission.get("summary") or row["text"]
+            row["evidence"] = [{"criterion": item.get("criterion"), "text": item.get("text", ""),
+                                "evidence": item.get("evidence", "")} for item in submission.get("evidence") or []]
+        rows.append(row)
+    dated = sorted((row for row in rows if row["at"]), key=lambda row: (row["at"], row["order"], row.get("seq", 0)))
+    undated = sorted((row for row in rows if not row["at"]), key=lambda row: row.get("seq", 0))
+    for row in dated + undated:
+        row.pop("order", None)
+        row.pop("seq", None)
+    return dated + undated
 
 
 # ── 协调记录（与主对话分开；只存协调人自己的上下文） ─────────────────────────

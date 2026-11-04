@@ -6,7 +6,7 @@
 - ``kick``：只把能开始的成员子任务放进池子，不叫醒协调人（派活工具用它）。
 - ``recover``：启动时按 ``TeamService.recover_after_restart`` 处理被打断的协调回合；被打断的成员子任务由启动
   扫描标为 interrupted，协调人醒来时会看到。
-- 协调回合的唤醒额度用完、无进展判定、验收证据都在 ``TeamService`` 里，本模块不重复判断。
+- 无进展判定、验收证据都在 ``TeamService`` 里，本模块不重复判断。不设额度。
 """
 from __future__ import annotations
 
@@ -77,6 +77,7 @@ class TeamRunner:
     def _member_job(self, root_id: str, child_id: str) -> Callable[[], Awaitable[None]]:
         async def job() -> None:
             child = await self._member(self.repo_root, root_id, child_id)
+            self._note(root_id, child)
             self.wake(root_id, describe(child))
         return job
 
@@ -90,10 +91,17 @@ class TeamRunner:
                 if child.status in {"queued", "running"}:
                     child = work.abort(child_id, child.collaboration["round"], cancelled=cancelled,
                                        error=error[:300] or ("" if cancelled else "成员执行异常"))
+                self._note(root_id, child)
                 self.wake(root_id, describe(child))
             except Exception as failure:  # noqa: BLE001
                 logger.warning("成员子任务 %s 收尾失败：%s", child_id, type(failure).__name__)
         return stopped
+
+    def _note(self, root_id: str, child: Any) -> None:
+        try:
+            self.service.note_member_result(root_id, child)
+        except Exception as error:  # noqa: BLE001 —— 记不上不影响叫醒协调人
+            logger.warning("任务上下文 %s 记录成员结果失败：%s", root_id, type(error).__name__)
 
     # ── 协调人 ────────────────────────────────────────────────────────
     def wake(self, root_id: str, event: str) -> None:
@@ -126,7 +134,7 @@ class TeamRunner:
             self.kick(root_id)
             if root_id not in self._pending and nudges < STALL_NUDGES and self._stuck(root_id):
                 # 回合结束时既没人在跑、也没等主人或交验收：不会再有事件叫醒它，这里补一次。
-                # 连续没进展由 TeamService.end_wake 转「等你」，唤醒额度另有上限，不会空转下去。
+                # 连续没进展由 TeamService.end_wake 转「等你」；这里同一次推进最多补叫 STALL_NUDGES 次，不会空转。
                 self._pending[root_id] = [NUDGE]
 
     def _stuck(self, root_id: str) -> bool:

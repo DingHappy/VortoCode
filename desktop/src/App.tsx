@@ -8,6 +8,8 @@ import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { CodexActionCard } from "./components/CodexActionCard";
 import { chatCodexActions } from "./lib/codexActionOutcome";
 import { AssistantWorkday } from "./components/AssistantWorkday";
+import { TeamChat } from "./components/TeamChat";
+import { TeamNoteActions } from "./components/TeamNoteActions";
 import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
@@ -91,7 +93,7 @@ import type {
   TurnActivity,
   WorkspaceScope,
   DesktopLlmProfileStatus,
-  ProjectSessionSummary, CodexAction, PhoneChat} from "./types";
+  ProjectSessionSummary, CodexAction, PhoneChat, TeamSummary} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, residentRetryReason, residentRetrySettled, retryResident } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -232,7 +234,10 @@ function App() {
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
   // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
-  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management">("chat");
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team">("chat");
+  // 任务小组（ADR-014 S3）：侧栏「最近」里每个小组一条，点开在中间看群聊
+  const [teamList, setTeamList] = useState<TeamSummary[]>([]);
+  const [openTeamId, setOpenTeamId] = useState<string | null>(null);
   useStickToBottom(conversationScrollRef, autoScrollRef, mainView);
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
@@ -2439,6 +2444,26 @@ function App() {
     return `${message}（${local.repoRoot}）。审完可在那里用 gh pr create --head ${branch} 开 PR。`;
   };
 
+  const openTeamChat = (id: string) => {
+    setOpenTeamId(id); setMainView("team"); setInspectorOpen(false);
+  };
+
+  // 主对话里「任务小组交付了」那条下面的「验收通过」：与群聊里同一个接口，成功后刷新侧栏的状态
+  const acceptTeamFromChat = async (id: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("还没连上常驻电脑");
+    await client.decideTeam(id, true, "");
+    try { setTeamList(await client.listTeams()); } catch { /* 下次轮询再刷 */ }
+  };
+  const teamNoteActions = useRef({ open: openTeamChat, accept: acceptTeamFromChat });
+  teamNoteActions.current = { open: openTeamChat, accept: acceptTeamFromChat };
+  // ChatHistory 是 memo 的：卡片渲染函数只随小组状态与连接变，流式输出时历史不重画
+  const renderChatCard = useCallback((message: ConversationMessage) => message.card?.kind === "team"
+    ? <TeamNoteActions card={message.card} status={teamList.find(team => team.id === message.card!.id)?.status}
+        connected={connection === "connected"} onOpen={id => teamNoteActions.current.open(id)}
+        onAccept={id => teamNoteActions.current.accept(id)} />
+    : null, [teamList, connection]);
+
   const openDispatch = async (id: string) => {
     setSelectedCodexAction(null);
     setSelectedDispatchId(id);
@@ -2547,6 +2572,20 @@ function App() {
     return () => { window.clearTimeout(later); stop(); };
   }, [appMode, connection, busy, activeSid, refreshActivity]);
 
+  // 任务小组列表（侧栏「最近」）：只在常驻助理上有；读不到就保持上次的列表，不当成「没有小组」
+  const residentConnected = appMode === "assistant" && connection === "connected" && onAssistantHost();
+  useEffect(() => {
+    if (!residentConnected) { setTeamList([]); return; }
+    let alive = true;
+    const read = async () => {
+      const client = clientRef.current;
+      if (!client) return;
+      try { const teams = await client.listTeams(); if (alive) setTeamList(teams); } catch { /* 保持上次 */ }
+    };
+    const stop = startPolling(read, { intervalMs: 30_000, hiddenIntervalMs: 120_000, immediate: true, visibility: document });
+    return () => { alive = false; stop(); };
+  }, [residentConnected, assistantScope]);
+
   // 助理面板的操作：每次渲染按此刻的 scope 现装（点下去绑定的就是这一刻的会话和电脑）
   const panelActions = assistantPanelActions({
     client: () => clientRef.current,
@@ -2586,6 +2625,9 @@ function App() {
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
+              teams={teamList.map(team => ({ id: team.id, title: team.objective, status: team.status }))}
+              currentTeam={mainView === "team" ? openTeamId ?? "" : ""}
+              onOpenTeam={openTeamChat}
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
               sideChats={sessions.filter((session) => session.sid !== mainChatSid && !isPhoneSession(session.sid) && (session.messages > 0 || session.sid === activeSid))
                 .map((session) => ({ sid: session.sid, title: session.title, busy: session.status === "working" }))}
@@ -2701,6 +2743,11 @@ function App() {
             onChooseProject={() => void chooseRepo()}
             onOpenBrowserSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }}
           />
+        ) : mainView === "team" && appMode === "assistant" && openTeamId && clientRef.current ? (
+          <section className="team-chat-page">
+            <TeamChat key={openTeamId} id={openTeamId} client={clientRef.current} connected={connection === "connected"}
+              onPull={pullTeamBranch} />
+          </section>
         ) : mainView === "customize" && appMode === "assistant" ? (
           <CustomizePage plugins={plugins} checks={pluginChecks} busy={pluginBusy}
             onCheck={(plugin) => pluginAction("check", plugin)}
@@ -2772,7 +2819,8 @@ function App() {
             )}
 
             <ChatHistory messages={messages} activityGroups={activityGroups} busy={busy} activeTurnRid={activeTurnRid}
-              assistant={appMode === "assistant"} focusedRid={conversationLocation.rid} />
+              assistant={appMode === "assistant"} focusedRid={conversationLocation.rid}
+              renderCard={renderChatCard} />
 
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
               && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard
@@ -2953,7 +3001,7 @@ function App() {
                   connected={connection === "connected"} resident={onAssistantHost()} dispatches={dispatches}
                   dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
                   confirmation={pendingConfirm} onConfirmation={() => focusConfirmation()}
-                  onPullTeamBranch={pullTeamBranch}
+                  onPullTeamBranch={pullTeamBranch} onTeam={openTeamChat}
                   onDispatch={id => void openDispatch(id)} onGoals={id => {
                     setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
                   }}

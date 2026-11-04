@@ -91,5 +91,5 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 - **发版（2026-10-27 定）**：只从 main 发，需要时就发、不按固定周期；先合并再打包，`npm run release:verify -- --mode release` 的 `commitOnMain` 关卡会拦下不在 main 上的提交。装好后跑 `npm run check:installed`；改到连接、恢复或 Codex 控制时，按 `docs/P1_ACCEPTANCE.md` 跑对应场景。
 - **测试必须离线、确定性**：live/联网/烧 token 的测试默认跳过；不要引入真实 API 依赖。
 - **契约测试断行为、不断源码**：不要用 `inspect.getsource` 查子串来"证明"某个防护存在——那种测试会在它声称要防的回归里保持绿色（本仓已清理过一轮此类安慰剂）。
-- README 里带 "已退役删除" 标注的子系统（5 角色批处理编排引擎、workspaces、独立 verification_loop、终端执行接口等）**已删除**，别照着那些历史设计写代码；当前真实能力以 README「核心特性」+ 实际代码为准。
+- 历史文档（`docs/ARCHITECTURE.md`、`docs/DEVELOPMENT_SUMMARY.md` 等）里的 5 角色批处理编排引擎、workspaces、独立 verification_loop、终端执行接口等子系统**已删除**，别照着那些历史设计写代码；当前真实能力以 README「主要能力」+ 实际代码为准。
 - 对外暴露的服务默认只听 127.0.0.1；暴露前必须设 `VORTOCODE_API_TOKEN`（设了则所有 `/api/*` 与 `/ws` 强制鉴权）。命令执行走 `require_shell()` 闸，文件路径必须经 `resolve_within()` 限定在工作目录内。

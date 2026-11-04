@@ -31,16 +31,20 @@ def test_private_context_cannot_have_a_web_member_and_open_cannot_carry_private_
         service.create("sid-owner", objective="x", acceptance=["y"], members=[{"name": "开发", "role": "dev"}])
 
 
-def test_assign_reserves_budget_first_and_children_belong_to_the_team(tmp_path):
+def test_assign_counts_usage_without_a_budget_and_children_belong_to_the_team(tmp_path):
+    # 主人 2026-11-04：不设额度。旧的额度键（tasks 等）被忽略，派活只计数、不拦
     service, root = _team(tmp_path, limits={"tasks": 1})
+    assert root.team["limits"] == {"parallel": 2}
     child = service.assign(root.id, "研究员", "查三家的公开价格", "价格表和来源链接")
     assert child.owner_session == child_owner(root.id)
     assert child.collaboration["dispatch"]["source"] == "team" and child.collaboration["dispatch"]["root"] == root.id
     root = service.get(root.id)
     assert root.team["used"]["tasks"] == 1 and root.team["used"]["steps"] == 12 and root.team["children"] == [child.id]
-    with pytest.raises(CollaborationConflict, match="额度不足"):
+    for _ in range(3):
         service.assign(root.id, "审查员", "审一下", "问题清单")
-    assert len(service.get(root.id).team["children"]) == 1          # 额度不够时不建子任务
+    assert len(service.get(root.id).team["children"]) == 4 and service.get(root.id).team["used"]["tasks"] == 4
+    with pytest.raises(CollaborationConflict, match="parallel"):
+        _team(tmp_path / "p", limits={"parallel": 9})
 
 
 def test_rework_charges_another_round_and_a_tainted_result_taints_the_root(tmp_path):
@@ -65,18 +69,18 @@ def test_coordinator_that_makes_no_progress_is_stopped_by_code(tmp_path):
     assert root.status == "waiting" and "没有新进展" in root.team["waiting_reason"]
 
 
-def test_same_error_three_times_and_exhausted_wakes_hand_back_to_the_owner(tmp_path):
+def test_same_error_three_times_hands_back_to_the_owner_and_wakes_are_unlimited(tmp_path):
     service, root = _team(tmp_path)
     for _ in range(STALL_WAKES):
         service.begin_wake(root.id)
         root = service.end_wake(root.id, error="模型超时")
     assert root.status == "waiting" and "同一个错误" in root.team["waiting_reason"]
-    service2, other = _team(tmp_path / "b", limits={"wakes": 1})
-    service2.begin_wake(other.id)
-    service2.end_wake(other.id)
-    with pytest.raises(CollaborationConflict):
+    service2, other = _team(tmp_path / "b", limits={"wakes": 1})          # 旧额度键：忽略
+    for number in range(20):                                              # 有进展就一直能醒
         service2.begin_wake(other.id)
-    assert service2.get(other.id).status == "waiting"
+        service2.assign(other.id, "研究员", f"查第 {number} 家", "价格")
+        service2.end_wake(other.id)
+    assert service2.get(other.id).status == "active" and service2.get(other.id).team["used"]["wakes"] == 20
 
 
 def test_restart_reruns_a_cut_coordinator_turn_once_then_fails(tmp_path):

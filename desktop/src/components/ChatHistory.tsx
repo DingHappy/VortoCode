@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import { sourceLabel } from "../lib/mainChat";
 import type { ConversationMessage, TurnActivity } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -6,13 +6,15 @@ import { TurnTimeline } from "./TurnTimeline";
 
 /** 流式正文与输入草稿更新时，历史消息不重新解析；时间线状态仍由原回合资料驱动。 */
 export const ChatHistory = memo(function ChatHistory({ messages, activityGroups, busy, activeTurnRid,
-  assistant, focusedRid }: {
+  assistant, focusedRid, renderCard }: {
   messages: ConversationMessage[];
   activityGroups: Map<string, TurnActivity[]>;
   busy: boolean;
   activeTurnRid: string | null;
   assistant: boolean;
   focusedRid?: string | null;
+  /** 代码写进对话的状态消息（如任务小组交付了）下面的按钮 */
+  renderCard?: (message: ConversationMessage) => ReactNode;
 }) {
   const outputRids = useMemo(() => new Set(messages
     .filter(message => message.role === "assistant" && message.text.trim().length > 0)
@@ -23,7 +25,8 @@ export const ChatHistory = memo(function ChatHistory({ messages, activityGroups,
       tabIndex={focusedRid && message.rid === focusedRid ? -1 : undefined}>
       {/* 助理模式不写「你」和助理名字：左右位置已经说明是谁说的，只在回复来自手机时标一句 */}
       {assistant
-        ? message.role === "assistant" && message.source ? <div className="message-author"><span className="message-source">回复在手机上</span></div> : null
+        ? message.role === "assistant" && message.source
+          ? <div className="message-author"><span className="message-source">{message.source === "team" ? "任务小组" : "回复在手机上"}</span></div> : null
         : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
       <div className="message-body">
         {message.role === "user" && sourceLabel(message.source) && <div className="message-source">{sourceLabel(message.source)}</div>}
@@ -31,6 +34,7 @@ export const ChatHistory = memo(function ChatHistory({ messages, activityGroups,
           {message.images.map((src, index) => <img key={index} src={src} alt={`发送的图片 ${index + 1}`} />)}
         </div>}
         {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text}
+        {message.card && renderCard?.(message)}
       </div>
     </article>
     {message.role === "user" && message.rid && activityGroups.has(message.rid) && (

@@ -119,7 +119,7 @@ history rewriting does not make a still-valid credential safe.
 
 ## Documentation Honesty
 
-- README "core features" reflects current behavior.
+- README "主要能力" reflects current behavior.
 - Historical design docs are clearly marked as historical.
 - Roadmap/planned features are not described as production-ready.
 - Internal hostnames, home-directory paths, incident details and links to

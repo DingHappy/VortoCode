@@ -1,6 +1,6 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, Users, X } from "lucide-react";
 import { Button, GroupTitle, IconButton, NavItem } from "./ui";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
@@ -29,6 +29,8 @@ export const ASSISTANT_PAGES: Array<{ id: AssistantPage; label: string; icon: Re
   { id: "customize", label: "定制", icon: <Puzzle aria-hidden="true" />, hint: "插件、连接的服务、个人技能" },
 ];
 
+const TEAM_BADGE: Record<string, string> = { waiting: "等你", review: "待验收", failed: "失败", done: "已完成", cancelled: "已停" };
+
 function LiveDot() {
   return <i className="vc-live-dot" aria-label="进行中" />;
 }
@@ -40,7 +42,7 @@ function matches(title: string, query: string): boolean {
 
 /** 助理模式左侧：新对话、搜索、一级入口，下面是「最近」：主要聊天置顶带星标，手机和本机的聊天在右侧注明来源。 */
 export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
-  search, query = "", onSelect, onPage, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat }: {
+  search, query = "", onSelect, onPage, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
   /** 手机上和助理的聊天：点开只读查看 */
@@ -61,11 +63,16 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   onSelect: (sid: string) => void;
   onPage?: (page: AssistantPage) => void;
   onNewSideChat: () => void;
+  /** 任务小组（ADR-014）：每个小组像一个群聊，点开在中间看经过和成员 */
+  teams?: Array<{ id: string; title: string; status: string }>;
+  currentTeam?: string;
+  onOpenTeam?: (id: string) => void;
 }) {
   const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
   const sides = sideChats.filter((chat) => matches(chat.title || "新的旁聊", query));
   const phones = phoneChats.filter((chat) => matches(chat.title, query));
   const offline = offlineChats.filter((chat) => matches(chat.title || "本机对话", query));
+  const groups = teams.filter((team) => matches(team.title, query));
   return <>
     <nav className="vc-side-nav" aria-label="助理">
       <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
@@ -81,6 +88,9 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
       {matches("主要聊天", query) && <NavItem className="vc-nav-item--recent" icon={<Star aria-hidden="true" />} label="主要聊天"
         title={mainChat.preview || "主要聊天"} current={!page && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
         meta={mainChat.busy ? <LiveDot /> : undefined} />}
+      {groups.map((team) => <NavItem key={team.id} className="vc-nav-item--recent vc-nav-item--team" icon={<Users aria-hidden="true" />}
+        label={team.title} title={`任务小组：${team.title}`} current={currentTeam === team.id} onClick={() => onOpenTeam?.(team.id)}
+        meta={team.status === "active" ? <LiveDot /> : TEAM_BADGE[team.status] ? <span className="vc-team-badge">{TEAM_BADGE[team.status]}</span> : undefined} />)}
       {sides.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title || "新的旁聊"}
         current={!page && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />)}
       {phones.map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent" label={chat.title.replace(/^📱\s*/, "")}

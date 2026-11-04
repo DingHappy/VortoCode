@@ -12,7 +12,7 @@ from fastapi import Request
 
 from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable, SessionCapacityError
-from src.gateway.main_conversation import set_main_conversation_host
+from src.gateway.main_conversation import set_main_conversation_host, set_main_note_host
 from src.gateway.session_event_stream import SessionEventStream
 from src.gateway.tool_summary import tool_summary
 from src.gateway.turn_bindings import TurnBindings
@@ -987,6 +987,34 @@ async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, 
 
 
 set_main_conversation_host(_run_main_conversation_turn)
+
+
+async def _post_main_conversation_note(*, key: str, rid: str, source: str, text: str, history_note: str,
+                                       card: Optional[Dict[str, Any]]) -> bool:
+    """代码拼的状态消息写进主要聊天：等前面的回合跑完再落，不开模型回合、不占「正在跑」。
+
+    transcript 里是给主人看的那条（带 ``card``，Desktop 据此画按钮）；history 里是给主 agent 的系统说明，
+    下一回合它就知道这件事。"""
+    context = _key_actor_context(key)
+
+    async def execute() -> None:
+        sess = context.get_session()
+        _append_transcript(sess, "assistant", text, rid=rid, source=source)
+        if card:
+            sess["transcript"][-1]["card"] = dict(card)
+        agent = sess["agent"]
+        agent.history = list(getattr(agent, "history", None) or []) + [{"role": "user", "content": history_note}]
+        context.persist()
+        await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
+
+    try:
+        return await _ACTORS.run_exclusive(context, execute, wait_timeout=1800.0)
+    except Exception:  # noqa: BLE001 —— 旁路：写不进对话不影响小组本身，推送照常
+        logger.warning("状态消息没能写进主要聊天", exc_info=True)
+        return False
+
+
+set_main_note_host(_post_main_conversation_note)
 
 
 def _prompt_queue(websocket) -> list[Dict[str, Any]]:

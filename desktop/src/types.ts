@@ -88,7 +88,11 @@ export interface ConversationMessage {
   source?: string;
   /** 本次会话里随消息发出的图片（data URL，只在内存里，不落盘；重开会话后只剩「🖼×N」标记） */
   images?: string[];
+  /** 代码写进对话的状态消息带的卡片（如任务小组交付了）；按钮由界面按 kind 画 */
+  card?: ChatCard;
 }
+
+export interface ChatCard { kind: "team"; id: string; status: string }
 
 export type TurnActivityStatus = "running" | "completed" | "succeeded" | "failed" | "blocked" | "cancelled" | string;
 
@@ -346,9 +350,26 @@ export interface TeamChild {
 export interface TeamMember { name: string; role: string; engine: string; model?: string }
 export interface TeamSummary {
   id: string; objective: string; status: TeamStatus; mode: string; waiting_reason: string;
+  /** 用量只计数（不设额度）；limits 只剩并发 parallel */
   used: Record<string, number>; limits: Record<string, number>; project?: string | null;
   members: TeamMember[]; children: TeamChild[]; tainted: boolean; updated_at?: string;
 }
+/** 群聊视图（/api/teams/{id}/transcript）：成员名单 + 按时间排的经过。text 可能含外部内容，只当纯文本显示。 */
+export interface TeamChatMember {
+  name: string; role: string; title: string; engine: string; model?: string;
+  state: "working" | "queued" | "idle"; current?: string; rounds: number; delivered: number; failures: number;
+}
+export interface TeamChatMessage {
+  at: string; speaker: "coordinator" | "member" | "owner" | "system"; kind: string; text: string;
+  member?: string; mention?: string; role?: string; engine?: string; child_id?: string; round?: number; tainted?: boolean;
+  evidence?: Array<{ criterion: number; text?: string; evidence: string }>;
+}
+export interface TeamTranscript {
+  team: { id: string; objective: string; status: TeamStatus; mode: string; waiting_reason: string; used: Record<string, number>;
+    project?: string | null; tainted: boolean; acceptance: string[]; updated_at?: string };
+  members: TeamChatMember[]; messages: TeamChatMessage[];
+}
+
 export interface TeamDetail extends Omit<TeamSummary, "project"> {
   acceptance: string[]; created_at?: string; error?: string;
   project: { name: string; repo_root: string; port: number | null } | null;

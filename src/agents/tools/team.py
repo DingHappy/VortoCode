@@ -1,6 +1,6 @@
-"""主 agent 管任务小组的工具（ADR-014 S1d）：开小组、看进度、回话、验收、加预算、停止。
+"""主 agent 管任务小组的工具（ADR-014 S1d）：开小组、看进度、回话、验收、停止。
 
-- 开小组与加预算会启动成员、花模型额度：按「执行」类过确认门，卡片列出目标、验收、成员、档位与额度。
+- 开小组会启动成员、花模型用量：按「执行」类过确认门，卡片列出目标、验收、成员与档位。不设额度（2026-11-04）。
 - 验收与回话是主人自己的事项（OWN_DATA）：污点回合里照样要问。
 - 停止是保护性动作，不问。
 - 看进度只给代码拼的结构化视图；协调人写的总结在根带污点时按外部内容给（本回合即为污点）。
@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from src.agents.tool import Tool
 
@@ -18,7 +18,7 @@ _ROLE_TEXT = {"web-researcher": "联网查资料", "reviewer": "只看交给它�
 _ENGINE_TEXT = {"opencode": "OpenCode", "deepseek-harness": "DeepSeek Harness"}
 
 
-def _card(objective: str, acceptance: List[str], members: List[dict], mode: str, limits: dict,
+def _card(objective: str, acceptance: List[str], members: List[dict], mode: str, limits: Optional[dict] = None,
           project: Optional[dict] = None) -> str:
     lines = ["开一个任务小组？", f"目标：{objective}", "验收标准："]
     lines += [f"  {index + 1}. {text}" for index, text in enumerate(acceptance)]
@@ -31,8 +31,7 @@ def _card(objective: str, acceptance: List[str], members: List[dict], mode: str,
                      "改完由 VortoCode 在沙箱里跑测试，改动落成本地分支——不推送、不合并，由你审")
     lines.append("档位：" + ("open（成员可联网，小组看不到你的记忆、目标和对话）" if mode == "open"
                             else "private（成员不能联网）"))
-    lines.append(f"额度：最多 {limits['tasks']} 个子任务、{limits['rounds']} 轮、累计 {limits['timeout_seconds'] // 60} 分钟、"
-                 f"协调人醒来 {limits['wakes']} 次；同时最多 {limits['parallel']} 个成员在跑")
+    lines.append("不设额度：小组做到交付验收或你停止为止；连续 3 次没有进展会停下来问你")
     return "\n".join(lines)
 
 
@@ -42,7 +41,8 @@ def _resident_project(name: str) -> Optional[dict]:
     return next((item for item in load_resident_projects() if item["name"].lower() == wanted), None)
 
 
-def build_team_tools(repo_root: str, *, confirm: Any, owner: str, allow_developers: bool = False) -> List[Tool]:
+def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[], Any]",
+                     allow_developers: bool = False) -> List[Tool]:
     """``allow_developers``：只有 Desktop 会话能开带开发成员的小组（批准钥匙 #723 合并前，手机与 IM 都不行）。"""
     from src.agents.gate import request
     from src.agents.taint import mark_tainted
@@ -89,7 +89,9 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str, allow_develope
         card = _card(objective, acceptance, members, mode, limits, project)
         if not await request(confirm, card, EXECUTE):
             return "主人没有同意开这个小组；不要重复提议同一内容，问清楚要怎么改。"
-        root = service().create(owner, objective=objective, acceptance=acceptance, members=members, mode=mode,
+        # Desktop 会话传进来的是取当前会话 ID 的函数（同派活工具）；真机 2026-11-04 曾把函数原样存盘，存不进去
+        session = str((owner() if callable(owner) else owner) or "")
+        root = service().create(session, objective=objective, acceptance=acceptance, members=members, mode=mode,
                                 limits=limits, project=project)
         runner().wake(root.id, "任务刚开始：先拆解，再给成员派活")
         return (f"小组已开工：{root.id}。成员交回结果时由小组自己推进；需要主人决定、交付验收或失败时会通知。"
@@ -132,16 +134,6 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str, allow_develope
             runner().wake(team_id, "主人退回了交付，按意见继续")
         return f"小组 {team_id} 已{'完成' if root.status == 'done' else '退回，继续进行'}。"
 
-    async def add_budget(args: dict) -> str:
-        team_id = str(args.get("team_id") or "")
-        extra = {key: value for key, value in (args.get("extra") or {}).items() if type(value) is int}
-        text = "、".join(f"{key} +{value}" for key, value in extra.items())
-        if not extra or not await request(confirm, f"给任务小组 {team_id} 加预算：{text}？", EXECUTE):
-            return "没有加预算。"
-        service().add_budget(team_id, extra)
-        runner().wake(team_id, "主人加了预算，接着做")
-        return f"已给小组 {team_id} 加预算：{text}。"
-
     async def stop(args: dict) -> str:
         root = runner().stop(str(args.get("team_id") or ""), str(args.get("reason") or "主人停止"))
         return f"已停止小组 {root.id}；在跑的成员已请求取消。"
@@ -156,7 +148,7 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str, allow_develope
              {"objective": "目标", "acceptance": "验收标准列表（1–10 条）",
               "members": "成员列表，每项 {name, role, engine 可选, model 可选}", "mode": "open（默认）或 private",
               "project": "有 developer 成员时必填：常驻电脑上登记的项目名",
-              "limits": "可选额度 {tasks, rounds, steps, timeout_seconds, wakes, parallel}"},
+              "limits": "可选 {parallel}：同时最多几个成员在跑（1–4，默认 2）"},
              guarded(propose), read_only=False, serial=True,
              argument_schema={"acceptance": {"type": "array", "items": {"type": "string"}},
                               "members": {"type": "array", "items": {"type": "object", "properties": {
@@ -164,7 +156,7 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str, allow_develope
                                   "engine": {"type": "string", "enum": ["vortocode", "opencode", "deepseek-harness"]},
                                   "model": {"type": "string"}}}},
                               "limits": {"type": "object"}}),
-        Tool("team_list", "列出进行中的任务小组：状态、成员、子任务、额度用量。", {}, guarded(overview), read_only=True),
+        Tool("team_list", "列出进行中的任务小组：状态、成员、子任务和用量。", {}, guarded(overview), read_only=True),
         Tool("team_open", "查看一个任务小组的详情；交付了的会带上协调人的总结和逐条证据。",
              {"team_id": "小组 ID"}, guarded(open_one), read_only=True),
         Tool("team_reply", "把主人的回答转给正在等主人的任务小组。", {"team_id": "小组 ID", "text": "主人的原话"},
@@ -172,9 +164,6 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: str, allow_develope
         Tool("team_decide", "主人对小组的交付做决定：accept=true 验收通过，false 退回并写明原因。",
              {"team_id": "小组 ID", "accept": "true/false", "note": "退回原因"}, guarded(decide), read_only=False, serial=True,
              argument_schema={"accept": {"type": "boolean"}}),
-        Tool("team_add_budget", "主人同意后给小组加预算。extra 例如 {\"wakes\": 8, \"rounds\": 4}。",
-             {"team_id": "小组 ID", "extra": "要加的额度"}, guarded(add_budget), read_only=False, serial=True,
-             argument_schema={"extra": {"type": "object"}}),
         Tool("team_stop", "停止一个任务小组，取消在跑的成员。", {"team_id": "小组 ID", "reason": "可选原因"},
              guarded(stop), read_only=False, serial=True),
     ]
