@@ -2085,7 +2085,9 @@ def test_folded_message_has_no_private_keys_and_keeps_native_pairing():
 
     assert set(folded) == {"role", "content"}           # 只有 role/content，绝无私有键
     _json.dumps(folded)                                 # 能干净序列化进请求体/快照
-    assert folded["content"].count("[工具 ") == 2 and "已折叠" in folded["content"]
+    from src.agents.tool_results import decode_tool_results
+    parts = decode_tool_results(folded["content"], names=["read_file", "grep"])
+    assert parts is not None and all("已折叠" in body for _, body in parts)
 
     agent.history[2] = folded
     native = _to_native_messages(agent.history)

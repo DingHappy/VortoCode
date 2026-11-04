@@ -27,6 +27,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/workflow/tasks/goal_submission.py` / `workbench/goals.py` | 原 Goal/Task 台账的确认快照、固定提交身份、持久关联与保存失败处理；[提交合同](GOAL_SUBMISSION.md) | 新执行池、自动重放、自动批准或以任务结束推导目标达成 |
 | `src/agents/agent_loop.py` | 模型回合、历史、上下文和媒体消息，接入共享工具运行层 | 客户端导航、任务持久化 |
 | `src/agents/tool.py` / `tool_runtime.py` | Agent 无关的工具定义、声明适配、能力/权限检查、调度、Hook/审计与污点传播；[接入合同](TOOL_RUNTIME.md) | 模型调用、会话存储、外部 Agent 自带工具的执行权限 |
+| `src/agents/tool_results.py` | 原模型历史文本的版本化结果编解码、调用顺序核对和旧格式读取 | 工具执行、真实性证明、权限、状态台账或模型请求 |
 | `src/agents/backends/control.py` / `backends/codex.py` | 现有会话的状态与轮次控制合同、Codex 协议适配；[核心控制合同](AGENT_BACKENDS.md) | 启动额外进程、工具执行、审批代决、会话存储或任意核心切换 |
 | `src/agents/backends/execution.py` | 可扩展的执行身份/状态/进展/结果与证据投影、版本编解码；[执行合同](EXECUTION_CONTRACT.md) | 任务数据库、调度、授权、验收判定或自动插件加载 |
 | `src/agents/backends/recovery.py` | 可信执行观察上的失败/备用/人工核对纯决策，以及停止内层自动重试的信号；[恢复合同](EXECUTION_RECOVERY.md) | 进程启动、模型调用、持久调度、权限或跨回合预算授权 |
