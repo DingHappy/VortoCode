@@ -34,7 +34,7 @@ def test_protocol_is_specific_and_stable_without_changing_mode_permissions():
                 assert '{"tool": "工具名", "args": {参数...}}' in prompt
             if mode == "plan":
                 assert "plan 模式下写/重型工具" in prompt
-                assert "request_build" in prompt
+                assert "request_build" not in prompt  # 未装配的升级工具不能出现在使用指引中
             else:
                 assert "现有权限、确认门和 capability 限制仍然生效" in prompt
 

@@ -104,6 +104,78 @@ async def test_mode_escalation_is_shared_with_the_callers_turn_state():
     assert (await other.execute("write", {})).status == "blocked"
 
 
+@pytest.mark.parametrize("failure,reason", [
+    (None, "authorization_unavailable"),
+    (False, "authorization_not_granted"),
+    (TimeoutError("private detail"), "authorization_timeout"),
+    (RuntimeError("private detail"), "authorization_error"),
+])
+async def test_confirmation_causes_stay_distinct_and_do_not_repeat_within_a_turn(failure, reason):
+    asked, ran, events = [], [], []
+    async def confirm(name, args):
+        asked.append(name)
+        if isinstance(failure, Exception):
+            raise failure
+        return False
+    async def write(args):
+        ran.append(args)
+        return "written"
+    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False), Tool("read", "Read", {}, echo)],
+                      on_escalate=confirm if failure is not None else None,
+                      on_event=lambda stage, event: events.append((stage, event)))
+    for _ in range(2):
+        result = await runtime.execute("write", {}, "plan")
+        assert result.status == "blocked" and result.reason == reason
+        assert "private detail" not in result.text and "未执行" in result.text
+        assert "用户拒绝了" not in result.text
+    assert len(asked) == (0 if failure is None else 1) and ran == []
+    assert not runtime.context.state.escalated
+    assert all(event["reason"] == reason for stage, event in events if stage == "finish")
+    assert (await runtime.execute("read", {}, "plan")).status == "succeeded"
+
+
+async def test_concurrent_mode_requests_ask_once_and_cancellation_is_not_a_refusal():
+    asked = []
+    async def approve(name, args):
+        asked.append(name)
+        await asyncio.sleep(0)
+        return True
+    runtime, _ = host([Tool("write", "Write", {}, echo, read_only=False)], on_escalate=approve)
+    results = await asyncio.gather(runtime.execute("write", {}), runtime.execute("write", {}))
+    assert len(asked) == 1 and all(result.status == "succeeded" for result in results)
+    async def cancel(name, args):
+        raise asyncio.CancelledError()
+    other, _ = host([Tool("write", "Write", {}, echo, read_only=False)], on_escalate=cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await other.execute("write", {})
+    assert other.context.state.escalation_result is None and not other.context.state.escalated
+
+
+async def test_old_pending_confirmation_cannot_authorize_a_new_turn():
+    started, release, asked = asyncio.Event(), asyncio.Event(), []
+    async def confirm(name, args):
+        asked.append(name)
+        if len(asked) == 1:
+            started.set()
+            await release.wait()
+            return True
+        return False
+    ran = []
+    async def write(args):
+        ran.append(args)
+        return "written"
+    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False)], on_escalate=confirm)
+    old = asyncio.create_task(runtime.execute("write", {}))
+    await started.wait()
+    runtime.context.state.reset_escalation()
+    current = asyncio.create_task(runtime.execute("write", {}))
+    release.set()
+    stale, refused = await asyncio.gather(old, current)
+    assert stale.status == refused.status == "blocked" and ran == []
+    assert stale.reason == "authorization_stale" and refused.reason == "authorization_not_granted"
+    assert len(asked) == 2 and not runtime.context.state.escalated
+
+
 @pytest.mark.parametrize("restriction", ["capability", "permission", "hook"])
 async def test_guards_block_before_handlers_or_escalation(restriction):
     calls = []
