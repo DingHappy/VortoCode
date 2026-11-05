@@ -2,9 +2,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 
 import type { PendingConfirmation, PromptQueueItem, TrustStatus } from "../types";
-import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./ComposerPanels";
+import { AttachmentChips, AttachmentReadStatus, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./ComposerPanels";
 
 const noop = () => {};
+
+it("only shows the attachment read notice while files are pending, with a named cancel action", () => {
+  expect(renderToStaticMarkup(<AttachmentReadStatus pending={0} onCancel={noop} />)).toBe("");
+  const html = renderToStaticMarkup(<AttachmentReadStatus pending={2} onCancel={noop} />);
+  expect(html).toContain('role="status"'); expect(html).toContain("正在读取 2 个附件");
+  expect(html).toContain("读完后可发送"); expect(html).toContain("取消本次附件选择");
+});
 // runtime 发来的两种计划授权请求的开头（与 lib/onboarding 识别的一致）
 const PLAN_EXECUTION_CONFIRMATION_PREFIX = "plan 阶段分析已完成，需要你授权才能动手。";
 const PLAN_BUDGET_CONFIRMATION_PREFIX = "plan 阶段预算已到，尚未形成可审阅计划；继续需要授权。";

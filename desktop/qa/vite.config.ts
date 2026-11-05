@@ -16,6 +16,7 @@ export default defineConfig({
       trust: new URL("trust.html", import.meta.url).pathname,
       content: new URL("content.html", import.meta.url).pathname,
       sessionInfo: new URL("session-info.html", import.meta.url).pathname,
+      composerAttachments: new URL("composer-attachments.html", import.meta.url).pathname,
       replies: new URL("replies.html", import.meta.url).pathname,
       mcp: new URL("mcp.html", import.meta.url).pathname,
       board: new URL("task-board.html", import.meta.url).pathname,
