@@ -19,6 +19,7 @@ from src.agents.notice import housekeeping
 from src.agents.taint import mark_tainted
 from src.agents.tool import Tool, ToolTurnYield, tool_definitions
 from src.agents.tool_calls import ToolCallError, argument_object
+from src.agents.tool_arguments import ToolArgumentError, validate_arguments
 from src.agents.wait_clock import minus_wait, waited
 from src.agents.tools._common import _max_tool_result
 from src.llm.hard_budget import claim_check_tool
@@ -130,10 +131,11 @@ class ToolRuntime:
         call_id = "tool-" + uuid.uuid4().hex[:16]
         started = time.monotonic()
         waited_before = waited()          # 确认框停在这个工具上的时间不算它的耗时
+        event_args = args if isinstance(args, dict) and all(isinstance(key, str) for key in args) else {}
         self._emit("start", {
             "id": call_id,
             "name": name,
-            "args": dict(args) if isinstance(args, dict) and all(isinstance(key, str) for key in args) else {},
+            "args": dict(event_args),
             "mode": mode,
         })
 
@@ -141,7 +143,7 @@ class ToolRuntime:
             self._emit("finish", {
                 "id": call_id,
                 "name": name,
-                "args": dict(args) if isinstance(args, dict) and all(isinstance(key, str) for key in args) else {},
+                "args": dict(event_args),
                 "mode": mode,
                 "status": status,
                 "result": str(result),
@@ -155,6 +157,17 @@ class ToolRuntime:
             return finish("blocked", f"{error} 工具未执行。")
         if mode not in {"plan", "build"}:
             return finish("blocked", "未知工具执行模式，已拒绝执行")
+        try:
+            # Match declaration precedence. Provider input_schema is a separate,
+            # full JSON Schema contract, not interpreted as this local subset.
+            if tool.input_schema is None:
+                validate_arguments(args, tool.argument_schema, tool.required_args)
+                if set(tool.argument_schema) - tool.args.keys() or set(tool.required_args) - tool.args.keys():
+                    raise ToolArgumentError("本机参数合同引用了未声明字段，已拒绝执行；请由工具提供方修正。")
+            else:
+                validate_arguments(args, {})
+        except ToolArgumentError as error:
+            return finish("blocked", f"[参数拦截] {error}")
         if ctx.capabilities is not None:
             if ctx.supervised:
                 from src.agents.capabilities import _sensitive_arg

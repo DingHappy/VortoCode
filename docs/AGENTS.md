@@ -12,6 +12,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
+| `agents/tool_arguments.py` / `Tool.argument_schema` 与 `required_args` | 本机显式类型、必填、枚举、范围和列表合同的有界纯校验；由 ToolRuntime 在授权与执行前调用；[工具合同](TOOL_RUNTIME.md) | 完整外部 JSON Schema、参数修复、默认值注入、权限授予或执行结果验收 |
 | `workflow/workbench/skill_learning.py` / 原 PersonalSkills | 原派活证据绑定的手动技能草稿、差异审核与停用保存，沿用原锁和版本启用；[学习审核](SKILL_LEARNING.md) | 模型提炼、自动学习/启用/重试、新任务库、独立账号身份或权限委托 |
 | 原 Tool 的 `ToolResource` / `gateway/session_resources.py` | 当前 WS 会话已装配资源的有界只读投影，复用原连接代次；[资源总览](SESSION_RESOURCES.md) | 凭据读取、设备发现/连接、工具执行、批准、资源数据库或新注册表 |
 | `agents/confirmation_context.py` / 原网站 BrowserSession | 当前工具链的确认展示与真实回合标识，任务内网站接管及本回合拒绝去重；[接管合同](WEBSITE_HANDOFF.md) | 批准决定、任务库、新执行循环、通用凭据管理或后台自动恢复 |

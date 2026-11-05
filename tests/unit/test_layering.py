@@ -32,7 +32,7 @@ def _imports(path, root=SRC):
 @pytest.mark.parametrize('module', ['agents/gate.py', 'agents/taint.py', 'agents/capabilities.py',
                                     'memory/write_policy.py', 'sandbox/policy.py',
                                     'agents/tool.py', 'agents/tool_runtime.py',
-                                    'agents/tool_results.py', 'agents/tool_calls.py',
+                                    'agents/tool_results.py', 'agents/tool_calls.py', 'agents/tool_arguments.py',
                                     'agents/backends/control.py', 'agents/backends/codex.py',
                                     'agents/backends/execution.py', 'agents/backends/observation_order.py',
                                     'agents/backends/acp.py'])
