@@ -3,6 +3,18 @@ import json
 from src.agents.agent_loop import MainAgent, _tool_catalog
 from src.agents.tool import Tool, function_schemas
 
+
+async def test_missing_tools_policy_reaches_the_actual_model_request():
+    requests = []
+    class Script:
+        async def chat(self, messages, **_kwargs):
+            requests.append(messages)
+            return {"content": "当前入口缺少排班工具，尚未安排。"}
+    agent = MainAgent([], llm=Script(), native=False)
+    await agent.run_turn("帮我安排一个定时任务")
+    policy = requests[0][0]["content"]
+    assert "缺工具时不要把用户推去用 crontab、GitHub Actions、IFTTT 这类外部服务" in policy
+
 async def noop(_args):
     return "fixture"
 
