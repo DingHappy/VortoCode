@@ -71,15 +71,24 @@ def member_prompt(task: Any) -> str:
     last = lambda kinds, rounds: next((item for item in reversed(messages)           # noqa: E731
                                        if item.get("kind") in kinds and item.get("round") in rounds), None)
     previous = last(("submitted", "failed", "interrupted"), (number - 1,))
+    saved = next((item for item in reversed(messages)
+                  if item.get("kind") == "submitted"
+                  and type(item.get("round")) is int and 0 < item["round"] < number
+                  and str(item.get("body") or "").strip()), None)
     note = last(("followup",), (number,))
     parts = [base, f"\n\n这是第 {number} 轮（返工）。你记不得上一轮，下面是上一轮的情况。"]
     if previous and previous.get("kind") == "submitted" and str(previous.get("body") or "").strip():
         parts.append(f"【你上一轮交回的】\n{previous['body']}")
     else:
         parts.append("【上一轮没有交回内容】" + (f"：{previous.get('body')}" if previous and previous.get("body") else ""))
+        if saved:
+            parts.append(f"【最近可用的保存稿 · 第 {saved['round']} 轮】\n{saved['body']}")
+    if saved and (saved.get("truncated") is True or "truncated" not in saved):
+        parts.append("【保存稿完整性待核对】这是服务端保留的文本，可能被截断；缺失部分没有恢复，不要编造或声称已复原全文。")
     if note and str(note.get("body") or "").strip():
         parts.append(f"【这次要改的】\n{note['body']}")
-    parts.append("在上一轮的基础上修改，不要从头重做；最后直接写出完整的交回内容。")
+    parts.append("以最近可用的保存稿为基础修改，不要从头重做；直接交回修订内容。"
+                 "没有保存稿或正文有缺口时明确说明，不能假设还记得其他任务或旧会话的全文。")
     return "\n\n".join(parts)
 
 
