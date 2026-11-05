@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 import json
+import logging
 from typing import Any, Callable, List, Optional
 
 from src.agents.agent_loop import MainAgent
@@ -178,6 +179,7 @@ def build_coordinator(repo_root: str, root: Any, *, kick: Callable[[str], None],
     from src.llm.client import LLMClient
     agent = agent_factory(build_tools(repo_root, root.id, kick=kick), llm=llm if llm is not None else LLMClient(),
                           max_steps=12, extra_system=system_prompt(root), native=native_default(),
+                          raise_llm_errors=True,
                           confirm_gate=make_confirm_gate(auto_approve=False, can_ask_human=False))
     model = root.team.get("coordinator", {}).get("model")
     if model and llm is None:
@@ -193,21 +195,52 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
 
     service = notifying_service(repo_root)
     root = service.begin_wake(root_id)
-    agent = build_coordinator(repo_root, root, kick=kick, llm=llm, agent_factory=agent_factory)
-    agent.history = load_history(repo_root, root_id)
-    message = event_message(events, service.take_inbox(root_id))
-    error, said, tainted = "", "", False
+    agent, inbox = None, []
+    error, completed, cancelled, history_loaded = "", False, False, False
+    said, tainted = "", False
     try:
+        agent = build_coordinator(repo_root, root, kick=kick, llm=llm, agent_factory=agent_factory)
+        agent.history = load_history(repo_root, root_id)
+        history_loaded = True
+        inbox = service.checkout_inbox(root_id)
+        # The exact receipt identities acknowledged below are included in this
+        # request. A result arriving during the model turn is not in this batch.
+        receipts = [f"成员回执 {child_id}（第 {item['round']} 轮，{item['status']}），用 team_result 核对"
+                    for child_id, item in root.team["wake"].get("result_snapshot", {}).items()]
+        message = event_message(events + receipts, inbox)
         with merge_nested_taint() as nested:
             said = str(await agent.run_turn(message, mode="build") or "")
         tainted = nested.child_tainted
         if tainted:
             service.mark_tainted(root_id)
+        completed = True
+    except asyncio.CancelledError:
+        cancelled = True
+        error = "协调回合已取消；未确认交付的主人留言已保留"
+        raise
     except Exception as failure:  # noqa: BLE001 —— 一次协调失败记成错误，同一错误反复出现由 end_wake 判定
         error = f"{type(failure).__name__}: {str(failure)[:200]}"
     finally:
-        save_history(repo_root, root_id, list(getattr(agent, "history", []) or []))
-        service.end_wake(root_id, error=error)
+        try:
+            if agent is not None and history_loaded:
+                save_history(repo_root, root_id, list(getattr(agent, "history", []) or []))
+                if completed:
+                    service.acknowledge_inbox(root_id, [item["id"] for item in inbox],
+                                             seen_results=root.team["wake"].get("result_snapshot", {}))
+        except Exception as failure:
+            error = f"协调记录或留言回执保存失败：{type(failure).__name__}: {str(failure)[:200]}"
+            try:
+                if service.get(root_id).status == "active":
+                    service.ask_owner(root_id, "协调记录或留言回执未能保存，可能已有动作生效；请核对现有任务后决定是否继续")
+            except Exception:
+                logging.getLogger(__name__).warning("任务上下文 %s 未能保存等待核对状态", root_id, exc_info=True)
+        finally:
+            try:
+                service.end_wake(root_id, error=error)
+            except Exception:
+                if not cancelled:
+                    raise
+                logging.getLogger(__name__).warning("任务上下文 %s 取消后的收尾未能保存", root_id, exc_info=True)
     if said.strip():
         # 群聊里协调人说的话；在 end_wake 之后记，不算进展。污点回合说的话标外部内容
         try:

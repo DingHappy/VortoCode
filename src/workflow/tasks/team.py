@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from src.workflow.tasks.collaboration import CollaborationService
@@ -202,7 +203,8 @@ class TeamService:
                 "limits": normalize_limits(limits), "used": {key: 0 for key in _USAGE_KEYS},
                 "children": [], "coordinator": {"kind": "main_agent", "model": ""},
                 "events": 0, "log": [], "inbox": [], "waiting_reason": "", "submission": None, "tainted": False,
-                "wake": {"open": False, "cuts": 0, "events_at_start": 0, "idle": 0, "last_error": "", "same_error": 0},
+                "wake": {"open": False, "cuts": 0, "events_at_start": 0, "idle": 0, "last_error": "", "same_error": 0,
+                         "seen_results": {}},
             }
             self._event(root, "created", objective)
             return self._save(root)
@@ -323,13 +325,44 @@ class TeamService:
             return root
 
     # ── 协调人醒来 ─────────────────────────────────────────────────────
+    def _result_snapshot(self, root: BackgroundTask) -> Dict[str, dict]:
+        return {child.id: {"round": child.collaboration["round"], "status": child.status}
+                for child in self.children(root)
+                if child.status in {"done", "failed", "cancelled", "interrupted"}
+                and child.collaboration.get("review") != "accepted"}
+
+    def _initialize_seen_results(self, root: BackgroundTask) -> bool:
+        if "seen_results" in root.team["wake"]:
+            return False
+        # Older completed wakes have no delivery cursor. Do not manufacture new
+        # events out of their old terminal records on every upgrade/restart.
+        # An interrupted wake still takes the explicit recovery/recheck path.
+        legacy_completed = root.team["used"].get("wakes", 0) > 0 and not root.team["wake"]["open"]
+        root.team["wake"]["seen_results"] = self._result_snapshot(root) if legacy_completed else {}
+        return True
+
+    def unseen_member_results(self, root_id: str) -> List[BackgroundTask]:
+        """Return receipts not delivered in a saved coordinator turn, irrespective of acceptance."""
+        with _LOCK:
+            root = self.get(root_id)
+            if self._initialize_seen_results(root):
+                self._save(root)
+            seen = root.team["wake"]["seen_results"]
+            snapshot = self._result_snapshot(root)
+            return [child for child in self.children(root)
+                    if child.id in snapshot and seen.get(child.id) != snapshot[child.id]]
+
     def begin_wake(self, root_id: str) -> BackgroundTask:
         """协调人每次醒来前调用：记一次唤醒并标记回合进行中。"""
         with _LOCK:
             root = self._live(root_id)
+            self._initialize_seen_results(root)
             self._charge(root, {"wakes": 1})
             wake = root.team["wake"]
-            wake.update(open=True, events_at_start=root.team["events"])
+            snapshot = self._result_snapshot(root)
+            wake.update(open=True, events_at_start=root.team["events"],
+                        result_snapshot={key: value for key, value in snapshot.items()
+                                         if wake["seen_results"].get(key) != value})
             return self._save(root)
 
     def note_said(self, root_id: str, text: str, *, tainted: bool = False) -> None:
@@ -407,19 +440,44 @@ class TeamService:
             raise CollaborationConflict("回复不能为空")
         with _LOCK:
             root = self._live(root_id, statuses=("active", "waiting"))
-            root.team["inbox"] = (root.team["inbox"] + [{"from": "owner", "text": text}])[-_MAX_INBOX:]
+            root.team["inbox"] = (root.team["inbox"] + [{"id": uuid.uuid4().hex, "from": "owner", "text": text}])[-_MAX_INBOX:]
             root.status, root.team["waiting_reason"] = "active", ""
             root.team["wake"].update(idle=0, same_error=0, last_error="")
             self._event(root, "owner_reply", text)
             return self._save(root)
 
-    def take_inbox(self, root_id: str) -> List[dict]:
-        """协调人读走主人的留言（读一次就清）。"""
+    def checkout_inbox(self, root_id: str) -> List[dict]:
+        """Snapshot owner messages without consuming them; identify older queued messages in place."""
         with _LOCK:
             root = self.get(root_id)
-            items, root.team["inbox"] = list(root.team["inbox"]), []
-            self._save(root)
-            return items
+            seen, changed = set(), False
+            for item in root.team["inbox"]:
+                identity = item.get("id")
+                if not isinstance(identity, str) or not identity or identity in seen:
+                    identity = item["id"] = uuid.uuid4().hex
+                    changed = True
+                seen.add(identity)
+            if changed:
+                self._save(root)
+            return [dict(item) for item in root.team["inbox"]]
+
+    def acknowledge_inbox(self, root_id: str, message_ids: List[str], *, seen_results: Optional[dict] = None) -> None:
+        """Acknowledge saved input snapshots atomically; later arrivals remain unseen."""
+        with _LOCK:
+            root = self.get(root_id)
+            ids = set(message_ids)
+            kept = [item for item in root.team["inbox"] if item.get("id") not in ids]
+            changed = len(kept) != len(root.team["inbox"])
+            if seen_results:
+                seen = root.team["wake"].setdefault("seen_results", {})
+                for key, value in seen_results.items():
+                    previous = seen.get(key)
+                    if previous is None or value["round"] >= previous["round"]:
+                        seen[key] = dict(value)
+                        changed = True
+            if changed:
+                root.team["inbox"] = kept
+                self._save(root)
 
     def decide(self, root_id: str, accept: bool, note: str = "") -> BackgroundTask:
         """主人验收：通过即完成；退回则带着意见回到进行中。"""
@@ -432,7 +490,7 @@ class TeamService:
                 if not note.strip():
                     raise CollaborationConflict("退回要写明原因")
                 root.status, root.team["submission"] = "active", None
-                root.team["inbox"] = (root.team["inbox"] + [{"from": "owner", "text": _text(note, 2000)}])[-_MAX_INBOX:]
+                root.team["inbox"] = (root.team["inbox"] + [{"id": uuid.uuid4().hex, "from": "owner", "text": _text(note, 2000)}])[-_MAX_INBOX:]
                 root.team["wake"].update(idle=0, same_error=0, last_error="")
                 self._event(root, "returned", note)
             return self._save(root)

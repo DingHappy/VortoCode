@@ -129,6 +129,9 @@ async def test_the_owner_can_talk_in_the_group_but_not_after_delivery(setup):
     data = await teams.message_team(root.id, teams.TeamMessage(text="也看看 D 家"))
     assert runner.woken[-1] == (root.id, "主人在群里说话了")
     assert data["messages"][-1]["speaker"] == "owner" and data["messages"][-1]["text"] == "也看看 D 家"
+    snapshot = service.checkout_inbox(root.id)
+    assert snapshot and all(item.get("id") for item in snapshot)
+    assert snapshot == service.checkout_inbox(root.id)
     assert service.get(root.id).team["inbox"][-1]["text"] == "也看看 D 家"     # 协调人下回合会读到
     service.submit(root.id, "推荐 A", [{"criterion": 0, "evidence": "A 最便宜"}])
     with pytest.raises(HTTPException) as delivered:

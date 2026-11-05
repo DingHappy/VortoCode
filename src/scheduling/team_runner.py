@@ -56,10 +56,13 @@ class TeamRunner:
         self._coordinator = coordinator or coordinator_turn
         self._pending: Dict[str, List[str]] = {}
         self._driving: Dict[str, asyncio.Task] = {}
+        self._closing = False
 
     # ── 成员 ──────────────────────────────────────────────────────────
     def kick(self, root_id: str) -> None:
         """把能开始的成员子任务放进后台池。"""
+        if self._closing:
+            return
         try:
             root = self.service.get(root_id)
             children = self.service.runnable(root)
@@ -69,27 +72,37 @@ class TeamRunner:
         for child in children:
             if self.runner.is_active(child.id):
                 continue
-            self.runner.enqueue_existing(child.id, self._member_job(root_id, child.id),
-                                         on_cancel=self._member_stopped(root_id, child.id, cancelled=True),
-                                         on_failure=lambda error, cid=child.id: self._member_stopped(
-                                             root_id, cid, error=f"{type(error).__name__}: {error}")())
+            number = child.collaboration["round"]
+            self.runner.enqueue_existing(child.id, self._member_job(root_id, child.id, number),
+                                         on_cancel=self._member_stopped(root_id, child.id, number, cancelled=True),
+                                         on_failure=lambda error, cid=child.id, n=number: self._member_stopped(
+                                             root_id, cid, n, error=f"{type(error).__name__}: {error}")())
 
-    def _member_job(self, root_id: str, child_id: str) -> Callable[[], Awaitable[None]]:
+    def _member_job(self, root_id: str, child_id: str, expected_round: int) -> Callable[[], Awaitable[None]]:
         async def job() -> None:
+            root = self.service.get(root_id)
+            work = self.service.collaboration(root)
+            current = work.get(child_id)
+            if current.collaboration["round"] != expected_round or current.status != "queued":
+                return
             child = await self._member(self.repo_root, root_id, child_id)
+            if work.get(child_id).collaboration["round"] != expected_round:
+                return
             self._note(root_id, child)
             self.wake(root_id, describe(child))
         return job
 
-    def _member_stopped(self, root_id: str, child_id: str, *, cancelled: bool = False,
+    def _member_stopped(self, root_id: str, child_id: str, expected_round: int, *, cancelled: bool = False,
                         error: str = "") -> Callable[[], None]:
         def stopped() -> None:
             try:
                 root = self.service.get(root_id)
                 work = self.service.collaboration(root)
                 child = work.get(child_id)
+                if child.collaboration["round"] != expected_round:
+                    return
                 if child.status in {"queued", "running"}:
-                    child = work.abort(child_id, child.collaboration["round"], cancelled=cancelled,
+                    child = work.abort(child_id, expected_round, cancelled=cancelled,
                                        error=error[:300] or ("" if cancelled else "成员执行异常"))
                 self._note(root_id, child)
                 self.wake(root_id, describe(child))
@@ -105,15 +118,27 @@ class TeamRunner:
 
     # ── 协调人 ────────────────────────────────────────────────────────
     def wake(self, root_id: str, event: str) -> None:
+        if self._closing:
+            return
         self._pending.setdefault(root_id, []).append(event)
         task = self._driving.get(root_id)
         if task is None or task.done():
-            self._driving[root_id] = asyncio.get_running_loop().create_task(self._drive(root_id))
+            task = asyncio.get_running_loop().create_task(self._drive(root_id))
+            self._driving[root_id] = task
+            task.add_done_callback(lambda completed: self._drive_finished(root_id, completed))
+
+    def _drive_finished(self, root_id: str, completed: asyncio.Task) -> None:
+        if self._driving.get(root_id) is completed:
+            self._driving.pop(root_id, None)
+        if not completed.cancelled():
+            error = completed.exception()
+            if error is not None:
+                logger.warning("任务上下文 %s 调度回合异常结束：%s", root_id, type(error).__name__)
 
     async def _drive(self, root_id: str) -> None:
         from src.workflow.tasks.errors import CollaborationConflict
         nudges = 0
-        while root_id in self._pending:
+        while not self._closing and root_id in self._pending:
             events = self._pending.pop(root_id)
             nudges = nudges + 1 if events == [NUDGE] else 0
             self.kick(root_id)
@@ -150,6 +175,8 @@ class TeamRunner:
     # ── 启动与停止 ─────────────────────────────────────────────────────
     async def recover(self) -> None:
         from src.workflow.tasks.team import LIVE
+        if self._closing:
+            return
         for root in self.service.list():
             if root.status not in LIVE:
                 continue
@@ -159,9 +186,11 @@ class TeamRunner:
                 continue
             if outcome == "failed" or root.status != "active":
                 continue
-            cut = [child for child in self.service.children(root) if child.status == "interrupted"]
+            cut = self.service.unseen_member_results(root.id)
             if cut:
                 self.wake(root.id, "；".join(describe(child) for child in cut))
+            elif root.team.get("inbox"):
+                self.wake(root.id, "仍有主人留言未完成交付；先核对现有任务状态和执行结果，再处理留言")
             else:
                 self.kick(root.id)
 
@@ -176,7 +205,12 @@ class TeamRunner:
         return root
 
     async def close(self) -> None:
-        for task in list(self._driving.values()):
+        self._closing = True
+        self._pending.clear()
+        tasks = list(self._driving.values())
+        for task in tasks:
             if not task.done():
                 task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._driving.clear()

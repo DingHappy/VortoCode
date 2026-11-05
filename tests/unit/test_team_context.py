@@ -102,7 +102,11 @@ def test_submit_needs_evidence_for_every_criterion_and_only_the_owner_completes(
     with pytest.raises(CollaborationConflict):
         service.assign(root.id, "研究员", "再查", "x")                 # 待验收时协调人不能再派活
     root = service.decide(root.id, False, "没有考虑自建成本")
-    assert root.status == "active" and service.take_inbox(root.id) == [{"from": "owner", "text": "没有考虑自建成本"}]
+    assert root.status == "active"
+    inbox = service.checkout_inbox(root.id)
+    assert len(inbox) == 1 and inbox[0]["from"] == "owner" and inbox[0]["text"] == "没有考虑自建成本"
+    service.acknowledge_inbox(root.id, [inbox[0]["id"]])
+    assert service.checkout_inbox(root.id) == []
     service.submit(root.id, "推荐 A", [{"criterion": 0, "evidence": "价格表"}, {"criterion": 1, "evidence": "含自建"}])
     assert service.decide(root.id, True).status == "done"
 
