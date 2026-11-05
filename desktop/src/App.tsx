@@ -10,6 +10,7 @@ import { chatCodexActions } from "./lib/codexActionOutcome";
 import { AssistantWorkday } from "./components/AssistantWorkday";
 import { TeamChat } from "./components/TeamChat";
 import { TeamNoteActions } from "./components/TeamNoteActions";
+import { WaitingInbox, waitingTeams } from "./components/WaitingInbox";
 import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
@@ -22,9 +23,8 @@ import { startPolling } from "./lib/polling";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, BackToAssistant, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
-import { TaskPill } from "./components/TaskPill";
 import { AssistantGoals } from "./components/AssistantGoals";
-import { assistantFeed, isPhoneSession, taskFeedItem } from "./lib/activityFeed";
+import { assistantFeed, isPhoneSession, taskFeedItem, type FeedItem } from "./lib/activityFeed";
 import { AssistantActivity, AssistantActivityDetail } from "./components/AssistantActivity";
 import { ComputerLauncher, ComputerWorkspacePanel } from "./components/ComputerWorkspace";
 import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
@@ -2386,7 +2386,6 @@ function App() {
     confirmation: pendingConfirm });
   const assistantSummary = assistantAttention(assistantFeedItems);
   const assistantWaiting = assistantSummary.decisions.length;
-  const assistantBusy = assistantSummary.running;
   const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
   const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
     .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
@@ -2448,6 +2447,31 @@ function App() {
 
   const openTeamChat = (id: string) => {
     setOpenTeamId(id); setMainView("team"); setInspectorOpen(false);
+  };
+
+  // 动态里点一条：确认卡、Codex 动作、任务单、后台任务、原对话位置。面板与主要聊天顶部的「等你处理」共用。
+  const openFeedItem = (item: FeedItem) => {
+    if (item.confirmationId) { focusConfirmation(item.confirmationId); return; }
+    if (item.codexActionId) {
+      setSelectedDispatchId(null);
+      setSelectedCodexAction({ client: clientRef.current, scope: assistantScope, id: item.codexActionId }); return;
+    }
+    if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
+    if (item.taskId) { focusTask(item.taskId); return; }
+    const sid = item.session?.replace(/^sid-/, "");
+    if (sid && isPhoneSession(sid)) { openPhoneChat(sid, item.rid); return; }
+    if (sid) {
+      setMainView("chat");
+      void switchSession(sid).then(opened => {
+        const client = clientRef.current;
+        if (opened && client && item.rid && mainViewRef.current === "chat") conversationLocation.locate({ client, sid, rid: item.rid });
+      });
+    }
+  };
+  // 从「等你处理」点进去：Codex 动作和任务单的详情在助理面板「动态」里，先把面板打开到那里
+  const openWaitingItem = (item: FeedItem) => {
+    if (item.codexActionId || item.dispatchId) { setAssistantTab("feed"); setInspectorOpen(true); }
+    openFeedItem(item);
   };
 
   // 主对话里「任务小组交付了」那条下面的「验收通过」：与群聊里同一个接口，成功后刷新侧栏的状态
@@ -2641,7 +2665,7 @@ function App() {
               page={assistantPage === "library" || assistantPage === "customize" ? assistantPage : null}
               search={sidebarSearch("搜索聊天")}
               query={sidebarQuery}
-              waiting={assistantWaiting}
+              waiting={assistantWaiting + waitingTeams(teamList).length}
               waitingUncertain={!activityComplete}
               onPage={openAssistantPage}
               onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
@@ -2786,8 +2810,7 @@ function App() {
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
             panelOpen={inspectorOpen} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
-            taskPill={appMode === "assistant" ? <TaskPill waiting={assistantWaiting} busy={assistantBusy} exceptions={assistantSummary.exceptions.length} uncertain={!activityComplete}
-              open={assistantPage === "tasks"} onOpen={() => openAssistantPage("tasks")} /> : undefined}
+            taskPill={undefined /* ADR-016：等你处理在主要聊天顶部，不再有顶栏胶囊 */}
             // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
             status={connection !== "connected" && (
               <span className={`connection-pill ${connection}`} title={`${runtime.workdir || repoRoot || "通用会话"} · 协议 ${protocolVersion ?? "—"}`}>
@@ -2810,6 +2833,10 @@ function App() {
               autoScrollRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
             }}
           >
+            {appMode === "assistant" && activeSid === mainChatSid && <WaitingInbox items={assistantSummary.decisions} teams={teamList} exceptions={assistantSummary.exceptions.length}
+                uncertain={!activityComplete} connected={connection === "connected"} onOpen={openWaitingItem}
+                onOpenTeam={openTeamChat} onAcceptTeam={acceptTeamFromChat}
+                onShowActivity={() => { setAssistantTab("feed"); setInspectorOpen(true); }} />}
             {messages.length === 0 && !streaming && (
               <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"}>
                 {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && (
@@ -3049,24 +3076,7 @@ function App() {
               <AssistantActivity key={assistantScope} items={assistantFeedItems}
                   client={clientRef.current}
                   currentSession={activeSid} connected={connection === "connected"} sources={activitySources} onRefresh={() => void refreshActivity()}
-                  onOpen={(item) => {
-                    if (item.confirmationId) { focusConfirmation(item.confirmationId); return; }
-                    if (item.codexActionId) {
-                      setSelectedDispatchId(null);
-                      setSelectedCodexAction({ client: clientRef.current, scope: assistantScope, id: item.codexActionId }); return;
-                    }
-                    if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
-                    if (item.taskId) { focusTask(item.taskId); return; }
-                    const sid = item.session?.replace(/^sid-/, "");
-                    if (sid && isPhoneSession(sid)) { openPhoneChat(sid, item.rid); return; }
-                    if (sid) {
-                      setMainView("chat");
-                      void switchSession(sid).then(opened => {
-                        const client = clientRef.current;
-                        if (opened && client && item.rid && mainViewRef.current === "chat") conversationLocation.locate({ client, sid, rid: item.rid });
-                      });
-                    }
-                  }}>
+                  onOpen={openFeedItem}>
                 <section className="assistant-task-cards" aria-label="交互任务单">
                   {activityCodexAction && <AssistantActivityDetail key={`${assistantScope}:codex:${activityCodexAction.id}`}
                     title={`Codex 动作详情：${activityCodexAction.thread_name}`} statusLabel="动作记录"
