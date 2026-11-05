@@ -64,6 +64,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 **包布局**：这是共享 runtime 的装配分层，不是按包名划一条绝对单向链。
 - **安全核心**：`agents/gate.py`、`agents/taint.py`、`agents/capabilities.py`、`memory/write_policy.py`、`sandbox/policy.py` 是底层策略；`agents/tool.py` / `tool_runtime.py` 是可复用的工具定义与执行层。这七个模块不得导入 `workflow`、`gateway`、`scheduling`、`web`、`tui`、`im`，含函数内和相对 import，由 `tests/unit/test_layering.py` 的 AST 契约钉住。
+- **工具调用解析**：`agents/tool_calls.py` 是无执行能力的纯解析层，与工具运行层遵守相同的下层依赖边界。模型调用整批通过结构校验后才能派发；不能把解析失败的参数当成空字典执行。MainAgent 只做有界格式纠正，不因此升级模式或自动续跑，详见 `docs/TOOL_RUNTIME.md`。
 - **工具工厂/能力装配**：`agents/main_agent.py`、`delegation.py`、`dev_tools.py`、`task_questions.py`、`dispatch.py`、`pipeline_exec.py`、`dev_policy.py`、`agents/tools/*` 等可在函数内组合 `workflow` / `scheduling` 的公开 API，不向 `gateway` 或前端反向取业务能力。媒体发送通过下层注册钩子接线。
 - `agents/mcp_session.py` 是现有会话装配例外，仍使用 `gateway.workspace_scope` 的作用域规范化；因此本轮没有声称整个 `agents/` 都不得导入 `gateway`，也没有加条件不成立的全包断言。安全核心名单不因该例外放宽。
 - `gateway/`：只管会话装配与传输——`agent_session`/`session`/`sessions`/`session_actor`/事件流/`protocol`/`client`/`runtime`/`audit`/IM 内嵌服务。
