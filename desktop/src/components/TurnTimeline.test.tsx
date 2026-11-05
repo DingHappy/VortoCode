@@ -40,3 +40,16 @@ it("keeps unknown history visible and does not animate an unverified historical 
   const live = renderToStaticMarkup(<TurnTimeline items={[{ ...items[0], status: "running" }]} active hasOutput={false} />);
   expect(live).toContain("activity-spinner");
 });
+
+it("separates invocation parameters, empty receipts and errors with explicit statuses", () => {
+  const html = renderToStaticMarkup(<TurnTimeline items={[
+    { id: "a", kind: "tool", status: "failed", label: "检查", name: "run_command", args: { command: "check" }, result: "", error: "exit 1" },
+    { id: "b", kind: "tool", status: "blocked", label: "写入", name: "write_file", result: "未获授权" },
+    { id: "c", kind: "tool", status: "cancelled", label: "已中止", name: "read_file" },
+    { id: "d", kind: "tool", status: "timed_out", label: "检查超时", name: "run_tests" },
+  ]} active={false} hasOutput />);
+  for (const text of ["调用参数", "返回结果", "错误信息", "返回内容为空", "exit 1", "失败", "调用受阻", "已取消", "已超时"]) {
+    expect(html).toContain(text);
+  }
+  expect(html).toContain("timeline-details");
+});

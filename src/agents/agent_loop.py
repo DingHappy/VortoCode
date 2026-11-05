@@ -44,6 +44,7 @@ from src.agents.tool_results import (
     RESULTS_PREFIX, UNKNOWN_RESULT, decode_tool_results, encode_tool_results,
 )
 from src.agents.wait_clock import start_turn
+from src.agents.tools._common import _truthy
 from src.llm.streaming import StreamInterrupted, checked_callback, close_stream
 # 工具执行由独立 runtime 承担；旧辅助名字继续再导出以兼容存量调用方。
 from src.agents.tool_runtime import (
@@ -613,7 +614,7 @@ class MainAgent:
         self.max_web_tool_calls = min(64, _env_int("VORTOCODE_MAX_WEB_TOOL_CALLS", 12))
         self._web_tool_calls = 0
         self._web_budget_exhausted = False
-        # 本回合直接改过的文件 / 是否跑过任何命令（见 _unverified_writes_note）。
+        # 本回合直接改过的文件 / 是否拿到命令或测试成功回执（见 _unverified_writes_note）。
         self._turn_writes: set[str] = set()
         self._turn_verified = False
         self._env_idx: Optional[int] = None    # 载体消息下标：被裁出窗口/压缩掉 → 即使 env 没变也要重新附
@@ -1454,7 +1455,10 @@ class MainAgent:
             if tool.name in self._DIRECT_WRITE_TOOLS and result.startswith("已"):
                 self._turn_writes.add(str((args or {}).get("path") or "?"))
             elif tool.name in self._VERIFY_TOOLS:
-                self._turn_verified = True
+                # A background launch is only an acceptance receipt. It cannot
+                # replace the command's eventual exit/test result.
+                if tool.name != "run_command" or not _truthy(args.get("background")):
+                    self._turn_verified = True
 
         return ToolRuntime(lambda: self.tools, ToolExecutionContext(
             capabilities=self._capabilities, permissions=self._permissions,
@@ -1478,7 +1482,7 @@ class MainAgent:
                      "dev_auto")
 
     def _unverified_writes_note(self) -> str:
-        """本回合直接改了文件、却一个命令都没跑过 → 一句给**人**看的话。
+        """本回合直接改了文件、却没有测试/命令成功回执 → 一句给**人**看的话。
 
         真机（2026-09-20，打包版冒烟）：主 agent 用 edit_file 把 todo.py 改出语法错误就收工了。
         隔离流水线改完必自测，直接改工作区这条路却什么都不做——人看到的只是"已修改 todo.py"，
@@ -1488,7 +1492,7 @@ class MainAgent:
         if not files or getattr(self, "_turn_verified", False):
             return ""
         shown = "、".join(sorted(files)[:3]) + ("…" if len(files) > 3 else "")
-        return (f"⚠ 本回合直接改了 {len(files)} 个文件（{shown}），但**没有跑过任何测试/命令**"
+        return (f"⚠ 本回合直接改了 {len(files)} 个文件（{shown}），但**尚未收到测试/命令的成功回执**"
                 f"——这些改动尚未被验证。")
 
     # 同一只读工具、同一参数、同一结果连着第几次才开始提醒 / 才不再重放正文。

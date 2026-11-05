@@ -150,12 +150,26 @@ describe("finishRunningActivities", () => {
     expect(next[2].label).toBe("已完成");
   });
 
-  it("failed / cancelled 用工具语义文案", () => {
+  it("turn errors and cancellation settle phases, not missing tool receipts", () => {
     const failed = finishRunningActivities(base, undefined, "failed");
-    expect(failed[1].label).toBe("工具调用失败");
+    expect(failed[0]).toMatchObject({ status: "failed", label: "任务失败" });
+    expect(failed[1]).toMatchObject({ status: "unknown", label: "正在调用" });
     const cancelled = finishRunningActivities(base, undefined, "cancelled");
     expect(cancelled[0].label).toBe("任务已取消");
-    expect(cancelled[1].label).toBe("工具调用已取消");
+    expect(cancelled[1]).toMatchObject({ status: "unknown", label: "正在调用" });
+  });
+
+  it("keeps unacknowledged tools/hooks unknown on success and accepts a late real receipt", () => {
+    const pending = hydrateActivities([
+      { type: "agent_tool", id: "tool", rid: "r1", status: "running", name: "run_command", args: { command: "check" } },
+      { type: "agent_hook", id: "hook", rid: "r1", status: "running", name: "audit" },
+      { type: "agent_tool", id: "done", rid: "r1", status: "failed", name: "run_tests", result: "not passed" },
+    ]);
+    const next = finishRunningActivities(pending, "r1", "completed");
+    expect(next.map(item => item.status)).toEqual(["unknown", "unknown", "failed"]);
+    expect(next[0].args).toEqual({ command: "check" });
+    const settled = upsertActivity(next, protocolActivity(ev({ type: "agent_tool", id: "tool", rid: "r1", status: "failed", result: "exit 1" }))!);
+    expect(settled[0]).toMatchObject({ status: "failed", result: "exit 1", args: { command: "check" } });
   });
 });
 

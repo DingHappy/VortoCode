@@ -159,7 +159,7 @@ async def test_build_command_tool_background(tmp_path):
     # read_output 是纯读→plan 可用；stop_command 终止进程=运行态副作用→必须 build（read_only=False）
     assert tools["read_output"].read_only is True
     assert tools["stop_command"].read_only is False
-    out = await tools["run_command"].handler({"command": "sleep 5", "background": True})
+    out = (await tools["run_command"].handler({"command": "sleep 5", "background": True})).text
     assert "已后台启动" in out and "bg" in out and "显式关闭" in out
     import re
     bid = re.search(r"句柄 (bg\d+)", out).group(1)
@@ -180,11 +180,11 @@ async def test_build_command_tool_confirm_gate(tmp_path):
         return False
 
     t_yes = {x.name: x for x in build_command_tool(str(tmp_path), yes)}["run_command"]
-    out = await t_yes.handler({"command": "echo hi"})
+    out = (await t_yes.handler({"command": "echo hi"})).text
     assert "退出码 0" in out and "hi" in out and "显式关闭" in out  # 允许 → 跑了且降级有证据
 
     t_no = {x.name: x for x in build_command_tool(str(tmp_path), no)}["run_command"]
-    assert "拒绝" in await t_no.handler({"command": "echo hi"})   # 拒绝 → 不跑
+    assert (await t_no.handler({"command": "echo hi"})).status == "blocked"   # 拒绝 → 不跑
 
     asked = {"n": 0}
 
@@ -192,7 +192,7 @@ async def test_build_command_tool_confirm_gate(tmp_path):
         asked["n"] += 1
         return True
     t_d = {x.name: x for x in build_command_tool(str(tmp_path), counting)}["run_command"]
-    out3 = await t_d.handler({"command": "rm -rf /"})
+    out3 = (await t_d.handler({"command": "rm -rf /"})).text
     assert "拒绝" in out3 and asked["n"] == 0                     # 危险硬拒，根本没问 confirm
 
 
@@ -210,13 +210,13 @@ async def test_build_command_tool_surfaces_fallback_before_confirmation(
     monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     tool = {item.name: item for item in build_command_tool(str(tmp_path), yes)}["run_command"]
-    out = await tool.handler({"command": "echo visible"})
+    out = (await tool.handler({"command": "echo visible"})).text
     assert asked and "显式降级到宿主机" in asked[0]
     assert "visible" in out and "显式降级到宿主机" in out
 
     monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
     asked.clear()
-    refused = await tool.handler({"command": "echo blocked"})
+    refused = (await tool.handler({"command": "echo blocked"})).text
     assert "拒绝执行" in refused and not asked
 
 

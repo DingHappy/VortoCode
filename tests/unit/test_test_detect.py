@@ -83,7 +83,7 @@ async def test_build_test_tool_selector_ignored_for_nonpython(tmp_path):
     # build_test_tool：非 pytest 的 default_cmd，给了 selector 也忽略、跑整套
     from src.agents.main_agent import build_test_tool
     tool = build_test_tool(str(tmp_path), default_cmd=["go", "test", "./..."])
-    out = await tool.handler({"test": "foo_test.go"})
+    out = (await tool.handler({"test": "foo_test.go"})).text
     assert "go test ./..." in out and "pytest" not in out
 
 
@@ -91,7 +91,7 @@ async def test_build_test_tool_selector_ignored_for_nonpython(tmp_path):
 async def test_build_test_tool_selector_applies_for_pytest(tmp_path):
     from src.agents.main_agent import build_test_tool
     tool = build_test_tool(str(tmp_path), default_cmd=[sys.executable, "-m", "pytest", "-q"])
-    out = await tool.handler({"test": "tests/test_x.py"})
+    out = (await tool.handler({"test": "tests/test_x.py"})).text
     assert "tests/test_x.py" in out                          # pytest：selector 生效
 
 

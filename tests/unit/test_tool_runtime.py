@@ -11,7 +11,7 @@ from src.agents.capabilities import HOST_PROCESS, SessionCapabilities
 from src.agents.gate import make_confirm_gate
 from src.agents.permissions import Permissions
 from src.agents.taint import is_tainted, reset_taint
-from src.agents.tool import Tool, ToolTurnYield, function_schemas, tool_definitions
+from src.agents.tool import Tool, ToolResult, ToolTurnYield, function_schemas, tool_definitions
 from src.agents.tool_runtime import ToolExecutionContext, ToolRuntime
 
 
@@ -313,6 +313,65 @@ async def test_explicit_failures_and_observer_errors_do_not_become_successes():
                       on_event=broken_observer, on_result=broken_observer)
     outcome = await runtime.execute("test", {})
     assert outcome.status == "failed" and outcome.text == "test failed"
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "blocked", "cancelled"])
+async def test_typed_outcomes_preserve_text_and_only_success_runs_success_callbacks(status):
+    events, successes, consumed = [], [], []
+    async def handler(args):
+        # Prose must not be used to guess outcome, in either direction.
+        return ToolResult("失败字样只是数据；退出信息保留", status)
+    runtime, _ = host([Tool("test", "Test", {}, handler)],
+        on_event=lambda stage, payload: events.append((stage, payload)),
+        consume_result=lambda raw: consumed.append(raw) or raw,
+        on_success=lambda *args: successes.append(True))
+    outcome = await runtime.execute("test", {})
+    assert outcome.status == status and outcome.text == "失败字样只是数据；退出信息保留"
+    assert consumed == [outcome.text]
+    assert successes == ([True] if status == "succeeded" else [])
+    assert events[-1][0] == "finish" and events[-1][1]["status"] == status
+    assert events[0][1]["id"] == events[-1][1]["id"] == outcome.call_id
+
+
+@pytest.mark.parametrize("ok", [True, False])
+async def test_command_and_test_results_keep_real_exit_outcomes(tmp_path, monkeypatch, ok):
+    from src.agents.capabilities import LOCAL_PROFILE
+    from src.agents.tools.files import build_test_tool
+    from src.agents.tools.shell import build_command_tool
+    from src.agents import shell, worktree
+    async def approve(_):
+        return True
+    monkeypatch.setattr(shell, "run_command", lambda *args, **kwargs:
+        {"ok": ok, "code": 0 if ok else 7, "output": "diagnostic tail"})
+    monkeypatch.setattr(worktree, "run_tests", lambda *args, **kwargs:
+        {"ok": ok, "cmd": "fixture tests", "output": "diagnostic tail"})
+    tools = build_command_tool(str(tmp_path), approve) + [build_test_tool(str(tmp_path), ["fixture"])]
+    runtime, _ = host(tools, capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE, str(tmp_path)))
+    command = await runtime.execute("run_command", {"command": "fixture"}, "build")
+    tests = await runtime.execute("run_tests", {}, "build")
+    assert command.status == tests.status == ("succeeded" if ok else "failed")
+    assert "diagnostic tail" in command.text and "diagnostic tail" in tests.text
+
+
+async def test_command_missing_args_policy_denial_and_confirmation_are_blocked(tmp_path, monkeypatch):
+    from src.agents.capabilities import LOCAL_PROFILE
+    from src.agents.tools.shell import build_command_tool
+    from src.agents import shell
+    from src.sandbox import policy
+    asked, ran = [], []
+    async def refuse(message):
+        asked.append(message)
+        return False
+    monkeypatch.setattr(shell, "run_command", lambda *args, **kwargs: ran.append(True))
+    tools = build_command_tool(str(tmp_path), refuse)
+    runtime, _ = host(tools, capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE, str(tmp_path)))
+    for args in [{}, {"command": "rm -rf /"}, {"command": "echo fixture"}]:
+        assert (await runtime.execute("run_command", args, "build")).status == "blocked"
+    assert len(asked) == 1 and ran == []
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setattr(policy, "sandbox_backend", lambda: "")
+    assert (await runtime.execute("run_command", {"command": "echo fixture"}, "build")).status == "blocked"
+    assert len(asked) == 1 and ran == []
 
 
 async def test_a_core_without_media_support_cannot_silently_discard_images():

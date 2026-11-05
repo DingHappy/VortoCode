@@ -997,9 +997,9 @@ async def test_build_test_tool_lets_subagent_self_check(tmp_path):
     # 给隔离实现子 agent 的受限 run_tests：只跑测试、不是任意 shell
     t = build_test_tool(str(tmp_path), [sys.executable, "-c", "import sys; sys.exit(0)"])
     assert t.name == "run_tests" and t.read_only is True
-    assert "通过" in await t.handler({})
+    assert "通过" in (await t.handler({})).text
     t2 = build_test_tool(str(tmp_path), [sys.executable, "-c", "import sys; sys.stderr.write('BOOM'); sys.exit(1)"])
-    out = await t2.handler({})
+    out = (await t2.handler({})).text
     assert "未过" in out and "BOOM" in out                     # 失败带输出，子 agent 据此改
 
 

@@ -161,7 +161,7 @@ async def test_direct_writes_without_any_verification_are_called_out(tmp_path, m
     await agent.run_turn("改一下", mode="build", say=lines.append)
 
     joined = "".join(lines)
-    assert "没有跑过任何测试/命令" in joined, joined
+    assert "尚未收到测试/命令的成功回执" in joined, joined
     assert "todo.py" in joined
 
 
@@ -188,7 +188,7 @@ async def test_no_note_when_something_was_actually_run(tmp_path, monkeypatch):
 
     monkeypatch.setattr(MainAgent, "_run_turn_body", fake_body)
     await agent.run_turn("改一下", mode="build", say=lines.append)
-    assert "没有跑过任何测试/命令" not in "".join(lines)
+    assert "尚未收到测试/命令的成功回执" not in "".join(lines)
 
 
 @pytest.mark.asyncio
@@ -210,4 +210,37 @@ async def test_a_refused_write_is_not_counted_as_a_change(tmp_path, monkeypatch)
 
     monkeypatch.setattr(MainAgent, "_run_turn_body", fake_body)
     await agent.run_turn("改一下", mode="build", say=lines.append)
-    assert "没有跑过任何测试/命令" not in "".join(lines)
+    assert "尚未收到测试/命令的成功回执" not in "".join(lines)
+
+
+@pytest.mark.asyncio
+async def test_failed_test_receipt_reaches_main_agent_without_marking_writes_verified(tmp_path):
+    from src.agents.agent_loop import MainAgent
+    from src.agents.tool import Tool, ToolResult
+
+    async def failed(_args):
+        return ToolResult("测试未过：assert expected == actual", "failed")
+
+    agent = MainAgent(build_write_tools(str(tmp_path)) + [Tool("run_tests", "自测", {}, failed)])
+    result = await agent._run_tool("write_file", {"path": "note.md", "content": "fixture"}, "build", lambda _: None)
+    assert result.startswith("已")
+    text = await agent._run_tool("run_tests", {}, "build", lambda _: None)
+    assert text == "测试未过：assert expected == actual"
+    assert "尚未收到测试/命令的成功回执" in agent._unverified_writes_note()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [True, "true", "1"])
+async def test_background_start_receipt_does_not_count_as_verification(tmp_path, background):
+    from src.agents.agent_loop import MainAgent
+    from src.agents.tool import Tool, ToolResult
+
+    async def launched(_args):
+        return ToolResult("已后台启动：尚无退出回执")
+
+    agent = MainAgent(build_write_tools(str(tmp_path)) + [Tool("run_command", "执行", {}, launched, read_only=False)])
+    await agent._run_tool("write_file", {"path": "note.md", "content": "fixture"}, "build", lambda _: None)
+    await agent._run_tool("run_command", {"background": background}, "build", lambda _: None)
+    assert "尚未收到测试/命令的成功回执" in agent._unverified_writes_note()
+    await agent._run_tool("run_command", {"background": "false"}, "build", lambda _: None)
+    assert agent._unverified_writes_note() == ""
