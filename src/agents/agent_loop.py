@@ -506,7 +506,12 @@ class MainAgent:
                 "维护任务清单：把当前任务拆成有序步骤并标状态。开始一步标 in_progress、做完标 "
                 "completed。工程量大时务必先用它列计划、再逐步推进并更新（每次传完整列表）。",
                 {"steps": "步骤列表；每项 {step: 一句话, status: pending|in_progress|completed}"},
-                self._update_plan, read_only=True))
+                self._update_plan, read_only=True, required_args=("steps",),
+                argument_schema={"steps": {"type": "array", "maxItems": 30, "items": {
+                    "type": "object", "properties": {
+                        "step": {"type": "string"},
+                        "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                    }, "required": ["step", "status"]}}}))
             self._tool_list.append(Tool(
                 "request_build",
                 "当 plan 阶段已经分析清楚、时机成熟且下一步确实需要动手（写文件/建定时作业/跑 dev "

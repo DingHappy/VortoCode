@@ -248,8 +248,8 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
               "task_type": "可选：analysis/coding/review/documentation/translation/extraction；同类任务统计标签，默认 analysis",
               **({"acceptance": "可选：验收标准字符串列表；完成后主 Agent 必须审查结果"} if collaboration else {})},
              _task, read_only=True,
-             argument_schema={"acceptance": {"type": "array", "items": {"type": "string"}},
-                              "task_type": {"type": "string", "enum": ["analysis", "coding", "review", "documentation", "translation", "extraction"]}} if collaboration else {}),
+             argument_schema={**{'description': {'type': 'string'}}, **({"acceptance": {"type": "array", "items": {"type": "string"}},
+                                          "task_type": {"type": "string", "enum": ["analysis", "coding", "review", "documentation", "translation", "extraction"]}} if collaboration else {})}, required_args=('description',)),
         Tool("research_parallel",
              "并行委派多个子 agent 同时处理**相互独立**的子问题，汇总各自结论（最多 5 个）；"
              "默认轻量最多 2 个；用户明确要求全面/多角度/并行深挖时，可传 max_parallel 和 reason 放宽。"
@@ -259,8 +259,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
               "reason": "可选；说明为什么需要超过默认并行度，如用户明确要求全面审查/多角度分析",
               "agent": "可选：自定义角色名（应用到本组全部子任务）"},
              _research_parallel, read_only=True,
-             argument_schema={"tasks": {"type": "array", "items": {"type": "string"}},
-                              "max_parallel": {"type": "integer"}}),
+             argument_schema={'tasks': {'type': 'array', 'items': {'type': 'string'}}, 'max_parallel': {'type': 'integer'}}, required_args=('tasks',)),
     ]
     if collaboration is not None:
         from src.agents.tools.model_assessment import build_model_assessment_tools

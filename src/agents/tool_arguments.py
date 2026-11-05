@@ -18,7 +18,7 @@ _TYPES = {"string", "integer", "number", "boolean", "array", "object", "null"}
 _ANNOTATIONS = {"description", "title", "default", "examples"}
 _LIMITS = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
            "minLength", "maxLength", "minItems", "maxItems"}
-_KEYS = _ANNOTATIONS | _LIMITS | {"type", "enum", "items", "properties"}
+_KEYS = _ANNOTATIONS | _LIMITS | {"type", "enum", "items", "properties", "required"}
 
 
 class _Budget:
@@ -74,6 +74,9 @@ def _contract(schema: Any, budget: _Budget, depth: int = 0) -> None:
             raise ToolArgumentError(invalid)
         for child in schema["properties"].values():
             _contract(child, budget, depth + 1)
+    if "required" in schema and (type(schema["required"]) is not list
+                                or any(type(name) is not str for name in schema["required"])):
+        raise ToolArgumentError(invalid)
 
 
 def _type_matches(value: Any, name: str) -> bool:
@@ -130,6 +133,9 @@ def _validate(value: Any, schema: dict, path: str, budget: _Budget, depth: int =
         for index, item in enumerate(value):
             _validate(item, schema["items"], f"{path}[{index}]", budget, depth + 1)
     if type(value) is dict:
+        for name in schema.get("required", []):
+            if name not in value:
+                reject("缺少声明的必填字段")
         for name, child in schema.get("properties", {}).items():
             if name in value:
                 _validate(value[name], child, f"{path}.{name}", budget, depth + 1)

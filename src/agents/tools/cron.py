@@ -247,23 +247,28 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
                            "会**单独**向主人要一次授权；查新闻、查行情这类必须传，"
                            "纯本地活儿（跑测试、整理文件）不要传",
               "model": "可选：指定模型", "budget": "可选：本作业 token 预算上限"},
-             _add, read_only=False),
+             _add, read_only=False, required_args=('name', 'schedule', 'prompt'), argument_schema={'name': {'type': 'string'},
+             'schedule': {'type': 'string'},
+             'prompt': {'type': 'string'},
+             'allow_web': {'type': 'boolean'},
+             'budget': {'type': 'integer', 'minimum': 0},
+             'announce': {'type': 'string', 'enum': ['im', 'silent']}}),
         Tool("cron_toggle", "启用或停用一个已有定时作业（停用后调度器不跑它，可随时再启用）。"
              "本工具刻意不提供删除——停用可逆可见，误删主人的巡检作业不可逆。需确认",
-             {"name": "作业名", "enabled": "true=启用 / false=停用"}, _toggle, read_only=False),
+             {"name": "作业名", "enabled": "true=启用 / false=停用"}, _toggle, read_only=False, required_args=('name', 'enabled'), argument_schema={'name': {'type': 'string'}, 'enabled': {'type': 'boolean'}}),
         # read_only=False 三处都必须显式写：Tool 的默认是 True，漏了就等于让 plan 模式改得动
         # cron.yaml、跑得动作业——绕过 plan/build 门。这是自测逮到的真洞，不是形式主义。
         Tool("cron_set_web", "给一个**已有**作业开/关联网许可（web_search/web_fetch/截图）。"
              "开时会单独向主人要一次授权。只改这一个开关——作业的 prompt/命令/排期都不会被动，"
              "要换内容请另建一个作业。需确认",
              {"name": "作业名", "allow_web": "true=给出网许可 / false=收回"},
-             _set_web, read_only=False),
+             _set_web, read_only=False, required_args=('name', 'allow_web'), argument_schema={'name': {'type': 'string'}, 'allow_web': {'type': 'boolean'}}),
         Tool("cron_set_prompt",
              "改一个**已有 prompt 作业**要做的事（整块替换它的 prompt，排期/开关/出网许可都不动）。"
              "确认时会把改前改后摆给你看。command 作业（跑确定性命令的）拒绝修改。需确认",
              {"name": "作业名", "prompt": "这个作业到点要做的事（完整新内容，不是补丁）"},
-             _set_prompt, read_only=False),
+             _set_prompt, read_only=False, required_args=('name', 'prompt'), argument_schema={'name': {'type': 'string'}, 'prompt': {'type': 'string'}}),
         Tool("cron_run", "立刻手动跑一次某个已有定时作业（不占用它的正常排期）。已停用的作业拒绝"
              "触发、同名作业在跑时拒绝重复触发。结果走通知台账，不在这里返回。需确认",
-             {"name": "作业名"}, _run, read_only=False),
+             {"name": "作业名"}, _run, read_only=False, required_args=('name',), argument_schema={'name': {'type': 'string'}}),
     ]

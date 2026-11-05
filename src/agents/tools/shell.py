@@ -120,15 +120,15 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
                  {"command": "要执行的 shell 命令",
                   "background": "可选，true=后台起长驻进程（不阻塞），用 read_output/stop_command 管理"},
                  _run, read_only=False, outward=True,
-                 required_capabilities=("host_process",)),
+                 required_capabilities=("host_process",), required_args=('command',), argument_schema={'command': {'type': 'string'}, 'background': {'type': 'boolean'}}),
             Tool("read_output",
                  "读某后台命令（run_command background=true 起的）的新增输出 + 运行状态；tail=N 看最近 N 行。只读",
                  {"id": "后台命令句柄，如 bg1", "tail": "可选，看最近 N 行"},
-                 _read_output, read_only=True, required_capabilities=("host_process",)),
+                 _read_output, read_only=True, required_capabilities=("host_process",), required_args=('id',), argument_schema={'id': {'type': 'string'}, 'tail': {'type': 'integer', 'minimum': 1}}),
             Tool("stop_command",
                  "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
                  {"id": "后台命令句柄，如 bg1"}, _stop, read_only=False,
-                 required_capabilities=("host_process",))]   # 终止进程是运行态副作用→仅 build
+                 required_capabilities=("host_process",), required_args=('id',), argument_schema={'id': {'type': 'string'}})]   # 终止进程是运行态副作用→仅 build
 
 
 def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
@@ -156,4 +156,4 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
                  "外向操作、需确认，gh 不可用则只 push（仅 build）",
                  {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
                  _open_pr, read_only=False, outward=True,
-                 required_capabilities=("authenticated_outbound",))]
+                 required_capabilities=("authenticated_outbound",), required_args=('branch', 'title'), argument_schema={'branch': {'type': 'string'}, 'title': {'type': 'string'}})]

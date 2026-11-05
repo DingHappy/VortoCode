@@ -166,8 +166,8 @@ async def test_real_team_contracts_validate_nested_members_and_evidence_without_
     runtime = ToolRuntime(lambda: registry, ToolExecutionContext(
         capabilities=SessionCapabilities.for_profile("local", str(tmp_path))))
     for tool in tools:
-        validate_arguments({}, tool.argument_schema, tool.required_args)
-    members = {"acceptance": ["Evidence"], "members": [{"name": "researcher", "role": "reviewer", "engine": "vortocode"}]}
+        validate_arguments({}, tool.argument_schema)  # Inspect optional/required field constraints without supplying a call.
+    members = {"objective": "Review evidence", "acceptance": ["Evidence"], "members": [{"name": "researcher", "role": "reviewer", "engine": "vortocode"}]}
     evidence = {"evidence": [{"criterion": 1, "evidence": "file.txt:1"}]}
     validate_arguments(members, registry["team_propose"].argument_schema)
     validate_arguments(evidence, registry["team_submit"].argument_schema)
