@@ -2824,6 +2824,11 @@ function App() {
 
           <div className="conversation-body">
             <ConversationLocation status={conversationLocation.status} onLatest={conversationLocation.latest} onRetry={conversationLocation.retry} />
+            {/* 「等你处理」固定在对话顶部，不随消息滚动（ADR-016；装好后发现放进滚动区会被推到历史最上面） */}
+            {appMode === "assistant" && activeSid === mainChatSid && <div className="waiting-inbox-band"><WaitingInbox items={assistantSummary.decisions} teams={teamList} exceptions={assistantSummary.exceptions.length}
+                uncertain={!activityComplete} connected={connection === "connected"} onOpen={openWaitingItem}
+                onOpenTeam={openTeamChat} onAcceptTeam={acceptTeamFromChat}
+                onShowActivity={() => { setAssistantTab("feed"); setInspectorOpen(true); }} /></div>}
           <div
             className="conversation-scroll"
             ref={conversationScrollRef}
@@ -2833,10 +2838,6 @@ function App() {
               autoScrollRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
             }}
           >
-            {appMode === "assistant" && activeSid === mainChatSid && <WaitingInbox items={assistantSummary.decisions} teams={teamList} exceptions={assistantSummary.exceptions.length}
-                uncertain={!activityComplete} connected={connection === "connected"} onOpen={openWaitingItem}
-                onOpenTeam={openTeamChat} onAcceptTeam={acceptTeamFromChat}
-                onShowActivity={() => { setAssistantTab("feed"); setInspectorOpen(true); }} />}
             {messages.length === 0 && !streaming && (
               <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"}>
                 {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && (
