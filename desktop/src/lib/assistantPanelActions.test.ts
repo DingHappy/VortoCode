@@ -4,6 +4,7 @@ import type { GatewayClient } from "../gateway";
 import type { AssistantConnector, AssistantMemory, AssistantScheduleItem, MemoryProposal } from "../types";
 import { assistantPanelActions, type AssistantPanelDeps } from "./assistantPanelActions";
 import { AssistantActionGate } from "./assistantTask";
+import { snapshotFixture } from "../test/memorySnapshotFixture";
 
 const item = { id: "a", kind: "cron", title: "早报", schedule: "每天 9:00", enabled: true, revision: "r1" } as AssistantScheduleItem;
 
@@ -40,6 +41,32 @@ function harness(client: Partial<GatewayClient>, overrides: Partial<AssistantPan
   };
   return { state, actions: assistantPanelActions(deps), deps };
 }
+
+describe("memory snapshot", () => {
+  it("returns only the current host's snapshot", async () => {
+    const slow = deferred<ReturnType<typeof snapshotFixture>>();
+    const h = harness({ getMemorySnapshot: () => slow.promise });
+    const pending = h.actions.memorySnapshot();
+    h.state.scope = "host-b";
+    slow.resolve(snapshotFixture());
+    expect(await pending).toBeNull();
+    expect(h.state.memories[0].id).toBe("m1");
+    const current = harness({ getMemorySnapshot: async () => snapshotFixture() });
+    expect(await current.actions.memorySnapshot()).toEqual(snapshotFixture());
+  });
+
+  it("rejects current failures but drops failures from an old connection", async () => {
+    let reject!: (error: Error) => void;
+    const slow = new Promise<ReturnType<typeof snapshotFixture>>((_, fail) => { reject = fail; });
+    const h = harness({ getMemorySnapshot: () => slow });
+    const pending = h.actions.memorySnapshot();
+    h.state.client = {} as GatewayClient;
+    reject(new Error("old host"));
+    expect(await pending).toBeNull();
+    const current = harness({ getMemorySnapshot: async () => { throw new Error("断开"); } });
+    await expect(current.actions.memorySnapshot()).rejects.toThrow("断开");
+  });
+});
 
 describe("schedule", () => {
   it("drops a reply that arrives after you switched machines, and only the latest read wins", async () => {

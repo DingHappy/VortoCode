@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from src.memory import assistant_profile
 
@@ -179,6 +181,22 @@ async def claim_main_chat(body: dict):
 @router.get("/api/assistant/memories")
 async def get_memories():
     return {"memories": assistant_profile.list_memories(os.getcwd())}
+
+
+@router.get("/api/assistant/memory-snapshot")
+async def memory_snapshot():
+    from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+    from src.gateway.execution_identity import current_execution_identity
+    from src.memory.memory_snapshot import read_memory_snapshot
+    if current_workspace_scope() != GENERAL:
+        raise HTTPException(403, "请在私人助理中导出记忆")
+    try:
+        root = os.getcwd()
+        identity = current_execution_identity(root) or {}
+        snapshot = await asyncio.to_thread(read_memory_snapshot, root, instance_id=identity.get("instance_id"))
+        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
+    except (OSError, ValueError, sqlite3.Error):
+        raise HTTPException(409, "记忆库暂时无法读取；未生成快照，请稍后重试") from None
 
 
 @router.delete("/api/assistant/memories/{memory_id}")

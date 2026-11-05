@@ -3053,11 +3053,12 @@ function App() {
                   onRefresh={panelActions.scheduleRefresh}
                   onToggle={panelActions.scheduleToggle}
                   onHistory={panelActions.scheduleHistory} />
-              : assistantTab === "identity" ? <AssistantIdentity key={`identity-${memoryFocus}`} initialMemories={memoryFocus > 0}
+              : assistantTab === "identity" ? <AssistantIdentity key={`identity-${assistantScope}-${memoryFocus}`} initialMemories={memoryFocus > 0}
                   profile={assistantProfile} memories={assistantMemories}
                   avatar={assistantAvatar}
                   onAvatar={(file) => void panelActions.avatar(file)}
                   proposals={memoryProposals}
+                  onMemorySnapshot={panelActions.memorySnapshot}
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
