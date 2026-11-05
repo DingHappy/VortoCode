@@ -9,12 +9,32 @@ export interface SessionResource {
 export interface SessionResources {
   version: 1; session: string; nonce: string; observed_at: string; status: "observed" | "not_loaded";
   truncated: boolean; items: SessionResource[]; attention_id?: string;
+  tool_inventory?: ToolInventory;
+}
+export interface ToolInventory {
+  version: 1; truncated: boolean;
+  items: { name: string; read_only: boolean | null; required_capabilities: string[] | null }[];
 }
 const states = new Set(["idle", "active", "needs_human", "cleanup_pending", "unknown", "not_attached",
   "needs_reconciliation", "loaded", "not_provided", "blocked", "disconnected", "connecting", "connected", "partial", "error"]);
 const record = (raw: unknown): Record<string, unknown> | null => raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
 const text = (v: unknown, max = 240): v is string => typeof v === "string" && v.length <= max && !/[\u0000-\u001f\u007f]/.test(v);
 const date = (v: unknown): v is string => text(v, 80) && Number.isFinite(Date.parse(v));
+
+function parseToolInventory(raw: unknown): ToolInventory | undefined {
+  const value = record(raw);
+  if (!value || value.version !== 1 || typeof value.truncated !== "boolean" || !Array.isArray(value.items) || value.items.length > 256) return;
+  const items: ToolInventory["items"] = [], seen = new Set<string>();
+  for (const rawItem of value.items) {
+    const item = record(rawItem);
+    if (!item || !text(item.name, 128) || !/^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/.test(item.name) || seen.has(item.name)
+      || !(item.read_only === null || typeof item.read_only === "boolean")) return;
+    const caps = item.required_capabilities;
+    if (!(caps === null || (Array.isArray(caps) && caps.length <= 16 && caps.every(cap => typeof cap === "string" && /^[a-z][a-z0-9_:-]{0,79}$/.test(cap))))) return;
+    seen.add(item.name); items.push({ name: item.name, read_only: item.read_only, required_capabilities: caps as string[] | null });
+  }
+  return { version: 1, truncated: value.truncated, items };
+}
 
 export function parseSessionResources(raw: unknown): SessionResources | null {
   const r = record(raw);
@@ -40,7 +60,8 @@ export function parseSessionResources(raw: unknown): SessionResources | null {
   if (r.status === "not_loaded" && items.length) return null;
   return { version: 1, session: r.session, nonce: r.nonce, observed_at: r.observed_at,
     status: r.status as SessionResources["status"], truncated: r.truncated, items,
-    ...(r.attention_id ? { attention_id: r.attention_id as string } : {}) };
+    ...(r.attention_id ? { attention_id: r.attention_id as string } : {}),
+    ...(r.tool_inventory !== undefined && r.status === "observed" ? { tool_inventory: parseToolInventory(r.tool_inventory) } : {}) };
 }
 
 export interface ResourceClient { send(event: Record<string, unknown>): Promise<void> }

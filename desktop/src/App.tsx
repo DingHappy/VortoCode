@@ -31,6 +31,7 @@ import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
 import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
 import { websiteConfirmation } from "./lib/websiteConfirmation";
+import { SessionCapabilities } from "./components/SessionCapabilities";
 import { useSessionResources } from "./hooks/useSessionResources";
 import { SessionResources, residentHostLabel } from "./components/SessionResources";
 import { ComposerCommands } from "./components/ComposerCommands";
@@ -225,6 +226,7 @@ function App() {
   const [projectSwitching, setProjectSwitching] = useState(false);
   coordinator.listen({ switching: setProjectSwitching, starting: setRuntimeStarting });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -323,6 +325,7 @@ function App() {
   const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
   // Snapshots are bound to the loaded host before they can expose actions.
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
+  useEffect(() => setCapabilitiesOpen(false), [assistantScope, activeSid]);
   const assistantScopeRef = useRef(assistantScope);
   assistantScopeRef.current = assistantScope;
   const {
@@ -2881,7 +2884,14 @@ function App() {
 
           </div>
           <div className="composer-wrap">
-            <SessionResources view={sessionResources.view} connected={connection === "connected"}
+            {capabilitiesOpen && <SessionCapabilities key={`${assistantScope}:${activeSid}`} view={sessionResources.view} connected={connection === "connected"}
+              hostLabel={residentHostLabel(remoteProjectRef.current ? projects.find(item => item.id === remoteProjectRef.current)?.name : undefined,
+                Boolean(remoteProjectRef.current), onAssistantHost())}
+              onClose={() => setCapabilitiesOpen(false)} onRefresh={sessionResources.refresh}
+              pendingId={pendingConfirm?.id} onFocusConfirmation={() => focusConfirmation(pendingConfirm?.id)}
+              onManage={() => setMainView(appMode === "assistant" ? "customize" : "plugins")}
+              onLocalSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }} />}
+            <SessionResources key={`${assistantScope}:${activeSid}`} view={sessionResources.view} connected={connection === "connected"}
               hostLabel={residentHostLabel(remoteProjectRef.current ? projects.find(item => item.id === remoteProjectRef.current)?.name : undefined,
                 Boolean(remoteProjectRef.current), onAssistantHost())}
               quietWhenOk={appMode === "assistant"}
@@ -2967,6 +2977,7 @@ function App() {
                   else if (command === "project") void chooseRepo();
                   else if (command === "files") openInspector("files");
                   else if (command === "info") openInspector("info");
+                  else if (command === "capabilities") { setCapabilitiesOpen(true); sessionResources.refresh(); }
                   else if (command === "model") { setSettingsSection("model"); setSettingsOpen(true); }
                   else if (command === "new" && connection === "connected") void newSession();
                 }}>
