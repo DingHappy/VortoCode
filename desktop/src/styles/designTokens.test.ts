@@ -83,3 +83,21 @@ describe("migrated files", () => {
     });
   }
 });
+
+describe("制品纸面只给预览用", () => {
+  // --vc-paper 在深色模式下也是白底（制品预览按白底写）。拿它当界面底色，深色模式就是白底配浅色字，
+  // 真机 2026-11-05：小组群聊里协调人的气泡在深色模式下几乎看不清。
+  const css = {
+    "styles/shell.css": shellCss, "styles/components.css": componentsCss,
+    ...Object.fromEntries(Object.entries(
+      import.meta.glob(["../components/*.css", "../*.css"], { query: "?raw", import: "default", eager: true }) as Record<string, string>,
+    ).map(([path, source]) => [path.replace("../", ""), source])),
+  };
+  it("只有制品预览的 iframe 用 --vc-paper", () => {
+    const uses = Object.entries(css).flatMap(([file, source]) => {
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+      return [...code.matchAll(/([^{}]+)\{[^}]*var\(--vc-paper\)[^}]*\}/g)].map(match => `${file}: ${match[1].trim()}`);
+    });
+    expect(uses).toEqual(["styles/shell.css: .vc-library-frame iframe"]);
+  });
+});
