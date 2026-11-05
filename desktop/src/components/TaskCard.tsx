@@ -10,6 +10,8 @@ import { TaskChainBudget } from "./TaskChainBudget";
 import { TaskCoverageActions } from "./TaskCoverageActions";
 import { TaskModelComparison } from "./TaskModelComparison";
 import type { GatewayClient } from "../gateway";
+import { firstSentence, type FeedItem } from "../lib/activityFeed";
+import { ResultDocument } from "./ResultDocument";
 
 type Props = {
   task: TaskItem;
@@ -26,11 +28,13 @@ type Props = {
   onCollaboration: (task: TaskItem, action: CollaborationAction) => unknown;
   getClient: () => GatewayClient | null;
   onDispatchUpdated: () => void;
+  teamContext?: FeedItem["teamContext"];
+  onOpenTeam?: (id: string) => void;
 };
 
 export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
   onPause, onCancel, onResume, onCopy, onReviewBranch, onVerify, onOpenPr, onCollaboration,
-  getClient, onDispatchUpdated }: Props) {
+  getClient, onDispatchUpdated, teamContext, onOpenTeam }: Props) {
   return (
     <section
       className={`task-card ${focused ? "focused" : ""}`}
@@ -40,8 +44,11 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
         <span className={`task-status ${task.status}`}>{task.status === "blocked" ? "等待回答" : statusLabel(task.status)}</span>
         <small>{task.id.slice(0, 8)}</small>
       </div>
-      <p>{task.prompt || "后台开发任务"}</p>
-      {task.kind !== "delegation" && <div className="task-linkage" title={`${task.id} → ${task.plan_id || "计划生成中"} → ${task.branch || task.plan?.branch || "分支生成中"}`}>
+      <p className="task-readable-title">{firstSentence(task.prompt, 100) || "后台任务"}</p>
+      {teamContext && <div className="task-team-context">小组内部任务 · {teamContext.member} · 由协调人审阅
+        {onOpenTeam ? <button type="button" onClick={() => onOpenTeam(teamContext.id)}>返回小组：{teamContext.objective}</button> : <span> · {teamContext.objective}</span>}</div>}
+      {task.prompt && <details className="task-request"><summary>查看完整要求（{task.prompt.length} 字）</summary><p className="task-request-text">{task.prompt}</p></details>}
+      {task.kind !== "delegation" && task.kind !== "team" && <div className="task-linkage" title={`${task.id} → ${task.plan_id || "计划生成中"} → ${task.branch || task.plan?.branch || "分支生成中"}`}>
         <span>Task {task.id.slice(0, 8)}</span>
         <b>→</b>
         <span>Plan {task.plan_id ? task.plan_id.slice(0, 14) : "生成中"}</span>
@@ -108,21 +115,22 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
             模型建议：{task.collaboration.model_assessment.state === "running" ? "评判中或已中断，尚无结论" : task.collaboration.model_assessment.reason}
             （仅建议，不自动执行或验收）
           </p>}
-          <strong>{task.dependencies?.result_valid === false ? "依赖已失效 · 历史记录保留" : task.collaboration.review === "accepted" ? "已验收" : task.collaboration.review === "pending" ? "执行结束 · 待验收" : task.collaboration.review === "rework_requested" ? "已请求返工" : "尚未提交结果"}</strong>
+          <strong>{task.dependencies?.result_valid === false ? "依赖已失效 · 历史记录保留" : task.collaboration.review === "accepted" ? (teamContext ? "协调人已接受" : "已验收") : task.collaboration.review === "pending" ? (teamContext ? "执行结束 · 等待协调人审阅" : "执行结束 · 待验收") : task.collaboration.review === "rework_requested" ? "已请求返工" : "尚未提交结果"}</strong>
           {task.collaboration.model_comparison?.round === task.collaboration.round && <TaskModelComparison report={task.collaboration.model_comparison} />}
-          {task.result && <details><summary>查看交付结果</summary><pre>{task.result}</pre></details>}
           {task.collaboration.messages.length > 0 && <details><summary>Agent 任务消息</summary>
             {task.collaboration.messages.map((message) => <div key={message.id}><small>{message.sender || "研究员"} · {message.kind} · 第 {message.round} 轮</small><pre>{message.body}</pre></div>)}
           </details>}
           <div className="task-actions">
-            {taskCollaborationDraft(task, "review") && <button onClick={() => onCollaboration(task, "review")}>交给主 Agent 验收</button>}
-            {taskCollaborationDraft(task, "followup") && <button onClick={() => onCollaboration(task, "followup")}>补充要求 / 返工</button>}
-            {taskCollaborationDraft(task, "assess") && <button onClick={() => onCollaboration(task, "assess")}>评估模型与成本</button>}
+            {!teamContext && taskCollaborationDraft(task, "review") && <button onClick={() => onCollaboration(task, "review")}>交给主 Agent 验收</button>}
+            {!teamContext && taskCollaborationDraft(task, "followup") && <button onClick={() => onCollaboration(task, "followup")}>补充要求 / 返工</button>}
+            {!teamContext && taskCollaborationDraft(task, "assess") && <button onClick={() => onCollaboration(task, "assess")}>评估模型与成本</button>}
           </div>
+          {task.result && <ResultDocument title="查看交付结果" text={task.result} tainted={task.collaboration.tainted} open={focused} />}
           <DispatchTaskActions task={task} getClient={getClient} onUpdated={onDispatchUpdated} />
         </div>
       )}
       <TaskQuestionActions task={task} getClient={getClient} onUpdated={onDispatchUpdated} />
+      {task.kind !== "delegation" && task.result && <ResultDocument title="查看交付结果" text={task.result} open={focused} />}
       <TaskDependencyActions task={task} getClient={getClient} onUpdated={onDispatchUpdated} />
       <TaskChainBudget budget={task.chain_budget} />
       <TaskCoverageActions task={task} getClient={getClient} onUpdated={onDispatchUpdated} />

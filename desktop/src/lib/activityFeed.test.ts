@@ -19,6 +19,7 @@ describe("firstSentence", () => {
 
 describe("feedStatus / taskFeedItem", () => {
   it("有待回答的问题或等验收 → 等你处理，且优先于运行状态", () => {
+    expect(taskFeedItem(task({ development: { version: 1, round: 1, owner_session: "", plan_id: "", root_task_id: "", questions: [question("open")] } })).requiresReply).toBe(true);
     expect(feedStatus(task({ status: "running", development: { version: 1, round: 1, owner_session: "", plan_id: "", root_task_id: "", questions: [question("open")] } }))).toBe("waiting");
     expect(feedStatus(task({ status: "done", collaboration: { assignee: "", round: 1, review: "pending", acceptance: [], tainted: false, messages: [] } }))).toBe("waiting");
     expect(feedStatus(task({ status: "running", development: { version: 1, round: 1, owner_session: "", plan_id: "", root_task_id: "", questions: [question("answered")] } }))).toBe("running");

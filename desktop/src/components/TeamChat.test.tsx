@@ -25,12 +25,13 @@ const data = (over: Partial<TeamTranscript["team"]> = {}): TeamTranscript => ({
 });
 const render = (transcript: TeamTranscript) => renderToStaticMarkup(<TeamChat id="task-1" client={client} connected initial={transcript} />);
 
-it("reads like a group chat: members with framework and state, then who said what", () => {
+it("keeps members available on demand while showing who said what", () => {
   const html = render(data());
-  for (const text of ["调研今日股市", "进行中", "成员 3", "协调人", "研究员", "OpenCode", "在做 · 做了 2 轮、交回 1 次、失败 1 次",
-    "空闲", "@研究员 ", "查今日指数点位", "@研究员 返工：", "这一轮没有交回：", "超过单轮时限", "也看看港股", "外部内容",
+  for (const text of ["调研今日股市", "进行中", "成员 3", "协调人", "研究员", "OpenCode",
+    "@研究员 ", "查今日指数点位", "@研究员 返工：", "这一轮没有交回：", "超过单轮时限", "也看看港股", "外部内容",
     "展开全文", "在群里说点什么"]) expect(html).toContain(text);
   expect(html).not.toContain("<b>上证"); expect(html).toContain("&lt;b&gt;上证");
+  expect(html).not.toContain('aria-label="小组成员"');
 });
 
 it("delivery asks for a decision; closed groups only keep the record", () => {

@@ -2,9 +2,9 @@
 .team-chat-page { min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--vc-bg); }
 .team-chat { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--vc-text); }
 .team-chat-head { padding: var(--vc-space-4) var(--vc-page-pad) var(--vc-space-3); border-bottom: 1px solid var(--vc-divider); }
-.team-chat-title { display: flex; align-items: center; gap: var(--vc-space-2); font-size: var(--vc-size-title); }
+.team-chat-title { display: flex; align-items: center; gap: var(--vc-space-2); font-size: var(--vc-size-heading); line-height: 1.5; min-width: 0; }
 .team-chat-title svg { width: var(--vc-icon); height: var(--vc-icon); color: var(--vc-muted); flex: none; }
-.team-chat-title strong { font-weight: var(--vc-weight-medium); overflow-wrap: anywhere; }
+.team-chat-title strong { min-width: 0; font-weight: var(--vc-weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-chat-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--vc-space-2); margin-top: var(--vc-space-2);
   color: var(--vc-muted); font-size: var(--vc-size-small); }
 .team-chat-status { padding: 0 var(--vc-space-2); border-radius: var(--vc-radius-full); background: var(--vc-fill); color: var(--vc-text-secondary); }
