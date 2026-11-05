@@ -323,6 +323,7 @@ function App() {
   const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
   // Snapshots are bound to the loaded host before they can expose actions.
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
+  const [waitingDisclosure, setWaitingDisclosure] = useState({ scope: "", open: false });
   const assistantScopeRef = useRef(assistantScope);
   assistantScopeRef.current = assistantScope;
   const {
@@ -344,6 +345,7 @@ function App() {
   const assistantActionGate = useRef(new AssistantActionGate());
   // 换了助理 scope：数据由 useAssistantSnapshot 清空，这里清掉指向旧数据的选中与弹窗。
   useEffect(() => {
+    setWaitingDisclosure({ scope: assistantScope, open: false });
     setPhoneChatSid(null); setPhoneChatRid(undefined);
     setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
   }, [assistantScope]);
@@ -2385,7 +2387,7 @@ function App() {
   const assistantFeedItems = assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
     confirmation: pendingConfirm });
   const assistantSummary = assistantAttention(assistantFeedItems);
-  const assistantWaiting = assistantSummary.decisions.length;
+  const assistantWaiting = assistantSummary.decisions.length + waitingTeams(teamList).length;
   const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
   const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
     .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
@@ -2665,7 +2667,7 @@ function App() {
               page={assistantPage === "library" || assistantPage === "customize" ? assistantPage : null}
               search={sidebarSearch("搜索聊天")}
               query={sidebarQuery}
-              waiting={assistantWaiting + waitingTeams(teamList).length}
+              waiting={assistantWaiting}
               waitingUncertain={!activityComplete}
               onPage={openAssistantPage}
               onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
@@ -2809,7 +2811,8 @@ function App() {
           <ConversationHeader
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
-            panelOpen={inspectorOpen} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            panelOpen={inspectorOpen} waiting={appMode === "assistant" ? assistantWaiting : feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            waitingUncertain={appMode === "assistant" && !activityComplete}
             taskPill={undefined /* ADR-016：等你处理在主要聊天顶部，不再有顶栏胶囊 */}
             // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
             status={connection !== "connected" && (
@@ -2826,6 +2829,8 @@ function App() {
             <ConversationLocation status={conversationLocation.status} onLatest={conversationLocation.latest} onRetry={conversationLocation.retry} />
             {/* 「等你处理」固定在对话顶部，不随消息滚动（ADR-016；装好后发现放进滚动区会被推到历史最上面） */}
             {appMode === "assistant" && activeSid === mainChatSid && <div className="waiting-inbox-band"><WaitingInbox items={assistantSummary.decisions} teams={teamList} exceptions={assistantSummary.exceptions.length}
+                expanded={waitingDisclosure.scope === assistantScope && waitingDisclosure.open}
+                onExpandedChange={open => setWaitingDisclosure({ scope: assistantScope, open })}
                 uncertain={!activityComplete} connected={connection === "connected"} onOpen={openWaitingItem}
                 onOpenTeam={openTeamChat} onAcceptTeam={acceptTeamFromChat}
                 onShowActivity={() => { setAssistantTab("feed"); setInspectorOpen(true); }} /></div>}
@@ -3076,6 +3081,10 @@ function App() {
                     });
                   }} />
               <AssistantActivity key={assistantScope} items={assistantFeedItems}
+                  waitingInbox={{ count: assistantWaiting, uncertain: !activityComplete, onOpen: () => {
+                    setWaitingDisclosure({ scope: assistantScope, open: true });
+                    setMainView("chat"); setInspectorOpen(false); void openMainChat();
+                  } }}
                   client={clientRef.current}
                   currentSession={activeSid} connected={connection === "connected"} sources={activitySources} onRefresh={() => void refreshActivity()}
                   onOpen={openFeedItem}>

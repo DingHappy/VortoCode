@@ -74,7 +74,7 @@ export function TeamChat({ id, client, connected, onPull, initial = null }: {
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showMembers, setShowMembers] = useState(true);
+  const [showMembers, setShowMembers] = useState(false);
   const pending = useRef(false);
   const end = useRef<HTMLLIElement | null>(null);
   const load = useCallback(async () => {
@@ -103,7 +103,7 @@ export function TeamChat({ id, client, connected, onPull, initial = null }: {
   const status = team.status;
   return <section className="team-chat" aria-label={`任务小组：${team.objective}`}>
     <header className="team-chat-head">
-      <div className="team-chat-title"><Users aria-hidden="true" /><strong>{team.objective}</strong></div>
+      <div className="team-chat-title"><Users aria-hidden="true" /><strong title={team.objective}>{team.objective}</strong></div>
       <div className="team-chat-meta">
         <span className={`team-chat-status team-chat-status-${status}`}>{STATUS[status] ?? status}</span>
         <span>{team.project ? `项目 ${team.project} · ` : ""}{team.mode === "private" ? "不能联网" : "成员可联网"} · 已派 {team.used.tasks ?? 0} 个子任务、{team.used.rounds ?? 0} 轮</span>
