@@ -111,6 +111,8 @@
   font-weight: var(--vc-weight-regular);
 }
 
+.vc-side-chats { display: flex; flex-direction: column; gap: inherit; }
+
 /* 「最近」里的条目：高 32，除主要聊天外不带图标 */
 .vc-nav-item.vc-nav-item--recent {
   height: var(--vc-control-h);

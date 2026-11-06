@@ -42,6 +42,40 @@ it("会话分组：主要聊天 → 任务小组 → 旁聊；旁聊默认只列
   expect(searching.match(/>旁聊\d</g)).toHaveLength(8);
 });
 
+it("recent-list disclosure describes its list and only offers a collapse that can hide rows", () => {
+  const props = { mainChat: { sid: "m" }, sideChats: Array.from({ length: 8 }, (_, index) => ({ sid: `s${index}`, title: `旁聊${index}` })),
+    onSelect: () => {}, onNewSideChat: () => {} };
+  const html = renderToStaticMarkup(<AssistantSidebar {...props} current="m" />);
+  const toggle = html.match(/<button[^>]*class="vc-side-more"[^>]*>/)?.[0];
+  expect(toggle).toContain('aria-expanded="false"');
+  const controls = toggle?.match(/aria-controls="([^"]+)"/)?.[1];
+  expect(controls).toBeTruthy();
+  expect(html).toContain(`class="vc-side-chats" id="${controls}"`);
+  const lastChat = renderToStaticMarkup(<AssistantSidebar {...props} current="s7" />);
+  expect(lastChat.match(/>旁聊\d</g)).toHaveLength(8);
+  expect(lastChat).not.toContain('class="vc-side-more"');
+  const inTeam = renderToStaticMarkup(<AssistantSidebar {...props} current="s7" currentTeam="t1"
+    teams={[{ id: "t1", title: "小组工作", status: "active" }]} />);
+  expect(inTeam.match(/>旁聊\d</g)).toHaveLength(5);
+  expect(inTeam.match(/aria-current="page"/g)).toHaveLength(1);
+});
+
+it("blank chat titles have searchable names and long titles keep their full hint text", () => {
+  const title = "本周交付与下一轮开发安排：核对原有计划和完整成果";
+  const props = { mainChat: { sid: "m" }, current: "m", onSelect: () => {}, onNewSideChat: () => {},
+    sideChats: [{ sid: "s1", title: " \t " }, { sid: "s2", title: ` ${title} ` }],
+    phoneChats: [{ sid: "p1", title: " 📱  " }], offlineChats: [{ sid: "o1", title: "  " }] };
+  const html = renderToStaticMarkup(<AssistantSidebar {...props} />);
+  expect(html).toContain(`title="${title}"`);
+  expect(html).toContain(`>${title}</span>`);
+  expect(html).not.toContain("📱");
+  for (const query of ["新的旁聊", "手机对话", "本机对话"]) {
+    const found = renderToStaticMarkup(<AssistantSidebar {...props} query={query} />);
+    expect(found).toContain(`>${query}</span>`);
+    expect(found).not.toContain("未找到匹配的会话");
+  }
+});
+
 it("每个面板入口都对得上一个标签，审核记录不占一级入口", () => {
   for (const [page, tab] of Object.entries(PAGE_PANEL)) expect(PANEL_PAGE[tab]).toBe(page);
   expect(PANEL_PAGE.audit).toBeNull();

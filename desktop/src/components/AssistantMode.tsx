@@ -77,21 +77,28 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   onOpenTeam?: (id: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const chatsId = useId(), moreButton = useRef<HTMLButtonElement>(null), scrollToggle = useRef(false);
+  useLayoutEffect(() => {
+    if (!scrollToggle.current) return;
+    scrollToggle.current = false;
+    moreButton.current?.scrollIntoView({ block: "nearest" });
+  }, [showAll]);
   const keyword = query.trim();
   const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
   const inChat = !page && !currentTeam;
   const groups = teams.filter((team) => matches(team.title, query));
   const others = [
-    ...sideChats.filter((chat) => matches(chat.title || "新的旁聊", query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
-      label={chat.title || "新的旁聊"} current={inChat && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />),
-    ...phoneChats.filter((chat) => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
-      label={chat.title.replace(/^📱\s*/, "")} title="手机上和助理的聊天（这里只读，在手机上回复）" onClick={() => onOpenPhoneChat?.(chat.sid)} meta="手机" />),
-    ...offlineChats.filter((chat) => matches(chat.title || "本机对话", query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
-      label={chat.title || "本机对话"} title="常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）" onClick={() => onOpenOfflineChat?.(chat.sid)} meta="本机" />),
+    ...sideChats.map(chat => ({ ...chat, title: chat.title.trim() || "新的旁聊" })).filter(chat => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title} title={chat.title} current={inChat && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />),
+    ...phoneChats.map(chat => ({ ...chat, title: chat.title.trim().replace(/^📱\s*/, "").trim() || "手机对话" })).filter(chat => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title} title={`${chat.title}\n手机上和助理的聊天（这里只读，在手机上回复）`} onClick={() => onOpenPhoneChat?.(chat.sid)} meta="手机" />),
+    ...offlineChats.map(chat => ({ ...chat, title: chat.title.trim() || "本机对话" })).filter(chat => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title} title={`${chat.title}\n常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）`} onClick={() => onOpenOfflineChat?.(chat.sid)} meta="本机" />),
   ];
   // 正在看的旁聊即使排在后面也要露出来；搜索时全列
-  const activeIndex = sideChats.findIndex((chat) => chat.sid === current);
-  const limit = keyword || showAll ? others.length : Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
+  const activeIndex = inChat ? sideChats.findIndex((chat) => chat.sid === current) : -1;
+  const collapsedLimit = Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
+  const limit = keyword || showAll ? others.length : collapsedLimit;
   const mainMatches = matches("主要聊天", query);
   const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !others.length;
   return <>
@@ -110,9 +117,9 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
         label={team.title} title={`任务小组：${team.title}`} current={currentTeam === team.id} onClick={() => onOpenTeam?.(team.id)}
         meta={team.status === "active" ? <LiveDot /> : TEAM_BADGE[team.status] ? <span className="vc-team-badge">{TEAM_BADGE[team.status]}</span> : undefined} />)}
       {others.length > 0 && <GroupTitle>旁聊</GroupTitle>}
-      {others.slice(0, limit)}
-      {others.length > limit && <button type="button" className="vc-side-more" onClick={() => setShowAll(true)}>显示全部 {others.length} 条</button>}
-      {showAll && !keyword && others.length > SIDE_CHAT_LIMIT && <button type="button" className="vc-side-more" onClick={() => setShowAll(false)}>收起</button>}
+      {others.length > 0 && <div className="vc-side-chats" id={chatsId}>{others.slice(0, limit)}</div>}
+      {!keyword && others.length > collapsedLimit && <button ref={moreButton} type="button" className="vc-side-more" aria-expanded={showAll} aria-controls={chatsId}
+        onClick={() => { scrollToggle.current = true; setShowAll(value => !value); }}>{showAll ? "收起" : `显示全部 ${others.length} 条`}</button>}
       {noMatches && <p className="vc-side-hint vc-side-search-empty" role="status">未找到匹配的会话。试试其它标题关键词，或清除搜索。</p>}
       {!keyword && others.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
     </div>
