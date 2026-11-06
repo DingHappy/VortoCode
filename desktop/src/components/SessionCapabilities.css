@@ -1,0 +1,22 @@
+.session-capabilities-dialog { width: min(840px, calc(100vw - 32px)); max-height: 85vh; padding: 0; border: 1px solid var(--vc-border); border-radius: var(--vc-radius-card); color: var(--vc-text); background: var(--vc-bg); }
+.session-capabilities-dialog[open] { display: flex; flex-direction: column; }
+.session-capabilities-dialog::backdrop { background: var(--vc-backdrop); }
+.session-capabilities-dialog > header { display: flex; gap: var(--vc-space-3); justify-content: space-between; align-items: center; padding: var(--vc-space-4) var(--vc-space-5); border-bottom: 1px solid var(--vc-divider); }
+.session-capabilities-dialog h2 { margin: var(--vc-space-1) 0 0; font-size: var(--vc-size-heading); }
+.session-capabilities-dialog small, .session-capabilities-dialog footer p { color: var(--vc-muted); font-size: var(--vc-size-small); line-height: 1.6; }
+.session-capabilities-dialog button { min-height: var(--vc-control-h); padding: var(--vc-space-1) var(--vc-space-3); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); color: var(--vc-text-secondary); background: var(--vc-fill); font: inherit; font-size: var(--vc-size-small); cursor: pointer; }
+.session-capabilities-dialog button:disabled { opacity: .5; cursor: default; }
+.session-capabilities-dialog button:focus-visible, .session-capabilities-dialog summary:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: 2px; }
+.session-capabilities-scroll { min-height: 0; overflow: auto; padding: var(--vc-space-4) var(--vc-space-5); overflow-wrap: anywhere; font-size: var(--vc-size-body); line-height: 1.7; }
+.session-capabilities-scroll h3 { margin: var(--vc-space-5) 0 var(--vc-space-2); font-size: var(--vc-size-body); }
+.session-capabilities-intro { margin-top: 0; color: var(--vc-text-secondary); }
+.session-capabilities-actions, .session-capabilities-dialog footer > div { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); }
+.session-capabilities-dialog > footer { padding: var(--vc-space-3) var(--vc-space-5); border-top: 1px solid var(--vc-divider); }
+.session-capabilities-dialog footer p { margin: 0 0 var(--vc-space-2); }
+.session-capability-groups details { border-bottom: 1px solid var(--vc-divider); padding: var(--vc-space-2) 0; }
+.session-capability-groups summary { cursor: pointer; color: var(--vc-text); }
+.session-capability-groups ul { list-style: none; padding: 0; margin: var(--vc-space-2) 0; }
+.session-capability-groups li { display: flex; flex-wrap: wrap; gap: var(--vc-space-1) var(--vc-space-3); padding: var(--vc-space-2) 0; }
+.session-capability-groups code { font: var(--vc-size-small)/1.6 var(--vc-font-mono); overflow-wrap: anywhere; }
+.session-capability-groups li > small { flex-basis: 100%; }
+.session-capability-groups li > span { margin-left: auto; font-size: var(--vc-size-small); color: var(--vc-muted); }

@@ -14,6 +14,7 @@
   --vc-hover: #ececea;
   --vc-border: #e4e4e1;
   --vc-divider: #ecece9;
+  --vc-backdrop: rgba(0, 0, 0, 0.35);
 
   /* 文字 */
   --vc-text: #18181b;
@@ -115,6 +116,7 @@
     --vc-hover: #2a2a28;
     --vc-border: #353533;
     --vc-divider: #2a2a28;
+    --vc-backdrop: rgba(0, 0, 0, 0.55);
     --vc-text: #ececea;
     --vc-text-secondary: #c9c9c4;
     --vc-muted: #9a9a96;
@@ -152,6 +154,7 @@
   --vc-hover: #2a2a28;
   --vc-border: #353533;
   --vc-divider: #2a2a28;
+  --vc-backdrop: rgba(0, 0, 0, 0.55);
   --vc-text: #ececea;
   --vc-text-secondary: #c9c9c4;
   --vc-muted: #9a9a96;

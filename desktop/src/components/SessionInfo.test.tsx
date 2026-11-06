@@ -25,6 +25,7 @@ it("slash matches real entry points and hides repository references from general
   expect(matchingCommands("/files", false)).toEqual([]);
   expect(matchingCommands("/files", true).map(item => item.id)).toEqual(["files"]);
   expect(matchingCommands("/模型", false).map(item => item.id)).toEqual(["model"]);
+  expect(matchingCommands("/capabilities", false).map(item => item.id)).toEqual(["capabilities"]);
   expect(matchingCommands("/compact", true)).toEqual([]);
 });
 

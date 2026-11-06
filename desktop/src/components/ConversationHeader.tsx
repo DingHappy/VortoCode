@@ -3,7 +3,7 @@ import type { ReactNode, RefObject } from "react";
 import { Laptop, PanelRightClose, PanelRightOpen, Server, Square } from "lucide-react";
 import { HintButton } from "./ui";
 
-export function ConversationHeader({ title, place, panelOpen, panelLabel = "任务动态", panelId, panelButtonRef, waiting, plan, busy, taskPill, status, onTogglePanel, onStop }: {
+export function ConversationHeader({ title, place, panelOpen, panelLabel = "任务动态", panelId, panelButtonRef, waiting, waitingUncertain = false, plan, busy, taskPill, status, onTogglePanel, onStop }: {
   title: string;
   /** 登记了常驻电脑、又在工作台项目里时才显示 */
   place: "resident" | "local" | null;
@@ -13,6 +13,7 @@ export function ConversationHeader({ title, place, panelOpen, panelLabel = "任�
   panelButtonRef?: RefObject<HTMLButtonElement | null>;
   /** 等你处理的件数 */
   waiting: number;
+  waitingUncertain?: boolean;
   plan: { done: number; total: number };
   busy: boolean;
   /** 助理模式用任务胶囊代替右侧面板开关（docs/DESIGN_SYSTEM.md 第 4 节） */
@@ -40,7 +41,7 @@ export function ConversationHeader({ title, place, panelOpen, panelLabel = "任�
           aria-expanded={panelOpen}
           aria-controls={panelOpen ? panelId : undefined}
           aria-label={`${panelOpen ? "收起" : "打开"}${panelLabel}`}
-          hint={`${panelOpen ? "收起" : "打开"}${panelLabel}${waiting ? ` · ${waiting} 件等你处理` : plan.total ? ` · 当前步骤 ${plan.done}/${plan.total}` : ""}`}
+          hint={`${panelOpen ? "收起" : "打开"}${panelLabel}${waiting ? ` · ${waiting}${waitingUncertain ? "+" : ""} 件等你处理` : waitingUncertain ? " · 待处理来源尚未完整读取" : plan.total ? ` · 当前步骤 ${plan.done}/${plan.total}` : ""}`}
           onClick={onTogglePanel}
         >
           {panelOpen ? <PanelRightClose size={16} aria-hidden="true" /> : <PanelRightOpen size={16} aria-hidden="true" />}

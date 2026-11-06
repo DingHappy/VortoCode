@@ -8,6 +8,7 @@ export const COMPOSER_COMMANDS = [
   { id: "project", label: "选择项目", description: "进入 Git 项目工作" },
   { id: "files", label: "引用源码", description: "从当前项目选择文件" },
   { id: "info", label: "运行信息", description: "查看步骤、上下文与压缩策略" },
+  { id: "capabilities", label: "此对话的能力", description: "当前运行端的工具、连接与限制（只读）" },
   { id: "model", label: "模型设置", description: "连接、模型和能力配置" },
   { id: "new", label: "新建会话", description: "开始独立会话，保留当前历史" },
 ] as const;
@@ -59,6 +60,7 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
     if (disabled) return;
     dismiss(true);
     if (slash) onPrompt("");
+    if (id === "capabilities") textarea.current?.focus();
     onAction(id);
   };
   const keyDown = (event: KeyboardEvent) => {

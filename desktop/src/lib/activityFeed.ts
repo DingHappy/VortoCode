@@ -31,6 +31,9 @@ export interface FeedItem {
   at: string;
   session?: string;
   taskId?: string;
+  /** An explicit open question stays with the owner, even inside a team. */
+  requiresReply?: boolean;
+  teamContext?: { id: string; objective: string; member: string };
   /** 常驻助理的任务单 */
   dispatchId?: string;
   codexActionId?: string;
@@ -70,6 +73,10 @@ function openQuestion(task: TaskItem) {
 
 export function feedStatus(task: TaskItem): FeedStatus {
   if (openQuestion(task) || task.collaboration?.review === "pending") return "waiting";
+  if (task.kind === "team") {
+    if (task.status === "active") return "running";
+    if (task.status === "review" || task.status === "waiting") return "waiting";
+  }
   if (task.status === "queued" || task.status === "running") return "running";
   if (task.status === "done") return "done";
   if (task.status === "paused" || task.status === "interrupted" || task.status === "cancelled") return "stopped";
@@ -89,6 +96,7 @@ export function taskFeedItem(task: TaskItem): FeedItem {
     id: `task:${task.id}`,
     kind: "task",
     taskId: task.id,
+    ...(question ? { requiresReply: true } : {}),
     presentation: task.status === "cancelled" ? "history" : undefined,
     title: firstSentence(task.prompt, MAX_TITLE) || "未命名任务",
     summary,

@@ -20,6 +20,8 @@ it("the panel toggle prefers waiting items over plan progress, and dots while bu
   expect(header({ panelOpen: false, panelLabel: "助理面板" })).toContain('aria-label="打开助理面板"');
   expect(header({ panelOpen: true, panelId: "assistant-panel" })).toContain('aria-controls="assistant-panel"');
   expect(header({ panelOpen: false, panelId: "assistant-panel" })).not.toContain("aria-controls");
+  expect(header({ waiting: 2, waitingUncertain: true })).toContain('data-hint="打开任务动态 · 2+ 件等你处理"');
+  expect(header({ waitingUncertain: true })).toContain("待处理来源尚未完整读取");
   expect(header()).not.toContain("workbench-toggle-dot");
   expect(header({ waiting: 1 })).toContain("workbench-toggle-dot waiting");
   expect(header({ busy: true })).toContain("停止");

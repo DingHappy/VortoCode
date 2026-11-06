@@ -13,6 +13,7 @@ import { AssistantWorkday } from "./components/AssistantWorkday";
 import { TeamChat } from "./components/TeamChat";
 import { TeamNoteActions } from "./components/TeamNoteActions";
 import { WaitingInbox, waitingTeams } from "./components/WaitingInbox";
+import { currentTeams } from "./lib/teamAttention";
 import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
@@ -33,6 +34,7 @@ import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
 import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
 import { websiteConfirmation } from "./lib/websiteConfirmation";
+import { SessionCapabilities } from "./components/SessionCapabilities";
 import { useSessionResources } from "./hooks/useSessionResources";
 import { SessionResources, residentHostLabel } from "./components/SessionResources";
 import { ComposerCommands } from "./components/ComposerCommands";
@@ -109,7 +111,7 @@ import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
-import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
+import { AttachmentChips, AttachmentReadStatus, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
 import { ConversationHome, FirstRunCard } from "./components/ConversationHome";
 import { SidebarBrand, SidebarSearch, SidebarSectionTitle, WorkNav } from "./components/SidebarChrome";
 import { IconButton } from "./components/ui";
@@ -132,7 +134,6 @@ import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { localGeneral, readLocalCodexObserver } from "./lib/codexObserverHealth";
 import { diag } from "./lib/diagnostics";
-import { checkAttachment } from "./lib/attachments";
 import { dismissOfflineChat, listOfflineChats, offlineChatAttachment, recordOfflineChat } from "./lib/offlineChats";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
@@ -176,6 +177,7 @@ import {
 import { errorText } from "./lib/errorText";
 import { confirmAction } from "./lib/confirm";
 import { useAttachments } from "./hooks/useAttachments";
+import { reportComposerFailure } from "./lib/composerFailure";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
@@ -228,6 +230,7 @@ function App() {
   const [projectSwitching, setProjectSwitching] = useState(false);
   coordinator.listen({ switching: setProjectSwitching, starting: setRuntimeStarting });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -240,6 +243,7 @@ function App() {
   const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team">("chat");
   // 任务小组（ADR-014 S3）：侧栏「最近」里每个小组一条，点开在中间看群聊
   const [teamList, setTeamList] = useState<TeamSummary[]>([]);
+  const [teamReadSource, setTeamReadSource] = useState<{ client: GatewayClient; scope: string } | null>(null);
   const [openTeamId, setOpenTeamId] = useState<string | null>(null);
   useStickToBottom(conversationScrollRef, autoScrollRef, mainView);
   const mainViewRef = useRef(mainView);
@@ -290,7 +294,7 @@ function App() {
   // 不再区分 Plan / Build：每轮都按可修改的模式运行，写盘、执行、外发照旧逐次过确认门
   //（授权档位决定问不问，污点回合一律问人）。只读规划交给模型自己判断，不再让用户先选模式。
   const mode = "build" as const;
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPromptState] = useState("");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const sessionResources = useSessionResources(clientRef, activeSid, connection);
   const confirmationViewRef = useRef({client:clientRef.current,scope:activeSid,id:"",state:pendingConfirm?.responseState});
@@ -317,6 +321,7 @@ function App() {
   appModeRef.current = appMode;
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
+  const [exceptionFocus, setExceptionFocus] = useState(0);
   const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
@@ -328,6 +333,8 @@ function App() {
   const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
   // Snapshots are bound to the loaded host before they can expose actions.
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
+  const [waitingDisclosure, setWaitingDisclosure] = useState({ scope: "", open: false });
+  useEffect(() => setCapabilitiesOpen(false), [assistantScope, activeSid]);
   const assistantScopeRef = useRef(assistantScope);
   assistantScopeRef.current = assistantScope;
   const {
@@ -349,7 +356,8 @@ function App() {
   const assistantActionGate = useRef(new AssistantActionGate());
   // 换了助理 scope：数据由 useAssistantSnapshot 清空，这里清掉指向旧数据的选中与弹窗。
   useEffect(() => {
-    setPhoneChatSid(null); setPhoneChatRid(undefined);
+    setWaitingDisclosure({ scope: assistantScope, open: false });
+    setPhoneChatSid(null); setPhoneChatRid(undefined); setExceptionFocus(0);
     setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
@@ -427,7 +435,13 @@ function App() {
     if (typeof value === "string" && value) diag("ui.banner", value, "warn");
     setBannerState(value);
   }, []);
-  const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
+  const { attachments, attachmentsReading, addFiles, addAttachment, removeAttachment, resetAttachments,
+    takeAttachments, attachmentRevision, isCurrentAttachments, isReadingAttachments, markComposerEdited, cancelAttachmentReads } = useAttachments(setBanner,
+    // A managed local engine may move to another loopback port during startup.
+    JSON.stringify([remoteProjectRef.current ?? "local", remoteProjectRef.current ? baseUrl : "", repoRoot, activeSid]));
+  const setPrompt = useCallback((value: SetStateAction<string>) => {
+    markComposerEdited(); setPromptState(value);
+  }, [markComposerEdited]);
   const { plugins, pluginBusy, pluginChecks, savePlugin, pluginAction } = usePlugins(
     clientRef, assistantScopeRef, assistantScope, connection, mainView === "customize", setBanner);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -1240,6 +1254,7 @@ function App() {
 
 
   const clearSessionView = () => {
+    resetAttachments();
     conversationLocation.reset();
     autoScrollRef.current = true;
     confirmationReplyRef.current?.close();
@@ -1743,10 +1758,7 @@ function App() {
   /** 「带回常驻电脑」：把本机这段对话作为文本附件放进输入框，用户补一句话再发；不自动发送、不合并。 */
   const bringOfflineChat = (chat: PhoneChat) => {
     const attachment = offlineChatAttachment(chat);
-    const others = attachments.filter((item) => item.id !== attachment.id);
-    const check = checkAttachment(attachment, others);
-    if (!check.ok) { setBanner(check.reason); return; }
-    setAttachments([...others, attachment]);
+    if (!addAttachment(attachment)) return;
     setOfflineChatIds(dismissOfflineChat(chat.sid));
     setOfflineChatSid(null);
     setMainView("chat");
@@ -1857,13 +1869,23 @@ function App() {
     requestedMode: "plan" | "build" = mode,
     requestedContext?: ContextItem[],
   ): Promise<boolean> => {
+    if (override === undefined && isReadingAttachments()) {
+      setBanner("附件还在读取，请读完后再发送，或取消读取");
+      return false;
+    }
     const text = (override ?? prompt).trim();
     const selectedContext = [...(requestedContext ?? contextItems)].slice(0, 8);
     // 附件只跟随输入框发送；面板一键派发（override）不夹带输入框里的附件。
     const selectedAttachments = override === undefined ? attachments : [];
+    const selectedRevision = attachmentRevision();
+    const selectedHost = remoteProjectRef.current;
     if ((!text && selectedContext.length === 0 && selectedAttachments.length === 0) || savingFile) return false;
 
     if (connection !== "connected" || !clientRef.current) {
+      if (selectedHost) {
+        setBanner("当前运行端尚未连接，请重新连接后发送；输入和附件已保留");
+        return false;
+      }
       if (coordinator.starting || coordinator.switching) {
         setBanner("工作区正在准备，请稍候发送");
         return false;
@@ -1880,13 +1902,21 @@ function App() {
       if (!ready || !clientRef.current) return false;
     }
 
+    // Workspace preparation may have changed the target while awaiting a connection.
+    if (!isCurrentAttachments() || remoteProjectRef.current !== selectedHost) {
+      setBanner("发送前会话或运行端已变化，未发送；请核对当前输入和附件");
+      return false;
+    }
+    const attachmentReceipt = override === undefined ? takeAttachments(selectedAttachments, selectedRevision) : null;
+    if (override === undefined && !attachmentReceipt) {
+      setBanner("输入或附件已变化，请核对后再发送");
+      return false;
+    }
     const client = clientRef.current;
     const willQueue = busy;
     const outgoing = { text, context: selectedContext, attachments: selectedAttachments, rid: createSessionId().slice(0, 64) };
     const { rid } = outgoing;
-    setPrompt("");
-    setContextItems([]);
-    if (selectedAttachments.length > 0) setAttachments([]);
+    if (override === undefined) { setPromptState(""); setContextItems([]); }
     if (appMode === "assistant" && showStarterTips) {
       recordAssistantSend();
       setShowStarterTips(shouldShowStarterTips());
@@ -1906,31 +1936,34 @@ function App() {
       void client.confirmDelivery().then((delivered) => {
         if (delivered) return;
         diag("send.unconfirmed", `rid=${rid}`, "warn");
-        if (activeTurnRidRef.current === rid) {
-          setBusy(false);
-          updateActiveTurnRid(null);
-        }
-        setActivities((previous) => upsertActivity(previous, {
-          id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking", status: "failed", label: "没确认送达",
-        }));
-        setPrompt((current) => current.trim() ? current : text);
-        setAttachments((current) => current.length > 0 ? current : selectedAttachments);
-        setBanner("这条消息没确认送达，连接可能断了；文字已放回输入框。连上后先看看对话里有没有它，再决定要不要重发");
+        reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+          recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
+          notify: setBanner, message: "这条消息没确认送达，连接可能断了", followUp: "连上后先核对，再决定要不要重发",
+          markFailed: () => {
+            if (activeTurnRidRef.current === rid) {
+              setBusy(false);
+              updateActiveTurnRid(null);
+            }
+            setActivities((previous) => upsertActivity(previous, {
+              id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking", status: "failed", label: "没确认送达",
+            }));
+          },
+        });
       });
       return true;
     } catch (error) {
-      if (!willQueue) {
-        setBusy(false);
-        updateActiveTurnRid(null);
-        setActivities((previous) => upsertActivity(previous, {
-          id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking",
-          status: "failed", label: "发送任务失败",
-        }));
-      }
-      setPrompt(text);
-      setContextItems(selectedContext);
-      if (selectedAttachments.length > 0) setAttachments(selectedAttachments);
-      setBanner(errorText(error, "发送失败"));
+      reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+        recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
+        notify: setBanner, message: errorText(error, "发送失败"), markFailed: () => {
+          if (!willQueue) {
+            if (activeTurnRidRef.current === rid) { setBusy(false); updateActiveTurnRid(null); }
+            setActivities((previous) => upsertActivity(previous, {
+              id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking",
+              status: "failed", label: "发送任务失败",
+            }));
+          }
+        },
+      });
       return false;
     }
   };
@@ -2389,8 +2422,9 @@ function App() {
   const feedWaiting = feedItems.filter(item => item.status === "waiting").length;
   const assistantFeedItems = assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
     confirmation: pendingConfirm });
-  const assistantSummary = assistantAttention(assistantFeedItems);
-  const assistantWaiting = assistantSummary.decisions.length;
+  const attentionTeams = currentTeams(teamList, teamReadSource, clientRef.current, assistantScope);
+  const assistantSummary = assistantAttention(assistantFeedItems, attentionTeams);
+  const assistantWaiting = assistantSummary.decisions.length + waitingTeams(attentionTeams).length;
   const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
   const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
     .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
@@ -2456,6 +2490,7 @@ function App() {
 
   // 动态里点一条：确认卡、Codex 动作、任务单、后台任务、原对话位置。面板与主要聊天顶部的「等你处理」共用。
   const openFeedItem = (item: FeedItem) => {
+    if (item.teamContext && !item.requiresReply) { openTeamChat(item.teamContext.id); return; }
     if (item.confirmationId) { focusConfirmation(item.confirmationId); return; }
     if (item.codexActionId) {
       setSelectedDispatchId(null);
@@ -2483,8 +2518,12 @@ function App() {
   const acceptTeamFromChat = async (id: string) => {
     const client = clientRef.current;
     if (!client) throw new Error("还没连上常驻电脑");
+    const scope = assistantScope;
     await client.decideTeam(id, true, "");
-    try { setTeamList(await client.listTeams()); } catch { /* 下次轮询再刷 */ }
+    try {
+      const teams = await client.listTeams();
+      if (clientRef.current === client && assistantScopeRef.current === scope) { setTeamList(teams); setTeamReadSource({ client, scope }); }
+    } catch { /* 下次轮询再刷 */ }
   };
   const teamNoteActions = useRef({ open: openTeamChat, accept: acceptTeamFromChat });
   teamNoteActions.current = { open: openTeamChat, accept: acceptTeamFromChat };
@@ -2615,7 +2654,12 @@ function App() {
     const read = async () => {
       const client = clientRef.current;
       if (!client) return;
-      try { const teams = await client.listTeams(); if (alive) setTeamList(teams); } catch { /* 保持上次 */ }
+      try {
+        const teams = await client.listTeams();
+        if (alive && clientRef.current === client && assistantScopeRef.current === assistantScope) {
+          setTeamList(teams); setTeamReadSource({ client, scope: assistantScope });
+        }
+      } catch { /* 同一来源保持上次；未知归属不抑制主人待办 */ }
     };
     const stop = startPolling(read, { intervalMs: 30_000, hiddenIntervalMs: 120_000, immediate: true, visibility: document });
     return () => { alive = false; stop(); };
@@ -2661,7 +2705,7 @@ function App() {
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
-              teams={teamList.map(team => ({ id: team.id, title: team.objective, status: team.status }))}
+              teams={attentionTeams.map(team => ({ id: team.id, title: team.objective, status: team.status }))}
               currentTeam={mainView === "team" ? openTeamId ?? "" : ""}
               onOpenTeam={openTeamChat}
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
@@ -2671,7 +2715,7 @@ function App() {
               page={assistantPage === "library" || assistantPage === "customize" ? assistantPage : null}
               search={sidebarSearch("搜索聊天")}
               query={sidebarQuery}
-              waiting={assistantWaiting + waitingTeams(teamList).length}
+              waiting={assistantWaiting}
               waitingUncertain={!activityComplete}
               onPage={openAssistantPage}
               onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
@@ -2817,7 +2861,8 @@ function App() {
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
             panelOpen={inspectorOpen} panelLabel={appMode === "assistant" ? "助理面板" : "任务动态"}
             panelId={appMode === "assistant" && !computerWorkspace.view ? "assistant-panel" : undefined} panelButtonRef={assistantPanelToggleRef}
-            waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            waiting={appMode === "assistant" ? assistantWaiting : feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            waitingUncertain={appMode === "assistant" && !activityComplete}
             taskPill={undefined /* ADR-016：等你处理在主要聊天顶部，不再有顶栏胶囊 */}
             // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
             status={connection !== "connected" && (
@@ -2833,10 +2878,12 @@ function App() {
           <div className="conversation-body">
             <ConversationLocation status={conversationLocation.status} onLatest={conversationLocation.latest} onRetry={conversationLocation.retry} />
             {/* 「等你处理」固定在对话顶部，不随消息滚动（ADR-016；装好后发现放进滚动区会被推到历史最上面） */}
-            {appMode === "assistant" && activeSid === mainChatSid && <div className="waiting-inbox-band"><WaitingInbox items={assistantSummary.decisions} teams={teamList} exceptions={assistantSummary.exceptions.length}
+            {appMode === "assistant" && activeSid === mainChatSid && <div className="waiting-inbox-band"><WaitingInbox items={assistantSummary.decisions} teams={attentionTeams} exceptions={assistantSummary.exceptions.length}
+                expanded={waitingDisclosure.scope === assistantScope && waitingDisclosure.open}
+                onExpandedChange={open => setWaitingDisclosure({ scope: assistantScope, open })}
                 uncertain={!activityComplete} connected={connection === "connected"} onOpen={openWaitingItem}
                 onOpenTeam={openTeamChat} onAcceptTeam={acceptTeamFromChat}
-                onShowActivity={() => { setAssistantTab("feed"); setInspectorOpen(true); }} /></div>}
+                onShowActivity={() => { setAssistantTab("feed"); setInspectorOpen(true); setSelectedDispatchId(null); setSelectedCodexAction(null); setExceptionFocus(value => value + 1); }} /></div>}
           <div
             className="conversation-scroll"
             ref={conversationScrollRef}
@@ -2889,7 +2936,14 @@ function App() {
 
           </div>
           <div className="composer-wrap">
-            <SessionResources view={sessionResources.view} connected={connection === "connected"}
+            {capabilitiesOpen && <SessionCapabilities key={`${assistantScope}:${activeSid}`} view={sessionResources.view} connected={connection === "connected"}
+              hostLabel={residentHostLabel(remoteProjectRef.current ? projects.find(item => item.id === remoteProjectRef.current)?.name : undefined,
+                Boolean(remoteProjectRef.current), onAssistantHost())}
+              onClose={() => setCapabilitiesOpen(false)} onRefresh={sessionResources.refresh}
+              pendingId={pendingConfirm?.id} onFocusConfirmation={() => focusConfirmation(pendingConfirm?.id)}
+              onManage={() => setMainView(appMode === "assistant" ? "customize" : "plugins")}
+              onLocalSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }} />}
+            <SessionResources key={`${assistantScope}:${activeSid}`} view={sessionResources.view} connected={connection === "connected"}
               hostLabel={residentHostLabel(remoteProjectRef.current ? projects.find(item => item.id === remoteProjectRef.current)?.name : undefined,
                 Boolean(remoteProjectRef.current), onAssistantHost())}
               quietWhenOk={appMode === "assistant"}
@@ -2963,8 +3017,9 @@ function App() {
               }}
             >
               <AttachmentChips items={attachments} onRemove={removeAttachment} />
+              <AttachmentReadStatus pending={attachmentsReading} onCancel={cancelAttachmentReads} />
               <ContextChips items={contextItems}
-                onRemove={(item) => setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item)))} />
+                onRemove={(item) => { markComposerEdited(); setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item))); }} />
               <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}
                 placeholder={appMode !== "assistant" ? undefined : onAssistantHost()
                   ? "交代一件事，它会在常驻电脑上接着做，做完了回到这里告诉你…" : "交代一件事，做完了回到这里告诉你…"}
@@ -2975,6 +3030,7 @@ function App() {
                   else if (command === "project") void chooseRepo();
                   else if (command === "files") openInspector("files");
                   else if (command === "info") openInspector("info");
+                  else if (command === "capabilities") { setCapabilitiesOpen(true); sessionResources.refresh(); }
                   else if (command === "model") { setSettingsSection("model"); setSettingsOpen(true); }
                   else if (command === "new" && connection === "connected") void newSession();
                 }}>
@@ -3001,7 +3057,7 @@ function App() {
                   onChoose={(value) => { setSavedModelChoice(value); persistModelChoice(value); }}
                   onManage={() => { setSettingsSection("model"); setSettingsOpen(true); }} />
                 <ContextStatus key={activeSid} context={currentSession?.context} />
-                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={attachmentsReading > 0 || (!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
                 </div>
               </div>
               </ComposerCommands>
@@ -3071,19 +3127,12 @@ function App() {
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
-              : <><AssistantTimeline key={`timeline-${assistantScope}`} client={clientRef.current} connected={connection === "connected"}
-                  version={Math.max(...activitySources.map(source => source.checkedAt ?? 0))}
-                  onChanged={() => void refreshActivity()}
-                  onOpen={(type, id) => {
-                    const client = clientRef.current, scope = assistantScope;
-                    void refreshAgentTurns().then(() => {
-                      if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
-                      if (type === "decide_dispatch") { void openDispatch(id); return; }
-                      setSelectedDispatchId(null);
-                      setSelectedCodexAction({ client, scope, id });
-                    });
-                  }} />
-              <AssistantActivity key={assistantScope} items={assistantFeedItems}
+              : <>
+              <AssistantActivity key={assistantScope} items={assistantFeedItems} teams={attentionTeams} exceptionFocus={exceptionFocus} onExceptionFocused={() => setExceptionFocus(0)}
+                  waitingInbox={{ count: assistantWaiting, uncertain: !activityComplete, onOpen: () => {
+                    setWaitingDisclosure({ scope: assistantScope, open: true });
+                    setMainView("chat"); setInspectorOpen(false); void openMainChat();
+                  } }}
                   client={clientRef.current}
                   currentSession={activeSid} connected={connection === "connected"} sources={activitySources} onRefresh={() => void refreshActivity()}
                   onOpen={openFeedItem}>
@@ -3099,7 +3148,19 @@ function App() {
                     steps={dispatchDetailSteps(dispatches.find(item => item.id === selectedDispatchId)!)} statusLabel="任务单记录" onClose={() => setSelectedDispatchId(null)}><AssistantTaskCard
                     key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
                     connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} /></AssistantActivityDetail>}
-                </section></AssistantActivity></>}
+                </section></AssistantActivity>
+              <AssistantTimeline key={`timeline-${assistantScope}`} client={clientRef.current} connected={connection === "connected"}
+                  version={Math.max(...activitySources.map(source => source.checkedAt ?? 0))}
+                  onChanged={() => void refreshActivity()}
+                  onOpen={(type, id) => {
+                    const client = clientRef.current, scope = assistantScope;
+                    void refreshAgentTurns().then(() => {
+                      if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
+                      if (type === "decide_dispatch") { void openDispatch(id); return; }
+                      setSelectedDispatchId(null);
+                      setSelectedCodexAction({ client, scope, id });
+                    });
+                  }} /></>}
           </AssistantPanel>
         )}
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (
@@ -3161,7 +3222,7 @@ function App() {
                 onDiscard={discardEditorChanges}
                 onSave={saveWorkspaceFile}
                 onLaunchExternal={launchExternalEditor}
-                onAddContext={addFileToContext}
+                onAddContext={item => { markComposerEdited(); addFileToContext(item); }}
                 onSelectSourceLine={selectSourceLine}
                 onClearSourceSelection={() => setSourceSelection(null)}
                 onFileQueryChange={setFileQuery}
@@ -3288,11 +3349,11 @@ function App() {
               />
             )}
             {inspectorTab === "tasks" && (
-              <TasksPanel tasks={tasks} focusedTaskId={focusedTaskId} worktreeWorkspace={worktreeWorkspace}
+              <TasksPanel tasks={tasks} teams={appMode === "assistant" ? attentionTeams : []} focusedTaskId={focusedTaskId} worktreeWorkspace={worktreeWorkspace}
                 dispatchForm={{ dispatch: taskDispatch, value: backgroundPrompt, onChange: setBackgroundPrompt,
                   enabled: connection === "connected" && activeScope !== "general" }}
                 onFocusTask={focusTask}
-                cardActions={{ taskReviewVerifying,
+                cardActions={{ taskReviewVerifying, onOpenTeam: openTeamChat,
                   loadPlanGraph: (id) => clientRef.current!.devPlanGraph(id),
                   onPause: (item) => pauseTask(item.id), onCancel: (item) => cancelTask(item.id),
                   onResume: resumeTask, onCopy: copyTaskHandoff, onReviewBranch: openTaskBranchReview,
