@@ -1,5 +1,16 @@
 import { expect, it } from "vitest";
-import { hintPosition, tabKeyTarget } from "./iconNavigation";
+import { commandKeyTarget, hintPosition, tabKeyTarget } from "./iconNavigation";
+
+it("moves through command buttons without treating Enter or Space as selection navigation", () => {
+  expect(commandKeyTarget("ArrowDown", -1, 5)).toBe(0);
+  expect(commandKeyTarget("ArrowUp", -1, 5)).toBe(4);
+  expect(commandKeyTarget("ArrowDown", 4, 5)).toBe(0);
+  expect(commandKeyTarget("ArrowUp", 0, 5)).toBe(4);
+  expect(commandKeyTarget("Home", 3, 5)).toBe(0);
+  expect(commandKeyTarget("End", 1, 5)).toBe(4);
+  expect(commandKeyTarget("ArrowDown", -1, 0)).toBeNull();
+  for (const key of ["Enter", " ", "Tab"]) expect(commandKeyTarget(key, 1, 5)).toBeNull();
+});
 
 it("moves through a horizontal tab bar and wraps at both ends", () => {
   expect(tabKeyTarget("ArrowLeft", 0, 5)).toBe(4);

@@ -1,8 +1,8 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, ImagePlus, List, ListChecks, PanelRightClose, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, UserRound, Users, X } from "lucide-react";
 import { Button, GroupTitle, HintButton, IconButton, NavItem } from "./ui";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { tabKeyTarget } from "../lib/iconNavigation";
 import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
 import type { MemorySnapshot } from "../lib/memorySnapshot";
@@ -137,7 +137,7 @@ const TABS: Array<{ id: AssistantTab; label: string; hint: string; icon: ReactNo
   { id: "identity", label: "身份", hint: "身份 · 资料、性格与记忆", icon: <UserRound aria-hidden="true" /> },
 ];
 
-export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
+export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
   name: string; connected: boolean; modelLabel?: string;
   avatar?: AssistantAvatar | null;
   host: AssistantHostInfo;
@@ -153,8 +153,18 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   waitingUncertain?: boolean;
   children: ReactNode;
   computer?: ReactNode;
+  id?: string;
+  toggleRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const panelId = useId();
+  const surface = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const toggle = toggleRef?.current;
+    if (toggle && document.activeElement === toggle && toggle.matches(":focus-visible")) {
+      surface.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
+    }
+  }, [toggleRef]);
+  const closePanel = () => { onClose(); toggleRef?.current?.focus({ preventScroll: true }); };
   // 连不上通常是隧道没开或网络断了：服务器上的助理还在干活，只是这台电脑看不到
   const unreachable = host.kind === "resident" && (!connected || host.reachable === false);
   const where = host.kind === "resident"
@@ -163,8 +173,8 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   const model = !connected ? "" : modelLabel === "未连接模型" ? "还没连接模型" : modelLabel ?? "";
   const badge = waiting || waitingUncertain
     ? waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}` : "";
-  return <aside className="assistant-panel vc-panel" aria-label="助理">
-    <IconButton className="vc-panel-close" label="收起面板" icon={<PanelRightClose />} onClick={onClose} />
+  return <aside ref={surface} id={id} className="assistant-panel vc-panel" aria-label="助理">
+    <IconButton className="vc-panel-close" label="收起面板" icon={<PanelRightClose />} onClick={closePanel} />
     <div className="vc-panel-card" data-tauri-drag-region="deep">
       <div className="vc-panel-identity-row">
         <AssistantAvatarImage name={name} avatar={avatar} size={32} />
@@ -191,6 +201,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
         id={`${panelId}-${item.id}`} aria-controls={`${panelId}-content`} tabIndex={tab === item.id ? 0 : -1}
         className="vc-panel-tab" onClick={() => onTab(item.id)} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closePanel(); return; }
           const target = tabKeyTarget(event.key, index, TABS.length);
           if (target === null) return;
           event.preventDefault(); onTab(TABS[target].id);
@@ -200,7 +211,13 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
         {item.id === "feed" && badge ? <i className={`vc-panel-tab-dot${waitingUncertain && !waiting ? " is-unknown" : ""}`} role="img" aria-label={badge} /> : null}
       </HintButton>)}
     </div>
-    <div className="assistant-panel-body" role="tabpanel" id={`${panelId}-content`} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}>{children}</div>
+    <div className="assistant-panel-body" role="tabpanel" id={`${panelId}-content`} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}
+      onKeyDown={event => {
+        if (event.target === event.currentTarget && event.key === "Escape" && !event.nativeEvent.isComposing
+            && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault(); event.stopPropagation(); closePanel();
+        }
+      }}>{children}</div>
   </aside>;
 }
 

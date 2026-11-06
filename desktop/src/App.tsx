@@ -206,6 +206,7 @@ function App() {
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const activeTurnRidRef = useRef<string | null>(null);
+  const assistantPanelToggleRef = useRef<HTMLButtonElement>(null);
   const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem(STORAGE_KEYS.baseUrl) ?? "http://127.0.0.1:8080");
   const [repoRoot, setRepoRoot] = useState("");
   const [token, setToken] = useState("");
@@ -2809,7 +2810,9 @@ function App() {
           <ConversationHeader
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
-            panelOpen={inspectorOpen} panelLabel={appMode === "assistant" ? "助理面板" : "任务动态"} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            panelOpen={inspectorOpen} panelLabel={appMode === "assistant" ? "助理面板" : "任务动态"}
+            panelId={appMode === "assistant" && !computerWorkspace.view ? "assistant-panel" : undefined} panelButtonRef={assistantPanelToggleRef}
+            waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
             taskPill={undefined /* ADR-016：等你处理在主要聊天顶部，不再有顶栏胶囊 */}
             // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
             status={connection !== "connected" && (
@@ -3017,7 +3020,7 @@ function App() {
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
-          : <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
+          : <AssistantPanel id="assistant-panel" toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}

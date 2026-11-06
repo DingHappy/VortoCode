@@ -114,6 +114,12 @@
 .conversation-actions > button svg { stroke-width: var(--vc-icon-stroke); }
 .conversation-actions .stop-button { display: inline-flex; align-items: center; gap: var(--vc-space-1); }
 .assistant-panel-body[role="tabpanel"]:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: -2px; }
+.conversation-actions > button:focus-visible, .composer-attach:focus-visible {
+  outline: 2px solid var(--vc-focus-ring); outline-offset: 2px;
+}
+.composer-command-help { margin: var(--vc-space-1) var(--vc-space-2); color: var(--vc-muted); font-size: var(--vc-size-small); }
+.composer-command-list > button:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: -2px; }
+.composer-command-selection { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* 侧栏项：高 34；当前项选中底色 + 500，悬停只换浅底 */
 .vc-nav-item {

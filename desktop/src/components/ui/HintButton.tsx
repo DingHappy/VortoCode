@@ -1,10 +1,10 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { hintPosition } from "../../lib/iconNavigation";
 
 /** A button stays a single layout item. Its hint also works with keyboard focus and native dialogs. */
-export function HintButton({ hint, type = "button", onPointerEnter, onPointerLeave, onFocus, onBlur, onClick,
-  "aria-describedby": description, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { hint: string }) {
+export function HintButton({ hint, buttonRef, type = "button", onPointerEnter, onPointerLeave, onFocus, onBlur, onClick,
+  "aria-describedby": description, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { hint: string; buttonRef?: RefObject<HTMLButtonElement | null> }) {
   const anchor = useRef<HTMLButtonElement>(null), popup = useRef<HTMLDivElement>(null), id = useId();
   const [open, setOpen] = useState(false), [position, setPosition] = useState({ left: 0, top: 0 });
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -28,7 +28,7 @@ export function HintButton({ hint, type = "button", onPointerEnter, onPointerLea
     window.addEventListener("resize", moved); window.addEventListener("scroll", moved, true);
     return () => { document.removeEventListener("keydown", key, true); window.removeEventListener("resize", moved); window.removeEventListener("scroll", moved, true); };
   }, [open]);
-  return <><button {...props} ref={anchor} type={type} data-hint={hint}
+  return <><button {...props} ref={node => { anchor.current = node; if (buttonRef) buttonRef.current = node; }} type={type} data-hint={hint}
     aria-describedby={[description, open ? id : ""].filter(Boolean).join(" ") || undefined}
     onPointerEnter={event => { onPointerEnter?.(event); hovered.current = true; stopTimer(); timer.current = setTimeout(() => setOpen(true), 300); }}
     onPointerLeave={event => { onPointerLeave?.(event); hovered.current = false; leave(); }}

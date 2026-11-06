@@ -18,6 +18,8 @@ it("the panel toggle prefers waiting items over plan progress, and dots while bu
   expect(header({ plan: { done: 1, total: 3 } })).toContain('data-hint="打开任务动态 · 当前步骤 1/3"');
   expect(header({ panelOpen: true, panelLabel: "助理面板" })).toContain('aria-label="收起助理面板"');
   expect(header({ panelOpen: false, panelLabel: "助理面板" })).toContain('aria-label="打开助理面板"');
+  expect(header({ panelOpen: true, panelId: "assistant-panel" })).toContain('aria-controls="assistant-panel"');
+  expect(header({ panelOpen: false, panelId: "assistant-panel" })).not.toContain("aria-controls");
   expect(header()).not.toContain("workbench-toggle-dot");
   expect(header({ waiting: 1 })).toContain("workbench-toggle-dot waiting");
   expect(header({ busy: true })).toContain("停止");

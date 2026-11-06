@@ -8,6 +8,16 @@ export function tabKeyTarget(key: string, index: number, count: number): number 
   return null;
 }
 
+/** Vertical command choices; -1 denotes the menu's close button or an absent selection. */
+export function commandKeyTarget(key: string, index: number, count: number): number | null {
+  if (count < 1) return null;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (key === "ArrowDown") return index < 0 ? 0 : (index + 1) % count;
+  if (key === "ArrowUp") return index < 0 ? count - 1 : (index + count - 1) % count;
+  return null;
+}
+
 /** Keep short button hints inside the viewport, flipping above when necessary. */
 export function hintPosition(anchor: { left: number; right: number; top: number; bottom: number },
   box: { width: number; height: number }, viewport: { width: number; height: number }) {

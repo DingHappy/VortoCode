@@ -1,14 +1,16 @@
 // 对话区标题栏：会话名、在哪台电脑上做（登记了常驻电脑时）、右侧面板开关或任务胶囊、停止按钮。只负责显示。
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { Laptop, PanelRightClose, PanelRightOpen, Server, Square } from "lucide-react";
 import { HintButton } from "./ui";
 
-export function ConversationHeader({ title, place, panelOpen, panelLabel = "任务动态", waiting, plan, busy, taskPill, status, onTogglePanel, onStop }: {
+export function ConversationHeader({ title, place, panelOpen, panelLabel = "任务动态", panelId, panelButtonRef, waiting, plan, busy, taskPill, status, onTogglePanel, onStop }: {
   title: string;
   /** 登记了常驻电脑、又在工作台项目里时才显示 */
   place: "resident" | "local" | null;
   panelOpen: boolean;
   panelLabel?: string;
+  panelId?: string;
+  panelButtonRef?: RefObject<HTMLButtonElement | null>;
   /** 等你处理的件数 */
   waiting: number;
   plan: { done: number; total: number };
@@ -33,8 +35,10 @@ export function ConversationHeader({ title, place, panelOpen, panelLabel = "任�
       <div className="conversation-actions">
         {status}
         {taskPill ?? <HintButton
+          buttonRef={panelButtonRef}
           className={`context-toggle workbench-toggle icon-only ${panelOpen ? "active" : ""}`}
           aria-expanded={panelOpen}
+          aria-controls={panelOpen ? panelId : undefined}
           aria-label={`${panelOpen ? "收起" : "打开"}${panelLabel}`}
           hint={`${panelOpen ? "收起" : "打开"}${panelLabel}${waiting ? ` · ${waiting} 件等你处理` : plan.total ? ` · 当前步骤 ${plan.done}/${plan.total}` : ""}`}
           onClick={onTogglePanel}

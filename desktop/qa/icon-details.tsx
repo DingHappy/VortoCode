@@ -27,7 +27,10 @@ function Fixture() {
   const [prompt, setPrompt] = useState(""), [search, setSearch] = useState(false), [query, setQuery] = useState("");
   const [light, setLight] = useState(new URLSearchParams(location.search).has("light")), [narrow, setNarrow] = useState(new URLSearchParams(location.search).has("narrow"));
   const [notice, setNotice] = useState(""), [dialog, setDialog] = useState(false), [changes, setChanges] = useState(0);
+  const [commands, setCommands] = useState(0), [sends, setSends] = useState(0);
+  const [preparing, setPreparing] = useState(false);
   const first = useRef<HTMLButtonElement>(null);
+  const panelToggle = useRef<HTMLButtonElement>(null);
   document.documentElement.dataset.theme = light ? "light" : "dark";
   return <main className={`qa-icons ${narrow ? "narrow" : ""}`}>
     <div className="qa-icon-controls"><strong>生产组件 · 图标细节验收</strong>
@@ -35,6 +38,8 @@ function Fixture() {
       <button onClick={() => setNarrow(!narrow)}>{narrow ? "恢复宽栏" : "窄栏 360"}</button>
       <button onClick={() => setDialog(true)}>检查弹窗提示</button>
       <button onClick={() => document.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus()}>聚焦当前标签</button>
+      <button onClick={() => panelToggle.current?.focus()}>聚焦面板开关</button>
+      <button onClick={() => setPreparing(!preparing)}>{preparing ? "结束准备状态" : "模拟准备状态"}</button>
       <button onClick={() => first.current?.focus()}>离开图标区域</button></div>
     <div className={`qa-icon-frame workbench vc-mode-assistant ${panel ? "panel-open" : ""} ${side ? "" : "side-closed"}`}>
       {side && <aside className="sidebar vc-sidebar"><SidebarBrand onCollapse={() => setSide(false)}/>
@@ -44,20 +49,23 @@ function Fixture() {
       </aside>}
       <section className="conversation">
         {!side && <IconButton className="qa-sidebar-open" label="展开侧栏" icon={<PanelLeftOpen/>} onClick={() => setSide(true)}/>}
-        <ConversationHeader title="主要聊天" place={null} panelLabel="助理面板" panelOpen={panel} waiting={2} plan={{ done: 0, total: 0 }} busy={false}
+        <ConversationHeader title="主要聊天" place={null} panelLabel="助理面板" panelOpen={panel} panelId="qa-assistant-panel" panelButtonRef={panelToggle}
+          waiting={2} plan={{ done: 0, total: 0 }} busy={false}
           onTogglePanel={() => setPanel(!panel)} onStop={() => {}}/>
         <div className="conversation-scroll"><article className="message user"><div className="message-body">帮我看看这周有哪些事。</div></article>
           <article className="message assistant"><div className="message-body"><p>周报已有草稿，有两项决定等你处理。</p><p>点击右上角打开助理面板；图标获得焦点或悬停时会显示说明。</p></div></article></div>
-        <div className="composer-wrap"><div className="composer"><ComposerCommands prompt={prompt} onPrompt={setPrompt} project={false} disabled={false}
-          onAction={command => setNotice(`仅导航演示：${command}`)} onSend={() => setNotice("演示页面不发送消息")}/></div></div>
+        <div className="composer-wrap"><div className="composer"><ComposerCommands prompt={prompt} onPrompt={setPrompt} project={false} disabled={preparing}
+          onAction={command => { setCommands(count => count + 1); setNotice(`仅导航演示：${command}`); }}
+          onSend={() => { setSends(count => count + 1); setNotice("演示页面不发送消息"); }}/></div></div>
       </section>
-      {panel && <AssistantPanel name="小V" connected host={{ kind: "resident", name: "常驻电脑" }} tab={tab}
+      {panel && <AssistantPanel id="qa-assistant-panel" toggleRef={panelToggle} name="小V" connected host={{ kind: "resident", name: "常驻电脑" }} tab={tab}
         onTab={value => { setTab(value); setChanges(count => count + 1); }} onClose={() => setPanel(false)} waiting={2}
         onEditProfile={() => setNotice("只读演示：资料入口")} onAddResident={() => {}} onRetryResident={() => {}}>
-        <section className="assistant-section"><h3>{labels[tab]}</h3><p>{tab === "identity" ? "资料、性格与记忆放在这里；无需指纹认证。" : tab === "goals" ? "本周周报：整理素材，下一步完成初稿。" : tab === "audit" ? "这里查看此前允许或拒绝的操作记录。" : tab === "schedule" ? "每天早上查看工作摘要，具体时间以计划为准。" : "两项决定等待处理；普通进展保持安静。"}</p></section>
+        <section className="assistant-section"><h3>{labels[tab]}</h3><p>{tab === "identity" ? "资料、性格与记忆放在这里；无需指纹认证。" : tab === "goals" ? "本周周报：整理素材，下一步完成初稿。" : tab === "audit" ? "这里查看此前允许或拒绝的操作记录。" : tab === "schedule" ? "每天早上查看工作摘要，具体时间以计划为准。" : "两项决定等待处理；普通进展保持安静。"}</p>
+          <label>合成草稿<input aria-label="面板草稿" placeholder="编辑时 Escape 不收起面板"/></label></section>
       </AssistantPanel>}
     </div>
-    <output aria-label="交互验收量测">当前标签：{labels[tab]}；切换 {changes} 次；真实发送与配置修改：0。{notice}</output>
+    <output aria-label="交互验收量测">当前标签：{labels[tab]}；切换 {changes} 次；菜单动作 {commands} 次；合成发送 {sends} 次；真实发送与配置修改：0。{notice}</output>
     {dialog && <ExampleDialog onClose={() => setDialog(false)}/>}
   </main>;
 }
