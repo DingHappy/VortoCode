@@ -11,6 +11,7 @@ import { AssistantWorkday } from "./components/AssistantWorkday";
 import { TeamChat } from "./components/TeamChat";
 import { TeamNoteActions } from "./components/TeamNoteActions";
 import { WaitingInbox, waitingTeams } from "./components/WaitingInbox";
+import { currentTeams } from "./lib/teamAttention";
 import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
@@ -2386,7 +2387,7 @@ function App() {
   const feedWaiting = feedItems.filter(item => item.status === "waiting").length;
   const assistantFeedItems = assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
     confirmation: pendingConfirm });
-  const attentionTeams = teamReadSource?.client === clientRef.current && teamReadSource?.scope === assistantScope ? teamList : [];
+  const attentionTeams = currentTeams(teamList, teamReadSource, clientRef.current, assistantScope);
   const assistantSummary = assistantAttention(assistantFeedItems, attentionTeams);
   const assistantWaiting = assistantSummary.decisions.length;
   const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
@@ -2668,7 +2669,7 @@ function App() {
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
-              teams={teamList.map(team => ({ id: team.id, title: team.objective, status: team.status }))}
+              teams={attentionTeams.map(team => ({ id: team.id, title: team.objective, status: team.status }))}
               currentTeam={mainView === "team" ? openTeamId ?? "" : ""}
               onOpenTeam={openTeamChat}
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
@@ -2678,7 +2679,7 @@ function App() {
               page={assistantPage === "library" || assistantPage === "customize" ? assistantPage : null}
               search={sidebarSearch("搜索聊天")}
               query={sidebarQuery}
-              waiting={assistantWaiting + waitingTeams(teamList).length}
+              waiting={assistantWaiting + waitingTeams(attentionTeams).length}
               waitingUncertain={!activityComplete}
               onPage={openAssistantPage}
               onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
@@ -2838,7 +2839,7 @@ function App() {
           <div className="conversation-body">
             <ConversationLocation status={conversationLocation.status} onLatest={conversationLocation.latest} onRetry={conversationLocation.retry} />
             {/* 「等你处理」固定在对话顶部，不随消息滚动（ADR-016；装好后发现放进滚动区会被推到历史最上面） */}
-            {appMode === "assistant" && activeSid === mainChatSid && <div className="waiting-inbox-band"><WaitingInbox items={assistantSummary.decisions} teams={teamList} exceptions={assistantSummary.exceptions.length}
+            {appMode === "assistant" && activeSid === mainChatSid && <div className="waiting-inbox-band"><WaitingInbox items={assistantSummary.decisions} teams={attentionTeams} exceptions={assistantSummary.exceptions.length}
                 uncertain={!activityComplete} connected={connection === "connected"} onOpen={openWaitingItem}
                 onOpenTeam={openTeamChat} onAcceptTeam={acceptTeamFromChat}
                 onShowActivity={() => { setAssistantTab("feed"); setInspectorOpen(true); setSelectedDispatchId(null); setSelectedCodexAction(null); setExceptionFocus(value => value + 1); }} /></div>}

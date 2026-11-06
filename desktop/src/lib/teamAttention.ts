@@ -1,6 +1,11 @@
 import type { TeamSummary } from "../types";
 import type { FeedItem } from "./activityFeed";
 
+/** A list read from another connection or host is never actionable on the current host. */
+export function currentTeams<T>(teams: TeamSummary[], source: { client: T; scope: string } | null, client: T | null, scope: string): TeamSummary[] {
+  return client !== null && source !== null && source.client === client && source.scope === scope ? teams : [];
+}
+
 /** Explicit membership only. Missing or conflicting snapshots never hide a record. */
 export function teamTaskContext(id: string | undefined, teams: TeamSummary[]): FeedItem["teamContext"] {
   if (!id) return undefined;
