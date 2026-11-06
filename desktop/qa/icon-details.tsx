@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PanelLeftOpen, X } from "lucide-react";
 import { AssistantPanel, AssistantSidebar, type AssistantTab } from "../src/components/AssistantMode";
@@ -7,6 +7,7 @@ import { ConversationHeader } from "../src/components/ConversationHeader";
 import { ComposerCommands } from "../src/components/ComposerCommands";
 import { IconButton } from "../src/components/ui";
 import { useDialogSurface } from "../src/hooks/useDialogSurface";
+import { useSidebarVisibility } from "../src/hooks/useSidebarVisibility";
 import "../src/styles/tokens.css";
 import "../src/styles/components.css";
 import "../src/App.css";
@@ -23,14 +24,24 @@ function ExampleDialog({ onClose }: { onClose: () => void }) {
   </dialog>;
 }
 function Fixture() {
-  const [tab, setTab] = useState<AssistantTab>("feed"), [panel, setPanel] = useState(true), [side, setSide] = useState(true);
+  const [tab, setTab] = useState<AssistantTab>("feed"), [panel, setPanel] = useState(true);
+  const sidebar = useSidebarVisibility();
   const [prompt, setPrompt] = useState(""), [search, setSearch] = useState(false), [query, setQuery] = useState("");
+  const [searchFocus, setSearchFocus] = useState(0);
   const [light, setLight] = useState(new URLSearchParams(location.search).has("light")), [narrow, setNarrow] = useState(new URLSearchParams(location.search).has("narrow"));
   const [notice, setNotice] = useState(""), [dialog, setDialog] = useState(false), [changes, setChanges] = useState(0);
   const [commands, setCommands] = useState(0), [sends, setSends] = useState(0);
   const [preparing, setPreparing] = useState(false);
   const first = useRef<HTMLButtonElement>(null);
   const panelToggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229 || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+      event.preventDefault(); sidebar.setCollapsed(false); setSearch(true); setSearchFocus(value => value + 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   document.documentElement.dataset.theme = light ? "light" : "dark";
   return <main className={`qa-icons ${narrow ? "narrow" : ""}`}>
     <div className="qa-icon-controls"><strong>生产组件 · 图标细节验收</strong>
@@ -39,16 +50,18 @@ function Fixture() {
       <button onClick={() => setDialog(true)}>检查弹窗提示</button>
       <button onClick={() => document.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus()}>聚焦当前标签</button>
       <button onClick={() => panelToggle.current?.focus()}>聚焦面板开关</button>
+      <button onClick={() => (sidebar.collapsed ? sidebar.reopenButton : sidebar.collapseButton).current?.focus()}>聚焦侧栏开关</button>
       <button onClick={() => setPreparing(!preparing)}>{preparing ? "结束准备状态" : "模拟准备状态"}</button>
       <button onClick={() => first.current?.focus()}>离开图标区域</button></div>
-    <div className={`qa-icon-frame workbench vc-mode-assistant ${panel ? "panel-open" : ""} ${side ? "" : "side-closed"}`}>
-      {side && <aside className="sidebar vc-sidebar"><SidebarBrand onCollapse={() => setSide(false)}/>
+    <div className={`qa-icon-frame workbench vc-mode-assistant ${panel ? "panel-open" : ""} ${sidebar.collapsed ? "side-closed" : ""}`}>
+      <aside id="qa-conversation-sidebar" className="sidebar vc-sidebar"><SidebarBrand sidebarId="qa-conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)}/>
         <AssistantSidebar mainChat={{ sid: "main", preview: "周报草稿已整理" }} sideChats={[{ sid: "side", title: "整理工作清单" }]}
           current="main" waiting={2} onSelect={() => setNotice("只读演示：会话入口")} onNewSideChat={() => setNotice("演示：新对话，未创建真实会话")}
-          search={<SidebarSearch open={search} query={query} placeholder="搜索会话" onOpenChange={setSearch} onQuery={setQuery}/>}/>
-      </aside>}
+          query={query} search={<SidebarSearch open={search} query={query} placeholder="搜索会话" focusRequest={searchFocus} onOpenChange={setSearch} onQuery={setQuery}/>}/>
+      </aside>
       <section className="conversation">
-        {!side && <IconButton className="qa-sidebar-open" label="展开侧栏" icon={<PanelLeftOpen/>} onClick={() => setSide(true)}/>}
+        {sidebar.collapsed && <IconButton className="qa-sidebar-open" label="展开侧栏" icon={<PanelLeftOpen/>} buttonRef={sidebar.reopenButton}
+          aria-expanded="false" aria-controls="qa-conversation-sidebar" onClick={() => sidebar.toggle(false)}/>}
         <ConversationHeader title="主要聊天" place={null} panelLabel="助理面板" panelOpen={panel} panelId="qa-assistant-panel" panelButtonRef={panelToggle}
           waiting={2} plan={{ done: 0, total: 0 }} busy={false}
           onTogglePanel={() => setPanel(!panel)} onStop={() => {}}/>

@@ -1,5 +1,6 @@
 import { AssistantTimeline } from "./components/AssistantTimeline";
 import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
+import { useSidebarVisibility } from "./hooks/useSidebarVisibility";
 import { ManagementHead, ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
@@ -250,15 +251,17 @@ function App() {
   const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebar = useSidebarVisibility();
+  const [sidebarSearchFocus, setSidebarSearchFocus] = useState(0);
   // ⌘K：侧栏收起时也能直接搜（docs/DESIGN_SYSTEM.md 第 2 节「搜索与 ⌘K」）；⌘, 打开设置。
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.key === ",") { event.preventDefault(); setSettingsOpen(true); return; }
       if (event.key.toLowerCase() !== "k") return;
       event.preventDefault();
-      setSidebarCollapsed(false); setSidebarSearchOpen(true);
+      sidebar.setCollapsed(false); setSidebarSearchOpen(true); setSidebarSearchFocus(value => value + 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -2417,7 +2420,7 @@ function App() {
   const assistantPage: AssistantPage | null = mainView === "artifacts" ? "library" : mainView === "customize" ? "customize"
     : mainView === "chat" && inspectorOpen && !computerWorkspace.view ? PANEL_PAGE[assistantTab] : null;
   const sidebarSearch = (placeholder: string) => <SidebarSearch open={sidebarSearchOpen} query={sidebarQuery} placeholder={placeholder}
-    onOpenChange={setSidebarSearchOpen} onQuery={setSidebarQuery} />;
+    onOpenChange={setSidebarSearchOpen} onQuery={setSidebarQuery} focusRequest={sidebarSearchFocus} />;
   const openAssistantPage = (page: AssistantPage) => {
     if (page === "library") {
       setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); return;
@@ -2649,10 +2652,11 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench vc-mode-${appMode} ${sidebarCollapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
-        {sidebarCollapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeftOpen />} onClick={() => setSidebarCollapsed(false)} />}
-        <aside className="sidebar vc-sidebar">
-          <SidebarBrand onCollapse={() => setSidebarCollapsed(true)} />
+      <div className={`workbench vc-mode-${appMode} ${sidebar.collapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+        {sidebar.collapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeftOpen />} buttonRef={sidebar.reopenButton}
+          aria-expanded="false" aria-controls="conversation-sidebar" onClick={() => sidebar.toggle(false)} />}
+        <aside id="conversation-sidebar" className="sidebar vc-sidebar">
+          <SidebarBrand sidebarId="conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)} />
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
