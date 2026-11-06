@@ -83,3 +83,23 @@ it("does not turn a failed empty read into a claim that there is no work", () =>
   expect(html).not.toContain("还没有任务");
   expect(html).toContain('aria-label="刷新动态"'); expect(refresh).not.toHaveBeenCalled();
 });
+
+it("links to the single main-chat inbox while preserving exceptions and selected task actions", () => {
+  const html = renderToStaticMarkup(<AssistantActivity connected sources={sources} onOpen={() => {}}
+    waitingInbox={{ count: 3, uncertain: true, onOpen: () => {} }} items={[...items,
+      { id: "failed", status: "failed", title: "来源失联需核对", summary: "未取得最新结果", at: "" },
+    ]}><button>当前确认卡</button></AssistantActivity>);
+  expect(html).toContain("3+ 件在主要聊天等你处理");
+  expect(html).not.toContain('<section aria-label="等你处理">');
+  expect(html).not.toContain("确认下一步");
+  expect(html).toContain("来源失联需核对");
+  expect(html).toContain("当前确认卡");
+  expect(html).toContain("查看全部记录（3）");
+});
+
+it("does not claim an empty inbox when only a team is waiting in main chat", () => {
+  const html = renderToStaticMarkup(<AssistantActivity connected sources={sources} onOpen={() => {}} items={[]}
+    waitingInbox={{ count: 1, uncertain: false, onOpen: () => {} }} />);
+  expect(html).toContain("1 件在主要聊天等你处理");
+  expect(html).not.toContain("暂未发现待处理事项");
+});

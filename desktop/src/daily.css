@@ -56,7 +56,7 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .timeline-list::before { display: none; }
 .timeline-list { padding-left: 0; }
 .timeline-icon { background: transparent; }
-.message-body .markdown-body .md-h1, .message-body .markdown-body .md-h2 { font-size: 22px; line-height: 1.4; font-weight: 600; }
+.message-body .markdown-body .md-h1, .message-body .markdown-body .md-h2 { font-size: var(--vc-size-heading); line-height: 1.5; font-weight: var(--vc-weight-strong); }
 .sidebar-nav button.active { background: var(--daily-accent-soft); }
 .message-body .markdown-body .md-heading { color: var(--n13); }
 .composer-chip, .composer-model.single, .composer-model select { font-size: 13px; color: var(--n11); }

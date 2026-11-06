@@ -18,6 +18,8 @@ export default defineConfig({
       sessionInfo: new URL("session-info.html", import.meta.url).pathname,
       composerAttachments: new URL("composer-attachments.html", import.meta.url).pathname,
       replies: new URL("replies.html", import.meta.url).pathname,
+      ownerAttention: new URL("owner-attention.html", import.meta.url).pathname,
+      chatReading: new URL("chat-reading.html", import.meta.url).pathname,
       mcp: new URL("mcp.html", import.meta.url).pathname,
       board: new URL("task-board.html", import.meta.url).pathname,
       settings: new URL("settings.html", import.meta.url).pathname,

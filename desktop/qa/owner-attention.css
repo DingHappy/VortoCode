@@ -1,0 +1,12 @@
+html, body, #root { min-width: 0; }
+body { overflow: auto; background: var(--vc-bg); color: var(--vc-text); }
+.qa-owner-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--vc-border); font: 12px/1.5 var(--vc-font-sans); }
+.qa-owner-controls span { margin-right: auto; color: var(--vc-muted); }
+.qa-owner-controls button { border: 1px solid var(--vc-border); border-radius: 8px; padding: 6px 10px; background: var(--vc-fill); color: var(--vc-text); cursor: pointer; }
+.qa-owner-stage { margin: 20px auto; height: 700px; border: 1px solid var(--vc-border); overflow: auto; min-width: 0; }
+.qa-owner-stage > h2, .qa-owner-note { padding: 0 20px; font-size: var(--vc-size-body); line-height: 1.7; }
+.qa-owner-stage > .waiting-inbox { padding: 0 20px; }
+.qa-owner-stage > .team-chat { height: 100%; }
+.qa-owner-timeline { padding: 20px; }
+.qa-owner-timeline p { color: var(--vc-muted); }
+.qa-owner-metrics { display: block; max-width: 1000px; margin: auto; padding: 0 20px 20px; color: var(--vc-muted); font: 12px/1.6 var(--vc-font-mono); overflow-wrap: anywhere; }
