@@ -19,14 +19,16 @@ export function AssistantActivityDetail({ title, children, onClose, steps, statu
 }
 
 /**
- * 默认交付待处理、异常与最近结果；普通过程记录由用户主动展开。
+ * 默认显示待处理入口、异常与最近结果；普通过程记录由用户主动展开。
  * 来源不全时照实说，不把读不到当成没有。
  */
-export function AssistantActivity({ items, currentSession, connected, children, onOpen, sources = [], onRefresh, client, teams = [], exceptionFocus = 0, onExceptionFocused }: {
+export function AssistantActivity({ items, currentSession, connected, children, onOpen, sources = [], onRefresh, client, waitingInbox, teams = [], exceptionFocus = 0, onExceptionFocused }: {
   items: FeedItem[]; currentSession?: string; connected: boolean;
   children?: ReactNode; onOpen: (item: FeedItem) => void;
   sources?: ActivitySource[]; onRefresh?: () => void;
   client?: Pick<GatewayClient,"getAgentActivityDetail"> | null;
+  /** 主界面已有唯一汇总；面板只提供跳转，完整历史仍可查。 */
+  waitingInbox?: { count: number; uncertain: boolean; onOpen: () => void };
   teams?: TeamSummary[];
   exceptionFocus?: number;
   onExceptionFocused?: () => void;
@@ -85,13 +87,17 @@ export function AssistantActivity({ items, currentSession, connected, children, 
     {children}
     <div className="assistant-activity-list">
       {showHistory ? feed(attention.history, true) : <>
-        {attention.decisions.length > 0 && <section aria-label="等你处理"><h5>等你处理 · {attention.decisions.length}</h5>{feed(attention.decisions)}</section>}
+        {waitingInbox ? (waitingInbox.count > 0 || waitingInbox.uncertain) &&
+          <button className="assistant-attention-toggle" onClick={waitingInbox.onOpen}>
+            {waitingInbox.count > 0 ? `${waitingInbox.count}${waitingInbox.uncertain ? "+" : ""} 件在主要聊天等你处理` : "主要聊天的待处理来源尚未完整读取"}
+          </button>
+          : attention.decisions.length > 0 && <section aria-label="等你处理"><h5>等你处理 · {attention.decisions.length}</h5>{feed(attention.decisions)}</section>}
         {(attention.exceptions.length > 0 || requestedExceptions || exceptionFocus > 0) && <section ref={exceptionSection} tabIndex={-1} className="assistant-exceptions" aria-label="需要核对"><h5>需要核对 · {attention.exceptions.length}</h5>
           {attention.exceptions.length > 0 ? feed(attention.exceptions) : <p className="assistant-attention-note">{coverage.complete ? "当前已读取的记录中没有需核对项。" : "来源尚未完整读取，请刷新核对。"}</p>}</section>}
         {attention.recentResults.length > 0 && <section aria-label="最近结果"><h5>最近结果</h5>{feed(attention.recentResults)}
           {attention.additionalResults > 0 && <p className="assistant-attention-note">其余 {attention.additionalResults} 条结果在全部记录中。</p>}</section>}
-        {attention.decisions.length === 0 && attention.exceptions.length === 0 && <p className="assistant-attention-note">
-          {coverage.complete ? "已读取的动态中暂未发现待处理事项。" : "部分来源待核对，不能据此判断没有事项。"}</p>}
+        {attention.decisions.length === 0 && attention.exceptions.length === 0 && !waitingInbox?.count && <p className="assistant-attention-note">
+          {coverage.complete && !waitingInbox?.uncertain ? "已读取的动态中暂未发现待处理事项。" : "部分来源待核对，不能据此判断没有事项。"}</p>}
         {attention.running > 0 && <p className="assistant-attention-note">已读取的进行中记录：{attention.running} 条，过程已收起。</p>}
         {attention.teamRecords.length > 0 && <p className="assistant-attention-note">另有 {attention.teamRecords.length} 条小组内部记录，由协调人处理；可在小组或全部记录查看。</p>}
       </>}

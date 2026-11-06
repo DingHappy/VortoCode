@@ -15,6 +15,8 @@ it("says where the work runs only when a place is given", () => {
 
 it("the panel toggle prefers waiting items over plan progress, and dots while busy or waiting", () => {
   expect(header({ waiting: 2, plan: { done: 1, total: 3 } })).toContain('title="任务动态 · 2 件等你处理"');
+  expect(header({ waiting: 2, waitingUncertain: true })).toContain('title="任务动态 · 2+ 件等你处理"');
+  expect(header({ waitingUncertain: true })).toContain("待处理来源尚未完整读取");
   expect(header({ plan: { done: 1, total: 3 } })).toContain('title="任务动态 · 当前步骤 1/3"');
   expect(header()).not.toContain("workbench-toggle-dot");
   expect(header({ waiting: 1 })).toContain("workbench-toggle-dot waiting");
