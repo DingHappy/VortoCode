@@ -4,6 +4,7 @@ import { AttachmentChips, AttachmentReadStatus } from "../src/components/Compose
 import { ComposerCommands } from "../src/components/ComposerCommands";
 import { useAttachments } from "../src/hooks/useAttachments";
 import { readAttachment, type AttachmentReader } from "../src/lib/attachmentDraft";
+import { reportComposerFailure } from "../src/lib/composerFailure";
 import "../src/styles/tokens.css";
 import "../src/styles/components.css";
 import "../src/App.css";
@@ -44,9 +45,9 @@ function Fixture() {
   };
   const fail = () => {
     const receipt = delivery.current;
-    if (!receipt?.current()) { setNotice("旧会话回执已忽略"); return; }
-    if (receipt.restore()) { setPrompt(receipt.text); setNotice("已恢复原输入和附件"); }
-    else setNotice("当前草稿已保留，未覆盖新的输入或附件");
+    if (!receipt) return;
+    reportComposerFailure({ current: receipt.current(), restore: receipt.restore, recover: () => setPrompt(receipt.text),
+      markFailed: () => setNotice("合成发送失败"), notify: setNotice, message: "这条消息没确认送达" });
   };
   return <main className={`qa-attachment ${narrow ? "narrow" : ""}`}>
     <h1>附件归属与读取 · 合成验收</h1><p>生产 Hook、FileReader 与输入组件；仅本地样例，不连接模型或运行端。</p>
@@ -62,7 +63,7 @@ function Fixture() {
     <p role="status">当前：{owner}；{notice}</p>
     <section className="composer qa-attachment-composer">
       <AttachmentChips items={draft.attachments} onRemove={draft.removeAttachment}/>
-      <AttachmentReadStatus pending={draft.attachmentsReading} onCancel={draft.clearAttachments}/>
+      <AttachmentReadStatus pending={draft.attachmentsReading} onCancel={draft.cancelAttachmentReads}/>
       <ComposerCommands prompt={prompt} onPrompt={changePrompt} project={false} disabled={false} onAction={() => {}} onSend={send}>
         <div className="composer-footer"><span>本地合成会话</span><button className="composer-send" aria-label="发送合成消息" disabled={draft.attachmentsReading > 0 || (!prompt.trim() && !draft.attachments.length)} onClick={send}>↑</button></div>
       </ComposerCommands>

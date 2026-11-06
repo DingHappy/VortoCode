@@ -173,6 +173,7 @@ import {
 import { errorText } from "./lib/errorText";
 import { confirmAction } from "./lib/confirm";
 import { useAttachments } from "./hooks/useAttachments";
+import { reportComposerFailure } from "./lib/composerFailure";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
@@ -421,8 +422,8 @@ function App() {
     if (typeof value === "string" && value) diag("ui.banner", value, "warn");
     setBannerState(value);
   }, []);
-  const { attachments, attachmentsReading, addFiles, addAttachment, removeAttachment, clearAttachments, resetAttachments,
-    takeAttachments, attachmentRevision, isCurrentAttachments, isReadingAttachments, markComposerEdited } = useAttachments(setBanner,
+  const { attachments, attachmentsReading, addFiles, addAttachment, removeAttachment, resetAttachments,
+    takeAttachments, attachmentRevision, isCurrentAttachments, isReadingAttachments, markComposerEdited, cancelAttachmentReads } = useAttachments(setBanner,
     // A managed local engine may move to another loopback port during startup.
     JSON.stringify([remoteProjectRef.current ?? "local", remoteProjectRef.current ? baseUrl : "", repoRoot, activeSid]));
   const setPrompt = useCallback((value: SetStateAction<string>) => {
@@ -1920,31 +1921,36 @@ function App() {
       if (appMode === "assistant" && !onAssistantHost() && findAssistantHost(projects)) setOfflineChatIds(recordOfflineChat(activeSid));
       // 写进 socket 不等于送到：连接半死时写进去也不报错。等对应的 pong，等不到就把文字放回输入框。
       void client.confirmDelivery().then((delivered) => {
-        if (delivered || !isCurrentAttachments()) return;
+        if (delivered) return;
         diag("send.unconfirmed", `rid=${rid}`, "warn");
-        if (activeTurnRidRef.current === rid) {
-          setBusy(false);
-          updateActiveTurnRid(null);
-        }
-        setActivities((previous) => upsertActivity(previous, {
-          id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking", status: "failed", label: "没确认送达",
-        }));
-        const restored = attachmentReceipt?.restore();
-        if (restored) { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); }
-        setBanner(`这条消息没确认送达，连接可能断了；${restored ? "已恢复原输入和附件" : "当前草稿已保留"}。连上后先核对，再决定要不要重发`);
+        reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+          recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
+          notify: setBanner, message: "这条消息没确认送达，连接可能断了", followUp: "连上后先核对，再决定要不要重发",
+          markFailed: () => {
+            if (activeTurnRidRef.current === rid) {
+              setBusy(false);
+              updateActiveTurnRid(null);
+            }
+            setActivities((previous) => upsertActivity(previous, {
+              id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking", status: "failed", label: "没确认送达",
+            }));
+          },
+        });
       });
       return true;
     } catch (error) {
-      if (!isCurrentAttachments()) return false;
-      if (!willQueue) {
-        if (activeTurnRidRef.current === rid) { setBusy(false); updateActiveTurnRid(null); }
-        setActivities((previous) => upsertActivity(previous, {
-          id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking",
-          status: "failed", label: "发送任务失败",
-        }));
-      }
-      if (attachmentReceipt?.restore()) { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); }
-      setBanner(errorText(error, "发送失败"));
+      reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+        recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
+        notify: setBanner, message: errorText(error, "发送失败"), markFailed: () => {
+          if (!willQueue) {
+            if (activeTurnRidRef.current === rid) { setBusy(false); updateActiveTurnRid(null); }
+            setActivities((previous) => upsertActivity(previous, {
+              id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking",
+              status: "failed", label: "发送任务失败",
+            }));
+          }
+        },
+      });
       return false;
     }
   };
@@ -2974,7 +2980,7 @@ function App() {
               }}
             >
               <AttachmentChips items={attachments} onRemove={removeAttachment} />
-              <AttachmentReadStatus pending={attachmentsReading} onCancel={clearAttachments} />
+              <AttachmentReadStatus pending={attachmentsReading} onCancel={cancelAttachmentReads} />
               <ContextChips items={contextItems}
                 onRemove={(item) => { markComposerEdited(); setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item))); }} />
               <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}

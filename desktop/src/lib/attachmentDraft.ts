@@ -47,12 +47,13 @@ export function createAttachmentDraft(read: AttachmentReader = readAttachment) {
       }, () => { if (running === entry) { notify(`读取 ${entry.item.name} 失败，请重新添加`); complete(); } });
     } catch { notify(`读取 ${entry.item.name} 失败，请重新添加`); complete(); }
   };
-  const clear = () => {
+  const cancelPending = () => {
     const previous = queue, cancel = running?.cancel;
-    running = null; queue = []; revision++; view = { items: [], pending: 0, notice: null };
+    running = null; queue = []; revision++; view = { ...view, pending: 0, notice: null };
     for (const entry of previous) entry.done();
     cancel?.(); publish();
   };
+  const clear = () => { view = { ...view, items: [] }; cancelPending(); };
   return {
     getSnapshot: () => view,
     getEpoch: () => epoch,
@@ -80,6 +81,7 @@ export function createAttachmentDraft(read: AttachmentReader = readAttachment) {
     },
     remove(id: string) { view = { ...view, items: view.items.filter(item => item.id !== id) }; revision++; publish(); },
     clear,
+    cancelPending,
     reset() { epoch++; clear(); },
     /** Consume exactly the selection the user reviewed. A newer draft is never overwritten on failure. */
     take(expected: Attachment[], expectedRevision = revision) {

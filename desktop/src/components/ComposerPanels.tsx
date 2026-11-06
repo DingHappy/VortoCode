@@ -179,7 +179,7 @@ export function AttachmentReadStatus({ pending, onCancel }: { pending: number; o
     <button type="button" onClick={event => {
       const input = event.currentTarget.closest(".composer")?.querySelector("textarea");
       onCancel(); input?.focus();
-    }}>取消本次附件选择</button></div>;
+    }}>取消读取</button></div>;
 }
 
 /** 随这条消息发出的附件：图片显示缩略图，其余显示类型图标和文件名。 */

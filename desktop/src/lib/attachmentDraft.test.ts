@@ -92,3 +92,17 @@ it("counts prepared offline-chat attachments against pending text quota", async 
   expect(draft.addPrepared(prepared("too-many.md"))).toBe(false);
   draft.clear(); await loading;
 });
+
+it("cancels only unfinished reads and keeps the two attachments already ready", async () => {
+  const { draft, operations } = controlled();
+  const added = draft.addFiles([file("one.md"), file("two.md"), file("three.md"), file("queued.md")]);
+  operations[0].resolve("one"); await flush(); operations[1].resolve("two"); await flush();
+  expect(draft.getSnapshot().items.map(item => item.name)).toEqual(["one.md", "two.md"]);
+  draft.cancelPending(); await added;
+  expect(operations[2].cancel).toHaveBeenCalledOnce(); expect(operations).toHaveLength(3);
+  expect(draft.getSnapshot().pending).toBe(0);
+  operations[2].resolve("late"); await flush();
+  expect(draft.getSnapshot().items.map(item => item.name)).toEqual(["one.md", "two.md"]);
+  const next = draft.addFiles([file("new.md")]); operations[3].resolve("new"); await next;
+  expect(draft.getSnapshot().items.map(item => item.name)).toEqual(["one.md", "two.md", "new.md"]);
+});

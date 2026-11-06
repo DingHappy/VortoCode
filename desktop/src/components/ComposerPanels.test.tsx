@@ -10,7 +10,7 @@ it("only shows the attachment read notice while files are pending, with a named 
   expect(renderToStaticMarkup(<AttachmentReadStatus pending={0} onCancel={noop} />)).toBe("");
   const html = renderToStaticMarkup(<AttachmentReadStatus pending={2} onCancel={noop} />);
   expect(html).toContain('role="status"'); expect(html).toContain("正在读取 2 个附件");
-  expect(html).toContain("读完后可发送"); expect(html).toContain("取消本次附件选择");
+  expect(html).toContain("读完后可发送"); expect(html).toContain("取消读取");
 });
 // runtime 发来的两种计划授权请求的开头（与 lib/onboarding 识别的一致）
 const PLAN_EXECUTION_CONFIRMATION_PREFIX = "plan 阶段分析已完成，需要你授权才能动手。";
