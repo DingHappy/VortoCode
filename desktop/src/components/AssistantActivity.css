@@ -5,6 +5,8 @@
 .assistant-activity-close { padding: 6px 10px; margin-bottom: 8px; border: 1px solid var(--n5); border-radius: 7px; background: var(--n3); color: var(--n11); font-size: 12px; cursor: pointer; }
 .assistant-activity-close:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; }
 .assistant-activity-list { scroll-margin-top: 50px; }
+.assistant-exceptions { scroll-margin-top: var(--vc-space-3); outline: none; }
+.assistant-exceptions:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: -2px; }
 .assistant-activity-list > section > h5 { margin: var(--vc-space-4) var(--vc-space-5) var(--vc-space-2); color: var(--vc-text); font-size: var(--vc-size-body); font-weight: var(--vc-weight-strong); }
 .assistant-activity-list > section .activity-feed { padding-bottom: var(--vc-space-1); }
 .assistant-activity-list > section[aria-label="等你处理"] > h5 { color: var(--vc-wait-text); }

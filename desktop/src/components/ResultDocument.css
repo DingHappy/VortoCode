@@ -1,0 +1,22 @@
+.result-document { margin: var(--vc-space-3) 0; min-width: 0; color: var(--vc-text); }
+.result-document > summary { cursor: pointer; font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); line-height: 1.7; }
+.result-document-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--vc-space-2); margin: var(--vc-space-3) 0; color: var(--vc-muted); font-size: var(--vc-size-small); line-height: 1.6; }
+.result-document-tools button { margin-left: auto; color: var(--vc-text-secondary); background: var(--vc-fill); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); padding: var(--vc-space-1) var(--vc-space-2); cursor: pointer; }
+.result-document-body { max-height: 55vh; overflow: auto; padding: var(--vc-space-4); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-card); background: var(--vc-bg); font-size: var(--vc-size-chat); line-height: 1.7; overflow-wrap: anywhere; }
+.result-document .markdown-body .md-heading { color: var(--vc-text); font-size: var(--vc-size-chat); line-height: 1.5; }
+.result-document .markdown-body .md-h1, .result-document .markdown-body .md-h2 { font-size: var(--vc-size-heading); }
+.result-document .markdown-body a { color: var(--vc-accent); }
+.result-document .markdown-body code, .result-document .markdown-body pre { color: var(--vc-text-secondary); background: var(--vc-fill); }
+.result-document .markdown-body pre { border-color: var(--vc-border); font-size: var(--vc-size-small); }
+.result-document .markdown-body blockquote { color: var(--vc-text-secondary); border-color: var(--vc-border); }
+.result-document .markdown-body table { width: max-content; min-width: 100%; }
+.result-document .markdown-body th, .result-document .markdown-body td { min-width: 12ch; max-width: 44ch; border-color: var(--vc-border); overflow-wrap: break-word; word-break: normal; }
+.result-document-source { margin-top: var(--vc-space-3); color: var(--vc-text-secondary); font-size: var(--vc-size-small); }
+.result-document-source summary { cursor: pointer; }
+.result-document-source pre, .task-request-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.7; }
+.result-document-source pre { max-height: 35vh; overflow: auto; }
+.task-card .task-readable-title { margin: var(--vc-space-2) 0; color: var(--vc-text); font-size: var(--vc-size-body); line-height: 1.7; }
+.task-card .task-request { margin: var(--vc-space-2) 0; font-size: var(--vc-size-small); color: var(--vc-text-secondary); }
+.task-request > summary { cursor: pointer; }
+.task-team-context { margin: var(--vc-space-2) 0; color: var(--vc-text-secondary); font-size: var(--vc-size-small); line-height: 1.7; }
+.task-team-context button { display: block; padding: 0; border: 0; background: none; color: var(--vc-accent); font: inherit; cursor: pointer; text-align: left; }

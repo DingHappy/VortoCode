@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Users } from "lucide-react";
 import type { GatewayClient } from "../gateway";
-import type { TeamChatMember, TeamChatMessage, TeamTranscript } from "../types";
+import type { TeamChatMember, TeamChatMessage, TeamTranscript, TeamDetail } from "../types";
 import { TeamCard, type TeamClient } from "./TeamCard";
+import { TeamDelivery } from "./TeamDelivery";
 import "./TeamChat.css";
 
 export type TeamChatClient = Pick<GatewayClient, "getTeamTranscript" | "messageTeam" | "decideTeam"> & TeamClient;
@@ -64,17 +65,19 @@ function clock(at: string): string {
 
 /** 任务小组的群聊视图（ADR-014 S3）：顶部是成员名单（角色、框架、在不在做），中间是按时间排的经过，底部能在群里说话。
  * 内容全部来自服务端记录；成员结果和协调人的话可能含外部内容，只当纯文本显示并标出来。 */
-export function TeamChat({ id, client, connected, onPull, initial = null }: {
+export function TeamChat({ id, client, connected, onPull, initial = null, initialDetail = null }: {
   id: string; client: TeamChatClient; connected: boolean;
   onPull?: Parameters<typeof TeamCard>[0]["onPull"];
   /** 已有的群聊（测试与预渲染用）；照样会去服务端核对 */
   initial?: TeamTranscript | null;
+  initialDetail?: TeamDetail | null;
 }) {
   const [data, setData] = useState<TeamTranscript | null>(initial);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
+  const [view, setView] = useState<"delivery" | "history" | null>(null);
   const pending = useRef(false);
   const end = useRef<HTMLLIElement | null>(null);
   const load = useCallback(async () => {
@@ -101,6 +104,7 @@ export function TeamChat({ id, client, connected, onPull, initial = null }: {
   const { team, members, messages } = data;
   const byName = Object.fromEntries(members.map(member => [member.name, member]));
   const status = team.status;
+  const shownView = view ?? (["review", "done"].includes(status) ? "delivery" : "history");
   return <section className="team-chat" aria-label={`任务小组：${team.objective}`}>
     <header className="team-chat-head">
       <div className="team-chat-title"><Users aria-hidden="true" /><strong title={team.objective}>{team.objective}</strong></div>
@@ -119,10 +123,15 @@ export function TeamChat({ id, client, connected, onPull, initial = null }: {
       </ul>}
       {status === "waiting" && team.waiting_reason && <p className="team-chat-waiting">{team.waiting_reason}</p>}
     </header>
-    <ol className="team-chat-log" aria-label="小组的经过">
+    <nav className="team-chat-views" aria-label="小组视图">
+      <button type="button" aria-pressed={shownView === "delivery"} onClick={() => setView("delivery")}>交付与原文</button>
+      <button type="button" aria-pressed={shownView === "history"} onClick={() => setView("history")}>小组经过</button>
+    </nav>
+    {shownView === "delivery" && <TeamDelivery key={team.id} id={team.id} client={client} connected={connected} initial={initialDetail} />}
+    <div className="team-chat-history" hidden={shownView !== "history"}><ol className="team-chat-log" aria-label="小组的经过">
       {messages.map((message, index) => <Bubble key={`${message.at}-${index}`} message={message} members={byName} />)}
       <li ref={end} aria-hidden="true" />
-    </ol>
+    </ol></div>
     <details className="team-chat-overview">
       <summary>概览、验收标准与交付分支</summary>
       <TeamCard id={team.id} client={client} connected={connected} onPull={onPull} onChanged={() => void load()} />

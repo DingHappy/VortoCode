@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { ComponentProps } from "react";
-import type { TaskItem, WorktreeWorkspaceSnapshot } from "../types";
+import type { TaskItem, TeamSummary, WorktreeWorkspaceSnapshot } from "../types";
+import { teamTaskContext } from "../lib/teamAttention";
 import { TaskCard } from "../components/TaskCard";
 import { TaskDispatchForm } from "../components/TaskDispatchForm";
 
@@ -11,11 +12,12 @@ type TasksPanelProps = {
   dispatchForm: ComponentProps<typeof TaskDispatchForm>;
   cardActions: Omit<ComponentProps<typeof TaskCard>, "task" | "focused">;
   onFocusTask: (id: string) => void;
+  teams?: TeamSummary[];
 };
 
 /** Presentation only: server snapshots and domain actions come from the owner. */
 export function TasksPanel({ tasks, focusedTaskId, worktreeWorkspace, dispatchForm,
-  cardActions, onFocusTask }: TasksPanelProps) {
+  cardActions, onFocusTask, teams = [] }: TasksPanelProps) {
   useEffect(() => {
     if (!focusedTaskId) return;
     const frame = window.requestAnimationFrame(() => {
@@ -75,7 +77,7 @@ export function TasksPanel({ tasks, focusedTaskId, worktreeWorkspace, dispatchFo
       )}
       {tasks.length === 0 && <div className="panel-empty compact"><strong>暂无后台任务</strong><p>可下派只读研究，或在隔离分支中执行开发。</p></div>}
       {tasks.map((task) => (
-        <TaskCard key={task.id} task={task} focused={focusedTaskId === task.id} {...cardActions} />
+        <TaskCard key={task.id} task={task} focused={focusedTaskId === task.id} {...cardActions} teamContext={teamTaskContext(task.id, teams)} />
       ))}
     </div>
   );
