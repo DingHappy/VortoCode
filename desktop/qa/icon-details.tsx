@@ -8,6 +8,7 @@ import { ComposerCommands } from "../src/components/ComposerCommands";
 import { IconButton } from "../src/components/ui";
 import { useDialogSurface } from "../src/hooks/useDialogSurface";
 import { useSidebarVisibility } from "../src/hooks/useSidebarVisibility";
+import { appShortcut } from "../src/lib/appShortcuts";
 import "../src/styles/tokens.css";
 import "../src/styles/components.css";
 import "../src/App.css";
@@ -23,9 +24,17 @@ const sideChats = searchExamples
   : [{ sid: "side", title: "整理工作清单" }];
 function ExampleDialog({ onClose }: { onClose: () => void }) {
   const dialog = useDialogSurface();
+  const [editorShortcuts, setEditorShortcuts] = useState(0);
   return <dialog className="qa-icon-dialog" ref={dialog} aria-label="弹窗提示验收" onCancel={event => { event.preventDefault(); onClose(); }}>
     <header><h2>弹窗里的图标提示</h2><IconButton label="关闭弹窗" icon={<X/>} onClick={onClose}/></header>
     <p>提示应显示在弹窗上。首次 Escape 只收起提示，再按一次关闭弹窗。</p>
+    <label>合成弹窗草稿<input aria-label="弹窗草稿" onKeyDown={event => {
+      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.altKey || event.shiftKey) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault(); setEditorShortcuts(value => value + 1);
+      }
+    }} /></label>
+    <output aria-label="编辑器快捷键计数">编辑器已处理 ⌘K：{editorShortcuts} 次；仅合成操作。</output>
   </dialog>;
 }
 function Fixture() {
@@ -43,7 +52,8 @@ function Fixture() {
   const panelToggle = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229 || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (appShortcut(event, document.querySelector("dialog[open]") !== null) !== "search") return;
       event.preventDefault(); sidebar.setCollapsed(false); setSearch(true); setSearchFocus(value => value + 1);
     };
     window.addEventListener("keydown", onKey);

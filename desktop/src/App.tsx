@@ -1,6 +1,7 @@
 import { AssistantTimeline } from "./components/AssistantTimeline";
 import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
 import { useSidebarVisibility } from "./hooks/useSidebarVisibility";
+import { appShortcut } from "./lib/appShortcuts";
 import { ManagementHead, ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
@@ -256,11 +257,11 @@ function App() {
   // ⌘K：侧栏收起时也能直接搜（docs/DESIGN_SYSTEM.md 第 2 节「搜索与 ⌘K」）；⌘, 打开设置。
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) return;
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key === ",") { event.preventDefault(); setSettingsOpen(true); return; }
-      if (event.key.toLowerCase() !== "k") return;
+      const action = appShortcut(event, document.querySelector("dialog[open]") !== null);
+      if (!action) return;
       event.preventDefault();
+      if (action === "settings") { setSettingsOpen(true); return; }
       sidebar.setCollapsed(false); setSidebarSearchOpen(true); setSidebarSearchFocus(value => value + 1);
     };
     window.addEventListener("keydown", onKey);
