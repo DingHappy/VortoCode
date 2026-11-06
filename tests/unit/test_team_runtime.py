@@ -269,9 +269,55 @@ def test_a_rework_round_carries_the_previous_result_and_the_rework_note(tmp_path
     work.finish(child.id, 2, "", error="超过单轮时限")
     service.review(root.id, child.id, "rework", "再试一次")
     third = team_members.member_prompt(service.collaboration(service.get(root.id)).get(child.id))
-    assert "【上一轮没有交回内容】" in third and "A 10 元" not in third and "再试一次" in third
+    assert "【上一轮没有交回内容】" in third and "A 10 元" in third and "再试一次" in third
+    assert "【最近可用的保存稿 · 第 1 轮】" in third and "超过单轮时限" in third
     fresh = service.assign(root.id, "审查员", "审一下", "清单")
     assert team_members.member_prompt(fresh) == "审一下\n\n要交回：清单"          # 第一轮不加东西
+
+
+def test_rework_preserves_the_saved_result_beyond_the_old_message_limit(tmp_path):
+    service, root = _root(tmp_path)
+    child = service.assign(root.id, "研究员", "整理结果", "正文")
+    work = service.collaboration(service.get(root.id))
+    work.start(child.id, 1)
+    draft = "前半段" * 1500 + "尾部事实需要保留"
+    work.finish(child.id, 1, draft, tainted=True)
+    service.review(root.id, child.id, "rework", "只改措辞")
+    restored = service.collaboration(service.get(root.id)).get(child.id)
+    prompt = team_members.member_prompt(restored)
+    assert draft in prompt and "尾部事实需要保留" in prompt
+    assert restored.collaboration["tainted"] is True
+    assert restored.result == "" and restored.status == "queued"
+
+
+def test_clipped_and_legacy_drafts_are_not_presented_as_recovered_full_text(tmp_path):
+    service, root = _root(tmp_path)
+    child = service.assign(root.id, "研究员", "整理结果", "正文")
+    work = service.collaboration(service.get(root.id))
+    work.start(child.id, 1)
+    work.finish(child.id, 1, "稿" * 9000)
+    service.review(root.id, child.id, "rework", "核对缺口")
+    restored = service.collaboration(service.get(root.id)).get(child.id)
+    prompt = team_members.member_prompt(restored)
+    assert "保存稿完整性待核对" in prompt and "不要编造" in prompt
+    assert "稿" * 9000 not in prompt
+    for message in restored.collaboration["messages"]:
+        message.pop("truncated", None)
+    assert "保存稿完整性待核对" in team_members.member_prompt(restored)
+
+
+def test_missing_or_future_drafts_do_not_create_context_that_never_existed(tmp_path):
+    service, root = _root(tmp_path)
+    child = service.assign(root.id, "研究员", "查资料", "正文")
+    work = service.collaboration(service.get(root.id))
+    work.start(child.id, 1)
+    work.finish(child.id, 1, "", error="未取得正文")
+    service.review(root.id, child.id, "rework", "明确缺口")
+    restored = service.collaboration(service.get(root.id)).get(child.id)
+    restored.collaboration["messages"].append({"kind": "submitted", "round": 3, "body": "未来稿件"})
+    prompt = team_members.member_prompt(restored)
+    assert "未来稿件" not in prompt and "最近可用的保存稿 ·" not in prompt
+    assert "明确缺口" in prompt
 
 
 def test_three_member_failures_in_a_row_hand_the_team_back_to_the_owner(tmp_path):

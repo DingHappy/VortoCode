@@ -75,9 +75,13 @@ class CollaborationService:
         state = task.collaboration
         seq = state.get("message_seq", 0) + 1
         state["message_seq"] = seq
+        # A followup clears task.result. Keep the same bounded saved draft here,
+        # rather than silently reducing an 8000-character result to 4000.
+        limit = 8000 if kind == "submitted" else 4000
         state["messages"] = (state.get("messages", []) + [{
             "id": f"{task.id}-message-{seq}", "kind": kind, "sender": sender,
-            "round": state["round"], "body": _text(body), "created": _now(),
+            "round": state["round"], "body": _text(body, limit), "created": _now(),
+            **({"truncated": len(body) > limit} if kind == "submitted" else {}),
         }])[-_MAX_MESSAGES:]
 
     def create(self, prompt: str, assignee: str = "", acceptance: list[str] | None = None, *,
