@@ -7,9 +7,9 @@ import "./SessionCapabilities.css";
 
 const groups = [
   { title: "查公开资料", test: (name: string) => ["web_search", "web_fetch"].includes(name) },
-  { title: "文件与项目", test: (name: string) => ["read_file", "write_file", "edit_file", "list_files", "search_files", "grep"].includes(name) },
-  { title: "命令与验证", test: (name: string) => ["shell", "run_tests", "run_command"].includes(name) },
-  { title: "任务与协作", test: (name: string) => /^(team_|task_|dev_|delegate)/.test(name) },
+  { title: "文件与项目", test: (name: string) => ["read_file", "write_file", "edit_file", "list_files", "search_files", "grep", "glob", "git_status", "find_definition", "find_references", "document_symbols"].includes(name) },
+  { title: "命令与验证", test: (name: string) => ["run_tests", "run_command"].includes(name) },
+  { title: "任务与协作", test: (name: string) => name === "task" || /^(team_|task_|dev_|delegate)/.test(name) },
   { title: "记忆与目标", test: (name: string) => /^(memory_|goal_|personal_goal_|recall|remember)/.test(name) || name === "save_memory" },
   { title: "其他工具与集成", test: () => true },
 ];

@@ -29,3 +29,16 @@ it("distinguishes old servers, unloaded sessions and retained offline observatio
   const offline = render({ snapshot, busy: false, stale: true, error: "" }, false);
   expect(offline).toContain("上次记录："); expect(offline).toContain("连接已中断"); expect(offline).toContain('disabled=""');
 });
+
+it("groups the actual project and task tool names without treating shell as a built-in command", () => {
+  const project = ["glob", "git_status", "find_definition", "find_references", "document_symbols"];
+  const names = [...project, "task", "run_command", "shell"];
+  const html = render({ snapshot: { ...snapshot, tool_inventory: { version: 1, truncated: false,
+    items: names.map(name => ({ name, read_only: null, required_capabilities: null })) } }, stale: false, busy: false, error: "" });
+  const section = (label: string) => html.match(new RegExp(`<details><summary>${label}.*?</details>`))?.[0] ?? "";
+  for (const name of project) expect(section("文件与项目")).toContain(`<code>${name}</code>`);
+  expect(section("任务与协作")).toContain("<code>task</code>");
+  expect(section("命令与验证")).toContain("<code>run_command</code>");
+  expect(section("命令与验证")).not.toContain("<code>shell</code>");
+  expect(section("其他工具与集成")).toContain("<code>shell</code>");
+});
