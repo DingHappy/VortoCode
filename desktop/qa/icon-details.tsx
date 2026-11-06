@@ -16,6 +16,10 @@ import "../src/styles/shell.css";
 import "./icon-details.css";
 
 const labels: Record<AssistantTab, string> = { feed: "动态", goals: "目标", audit: "审核记录", schedule: "定时", identity: "身份" };
+const searchExamples = new URLSearchParams(location.search).has("search");
+const sideChats = searchExamples
+  ? ["整理工作清单", "会议纪要", "周报草稿", "发布计划", "采购清单", "界面反馈", "项目资料", "旅行安排"].map((title, index) => ({ sid: `side-${index}`, title }))
+  : [{ sid: "side", title: "整理工作清单" }];
 function ExampleDialog({ onClose }: { onClose: () => void }) {
   const dialog = useDialogSurface();
   return <dialog className="qa-icon-dialog" ref={dialog} aria-label="弹窗提示验收" onCancel={event => { event.preventDefault(); onClose(); }}>
@@ -55,7 +59,10 @@ function Fixture() {
       <button onClick={() => first.current?.focus()}>离开图标区域</button></div>
     <div className={`qa-icon-frame workbench vc-mode-assistant ${panel ? "panel-open" : ""} ${sidebar.collapsed ? "side-closed" : ""}`}>
       <aside id="qa-conversation-sidebar" className="sidebar vc-sidebar"><SidebarBrand sidebarId="qa-conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)}/>
-        <AssistantSidebar mainChat={{ sid: "main", preview: "周报草稿已整理" }} sideChats={[{ sid: "side", title: "整理工作清单" }]}
+        <AssistantSidebar mainChat={{ sid: "main", preview: "周报草稿已整理" }} sideChats={sideChats}
+          phoneChats={searchExamples ? [{ sid: "phone", title: "📱 手机备忘" }] : []}
+          offlineChats={searchExamples ? [{ sid: "local", title: "本机备忘" }] : []}
+          teams={searchExamples ? [{ id: "team", title: "修复登录", status: "review" }] : []}
           current="main" waiting={2} onSelect={() => setNotice("只读演示：会话入口")} onNewSideChat={() => setNotice("演示：新对话，未创建真实会话")}
           query={query} search={<SidebarSearch open={search} query={query} placeholder="搜索会话" focusRequest={searchFocus} onOpenChange={setSearch} onQuery={setQuery}/>}/>
       </aside>

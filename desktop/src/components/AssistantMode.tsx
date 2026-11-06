@@ -77,6 +77,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   onOpenTeam?: (id: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const keyword = query.trim();
   const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
   const inChat = !page && !currentTeam;
   const groups = teams.filter((team) => matches(team.title, query));
@@ -90,14 +91,16 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   ];
   // 正在看的旁聊即使排在后面也要露出来；搜索时全列
   const activeIndex = sideChats.findIndex((chat) => chat.sid === current);
-  const limit = query || showAll ? others.length : Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
+  const limit = keyword || showAll ? others.length : Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
+  const mainMatches = matches("主要聊天", query);
+  const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !others.length;
   return <>
     <nav className="vc-side-nav" aria-label="助理">
       <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
       {search}
     </nav>
     <div className="vc-side-recent">
-      {matches("主要聊天", query) && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
+      {mainMatches && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
         title={mainChat.preview || "主要聊天"} current={inChat && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
         meta={badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
           aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span>
@@ -109,8 +112,9 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
       {others.length > 0 && <GroupTitle>旁聊</GroupTitle>}
       {others.slice(0, limit)}
       {others.length > limit && <button type="button" className="vc-side-more" onClick={() => setShowAll(true)}>显示全部 {others.length} 条</button>}
-      {showAll && !query && others.length > SIDE_CHAT_LIMIT && <button type="button" className="vc-side-more" onClick={() => setShowAll(false)}>收起</button>}
-      {!query && sideChats.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
+      {showAll && !keyword && others.length > SIDE_CHAT_LIMIT && <button type="button" className="vc-side-more" onClick={() => setShowAll(false)}>收起</button>}
+      {noMatches && <p className="vc-side-hint vc-side-search-empty" role="status">未找到匹配的会话。试试其它标题关键词，或清除搜索。</p>}
+      {!keyword && others.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
     </div>
   </>;
 }

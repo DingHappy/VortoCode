@@ -3,7 +3,7 @@
 // 搜索框开合由 App 持有：⌘K 在侧栏收起时也要能打开它。查询词给项目与会话列表共用。
 // 分区的折叠状态也留在 App：切到助理模式再切回来，工作台的分区要保持原样，而那时分区已经卸载过。
 import { useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
-import { ChevronDown, Library, ListChecks, PanelLeftClose, Puzzle, Search, SquarePen, Target } from "lucide-react";
+import { ChevronDown, Library, ListChecks, PanelLeftClose, Puzzle, Search, SquarePen, Target, X } from "lucide-react";
 import { IconButton, NavItem } from "./ui";
 
 export function SidebarBrand({ onCollapse, collapseRef, sidebarId }: {
@@ -38,6 +38,13 @@ export function SidebarSearch({ open, query, placeholder, onOpenChange, onQuery,
     return <NavItem buttonRef={trigger} icon={<Search aria-hidden="true" />} label="搜索" meta="⌘K" aria-expanded="false" onClick={() => onOpenChange(true)} />;
   }
   return (
+    <div className={`vc-side-search-wrap${query ? " has-query" : ""}`} onKeyDown={event => {
+      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation(); restoreTrigger.current = true;
+        onQuery(""); onOpenChange(false);
+      }
+    }}>
     <label className="vc-side-search" htmlFor={inputId}>
       <Search aria-hidden="true" />
       <input
@@ -48,15 +55,12 @@ export function SidebarSearch({ open, query, placeholder, onOpenChange, onQuery,
         placeholder={placeholder}
         onChange={(event) => onQuery(event.target.value)}
         onBlur={() => { if (!query) onOpenChange(false); }}
-        onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-          if (event.key === "Escape") {
-            event.preventDefault(); event.stopPropagation(); restoreTrigger.current = true;
-            onQuery(""); onOpenChange(false);
-          }
-        }}
       />
     </label>
+    {query && <IconButton className="vc-side-search-clear" label="清除搜索" icon={<X aria-hidden="true" />} onClick={() => {
+      onQuery(""); input.current?.focus({ preventScroll: true });
+    }} />}
+    </div>
   );
 }
 

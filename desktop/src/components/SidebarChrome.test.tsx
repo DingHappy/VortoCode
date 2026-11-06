@@ -24,6 +24,9 @@ it("search is a nav item with its shortcut until opened", () => {
   const inputId = open.match(/<input[^>]+id="([^"]+)"/)?.[1];
   expect(inputId).toBeTruthy();
   expect(open).toContain(`for="${inputId}"`);
+  expect(open).toContain('aria-label="清除搜索"');
+  const empty = renderToStaticMarkup(<SidebarSearch open query="" placeholder="搜索聊天" onOpenChange={noop} onQuery={noop} />);
+  expect(empty).not.toContain('aria-label="清除搜索"');
 });
 
 it("work nav has four pages, marks the open one, and needs a connection for a new chat", () => {

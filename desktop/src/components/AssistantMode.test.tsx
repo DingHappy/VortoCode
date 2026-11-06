@@ -196,6 +196,36 @@ it("search narrows only the recent list", () => {
   expect(html).toContain("新对话");   // 新对话、搜索不受影响
 });
 
+it("search reports no matches only when main, team, phone, local and side chats all miss", () => {
+  const props = { mainChat: { sid: "m" }, current: "m", onSelect: () => {}, onNewSideChat: () => {},
+    sideChats: [{ sid: "s", title: "周报草稿" }], phoneChats: [{ sid: "p", title: "📱 买菜" }],
+    offlineChats: [{ sid: "o", title: "旅行安排" }], teams: [{ id: "t", title: "修复登录", status: "active" }] };
+  const missing = renderToStaticMarkup(<AssistantSidebar {...props} query="找不到的会话" />);
+  expect(missing).toContain('role="status">未找到匹配的会话');
+  expect(missing).toContain("标题关键词");
+  expect(missing).toContain("新对话");
+  for (const [query, label] of [["主要", "主要聊天"], ["周报", "周报草稿"], ["买菜", "买菜"], ["旅行", "旅行安排"], ["登录", "修复登录"]]) {
+    const found = renderToStaticMarkup(<AssistantSidebar {...props} query={query} />);
+    expect(found).not.toContain("未找到匹配的会话");
+    expect(found).toContain(label + "</span>");
+  }
+});
+
+it("whitespace keeps the normal recent-chat limit and empty guidance counts all chat sources", () => {
+  const props = { mainChat: { sid: "m" }, current: "m", onSelect: () => {}, onNewSideChat: () => {},
+    sideChats: Array.from({ length: 8 }, (_, index) => ({ sid: `s${index}`, title: `旁聊${index}` })) };
+  const blank = renderToStaticMarkup(<AssistantSidebar {...props} query={" \t "} />);
+  expect(blank.match(/>旁聊\d</g)).toHaveLength(5);
+  expect(blank).toContain("显示全部 8 条");
+  expect(blank).not.toContain("未找到匹配的会话");
+  const found = renderToStaticMarkup(<AssistantSidebar {...props} query=" 旁聊 " />);
+  expect(found.match(/>旁聊\d</g)).toHaveLength(8);
+  expect(found).not.toContain("显示全部");
+  const phoneOnly = renderToStaticMarkup(<AssistantSidebar {...props} sideChats={[]} phoneChats={[{ sid: "p", title: "手机记录" }]} />);
+  expect(phoneOnly).not.toContain("开个旁聊");
+  expect(phoneOnly).toContain("手机记录");
+});
+
 it("首页建议是输入框下面的一排小按钮：显示短名字，整句话放在悬停提示里", async () => {
   const { AssistantStarterTips } = await import("./AssistantMode");
   const html = renderToStaticMarkup(<AssistantStarterTips tips={[{ id: "t1", label: "看看这周的日程", prompt: "帮我看看这周的日程，有冲突提醒我" }]}
