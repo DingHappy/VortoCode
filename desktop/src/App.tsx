@@ -1857,7 +1857,7 @@ function App() {
     requestedContext?: ContextItem[],
   ): Promise<boolean> => {
     if (override === undefined && isReadingAttachments()) {
-      setBanner("附件还在读取，请读完后再发送，或取消本次附件选择");
+      setBanner("附件还在读取，请读完后再发送，或取消读取");
       return false;
     }
     const text = (override ?? prompt).trim();

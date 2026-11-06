@@ -37,7 +37,7 @@ function Fixture() {
     void draft.addFiles(Array.from({ length: count }, (_, index) => new File([bytes], `样例-${batch.current}-${index + 1}.png`, { type: "image/png" })));
   };
   const send = () => {
-    if (draft.isReadingAttachments()) { setBlocked(value => value + 1); setNotice("附件还在读取，请读完后再发送，或取消本次附件选择"); return; }
+    if (draft.isReadingAttachments()) { setBlocked(value => value + 1); setNotice("附件还在读取，请读完后再发送，或取消读取"); return; }
     const receipt = draft.takeAttachments(draft.attachments);
     if (!receipt) return;
     delivery.current = { current: draft.isCurrentAttachments, restore: receipt.restore, text: prompt };
