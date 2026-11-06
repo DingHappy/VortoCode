@@ -19,6 +19,7 @@ function FeedEntry({ item, onOpen, onInspect, now, recordExpansion }: { item: Fe
     <span className="activity-feed-text">
       <strong>{item.title}</strong>
       <span>{item.summary}</span>
+      {item.teamContext && <small>小组：{item.teamContext.objective}</small>}
       <small className="activity-feed-meta">
         <span className="activity-feed-status">{item.statusLabel || STATUS_TEXT[item.status]}</span>
         {item.sourceLabel && <span>{item.sourceLabel}</span>}
