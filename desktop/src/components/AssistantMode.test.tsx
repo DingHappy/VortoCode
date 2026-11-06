@@ -94,7 +94,16 @@ it("名片说明助理住在哪：常驻电脑 / 本机；连不上常驻电脑�
 
 it("右侧五个标签只显示图标，名字在 aria-label 和悬停提示里；等你处理的件数挂在动态上", () => {
   const html = renderToStaticMarkup(<AssistantPanel name="小V" connected host={{ kind: "local", canAddResident: false }} onAddResident={() => {}} onRetryResident={() => {}} tab="identity" onTab={() => {}} onClose={() => {}} waiting={3}><p /></AssistantPanel>);
-  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}" title="${label}"`);
+  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}"`);
+  expect(html).toContain('data-hint="身份 · 资料、性格与记忆"');
+  const tabs = [...html.matchAll(/<button[^>]*role="tab"[^>]*>/g)].map(match => match[0]);
+  expect(tabs).toHaveLength(5);
+  expect(tabs.filter(button => button.includes('tabindex="0"'))).toHaveLength(1);
+  expect(tabs.find(button => button.includes('tabindex="0"'))).toContain('aria-label="身份"');
+  const panel = html.match(/<div[^>]*role="tabpanel"[^>]*>/)?.[0];
+  const id = panel?.match(/id="([^"]+)"/)?.[1];
+  expect(id).toBeTruthy();
+  for (const button of tabs) expect(button).toContain(`aria-controls="${id}"`);
   expect(html).not.toContain('aria-label="今日"');
   expect(html).toContain('aria-selected="true" aria-label="身份"');
   expect(html).toContain('class="vc-panel-tab-dot" role="img" aria-label="3 件等你处理"');

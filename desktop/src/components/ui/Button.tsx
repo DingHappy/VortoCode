@@ -1,5 +1,6 @@
 // 基础按钮（docs/DESIGN_SYSTEM.md 第 6 节）。样式在 styles/components.css。
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { HintButton } from "./HintButton";
 
 export type ButtonVariant = "primary" | "secondary" | "text" | "danger";
 
@@ -34,14 +35,14 @@ type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "aria-label
 
 export function IconButton({ label, icon, className, title, type = "button", ...rest }: IconButtonProps) {
   return (
-    <button
+    <HintButton
       {...rest}
       type={type}
       aria-label={label}
-      title={title ?? label}
+      hint={title ?? label}
       className={joinClass("vc-btn", "vc-btn--icon", className)}
     >
-      {icon}
-    </button>
+      <span aria-hidden="true" className="vc-icon-content">{icon}</span>
+    </HintButton>
   );
 }

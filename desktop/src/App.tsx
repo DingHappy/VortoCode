@@ -45,7 +45,7 @@ import {
   GitCompareArrows,
   Inbox,
   Library,
-  PanelLeft,
+  PanelLeftOpen,
   ListChecks,
   Server,
   FolderPlus,
@@ -2649,7 +2649,7 @@ function App() {
       </div>
 
       <div className={`workbench vc-mode-${appMode} ${sidebarCollapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
-        {sidebarCollapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeft />} onClick={() => setSidebarCollapsed(false)} />}
+        {sidebarCollapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeftOpen />} onClick={() => setSidebarCollapsed(false)} />}
         <aside className="sidebar vc-sidebar">
           <SidebarBrand onCollapse={() => setSidebarCollapsed(true)} />
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
@@ -2809,7 +2809,7 @@ function App() {
           <ConversationHeader
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
-            panelOpen={inspectorOpen} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            panelOpen={inspectorOpen} panelLabel={appMode === "assistant" ? "助理面板" : "任务动态"} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
             taskPill={undefined /* ADR-016：等你处理在主要聊天顶部，不再有顶栏胶囊 */}
             // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
             status={connection !== "connected" && (

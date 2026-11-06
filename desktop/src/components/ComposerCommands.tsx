@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Plus } from "lucide-react";
+import { HintButton } from "./ui";
 
 export const COMPOSER_COMMANDS = [
   { id: "attach", label: "添加附件", description: "图片、音频或文本文件" },
@@ -41,8 +42,10 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
     onAction(id);
   };
   const keyDown = (event: KeyboardEvent) => {
+    if (!event.nativeEvent.isComposing && open && event.key === "Escape") {
+      event.preventDefault(); setExpanded(false); setDismissed(true); textarea.current?.focus(); return;
+    }
     if (event.nativeEvent.isComposing || (!(event.target instanceof HTMLTextAreaElement) && !(event.target as HTMLElement).closest(".composer-command-menu"))) return;
-    if (open && event.key === "Escape") { event.preventDefault(); setExpanded(false); setDismissed(true); return; }
     if (open && ["ArrowDown", "ArrowUp"].includes(event.key)) {
       event.preventDefault(); setSelected(index => choices.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + choices.length) % choices.length : 0); return;
     }
@@ -62,7 +65,7 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
     </div>}
     <textarea ref={textarea} onPaste={onPaste} aria-label="任务输入" value={prompt} onChange={event => onPrompt(event.target.value)} placeholder={placeholder} />
     <div className="composer-command-toolbar">
-      <button className="composer-attach" aria-label="添加与快捷操作" title="添加附件、引用源码或选择项目" aria-expanded={open} disabled={disabled} onClick={() => { setExpanded(value => !value); setDismissed(false); }}><Plus size={17} aria-hidden="true" /></button>
+      <HintButton className="composer-attach" aria-label="添加与快捷操作" hint="添加附件、引用源码或选择项目" aria-expanded={open} disabled={disabled} onClick={() => { setExpanded(value => !value); setDismissed(false); }}><Plus size={17} aria-hidden="true" /></HintButton>
       {children}
     </div>
   </div>;

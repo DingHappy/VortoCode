@@ -1,8 +1,9 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, Users, X } from "lucide-react";
-import { Button, GroupTitle, IconButton, NavItem } from "./ui";
-import { useEffect, useRef, useState } from "react";
+import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, ImagePlus, List, ListChecks, PanelRightClose, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, UserRound, Users, X } from "lucide-react";
+import { Button, GroupTitle, HintButton, IconButton, NavItem } from "./ui";
+import { useEffect, useId, useRef, useState } from "react";
+import { tabKeyTarget } from "../lib/iconNavigation";
 import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
 import type { MemorySnapshot } from "../lib/memorySnapshot";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
@@ -128,12 +129,12 @@ export const PANEL_PAGE: Record<AssistantTab, AssistantPage | null> = {
   feed: "tasks", schedule: "schedule", goals: "goals", identity: null, audit: null,
 };
 
-const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
-  { id: "feed", label: "动态", icon: <List aria-hidden="true" /> },
-  { id: "goals", label: "目标", icon: <Target aria-hidden="true" /> },
-  { id: "audit", label: "审核记录", icon: <ShieldCheck aria-hidden="true" /> },
-  { id: "schedule", label: "定时", icon: <Clock3 aria-hidden="true" /> },
-  { id: "identity", label: "身份", icon: <Fingerprint aria-hidden="true" /> },
+const TABS: Array<{ id: AssistantTab; label: string; hint: string; icon: ReactNode }> = [
+  { id: "feed", label: "动态", hint: "动态 · 查看进展与待处理", icon: <List aria-hidden="true" /> },
+  { id: "goals", label: "目标", hint: "目标 · 查看进度和下一步", icon: <Target aria-hidden="true" /> },
+  { id: "audit", label: "审核记录", hint: "审核记录 · 查看允许与拒绝", icon: <ShieldCheck aria-hidden="true" /> },
+  { id: "schedule", label: "定时", hint: "定时 · 查看计划和执行记录", icon: <Clock3 aria-hidden="true" /> },
+  { id: "identity", label: "身份", hint: "身份 · 资料、性格与记忆", icon: <UserRound aria-hidden="true" /> },
 ];
 
 export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
@@ -153,6 +154,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   children: ReactNode;
   computer?: ReactNode;
 }) {
+  const panelId = useId();
   // 连不上通常是隧道没开或网络断了：服务器上的助理还在干活，只是这台电脑看不到
   const unreachable = host.kind === "resident" && (!connected || host.reachable === false);
   const where = host.kind === "resident"
@@ -162,7 +164,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   const badge = waiting || waitingUncertain
     ? waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}` : "";
   return <aside className="assistant-panel vc-panel" aria-label="助理">
-    <IconButton className="vc-panel-close" label="收起面板" icon={<X />} onClick={onClose} />
+    <IconButton className="vc-panel-close" label="收起面板" icon={<PanelRightClose />} onClick={onClose} />
     <div className="vc-panel-card" data-tauri-drag-region="deep">
       <div className="vc-panel-identity-row">
         <AssistantAvatarImage name={name} avatar={avatar} size={32} />
@@ -185,13 +187,20 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
       </details>
     </div>
     <div className="vc-panel-tabs" role="tablist" aria-label="助理面板">
-      {TABS.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} title={item.label}
-        className="vc-panel-tab" onClick={() => onTab(item.id)}>
+      {TABS.map((item, index) => <HintButton key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} hint={item.hint}
+        id={`${panelId}-${item.id}`} aria-controls={`${panelId}-content`} tabIndex={tab === item.id ? 0 : -1}
+        className="vc-panel-tab" onClick={() => onTab(item.id)} onKeyDown={event => {
+          if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+          const target = tabKeyTarget(event.key, index, TABS.length);
+          if (target === null) return;
+          event.preventDefault(); onTab(TABS[target].id);
+          event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[id="${panelId}-${TABS[target].id}"]`)?.focus();
+        }}>
         {item.icon}
         {item.id === "feed" && badge ? <i className={`vc-panel-tab-dot${waitingUncertain && !waiting ? " is-unknown" : ""}`} role="img" aria-label={badge} /> : null}
-      </button>)}
+      </HintButton>)}
     </div>
-    <div className="assistant-panel-body">{children}</div>
+    <div className="assistant-panel-body" role="tabpanel" id={`${panelId}-content`} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}>{children}</div>
   </aside>;
 }
 

@@ -3,7 +3,7 @@
 // 搜索框开合由 App 持有：⌘K 在侧栏收起时也要能打开它。查询词给项目与会话列表共用。
 // 分区的折叠状态也留在 App：切到助理模式再切回来，工作台的分区要保持原样，而那时分区已经卸载过。
 import type { ReactNode } from "react";
-import { ChevronDown, Library, ListChecks, PanelLeft, Puzzle, Search, SquarePen, Target } from "lucide-react";
+import { ChevronDown, Library, ListChecks, PanelLeftClose, Puzzle, Search, SquarePen, Target } from "lucide-react";
 import { IconButton, NavItem } from "./ui";
 
 export function SidebarBrand({ onCollapse }: { onCollapse: () => void }) {
@@ -11,7 +11,7 @@ export function SidebarBrand({ onCollapse }: { onCollapse: () => void }) {
     <div className="vc-side-brand" data-tauri-drag-region="deep">
       <span className="vc-side-logo" aria-hidden="true">V</span>
       <strong>VortoCode</strong>
-      <IconButton label="收起侧栏" icon={<PanelLeft />} onClick={onCollapse} />
+      <IconButton label="收起侧栏" icon={<PanelLeftClose />} onClick={onCollapse} />
     </div>
   );
 }
