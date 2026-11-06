@@ -46,6 +46,26 @@ def test_unloaded_session_does_not_imply_resources_are_absent():
     assert read(SimpleNamespace(tools=None))["truncated"] is True
 
 
+def test_inventory_exports_only_current_tool_declarations_without_probing_or_credentials():
+    tool = Tool("web_search", "synthetic-secret description", {"key": "synthetic-secret"}, forbidden,
+                read_only=True, required_capabilities=("web_read",))
+    result = read(agent([tool]))
+    assert result["tool_inventory"] == {"version": 1, "truncated": False, "items": [
+        {"name": "web_search", "read_only": True, "required_capabilities": ["web_read"]}]}
+    assert "synthetic-secret" not in json.dumps(result)
+    assert "tool_inventory" not in read(None)
+
+
+def test_invalid_or_partial_declarations_remain_unknown_without_boolean_coercion(monkeypatch):
+    import src.gateway.session_resources as module
+    monkeypatch.setattr(module, "MAX_TOOL_INVENTORY", 1)
+    tool = Tool("unknown", "", {}, forbidden, read_only="false", required_capabilities=("bad value",))
+    result = read(agent([tool, Tool("other", "", {}, forbidden)]))["tool_inventory"]
+    assert result["truncated"] is True
+    assert result["items"] == [{"name": "unknown", "read_only": None, "required_capabilities": None}]
+    assert read(SimpleNamespace(tools={"invalid\nname": tool}))["tool_inventory"]["truncated"] is True
+
+
 def test_observer_failure_and_ambiguous_identity_never_expose_errors_or_grant_access():
     def broken():
         raise RuntimeError("synthetic-secret exception")

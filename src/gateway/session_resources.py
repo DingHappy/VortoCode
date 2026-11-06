@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from itertools import islice
 import re
 
-from src.agents.tool import ToolResource
+from src.agents.tool import Tool, ToolResource
 
 MAX_RESOURCES = 32
 MAX_TOOLS = 2048
+MAX_TOOL_INVENTORY = 256
 STATES = frozenset({"idle", "active", "needs_human", "cleanup_pending", "unknown", "not_attached",
                     "needs_reconciliation", "loaded", "not_provided", "blocked", "disconnected",
                     "connecting", "connected", "partial", "error"})
@@ -21,6 +22,27 @@ def _text(value, limit=240):
     return "".join(c for c in value[:limit] if c >= " " and c != "\x7f") if isinstance(value, str) else ""
 
 
+def _tool_inventory(tools):
+    """Declarations only: no descriptions, arguments, handlers or permission probes."""
+    view = {"version": 1, "truncated": not isinstance(tools, dict), "items": []}
+    if not isinstance(tools, dict):
+        return view
+    view["truncated"] = len(tools) > MAX_TOOL_INVENTORY
+    for name, tool in islice(tools.items(), MAX_TOOL_INVENTORY):
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.:-]{0,127}", name) \
+                or not isinstance(tool, Tool) or tool.name != name:
+            view["truncated"] = True
+            continue
+        capabilities = tool.required_capabilities
+        valid = isinstance(capabilities, (tuple, list)) and len(capabilities) <= 16 and all(
+            isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_:-]{0,79}", value) for value in capabilities)
+        if not valid:
+            view["truncated"] = True
+        view["items"].append({"name": name, "read_only": tool.read_only if type(tool.read_only) is bool else None,
+                              "required_capabilities": list(capabilities) if valid else None})
+    return view
+
+
 def snapshot(agent, *, session, nonce, pending=(), clock=None):
     now = (clock or (lambda: datetime.now(timezone.utc).isoformat()))()
     result = {"version": 1, "session": session, "nonce": nonce, "observed_at": now,
@@ -28,6 +50,7 @@ def snapshot(agent, *, session, nonce, pending=(), clock=None):
     if agent is None:
         return result
     tools = getattr(agent, "tools", {})
+    result["tool_inventory"] = _tool_inventory(tools)
     values = list(islice(tools.values(), MAX_TOOLS)) if isinstance(tools, dict) else []
     result["truncated"] = not isinstance(tools, dict) or len(tools) > MAX_TOOLS
     seen = {}

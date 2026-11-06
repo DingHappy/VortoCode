@@ -1,4 +1,5 @@
 import type { ResourceView, SessionResource } from "../lib/sessionResources";
+import { useState } from "react";
 
 const labels: Record<SessionResource["state"], string> = {
   idle: "已装配，尚未打开", active: "会话已打开", needs_human: "等待人工处理", cleanup_pending: "清理待核对",
@@ -24,10 +25,11 @@ export function SessionResources({ view, connected, hostLabel, pendingId, onRefr
 }) {
   const snapshot = view.snapshot;
   const stale = view.stale || !connected;
+  const [open, setOpen] = useState(false);
   const attention = Boolean(view.error || snapshot?.items.some(item =>
     ["needs_human", "needs_reconciliation", "cleanup_pending", "error"].includes(item.state)));
-  if (quietWhenOk && connected && !attention) return null;
-  return <details className="session-resources" onToggle={event => { if (event.currentTarget.open) onRefresh(); }}>
+  if (quietWhenOk && connected && !attention && !open) return null;
+  return <details className="session-resources" onToggle={event => { setOpen(event.currentTarget.open); if (event.currentTarget.open) onRefresh(); }}>
     <summary>{hostLabel} · 连接与能力 <small>{!connected ? "连接中断" : attention ? "需要核对" : view.busy ? "读取中" : !snapshot ? "按需查看" : stale ? "记录待核对" : "查看详情"}</small></summary>
     <div className="session-resource-actions">
       <button disabled={!connected || view.busy} onClick={onRefresh}>{view.busy ? "读取中…" : "刷新状态"}</button>
@@ -35,7 +37,14 @@ export function SessionResources({ view, connected, hostLabel, pendingId, onRefr
       <button onClick={onManage}>管理连接</button>
       {onBrowserSettings && <button onClick={onBrowserSettings}>浏览器设置</button>}
     </div>
-    <div className="session-resources-body">
+    <SessionResourceDetails view={view} connected={connected} hostLabel={hostLabel} />
+  </details>;
+}
+
+export function SessionResourceDetails({ view, connected, hostLabel }: { view: ResourceView; connected: boolean; hostLabel: string }) {
+  const snapshot = view.snapshot;
+  const stale = view.stale || !connected;
+  return <div className="session-resources-body">
       <p>当前连接：{hostLabel}。这里的状态不代表已登录、已授权执行或任务完成。</p>
       {snapshot && <p>读取于 {new Date(snapshot.observed_at).toLocaleString()}{stale ? " · 保留上次记录，当前状态待核对" : " · 会话观察，未作在线账号检查"}</p>}
       {view.error && <p role="status">{view.error}</p>}
@@ -54,6 +63,5 @@ export function SessionResources({ view, connected, hostLabel, pendingId, onRefr
         </dl>
         <p>{item.detail}</p>
       </li>)}</ul> : null}
-    </div>
-  </details>;
+    </div>;
 }
