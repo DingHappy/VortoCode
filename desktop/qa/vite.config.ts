@@ -18,6 +18,7 @@ export default defineConfig({
       sessionInfo: new URL("session-info.html", import.meta.url).pathname,
       composerAttachments: new URL("composer-attachments.html", import.meta.url).pathname,
       sessionCapabilities: new URL("session-capabilities.html", import.meta.url).pathname,
+      iconDetails: new URL("icon-details.html", import.meta.url).pathname,
       replies: new URL("replies.html", import.meta.url).pathname,
       ownerAttention: new URL("owner-attention.html", import.meta.url).pathname,
       chatReading: new URL("chat-reading.html", import.meta.url).pathname,

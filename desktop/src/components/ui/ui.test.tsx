@@ -12,7 +12,9 @@ describe("ui primitives", () => {
   it("labels icon-only buttons for screen readers and hover", () => {
     const html = renderToStaticMarkup(<IconButton label="关闭" icon={<svg />} />);
     expect(html).toContain('aria-label="关闭"');
-    expect(html).toContain('title="关闭"');
+    expect(html).toContain('data-hint="关闭"');
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toContain('role="tooltip"'); // Nothing floats until pointer or keyboard focus.
   });
 
   it("uses one word per status across screens", () => {

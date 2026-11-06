@@ -1,5 +1,7 @@
 import { AssistantTimeline } from "./components/AssistantTimeline";
 import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
+import { useSidebarVisibility } from "./hooks/useSidebarVisibility";
+import { appShortcut } from "./lib/appShortcuts";
 import { ManagementHead, ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
@@ -47,7 +49,7 @@ import {
   GitCompareArrows,
   Inbox,
   Library,
-  PanelLeft,
+  PanelLeftOpen,
   ListChecks,
   Server,
   FolderPlus,
@@ -208,6 +210,7 @@ function App() {
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const activeTurnRidRef = useRef<string | null>(null);
+  const assistantPanelToggleRef = useRef<HTMLButtonElement>(null);
   const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem(STORAGE_KEYS.baseUrl) ?? "http://127.0.0.1:8080");
   const [repoRoot, setRepoRoot] = useState("");
   const [token, setToken] = useState("");
@@ -253,15 +256,17 @@ function App() {
   const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebar = useSidebarVisibility();
+  const [sidebarSearchFocus, setSidebarSearchFocus] = useState(0);
   // ⌘K：侧栏收起时也能直接搜（docs/DESIGN_SYSTEM.md 第 2 节「搜索与 ⌘K」）；⌘, 打开设置。
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key === ",") { event.preventDefault(); setSettingsOpen(true); return; }
-      if (event.key.toLowerCase() !== "k") return;
+      const action = appShortcut(event, document.querySelector("dialog[open]") !== null);
+      if (!action) return;
       event.preventDefault();
-      setSidebarCollapsed(false); setSidebarSearchOpen(true);
+      if (action === "settings") { setSettingsOpen(true); return; }
+      sidebar.setCollapsed(false); setSidebarSearchOpen(true); setSidebarSearchFocus(value => value + 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -2450,7 +2455,7 @@ function App() {
   const assistantPage: AssistantPage | null = mainView === "artifacts" ? "library" : mainView === "customize" ? "customize"
     : mainView === "chat" && inspectorOpen && !computerWorkspace.view ? PANEL_PAGE[assistantTab] : null;
   const sidebarSearch = (placeholder: string) => <SidebarSearch open={sidebarSearchOpen} query={sidebarQuery} placeholder={placeholder}
-    onOpenChange={setSidebarSearchOpen} onQuery={setSidebarQuery} />;
+    onOpenChange={setSidebarSearchOpen} onQuery={setSidebarQuery} focusRequest={sidebarSearchFocus} />;
   const openAssistantPage = (page: AssistantPage) => {
     if (page === "library") {
       setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); return;
@@ -2692,10 +2697,11 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench vc-mode-${appMode} ${sidebarCollapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
-        {sidebarCollapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeft />} onClick={() => setSidebarCollapsed(false)} />}
-        <aside className="sidebar vc-sidebar">
-          <SidebarBrand onCollapse={() => setSidebarCollapsed(true)} />
+      <div className={`workbench vc-mode-${appMode} ${sidebar.collapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+        {sidebar.collapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeftOpen />} buttonRef={sidebar.reopenButton}
+          aria-expanded="false" aria-controls="conversation-sidebar" onClick={() => sidebar.toggle(false)} />}
+        <aside id="conversation-sidebar" className="sidebar vc-sidebar">
+          <SidebarBrand sidebarId="conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)} />
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
@@ -2853,7 +2859,9 @@ function App() {
           <ConversationHeader
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
-            panelOpen={inspectorOpen} waiting={appMode === "assistant" ? assistantWaiting : feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            panelOpen={inspectorOpen} panelLabel={appMode === "assistant" ? "助理面板" : "任务动态"}
+            panelId={appMode === "assistant" && !computerWorkspace.view ? "assistant-panel" : undefined} panelButtonRef={assistantPanelToggleRef}
+            waiting={appMode === "assistant" ? assistantWaiting : feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
             waitingUncertain={appMode === "assistant" && !activityComplete}
             taskPill={undefined /* ADR-016：等你处理在主要聊天顶部，不再有顶栏胶囊 */}
             // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
@@ -3073,7 +3081,7 @@ function App() {
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
-          : <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
+          : <AssistantPanel id="assistant-panel" toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}

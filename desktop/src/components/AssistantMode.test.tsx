@@ -42,6 +42,40 @@ it("会话分组：主要聊天 → 任务小组 → 旁聊；旁聊默认只列
   expect(searching.match(/>旁聊\d</g)).toHaveLength(8);
 });
 
+it("recent-list disclosure describes its list and only offers a collapse that can hide rows", () => {
+  const props = { mainChat: { sid: "m" }, sideChats: Array.from({ length: 8 }, (_, index) => ({ sid: `s${index}`, title: `旁聊${index}` })),
+    onSelect: () => {}, onNewSideChat: () => {} };
+  const html = renderToStaticMarkup(<AssistantSidebar {...props} current="m" />);
+  const toggle = html.match(/<button[^>]*class="vc-side-more"[^>]*>/)?.[0];
+  expect(toggle).toContain('aria-expanded="false"');
+  const controls = toggle?.match(/aria-controls="([^"]+)"/)?.[1];
+  expect(controls).toBeTruthy();
+  expect(html).toContain(`class="vc-side-chats" id="${controls}"`);
+  const lastChat = renderToStaticMarkup(<AssistantSidebar {...props} current="s7" />);
+  expect(lastChat.match(/>旁聊\d</g)).toHaveLength(8);
+  expect(lastChat).not.toContain('class="vc-side-more"');
+  const inTeam = renderToStaticMarkup(<AssistantSidebar {...props} current="s7" currentTeam="t1"
+    teams={[{ id: "t1", title: "小组工作", status: "active" }]} />);
+  expect(inTeam.match(/>旁聊\d</g)).toHaveLength(5);
+  expect(inTeam.match(/aria-current="page"/g)).toHaveLength(1);
+});
+
+it("blank chat titles have searchable names and long titles keep their full hint text", () => {
+  const title = "本周交付与下一轮开发安排：核对原有计划和完整成果";
+  const props = { mainChat: { sid: "m" }, current: "m", onSelect: () => {}, onNewSideChat: () => {},
+    sideChats: [{ sid: "s1", title: " \t " }, { sid: "s2", title: ` ${title} ` }],
+    phoneChats: [{ sid: "p1", title: " 📱  " }], offlineChats: [{ sid: "o1", title: "  " }] };
+  const html = renderToStaticMarkup(<AssistantSidebar {...props} />);
+  expect(html).toContain(`title="${title}"`);
+  expect(html).toContain(`>${title}</span>`);
+  expect(html).not.toContain("📱");
+  for (const query of ["新的旁聊", "手机对话", "本机对话"]) {
+    const found = renderToStaticMarkup(<AssistantSidebar {...props} query={query} />);
+    expect(found).toContain(`>${query}</span>`);
+    expect(found).not.toContain("未找到匹配的会话");
+  }
+});
+
 it("每个面板入口都对得上一个标签，审核记录不占一级入口", () => {
   for (const [page, tab] of Object.entries(PAGE_PANEL)) expect(PANEL_PAGE[tab]).toBe(page);
   expect(PANEL_PAGE.audit).toBeNull();
@@ -94,7 +128,16 @@ it("名片说明助理住在哪：常驻电脑 / 本机；连不上常驻电脑�
 
 it("右侧五个标签只显示图标，名字在 aria-label 和悬停提示里；等你处理的件数挂在动态上", () => {
   const html = renderToStaticMarkup(<AssistantPanel name="小V" connected host={{ kind: "local", canAddResident: false }} onAddResident={() => {}} onRetryResident={() => {}} tab="identity" onTab={() => {}} onClose={() => {}} waiting={3}><p /></AssistantPanel>);
-  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}" title="${label}"`);
+  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}"`);
+  expect(html).toContain('data-hint="身份 · 资料、性格与记忆"');
+  const tabs = [...html.matchAll(/<button[^>]*role="tab"[^>]*>/g)].map(match => match[0]);
+  expect(tabs).toHaveLength(5);
+  expect(tabs.filter(button => button.includes('tabindex="0"'))).toHaveLength(1);
+  expect(tabs.find(button => button.includes('tabindex="0"'))).toContain('aria-label="身份"');
+  const panel = html.match(/<div[^>]*role="tabpanel"[^>]*>/)?.[0];
+  const id = panel?.match(/id="([^"]+)"/)?.[1];
+  expect(id).toBeTruthy();
+  for (const button of tabs) expect(button).toContain(`aria-controls="${id}"`);
   expect(html).not.toContain('aria-label="今日"');
   expect(html).toContain('aria-selected="true" aria-label="身份"');
   expect(html).toContain('class="vc-panel-tab-dot" role="img" aria-label="3 件等你处理"');
@@ -185,6 +228,36 @@ it("search narrows only the recent list", () => {
   expect(html).not.toContain("签到脚本");
   expect(html).not.toContain("主要聊天</span>");
   expect(html).toContain("新对话");   // 新对话、搜索不受影响
+});
+
+it("search reports no matches only when main, team, phone, local and side chats all miss", () => {
+  const props = { mainChat: { sid: "m" }, current: "m", onSelect: () => {}, onNewSideChat: () => {},
+    sideChats: [{ sid: "s", title: "周报草稿" }], phoneChats: [{ sid: "p", title: "📱 买菜" }],
+    offlineChats: [{ sid: "o", title: "旅行安排" }], teams: [{ id: "t", title: "修复登录", status: "active" }] };
+  const missing = renderToStaticMarkup(<AssistantSidebar {...props} query="找不到的会话" />);
+  expect(missing).toContain('role="status">未找到匹配的会话');
+  expect(missing).toContain("标题关键词");
+  expect(missing).toContain("新对话");
+  for (const [query, label] of [["主要", "主要聊天"], ["周报", "周报草稿"], ["买菜", "买菜"], ["旅行", "旅行安排"], ["登录", "修复登录"]]) {
+    const found = renderToStaticMarkup(<AssistantSidebar {...props} query={query} />);
+    expect(found).not.toContain("未找到匹配的会话");
+    expect(found).toContain(label + "</span>");
+  }
+});
+
+it("whitespace keeps the normal recent-chat limit and empty guidance counts all chat sources", () => {
+  const props = { mainChat: { sid: "m" }, current: "m", onSelect: () => {}, onNewSideChat: () => {},
+    sideChats: Array.from({ length: 8 }, (_, index) => ({ sid: `s${index}`, title: `旁聊${index}` })) };
+  const blank = renderToStaticMarkup(<AssistantSidebar {...props} query={" \t "} />);
+  expect(blank.match(/>旁聊\d</g)).toHaveLength(5);
+  expect(blank).toContain("显示全部 8 条");
+  expect(blank).not.toContain("未找到匹配的会话");
+  const found = renderToStaticMarkup(<AssistantSidebar {...props} query=" 旁聊 " />);
+  expect(found.match(/>旁聊\d</g)).toHaveLength(8);
+  expect(found).not.toContain("显示全部");
+  const phoneOnly = renderToStaticMarkup(<AssistantSidebar {...props} sideChats={[]} phoneChats={[{ sid: "p", title: "手机记录" }]} />);
+  expect(phoneOnly).not.toContain("开个旁聊");
+  expect(phoneOnly).toContain("手机记录");
 });
 
 it("首页建议是输入框下面的一排小按钮：显示短名字，整句话放在悬停提示里", async () => {
