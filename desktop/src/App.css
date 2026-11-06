@@ -8987,6 +8987,28 @@ input::placeholder {
   padding: 12px 12px 0;
 }
 
+.attachment-read-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vc-space-2);
+  padding: var(--vc-space-3) var(--vc-space-3) 0;
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+  line-height: 1.6;
+}
+.attachment-read-status span { min-width: 0; overflow-wrap: anywhere; }
+.attachment-read-status button {
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  padding: var(--vc-space-1) var(--vc-space-2);
+  color: var(--vc-text-secondary);
+  background: var(--vc-fill);
+  font: inherit;
+  cursor: pointer;
+}
+.attachment-read-status button:focus-visible { outline: 2px solid var(--vc-accent); outline-offset: 2px; }
+
 .attachment-chip {
   display: inline-flex;
   align-items: center;

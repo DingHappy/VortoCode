@@ -108,7 +108,7 @@ import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
-import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
+import { AttachmentChips, AttachmentReadStatus, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
 import { ConversationHome, FirstRunCard } from "./components/ConversationHome";
 import { SidebarBrand, SidebarSearch, SidebarSectionTitle, WorkNav } from "./components/SidebarChrome";
 import { IconButton } from "./components/ui";
@@ -131,7 +131,6 @@ import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { localGeneral, readLocalCodexObserver } from "./lib/codexObserverHealth";
 import { diag } from "./lib/diagnostics";
-import { checkAttachment } from "./lib/attachments";
 import { dismissOfflineChat, listOfflineChats, offlineChatAttachment, recordOfflineChat } from "./lib/offlineChats";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
@@ -175,6 +174,7 @@ import {
 import { errorText } from "./lib/errorText";
 import { confirmAction } from "./lib/confirm";
 import { useAttachments } from "./hooks/useAttachments";
+import { reportComposerFailure } from "./lib/composerFailure";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
@@ -287,7 +287,7 @@ function App() {
   // 不再区分 Plan / Build：每轮都按可修改的模式运行，写盘、执行、外发照旧逐次过确认门
   //（授权档位决定问不问，污点回合一律问人）。只读规划交给模型自己判断，不再让用户先选模式。
   const mode = "build" as const;
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPromptState] = useState("");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const sessionResources = useSessionResources(clientRef, activeSid, connection);
   const confirmationViewRef = useRef({client:clientRef.current,scope:activeSid,id:"",state:pendingConfirm?.responseState});
@@ -427,7 +427,13 @@ function App() {
     if (typeof value === "string" && value) diag("ui.banner", value, "warn");
     setBannerState(value);
   }, []);
-  const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
+  const { attachments, attachmentsReading, addFiles, addAttachment, removeAttachment, resetAttachments,
+    takeAttachments, attachmentRevision, isCurrentAttachments, isReadingAttachments, markComposerEdited, cancelAttachmentReads } = useAttachments(setBanner,
+    // A managed local engine may move to another loopback port during startup.
+    JSON.stringify([remoteProjectRef.current ?? "local", remoteProjectRef.current ? baseUrl : "", repoRoot, activeSid]));
+  const setPrompt = useCallback((value: SetStateAction<string>) => {
+    markComposerEdited(); setPromptState(value);
+  }, [markComposerEdited]);
   const { plugins, pluginBusy, pluginChecks, savePlugin, pluginAction } = usePlugins(
     clientRef, assistantScopeRef, assistantScope, connection, mainView === "customize", setBanner);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -1240,6 +1246,7 @@ function App() {
 
 
   const clearSessionView = () => {
+    resetAttachments();
     conversationLocation.reset();
     autoScrollRef.current = true;
     confirmationReplyRef.current?.close();
@@ -1743,10 +1750,7 @@ function App() {
   /** 「带回常驻电脑」：把本机这段对话作为文本附件放进输入框，用户补一句话再发；不自动发送、不合并。 */
   const bringOfflineChat = (chat: PhoneChat) => {
     const attachment = offlineChatAttachment(chat);
-    const others = attachments.filter((item) => item.id !== attachment.id);
-    const check = checkAttachment(attachment, others);
-    if (!check.ok) { setBanner(check.reason); return; }
-    setAttachments([...others, attachment]);
+    if (!addAttachment(attachment)) return;
     setOfflineChatIds(dismissOfflineChat(chat.sid));
     setOfflineChatSid(null);
     setMainView("chat");
@@ -1857,13 +1861,23 @@ function App() {
     requestedMode: "plan" | "build" = mode,
     requestedContext?: ContextItem[],
   ): Promise<boolean> => {
+    if (override === undefined && isReadingAttachments()) {
+      setBanner("附件还在读取，请读完后再发送，或取消读取");
+      return false;
+    }
     const text = (override ?? prompt).trim();
     const selectedContext = [...(requestedContext ?? contextItems)].slice(0, 8);
     // 附件只跟随输入框发送；面板一键派发（override）不夹带输入框里的附件。
     const selectedAttachments = override === undefined ? attachments : [];
+    const selectedRevision = attachmentRevision();
+    const selectedHost = remoteProjectRef.current;
     if ((!text && selectedContext.length === 0 && selectedAttachments.length === 0) || savingFile) return false;
 
     if (connection !== "connected" || !clientRef.current) {
+      if (selectedHost) {
+        setBanner("当前运行端尚未连接，请重新连接后发送；输入和附件已保留");
+        return false;
+      }
       if (coordinator.starting || coordinator.switching) {
         setBanner("工作区正在准备，请稍候发送");
         return false;
@@ -1880,13 +1894,21 @@ function App() {
       if (!ready || !clientRef.current) return false;
     }
 
+    // Workspace preparation may have changed the target while awaiting a connection.
+    if (!isCurrentAttachments() || remoteProjectRef.current !== selectedHost) {
+      setBanner("发送前会话或运行端已变化，未发送；请核对当前输入和附件");
+      return false;
+    }
+    const attachmentReceipt = override === undefined ? takeAttachments(selectedAttachments, selectedRevision) : null;
+    if (override === undefined && !attachmentReceipt) {
+      setBanner("输入或附件已变化，请核对后再发送");
+      return false;
+    }
     const client = clientRef.current;
     const willQueue = busy;
     const outgoing = { text, context: selectedContext, attachments: selectedAttachments, rid: createSessionId().slice(0, 64) };
     const { rid } = outgoing;
-    setPrompt("");
-    setContextItems([]);
-    if (selectedAttachments.length > 0) setAttachments([]);
+    if (override === undefined) { setPromptState(""); setContextItems([]); }
     if (appMode === "assistant" && showStarterTips) {
       recordAssistantSend();
       setShowStarterTips(shouldShowStarterTips());
@@ -1906,31 +1928,34 @@ function App() {
       void client.confirmDelivery().then((delivered) => {
         if (delivered) return;
         diag("send.unconfirmed", `rid=${rid}`, "warn");
-        if (activeTurnRidRef.current === rid) {
-          setBusy(false);
-          updateActiveTurnRid(null);
-        }
-        setActivities((previous) => upsertActivity(previous, {
-          id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking", status: "failed", label: "没确认送达",
-        }));
-        setPrompt((current) => current.trim() ? current : text);
-        setAttachments((current) => current.length > 0 ? current : selectedAttachments);
-        setBanner("这条消息没确认送达，连接可能断了；文字已放回输入框。连上后先看看对话里有没有它，再决定要不要重发");
+        reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+          recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
+          notify: setBanner, message: "这条消息没确认送达，连接可能断了", followUp: "连上后先核对，再决定要不要重发",
+          markFailed: () => {
+            if (activeTurnRidRef.current === rid) {
+              setBusy(false);
+              updateActiveTurnRid(null);
+            }
+            setActivities((previous) => upsertActivity(previous, {
+              id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking", status: "failed", label: "没确认送达",
+            }));
+          },
+        });
       });
       return true;
     } catch (error) {
-      if (!willQueue) {
-        setBusy(false);
-        updateActiveTurnRid(null);
-        setActivities((previous) => upsertActivity(previous, {
-          id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking",
-          status: "failed", label: "发送任务失败",
-        }));
-      }
-      setPrompt(text);
-      setContextItems(selectedContext);
-      if (selectedAttachments.length > 0) setAttachments(selectedAttachments);
-      setBanner(errorText(error, "发送失败"));
+      reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+        recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
+        notify: setBanner, message: errorText(error, "发送失败"), markFailed: () => {
+          if (!willQueue) {
+            if (activeTurnRidRef.current === rid) { setBusy(false); updateActiveTurnRid(null); }
+            setActivities((previous) => upsertActivity(previous, {
+              id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking",
+              status: "failed", label: "发送任务失败",
+            }));
+          }
+        },
+      });
       return false;
     }
   };
@@ -2974,8 +2999,9 @@ function App() {
               }}
             >
               <AttachmentChips items={attachments} onRemove={removeAttachment} />
+              <AttachmentReadStatus pending={attachmentsReading} onCancel={cancelAttachmentReads} />
               <ContextChips items={contextItems}
-                onRemove={(item) => setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item)))} />
+                onRemove={(item) => { markComposerEdited(); setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item))); }} />
               <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}
                 placeholder={appMode !== "assistant" ? undefined : onAssistantHost()
                   ? "交代一件事，它会在常驻电脑上接着做，做完了回到这里告诉你…" : "交代一件事，做完了回到这里告诉你…"}
@@ -3012,7 +3038,7 @@ function App() {
                   onChoose={(value) => { setSavedModelChoice(value); persistModelChoice(value); }}
                   onManage={() => { setSettingsSection("model"); setSettingsOpen(true); }} />
                 <ContextStatus key={activeSid} context={currentSession?.context} />
-                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={attachmentsReading > 0 || (!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
                 </div>
               </div>
               </ComposerCommands>
@@ -3177,7 +3203,7 @@ function App() {
                 onDiscard={discardEditorChanges}
                 onSave={saveWorkspaceFile}
                 onLaunchExternal={launchExternalEditor}
-                onAddContext={addFileToContext}
+                onAddContext={item => { markComposerEdited(); addFileToContext(item); }}
                 onSelectSourceLine={selectSourceLine}
                 onClearSourceSelection={() => setSourceSelection(null)}
                 onFileQueryChange={setFileQuery}
