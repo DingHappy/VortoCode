@@ -2,13 +2,14 @@
 import type { ReactNode } from "react";
 import { Laptop, PanelRight, Server } from "lucide-react";
 
-export function ConversationHeader({ title, place, panelOpen, waiting, plan, busy, taskPill, status, onTogglePanel, onStop }: {
+export function ConversationHeader({ title, place, panelOpen, waiting, waitingUncertain = false, plan, busy, taskPill, status, onTogglePanel, onStop }: {
   title: string;
   /** 登记了常驻电脑、又在工作台项目里时才显示 */
   place: "resident" | "local" | null;
   panelOpen: boolean;
   /** 等你处理的件数 */
   waiting: number;
+  waitingUncertain?: boolean;
   plan: { done: number; total: number };
   busy: boolean;
   /** 助理模式用任务胶囊代替右侧面板开关（docs/DESIGN_SYSTEM.md 第 4 节） */
@@ -34,7 +35,8 @@ export function ConversationHeader({ title, place, panelOpen, waiting, plan, bus
           className={`context-toggle workbench-toggle icon-only ${panelOpen ? "active" : ""}`}
           aria-expanded={panelOpen}
           aria-label="任务动态"
-          title={waiting ? `任务动态 · ${waiting} 件等你处理` : plan.total ? `任务动态 · 当前步骤 ${plan.done}/${plan.total}` : "任务动态"}
+          title={waiting ? `任务动态 · ${waiting}${waitingUncertain ? "+" : ""} 件等你处理`
+            : waitingUncertain ? "任务动态 · 待处理来源尚未完整读取" : plan.total ? `任务动态 · 当前步骤 ${plan.done}/${plan.total}` : "任务动态"}
           onClick={onTogglePanel}
         >
           <PanelRight size={16} />
