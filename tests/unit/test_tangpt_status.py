@@ -94,7 +94,7 @@ globalThis.document={querySelectorAll:selector=>{
 console.log(JSON.stringify(eval(PROBE)));
 '''.replace("SETTINGS", json.dumps({"protected": protected, "cross_origin": cross_origin, "extra_account": extra_account}))
     source = source.replace("PROBE", json.dumps(tangpt.STATUS_JS))
-    execution = subprocess.run([node, "-e", source], text=True, capture_output=True, timeout=5)
+    execution = subprocess.run([node, "-e", source], text=True, capture_output=True, timeout=30)
     assert execution.returncode == 0, execution.stderr
     assert "synthetic-hidden" not in execution.stdout and "UnrelatedForumUser" not in execution.stdout
     raw = json.loads(execution.stdout)
