@@ -1,5 +1,6 @@
 """Domain decisions remain distinct from mutable submission/execution state."""
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -7,7 +8,7 @@ from src.agents.approval_records import approval_events, record_approval
 from src.gateway.owner_access import snapshot
 from src.scheduling import codex_watch as watch
 from src.workflow.tasks import assistant_dispatch as dispatch
-from tests.unit.test_assistant_dispatch import registry  # noqa: F401
+from tests.unit.test_assistant_dispatch import _Http, registry  # noqa: F401
 from tests.unit.test_codex_watch import _every_session_handed_over, _seed  # noqa: F401
 
 
@@ -107,14 +108,88 @@ def test_bounded_reader_preserves_the_existing_utf8_contract(tmp_path):
     assert snapshot(str(tmp_path))["history"]["sources"]["codex"] == "unavailable"
 
 
-def test_broken_existing_events_block_a_new_decision_without_erasing_them(tmp_path):
+@pytest.mark.parametrize("broken", [None, {}, [{"v": 2, "outcome": []}]])
+async def test_broken_dispatch_events_block_approval_but_not_manual_withdrawal(tmp_path, broken):
     root = str(tmp_path)
     item = dispatch.propose(root, project="VortoCode", title="test", goal="test")
     path = tmp_path / ".vortocode/dispatches/ledger.json"
-    data = json.loads(path.read_text()); data["dispatches"][0]["approval_events"] = [{"v": 2, "outcome": []}]
+    data = json.loads(path.read_text()); data["dispatches"][0]["approval_events"] = broken
     path.write_text(json.dumps(data)); before = path.read_bytes()
+    async def forbidden(*_args, **_kwargs):
+        pytest.fail("corrupt metadata must block approval before network I/O")
     with pytest.raises(dispatch.DispatchError, match="审批记录待核对"):
-        dispatch.cancel(root, item["id"], origin="app", decision_source="user")
+        await dispatch.approve(root, item["id"], http=forbidden, origin="app", decision_source="user")
     assert path.read_bytes() == before
+    withdrawn = dispatch.cancel(root, item["id"], origin="app", decision_source="user")
+    assert withdrawn["status"] == "cancelled" and withdrawn["approval_events_truncated"]
+    [event] = approval_events(withdrawn)
+    assert event["outcome"] == "cancelled" and event["source"] == "user"
     history = snapshot(root)["history"]
-    assert history["sources"]["dispatches"] == "partial" and history["entries"][0]["approval_outcome"] == "unknown"
+    assert history["sources"]["dispatches"] == "partial" and history["entries"][0]["approval_outcome"] == "cancelled"
+
+
+@pytest.mark.parametrize("broken", [None, {}, [{"v": 2, "outcome": []}]])
+async def test_expired_dispatch_with_broken_events_can_be_withdrawn_by_the_watch(tmp_path, broken):
+    from src.scheduling import assistant_watch
+    root = str(tmp_path)
+    item = dispatch.propose(root, project="VortoCode", title="old", goal="test")
+    path = tmp_path / ".vortocode/dispatches/ledger.json"
+    data = json.loads(path.read_text())
+    now = datetime(2026, 11, 7, tzinfo=timezone.utc)
+    data["dispatches"][0].update(approval_events=broken, created_at=(now - timedelta(days=8)).isoformat())
+    path.write_text(json.dumps(data))
+    notices = []
+    async def notify(text, *_args):
+        notices.append(text)
+        return True
+    state = {}
+    await assistant_watch._nudge_overdue(root, now, dispatch.list_dispatches(root), state, notify)
+    [withdrawn] = dispatch.list_dispatches(root)
+    assert withdrawn["status"] == "cancelled" and withdrawn["approval_events_truncated"]
+    [event] = approval_events(withdrawn)
+    assert event["outcome"] == "cancelled" and event["source"] == "system"
+    assert state["nudged"][item["id"]] == "expired" and len(notices) == 1
+
+
+@pytest.mark.parametrize("broken", [None, {}, [{"v": 2, "outcome": []}]])
+def test_broken_codex_events_block_approval_but_not_rejection(tmp_path, broken):
+    root = str(tmp_path); _seed(root)
+    action = watch.propose_action(root, thread="登录", kind="message", text="test")
+    path = tmp_path / ".vortocode/codex/actions.json"
+    data = json.loads(path.read_text()); data[0]["approval_events"] = broken
+    path.write_text(json.dumps(data)); before = path.read_bytes()
+    with pytest.raises(watch.CodexActionError, match="审批记录待核对"):
+        watch.decide_action(root, action["id"], True, origin="runtime", decision_source="user")
+    assert path.read_bytes() == before
+    denied = watch.decide_action(root, action["id"], False, origin="runtime", decision_source="user")
+    assert denied["status"] == "cancelled" and denied["approval_events_truncated"]
+    [event] = approval_events(denied)
+    assert event["outcome"] == "denied" and event["source"] == "user"
+
+
+async def test_desktop_dispatch_has_one_history_row_despite_the_original_audit(tmp_path, monkeypatch):
+    from src.gateway.audit import list_audit
+    from src.web.routers import resident
+    root = str(tmp_path); monkeypatch.chdir(tmp_path)
+    item = dispatch.propose(root, project="VortoCode", title="test", goal="test")
+    http = _Http([{"id": dispatch.submission_task_id(item["request_id"]), "status": "queued"}])
+    real_approve = dispatch.approve
+    async def approve(root, dispatch_id, **kwargs):
+        return await real_approve(root, dispatch_id, http=http, **kwargs)
+    monkeypatch.setattr(dispatch, "approve", approve)
+    sent = await resident.approve_dispatch(item["id"])
+    assert sent["status"] == "running" and len(list_audit(root)) == 1
+    [row] = snapshot(root)["history"]["entries"]
+    assert row["record_type"] == "dispatch" and row["approval_outcome"] == "approved"
+
+
+async def test_desktop_codex_rejection_has_one_history_row_despite_the_original_audit(tmp_path, monkeypatch):
+    from src.gateway.audit import list_audit
+    from src.web.routers import codex
+    root = str(tmp_path); _seed(root)
+    monkeypatch.setattr(codex, "_general_root", lambda: root)
+    action = watch.propose_action(root, thread="登录", kind="message", text="test")
+    denied = await codex.cancel_codex_action(action["id"])
+    assert denied["status"] == "cancelled" and len(list_audit(root)) == 1
+    [row] = snapshot(root)["history"]["entries"]
+    assert row["record_type"] == "codex_action" and row["approval_outcome"] == "denied"

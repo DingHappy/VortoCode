@@ -65,7 +65,7 @@ def snapshot(root: str) -> dict:
               "decision_source", "approval_outcome", "decision", "tainted")
     entries = []
     for item in history["entries"]:
-        if item["category"] != "decision":
+        if item["category"] != "decision" or not item.get("operation_kind"):
             continue
         entries.append({**{key: item[key] for key in fields if key in item},
                         "id": "history-" + hashlib.sha256(item["id"].encode()).hexdigest()[:24],

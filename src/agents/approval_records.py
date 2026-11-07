@@ -38,9 +38,16 @@ def approval_events(item: dict) -> list[dict]:
 
 def record_approval(item: dict, outcome: str, *, at: str, origin: str = "unknown", source: str = "unknown") -> None:
     """After transition checks, before the original atomic save; no separate store."""
-    events = approval_events(item)
     if outcome not in {"approved", "denied", "cancelled"}:
         raise ValueError("未知审批结果")
+    repaired = False
+    try:
+        events = approval_events(item)
+    except (ValueError, TypeError):
+        if outcome == "approved":
+            raise
+        # 拒绝和撤回不依赖旧审批元数据；保留缺失标记，不能伪装历史完整。
+        events, repaired = [], True
     origin = origin if isinstance(origin, str) and origin in ORIGINS else "unknown"
     source = source if isinstance(source, str) and source in SOURCES else "unknown"
     event = {"v": 1, "id": uuid.uuid4().hex[:24], "at": at, "outcome": outcome,
@@ -50,5 +57,5 @@ def record_approval(item: dict, outcome: str, *, at: str, origin: str = "unknown
     # Validate newly written data too; a bad clock cannot create a fake decision time.
     approval_events({"approval_events": [event]})
     item["approval_events"] = (events + [event])[-MAX_EVENTS:]
-    if len(events) == MAX_EVENTS:
+    if repaired or len(events) == MAX_EVENTS:
         item["approval_events_truncated"] = True
