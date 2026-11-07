@@ -195,7 +195,7 @@ async def test_app_range_grant_race_preserves_the_approved_card_and_single_actio
             results.append(await gate("own", "own_data"))
             return "done"
     manager = AppTurns(str(tmp_path), lambda _confirm: Agent())
-    turn = manager.start("req-scope-race-001", "own")
+    turn = await manager.start("req-scope-race-001", "own")
     await _settle(turn, ("waiting",))
     card = turn.cards[0]
     manager.decide(turn.rid, card.id, True, card.digest(turn.rid), "approval", scope="turn")
@@ -219,7 +219,7 @@ async def test_app_pending_range_is_rechecked_before_execution(tmp_path, shared_
                 results.append(await gate("own", "own_data"))
             return "done"
     manager = AppTurns(str(tmp_path), lambda _confirm: Agent())
-    turn = manager.start("req-scope-recheck", "own")
+    turn = await manager.start("req-scope-recheck", "own")
     await _settle(turn, ("waiting",))
     card = turn.cards[0]; digest = card.digest(turn.rid)
     if failure == "expired": now[0] = 600
@@ -254,7 +254,7 @@ async def test_app_scope_is_bound_to_card_and_requires_approval_key(tmp_path, sh
                 if not ok: return "denied"
             return "done"
     manager = AppTurns(str(tmp_path), lambda confirm: Agent(confirm))
-    turn = manager.start("req-scope-0001", "do three updates")
+    turn = await manager.start("req-scope-0001", "do three updates")
     await _settle(turn, ("waiting",))
     card = turn.cards[0].public(turn.rid)
     assert card["scope_options"] == ["once", "turn"] and card["scope_keys"]["turn"] == "approval"
