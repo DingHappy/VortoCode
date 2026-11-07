@@ -1,4 +1,4 @@
-"""Display-only confirmation metadata, scoped to the trusted tool await chain.
+"""Trusted confirmation metadata, scoped to the tool await chain.
 
 Never read model arguments or prompt text as presentation authority. This adds no
 approval channel: the original gate and pending Future still own the decision.
@@ -33,3 +33,36 @@ def presenting_website(details: dict):
         yield
     finally:
         _WEBSITE.reset(token)
+
+
+_APPROVAL: ContextVar[dict | None] = ContextVar("approval_presentation", default=None)
+
+
+def approval_details(kind: str | None) -> dict:
+    """可信工具类别的展示与手机签名级别；不授予工具能力或预授权。未知类别加强确认。"""
+    from src.agents.trust import KINDS, READ, OWN_DATA, DRAFT
+    category = kind if isinstance(kind, str) and kind in KINDS else "unknown"
+    ordinary = category in (READ, OWN_DATA, DRAFT)
+    return {"operation_kind": category, "risk": "normal" if ordinary else "high",
+            "required_key": "device" if ordinary else "approval"}
+
+
+def approval_context() -> dict | None:
+    value = _APPROVAL.get()
+    return dict(value) if value is not None else None
+
+
+def record_approval_outcome(outcome: str, source: str = "user") -> None:
+    """终端回报当前等待如何闭合；只影响审计展示，不生成批准。"""
+    value = _APPROVAL.get()
+    if value is not None:
+        _APPROVAL.set({**value, "approval_outcome": outcome, "decision_source": source})
+
+
+@contextmanager
+def presenting_approval(kind: str | None, *, source: str, scope: str):
+    token = _APPROVAL.set({**approval_details(kind), "decision_source": source, "approval_scope": scope})
+    try:
+        yield
+    finally:
+        _APPROVAL.reset(token)

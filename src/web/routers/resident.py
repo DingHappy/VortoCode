@@ -43,7 +43,7 @@ def _audit(entry: dict, allowed: bool, verb: str = "") -> None:
 @router.post("/api/dispatches/{dispatch_id}/approve")
 async def approve_dispatch(dispatch_id: str):
     try:
-        entry = await dispatch.approve(os.getcwd(), dispatch_id)
+        entry = await dispatch.approve(os.getcwd(), dispatch_id, origin="runtime", decision_source="user")
     except dispatch.DispatchError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     _audit(entry, True)
@@ -53,7 +53,7 @@ async def approve_dispatch(dispatch_id: str):
 @router.post("/api/dispatches/{dispatch_id}/cancel")
 async def cancel_dispatch(dispatch_id: str):
     try:
-        entry = dispatch.cancel(os.getcwd(), dispatch_id)
+        entry = dispatch.cancel(os.getcwd(), dispatch_id, origin="runtime", decision_source="user")
     except dispatch.DispatchError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     _audit(entry, False)
