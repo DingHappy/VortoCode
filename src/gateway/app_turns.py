@@ -107,7 +107,7 @@ class AppTurns:
 
     # —— 回合 ——
 
-    def start(self, request_id: str, text: str) -> AppTurn:
+    async def start(self, request_id: str, text: str) -> AppTurn:
         """起一个回合；同一个 request_id 重试只起一次（网络重发）。"""
         import re
 
@@ -120,7 +120,11 @@ class AppTurns:
             return self.turns[existing]
         from src.gateway.audit import audit_snapshot
         from src.gateway.app_approval_journal import read_openings, request_ref
-        saved = audit_snapshot(self.root, 500)
+        saved = await asyncio.to_thread(audit_snapshot, self.root, 500)
+        # 两个相同请求可同时等待读取；回到事件循环后再核对，不能各建一个回合。
+        existing = self.by_request.get(request_id)
+        if existing in self.turns:
+            return self.turns[existing]
         if saved["status"] == "unavailable":
             raise AppTurnError("审批记录暂时无法核对，未开始新回合，请稍后再试")
         openings, _partial = read_openings(saved["entries"])

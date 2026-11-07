@@ -4,6 +4,8 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import asyncio
+import threading
 
 import pytest
 
@@ -21,7 +23,7 @@ def waits(root, live=None):
     return [row for row in snapshot(str(root), live_cards=live)["history"]["entries"] if row["record_type"] == "card_wait"]
 
 
-def test_abrupt_process_exit_leaves_a_private_non_executable_hint(tmp_path):
+async def test_abrupt_process_exit_leaves_a_private_non_executable_hint(tmp_path):
     code = '''import asyncio, os, sys
 from src.gateway.app_turns import AppTurn, AppTurns
 async def run():
@@ -42,7 +44,7 @@ asyncio.run(run())
     manager = AppTurns(str(tmp_path), lambda _confirm: pytest.fail("read/retry constructed an agent"))
     assert manager.turns == {} and not manager.pending_card_refs()
     with pytest.raises(AppTurnError, match="留有审批记录"):
-        manager.start("req-crash-001", "retry after lost response")
+        await manager.start("req-crash-001", "retry after lost response")
     with pytest.raises(KeyError):
         manager.decide("app-" + "a" * 16, "old-card", True, "d" * 64, "approval")
 
@@ -57,9 +59,46 @@ def test_reader_without_live_evidence_does_not_assert_interruption(tmp_path):
     assert lost["approval_outcome"] == "interrupted"
 
 
+async def test_start_reads_off_loop_and_concurrent_retries_create_one_turn(tmp_path, monkeypatch, shared_chat):
+    turns, _ = _turns(tmp_path)
+    original = audit.audit_snapshot
+    entered, release, lock = threading.Event(), threading.Event(), threading.Lock()
+    readers = []
+    def blocked(*args):
+        with lock:
+            readers.append(threading.get_ident())
+            if len(readers) == 2:
+                entered.set()
+        assert release.wait(5), "test did not release the audit reader"
+        return original(*args)
+    monkeypatch.setattr(audit, "audit_snapshot", blocked)
+    pending = [asyncio.create_task(turns.start("req-concurrent-001", "check")) for _ in range(2)]
+    try:
+        assert await asyncio.to_thread(entered.wait, 3)
+        assert all(not task.done() for task in pending)
+        assert threading.get_ident() not in readers
+    finally:
+        release.set()
+    first, second = await asyncio.gather(*pending)
+    assert first is second and len(turns.turns) == 1
+    await _settle(first, ("done",))
+    assert len(shared_chat) == 1
+
+
+async def test_unreadable_audit_blocks_new_turns_but_not_an_existing_request(tmp_path, monkeypatch, shared_chat):
+    turns, agents = _turns(tmp_path)
+    turn = await turns.start("req-existing-001", "check")
+    await _settle(turn, ("done",))
+    monkeypatch.setattr(audit, "audit_snapshot", lambda *_args: {"status": "unavailable", "entries": []})
+    assert await turns.start("req-existing-001", "retry") is turn
+    with pytest.raises(AppTurnError, match="未开始新回合"):
+        await turns.start("req-new-0001", "new")
+    assert len(turns.turns) == len(agents) == len(shared_chat) == 1
+
+
 async def test_closed_card_does_not_come_back_as_an_interrupted_wait(tmp_path, shared_chat):
     turns, _ = _turns(tmp_path, ask="private confirmation")
-    turn = turns.start("req-journal-001", "check")
+    turn = await turns.start("req-journal-001", "check")
     await _settle(turn, ("waiting",))
     assert waits(tmp_path, turns.pending_card_refs())[0]["approval_outcome"] == "pending"
     card = turn.cards[0].public(turn.rid)
@@ -73,14 +112,14 @@ async def test_closed_card_does_not_come_back_as_an_interrupted_wait(tmp_path, s
 async def test_opening_persistence_failure_never_exposes_a_card(tmp_path, monkeypatch, shared_chat):
     monkeypatch.setattr("src.gateway.app_approval_journal.open_card", lambda *a, **k: False)
     turns, _ = _turns(tmp_path, ask="check")
-    turn = turns.start("req-journal-002", "check")
+    turn = await turns.start("req-journal-002", "check")
     await _settle(turn, ("failed",))
     assert turn.state == "failed" and "未开放" in turn.error and not turn.cards
 
 
 async def test_failed_approval_save_keeps_future_pending_until_an_explicit_retry(tmp_path, monkeypatch, shared_chat):
     turns, _ = _turns(tmp_path, ask="check")
-    turn = turns.start("req-journal-003", "check")
+    turn = await turns.start("req-journal-003", "check")
     await _settle(turn, ("waiting",))
     card = turn.cards[0].public(turn.rid)
     with monkeypatch.context() as patch:

@@ -103,7 +103,7 @@ async def start_turn(request: Request):
     from src.gateway.app_turns import AppTurnError, AppRequestNeedsReview
     _op, data, _kind = _opened(await _body(request), {"chat_send"})
     try:
-        return turns().start(data.get("request_id"), data.get("text")).public()
+        return (await turns().start(data.get("request_id"), data.get("text"))).public()
     except AppRequestNeedsReview as error:
         from fastapi.responses import JSONResponse
         return JSONResponse({"detail": str(error), "code": "app_request_review_required"}, status_code=409)
