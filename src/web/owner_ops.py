@@ -75,7 +75,7 @@ def decide_codex(root: str, args: Dict[str, Any]) -> Result:
     try:
         if approve and signing.action_digest(current) != digest:
             raise codex_watch.CodexActionError("这条动作已经变了，请刷新后重新核对")
-        action = codex_watch.decide_action(root, action_id, approve)
+        action = codex_watch.decide_action(root, action_id, approve, origin="app", decision_source="user")
     except codex_watch.CodexActionError as error:
         return 409, {"detail": str(error)[:200]}
     return 200, {"id": action["id"], "status": action["status"],
@@ -113,13 +113,13 @@ async def dispatch(root: str, args: Dict[str, Any]) -> Result:
         return 404, {"detail": "没有这张任务单"}
     try:
         if not approve:
-            entry = assistant_dispatch.cancel(root, dispatch_id)
+            entry = assistant_dispatch.cancel(root, dispatch_id, origin="app", decision_source="user")
             return 200, {"id": entry["id"], "status": entry["status"], "status_text": "已撤回"}
         if current.get("tainted"):
             return 409, {"detail": "这张任务单是助理读过外部内容后拟的，请到 Desktop 上核对后下发"}
         if dispatch_view(current)["digest"] != digest:
             return 409, {"detail": "任务单内容已经变了，请刷新后重新核对"}
-        entry = await assistant_dispatch.approve(root, dispatch_id)
+        entry = await assistant_dispatch.approve(root, dispatch_id, origin="app", decision_source="user")
     except assistant_dispatch.DispatchError as error:
         return 409, {"detail": str(error)[:200]}
     return 200, {"id": entry["id"], "status": entry["status"],

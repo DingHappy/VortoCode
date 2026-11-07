@@ -3,6 +3,12 @@ import Foundation
 /// 主人终端的读写（`/api/mobile/native/*`）。读取沿用原生会话；写入另带设备签名。
 /// 错误分开处理：写入的 401/403 不清除登录（那是签名或服务端开关的问题），只告诉用户这次没提交。
 extension MobileAPI {
+    public func ownerAccess(_ credential: NativeCredential) async throws -> OwnerAccessSnapshot {
+        let value = try decode(OwnerAccessSnapshot.self, try await owner("access", method: "GET", credential: credential))
+        try value.validate()
+        return value
+    }
+
     private func owner(_ path: String, method: String, credential: NativeCredential, body: Data? = nil,
                        signer: RequestSigner? = nil, key: SigningKey = .device, deviceId: String? = nil,
                        query: [URLQueryItem] = []) async throws -> Data {

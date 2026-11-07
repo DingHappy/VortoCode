@@ -310,6 +310,26 @@ async def timeline(request: Request):
     return await _guarded(request, handle)
 
 
+@router.get("/api/mobile/native/access")
+async def owner_access(request: Request):
+    async def handle(grant):
+        if not _trusted(grant):
+            return _reply({"detail": "这台手机还没获得写入权限"}, 403)
+        from src.gateway.app_relay_client import configured
+        if configured():
+            result = await _relayed("/api/assistant/app-relay/access", {})
+        else:
+            from src.gateway.owner_access import snapshot
+            result = _reply(await asyncio.to_thread(snapshot, os.getcwd()))
+        # Waiting on the resident service must not outlive local session/key revocation.
+        sessions, session = native_session(request)
+        sessions._check(session)
+        if not writes_enabled() or not _trusted(grant) or not MobileDevices(os.getcwd()).is_active(grant["device"]["id"]):
+            raise BrowserDenied()
+        return result
+    return await _guarded(request, handle)
+
+
 @router.post("/api/mobile/native/goal-advance/resume")
 async def resume_goal(request: Request):
     async def handle(grant):

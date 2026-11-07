@@ -117,7 +117,11 @@ def record_decision_audit(
     operation: str,
     decision: bool,
     tainted: bool,
+    approval: Dict[str, Any] | None = None,
 ) -> bool:
+    from src.agents.confirmation_context import approval_context
+    metadata = approval if approval is not None else approval_context()
+    details = _approval_fields(metadata) if metadata is not None else {}
     return append_audit(repo_root, {
         "category": "decision",
         "session": _clip_text(session, 120),
@@ -125,7 +129,20 @@ def record_decision_audit(
         "operation": _clip_text(operation, 1000),
         "decision": "allowed" if decision else "denied",
         "tainted": bool(tainted),
+        **details,
     })
+
+
+def _approval_fields(value: Dict[str, Any]) -> Dict[str, str]:
+    """只保存有限元数据；不把审批正文、工具参数或凭据复制进新的历史字段。"""
+    from src.agents.trust import KINDS
+    limits = {"operation_kind": (*KINDS, "unknown"), "risk": ("normal", "high", "unknown"),
+              "required_key": ("device", "approval", "unknown"),
+              "approval_scope": ("once", "existing_trust", "none", "unknown"),
+              "decision_source": ("user", "preauthorized", "system", "timeout", "cancelled", "unknown"),
+              "approval_outcome": ("approved", "denied", "expired", "cancelled", "unknown")}
+    return {key: value[key] if isinstance(value.get(key), str) and value[key] in allowed else "unknown"
+            for key, allowed in limits.items() if key in value}
 
 
 def record_event_audit(
@@ -185,6 +202,7 @@ def _normalize(record: Dict[str, Any], line_number: int) -> Dict[str, Any]:
             operation=_clip_text(record.get("operation") or "", 1000),
             decision=decision if decision in {"allowed", "denied"} else "denied",
             tainted=bool(record.get("tainted")),
+            **_approval_fields(record),
         )
     else:
         item.update(
@@ -194,25 +212,37 @@ def _normalize(record: Dict[str, Any], line_number: int) -> Dict[str, Any]:
     return item
 
 
-def list_audit(repo_root: str, limit: int = 100) -> list[Dict[str, Any]]:
-    """Return newest-first, normalized records; malformed legacy lines are skipped."""
+def audit_snapshot(repo_root: str, limit: int = 100) -> dict:
+    """Bounded read with explicit source health; unreadable history is never empty success."""
     path = Path(repo_root) / ".vortocode" / "audit.log"
-    if not path.is_file():
-        return []
     bounded = max(1, min(int(limit), _MAX_ENTRIES))
     output: list[Dict[str, Any]] = []
     try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return {"entries": [], "status": "current", "bounded": True}
+    except OSError:
+        return {"entries": [], "status": "unavailable", "bounded": True}
+    try:
         lines = _tail_lines(path)
     except OSError:
-        return []
+        return {"entries": [], "status": "unavailable", "bounded": True}
+    malformed = False
     for line_number, line in reversed(list(enumerate(lines))):
         try:
             record = json.loads(line)
             if not isinstance(record, dict):
+                malformed = True
                 continue
             output.append(_normalize(record, line_number))
         except (TypeError, ValueError):
+            malformed = True
             continue
         if len(output) >= bounded:
             break
-    return output
+    return {"entries": output, "status": "partial" if malformed or size > _MAX_READ_BYTES else "current", "bounded": True}
+
+
+def list_audit(repo_root: str, limit: int = 100) -> list[Dict[str, Any]]:
+    """Compatibility projection for existing clients."""
+    return audit_snapshot(repo_root, limit)["entries"]

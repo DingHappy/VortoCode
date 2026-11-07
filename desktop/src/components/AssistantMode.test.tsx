@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it } from "vitest";
-import { AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, BackToAssistant, PAGE_PANEL, PANEL_PAGE } from "./AssistantMode";
+import { expect, it, vi } from "vitest";
+import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, BackToAssistant, PAGE_PANEL, PANEL_PAGE } from "./AssistantMode";
+import { ConnectionCoordinator } from "../connection/connectionCoordinator";
+import { ownerAccessClient } from "../lib/ownerAccess";
 
 it("工作台已撤：没有模式切换，项目界面里只有「回到助理」", () => {
   const html = renderToStaticMarkup(<BackToAssistant onBack={() => {}} />);
@@ -170,6 +172,25 @@ it("审核记录只列决策，写明允许/拒绝与是否读过外部内容", 
   expect(html).toContain("下发任务单「修登录」到 VortoCode");
   expect(html).toContain("已拒绝 · 读过外部内容后");
   expect(html).not.toContain("web_fetch");
+});
+
+it.each([
+  { name: "本机通用引擎", scope: "general", remote: null, visible: false },
+  { name: "其它远端的通用引擎", scope: "general", remote: "other", visible: false },
+  { name: "常驻电脑的项目引擎", scope: "project", remote: "resident", visible: false },
+  { name: "常驻助理通用引擎", scope: "general", remote: "resident", visible: true },
+] as const)("$name 只展示所属运行端的审核记录", ({ scope, remote, visible }) => {
+  const coordinator = new ConnectionCoordinator();
+  coordinator.assistantHost.current = "resident";
+  coordinator.remote.current = remote;
+  const client = { ownerAccess: vi.fn(async () => { throw new Error("render must not fetch permissions"); }) };
+  const html = renderToStaticMarkup(<AssistantAudit connected
+    accessClient={ownerAccessClient(scope, coordinator.onAssistantHost, client)}
+    entries={[{ id: "local-decision", category: "decision", operation: "当前运行端的普通决定", decision: "allowed" }]} />);
+  expect(html.includes('aria-label="手机权限与审批记录"')).toBe(visible);
+  expect(html.includes("核对权限与记录")).toBe(visible);
+  expect(html).toContain("当前运行端的普通决定");
+  expect(client.ownerAccess).not.toHaveBeenCalled();
 });
 
 it("待确认记忆：可能更新了旧记忆的才多一个「记住并替换旧的」，并写出旧的是哪条", () => {

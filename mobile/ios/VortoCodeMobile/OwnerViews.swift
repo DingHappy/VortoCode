@@ -77,6 +77,12 @@ struct ChatView: View {
         ForEach(turn.pendingCards) { card in
             VStack(alignment: .leading, spacing: 10) {
                 Label("需要你确认", systemImage: card.needsFaceID ? "faceid" : "checkmark.circle").font(.headline)
+                Text(card.categoryLabel + " · " + (card.needsFaceID ? "加强确认" : "普通确认") + " · 仅本次")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if card.tainted == true {
+                    Text("读过外部内容后拟的，请核对是否符合你的本意。")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
                 Text(card.text).textSelection(.enabled)
                 Text("你处理之前，新的消息先不发出；10 分钟没处理按不同意。")
                     .font(.footnote).foregroundStyle(.secondary)

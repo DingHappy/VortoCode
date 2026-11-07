@@ -13,6 +13,15 @@ from src.memory import assistant_profile
 router = APIRouter()
 
 
+@router.get("/api/assistant/access")
+async def owner_access():
+    from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+    if current_workspace_scope() != GENERAL:
+        raise HTTPException(403, "手机权限与审批记录仅在私人助理范围查看")
+    from src.gateway.owner_access import snapshot
+    return await asyncio.to_thread(snapshot, os.getcwd())
+
+
 def _personal_skills():
     from src.gateway.workspace_scope import GENERAL, current_workspace_scope
     from src.workflow.workbench.personal_skills import PersonalSkills

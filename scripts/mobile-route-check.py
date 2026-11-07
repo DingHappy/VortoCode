@@ -19,7 +19,8 @@ from urllib.parse import urlsplit
 
 PREFIX = "/api/mobile/native/"
 INVALID_SESSION = "vcn_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-CLOSED_ROUTES = (("GET", "/api/assistant/timeline"), ("POST", "/api/assistant/app-relay/timeline"))
+CLOSED_ROUTES = (("GET", "/api/assistant/timeline"), ("POST", "/api/assistant/app-relay/timeline"),
+                 ("GET", "/api/assistant/access"), ("POST", "/api/assistant/app-relay/access"))
 
 
 class CheckFailed(ValueError):

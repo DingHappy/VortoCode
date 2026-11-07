@@ -13,6 +13,7 @@ CLI 的 `--yes` 和 Web 的确认门完全不查；attach 又自己手搓了一�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Optional
 
@@ -88,7 +89,7 @@ def decide(*, tainted: bool, pre_authorized: bool, can_ask_human: bool) -> str:
 
 
 def make_confirm_gate(
-    ask_human: Optional[Callable[[str], Awaitable[bool]]] = None,
+    ask_human: Optional[Callable[..., Awaitable[bool]]] = None,
     *,
     auto_approve: bool = False,
     can_ask_human: bool = False,
@@ -146,22 +147,33 @@ def make_confirm_gate(
         tainted = is_tainted()
         verdict = decide(tainted=tainted, pre_authorized=pre_authorized(_level(), kind),
                          can_ask_human=can_ask_human)
-        if verdict == ALLOW:
-            _tell(operation, True, tainted)        # 自动放行也要留痕，不能静默
-            return True
-        if verdict == DENY or ask_human is None:   # 问不到人（或端没给问法）→ 拒
-            _tell(operation, False, tainted)
-            return False
-        # 走 taint_prefix() 而不是直接拼 TAINT_WARNING：措辞按污点**来源**分档的逻辑只此一份。
-        # （真机 2026-07-27：分档函数改好了，可这里绕过它自己拼常量，于是 IM 每次确认照旧顶着
-        #  "模型读过被投毒的网页"那句重话——**改了定义、漏了唯一的调用点**。）
-        prompt = taint_prefix() + operation
-        # 这里是全仓唯一一处"真的停下来等人"的 await。计进等待时钟，好让报耗时的地方把它扣掉
-        # ——否则「运行 xxx · 2 分 13 秒」里那两分钟其实是用户在倒水（见 agents/wait_clock.py）。
-        async with waiting():
-            ok = bool(await ask_human(prompt))
-        _tell(operation, ok, tainted)
-        return ok
+        from src.agents.confirmation_context import approval_context, presenting_approval, record_approval_outcome
+        source = "preauthorized" if verdict == ALLOW else "system" if verdict == DENY or ask_human is None else "user"
+        scope = "existing_trust" if verdict == ALLOW else "none" if source == "system" else "once"
+        with presenting_approval(kind, source=source, scope=scope):
+            if verdict == ALLOW:
+                _tell(operation, True, tainted)        # 自动放行也要留痕，不能静默
+                return True
+            if verdict == DENY or ask_human is None:   # 问不到人（或端没给问法）→ 拒
+                _tell(operation, False, tainted)
+                return False
+            # 走 taint_prefix() 而不是直接拼 TAINT_WARNING：措辞按污点**来源**分档的逻辑只此一份。
+            # （真机 2026-07-27：分档函数改好了，可这里绕过它自己拼常量，于是 IM 每次确认照旧顶着
+            #  "模型读过被投毒的网页"那句重话——**改了定义、漏了唯一的调用点**。）
+            prompt = taint_prefix() + operation
+            # 这里是全仓唯一一处"真的停下来等人"的 await。计进等待时钟，好让报耗时的地方把它扣掉
+            # ——否则「运行 xxx · 2 分 13 秒」里那两分钟其实是用户在倒水（见 agents/wait_clock.py）。
+            try:
+                async with waiting():
+                    ok = bool(await request(ask_human, prompt, kind))
+            except asyncio.CancelledError:
+                record_approval_outcome("cancelled", "cancelled")
+                _tell(operation, False, tainted)
+                raise
+            if "approval_outcome" not in (approval_context() or {}):
+                record_approval_outcome("approved" if ok else "denied")
+            _tell(operation, ok, tainted)
+            return ok
 
     setattr(gated, _KERNEL_GATE, True)
     return gated

@@ -63,9 +63,16 @@ def _ledger_path(root: str) -> Path:
     return Path(root) / ".vortocode" / "dispatches" / "ledger.json"
 
 
-def _load(root: str) -> List[Dict[str, Any]]:
+def _load(root: str, *, max_bytes: int | None = None) -> List[Dict[str, Any]]:
     try:
-        data = json.loads(_ledger_path(root).read_text(encoding="utf-8"))
+        if max_bytes is None:
+            raw = _ledger_path(root).read_bytes()
+        else:
+            with _ledger_path(root).open("rb") as handle:
+                raw = handle.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise ValueError("任务单超过读取上限")
+        data = json.loads(raw.decode("utf-8"))
     except FileNotFoundError:
         return []
     except (OSError, ValueError) as error:
@@ -380,6 +387,15 @@ def list_dispatches(root: str) -> List[Dict[str, Any]]:
     return list(reversed(_load(root)))
 
 
+def read_dispatch_snapshot(root: str) -> dict:
+    """Bounded local read only: never sync, submit, reconcile or archive."""
+    try:
+        items = _load(root, max_bytes=2 * 1024 * 1024)
+    except DispatchError:
+        return {"items": [], "status": "unavailable"}
+    return {"items": list(reversed(items))[:200], "status": "partial" if len(items) > 200 else "current"}
+
+
 def _update(root: str, dispatch_id: str, change: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
     with _transaction(root):
         items = _load(root)
@@ -392,10 +408,15 @@ def _update(root: str, dispatch_id: str, change: Callable[[Dict[str, Any]], None
     raise DispatchError(f"没有这张任务单：{dispatch_id}")
 
 
-def cancel(root: str, dispatch_id: str) -> Dict[str, Any]:
+def cancel(root: str, dispatch_id: str, *, origin: str = "unknown", decision_source: str = "unknown") -> Dict[str, Any]:
     def change(item: Dict[str, Any]) -> None:
         if item.get("status") != "proposed" and not (item.get("status") == "send_failed" and item.get("submission_attempted") is False):
             raise DispatchError("只有还没下发的任务单能撤回")
+        from src.agents.approval_records import record_approval
+        try:
+            record_approval(item, "cancelled", at=_now(), origin=origin, source=decision_source)
+        except ValueError as error:
+            raise DispatchError("审批记录待核对，未撤回任务单") from error
         item["status"] = "cancelled"
     return _update(root, dispatch_id, change)
 
@@ -480,7 +501,7 @@ async def _http(method: str, url: str, payload: Optional[dict] = None, *, second
             return data if isinstance(data, dict) else {}
 
 
-async def approve(root: str, dispatch_id: str, *, http=_http) -> Dict[str, Any]:
+async def approve(root: str, dispatch_id: str, *, http=_http, origin: str = "unknown", decision_source: str = "unknown") -> Dict[str, Any]:
     """人点了「下发」：把任务单交给项目运行时，记下远端任务 id。"""
     def claim(item: Dict[str, Any]) -> None:
         if item.get("legacy_submission"):
@@ -489,6 +510,11 @@ async def approve(root: str, dispatch_id: str, *, http=_http) -> Dict[str, Any]:
             raise DispatchError("这张任务单已经下发或撤回了")
         if item["status"] != "proposed" and not item.get("request_id"):
             raise DispatchError("旧任务单的提交结果未核实，不能安全重试；请到项目工作台核对")
+        from src.agents.approval_records import record_approval
+        try:
+            record_approval(item, "approved", at=_now(), origin=origin, source=decision_source)
+        except ValueError as error:
+            raise DispatchError("审批记录待核对，未下发任务单") from error
         item.setdefault("request_id", f"assistant-{uuid.uuid4().hex}")
         if item["status"] == "proposed":
             # 任务归属一个专属会话，开发流水线缺关键信息时才能提问（无主任务问不了，只能瞎猜或失败）。

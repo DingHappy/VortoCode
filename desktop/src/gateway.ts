@@ -1,4 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { ownerAccessSnapshot, type OwnerAccessSnapshot } from "./lib/ownerAccess";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-websocket";
@@ -540,6 +541,10 @@ export class GatewayClient {
 
   async listPhoneKeys(): Promise<PhoneKeys> {
     return this.request<PhoneKeys>("/api/assistant/phone-keys");
+  }
+
+  async ownerAccess(): Promise<OwnerAccessSnapshot> {
+    return ownerAccessSnapshot(await this.request<OwnerAccessSnapshot>("/api/assistant/access"));
   }
 
   async decidePhoneKey(deviceId: string, approve: boolean): Promise<void> {

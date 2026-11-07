@@ -1195,8 +1195,8 @@ class IMBridge:
             if entry.get("tainted"):
                 await self._safe_send("这张任务单是在读过网页等外部内容后写的，为安全起见只能在 Desktop 助理的「动态」里确认。")
                 return
-            entry = (await dispatch.approve(self.repo_root, dispatch_id) if approved
-                     else dispatch.cancel(self.repo_root, dispatch_id))
+            entry = (await dispatch.approve(self.repo_root, dispatch_id, origin="im", decision_source="user") if approved
+                     else dispatch.cancel(self.repo_root, dispatch_id, origin="im", decision_source="user"))
         except dispatch.DispatchError as error:
             await self._safe_send(f"没有{verb}：{error}")
             return
@@ -1282,7 +1282,7 @@ class IMBridge:
         """「助理想替你给 Codex 发…」通知上的按钮：批准后由 Mac 上的观察员交给 Codex。不经过模型。"""
         from src.scheduling import codex_watch
         try:
-            action = codex_watch.decide_action(self.repo_root, action_id, approved)
+            action = codex_watch.decide_action(self.repo_root, action_id, approved, origin="im", decision_source="user")
         except codex_watch.CodexActionError as error:
             await self._safe_send(f"没有{'批准' if approved else '拒绝'}：{error}")
             return

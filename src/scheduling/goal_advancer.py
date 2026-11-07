@@ -299,7 +299,7 @@ async def _dispatch(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], no
                                       tainted=tainted, now=now, llm=llm)
     if review["verdict"] == auto_review.APPROVE:
         try:
-            await assistant_dispatch.approve(root, entry["id"])
+            await assistant_dispatch.approve(root, entry["id"], origin="runtime", decision_source="automatic_review")
         except Exception as error:  # noqa: BLE001 —— 下发失败就留给主人，任务单还在
             logger.warning("自动下发失败：%s", str(error)[:120])
         else:
