@@ -198,34 +198,52 @@ async def test_kernel_category_and_taint_reach_app_card_together(tmp_path, share
 
 async def test_timeout_keeps_the_same_outcome_in_card_and_kernel_audits(tmp_path, shared_chat):
     from src.agents.gate import make_confirm_gate
-    from src.gateway.audit import list_audit, record_decision_audit
+    from src.gateway.audit import list_audit
     turns, _ = _turns(tmp_path, ask="记一下", card_timeout=0.01)
     agent = turns._agent_for_turn()
     agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True,
-        on_decision=lambda op, ok, taint: record_decision_audit(str(tmp_path), session="kernel",
-            mode="build", operation=op, decision=ok, tainted=taint))
+                                     on_decision=turns.audit_decision)
     turn = turns.start("req-typed-005", "记一下")
     await _settle(turn, ("done",))
     entries = list_audit(str(tmp_path))
-    assert len(entries) == 2
+    assert len(entries) == 1
     assert all(e["approval_outcome"] == "expired" and e["decision_source"] == "timeout" for e in entries)
+    assert entries[0]["operation"].startswith("App 审批卡 ")
 
 
-async def test_app_preapproval_is_audited_without_copying_private_operation(tmp_path, shared_chat):
+@pytest.mark.parametrize("approved", [True, False])
+async def test_app_user_decision_is_recorded_once_by_the_card(tmp_path, shared_chat, approved):
+    from src.agents.gate import make_confirm_gate
+    from src.gateway.audit import list_audit
+    turns, _ = _turns(tmp_path, ask="记一下")
+    agent = turns._agent_for_turn()
+    agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True, on_decision=turns.audit_decision)
+    turn = turns.start("req-user-once", "记一下")
+    await _settle(turn, ("waiting",))
+    [card] = turn.public()["cards"]
+    turns.decide(turn.rid, card["id"], approved, card["digest"], "device")
+    await _settle(turn, ("done",))
+    [entry] = list_audit(str(tmp_path))
+    assert entry["approval_outcome"] == ("approved" if approved else "denied")
+    assert entry["decision_source"] == "user" and entry["operation"].startswith("App 审批卡 ")
+
+
+@pytest.mark.parametrize("trust,approved,source", [("reads", True, "preauthorized"), ("ask", False, "system")])
+async def test_app_automatic_decision_is_audited_once_without_private_operation(tmp_path, shared_chat, trust, approved, source):
     from src.agents.gate import make_confirm_gate
     from src.agents.taint import reset_taint
     from src.gateway.audit import list_audit
     reset_taint()
     turns, _ = _turns(tmp_path, ask="私人事项正文", ask_kind="own_data")
     agent = turns._agent_for_turn()
-    agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True, trust_level="reads",
+    agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=False, trust_level=trust,
         capability_profile="owner_device", on_decision=turns.audit_decision)
     turn = turns.start("req-typed-006", "记一下")
     await _settle(turn, ("done",))
-    assert not turn.cards and turn.reply == "已记下"
+    assert not turn.cards and turn.reply == ("已记下" if approved else "没有记")
     [entry] = list_audit(str(tmp_path))
-    assert entry["operation_kind"] == "own_data" and entry["decision_source"] == "preauthorized"
-    assert entry["approval_scope"] == "existing_trust" and entry["session"] == turn.rid
+    assert entry["operation_kind"] == "own_data" and entry["decision_source"] == source
+    assert entry["approval_scope"] == ("existing_trust" if approved else "none") and entry["session"] == turn.rid
     assert "私人事项正文" not in (tmp_path / ".vortocode/audit.log").read_text()
 
 

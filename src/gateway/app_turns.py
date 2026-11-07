@@ -240,7 +240,11 @@ class AppTurns:
                       "decision_source": source, "approval_outcome": outcome})
 
     def audit_decision(self, _operation: str, decision: bool, tainted: bool) -> None:
-        """内核决定也留痕（含已有授权）；手机正文不复制进审核记录。"""
+        """只补记自动内核决定；人工、超时和取消已经由卡片闭合记录。"""
+        from src.agents.confirmation_context import approval_context
+        context = approval_context() or {}
+        if context.get("decision_source") not in {"preauthorized", "system"}:
+            return
         turn = self._current
         if turn is not None:
             from src.gateway.audit import record_decision_audit
