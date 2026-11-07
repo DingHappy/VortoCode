@@ -11,7 +11,8 @@ extension MobileAPI {
 
     private func owner(_ path: String, method: String, credential: NativeCredential, body: Data? = nil,
                        signer: RequestSigner? = nil, key: SigningKey = .device, deviceId: String? = nil,
-                       query: [URLQueryItem] = []) async throws -> Data {
+                       query: [URLQueryItem] = [], beforeSend: (@Sendable () async throws -> Void)? = nil) async throws -> Data {
+        try Task.checkCancellation()
         try credential.validate()
         let route = "/api/mobile/native/" + path
         var url = entry.origin.appendingPathComponent(String(route.dropFirst()))
@@ -33,14 +34,19 @@ extension MobileAPI {
             let message = RequestSigning.message(method: method, path: route, body: body ?? Data(),
                                                  timestamp: timestamp, nonce: nonce, deviceId: deviceId)
             let signature = try await signer.sign(message, with: key)
+            try Task.checkCancellation()
             request.setValue(timestamp, forHTTPHeaderField: "X-VC-Timestamp")
             request.setValue(nonce, forHTTPHeaderField: "X-VC-Nonce")
             request.setValue(signature.base64EncodedString(), forHTTPHeaderField: "X-VC-Signature")
         }
+        try credential.validate()
+        if let beforeSend { try await beforeSend() }
+        try Task.checkCancellation()
         let data: Data, response: URLResponse
         do { (data, response) = try await session.data(for: request) }
         catch is CancellationError { throw CancellationError() }
-        catch { throw OwnerWriteError.unavailable }
+        catch { if Task.isCancelled { throw CancellationError() }; throw OwnerWriteError.unavailable }
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse, data.count <= 1_048_576 else { throw MobileError.invalidResponse }
         switch http.statusCode {
         case 200: return data
@@ -174,14 +180,15 @@ extension MobileAPI {
 
     /// 批准 / 拒绝一张卡。高风险卡的批准用批准钥匙（Face ID），其余用日常钥匙；用哪把也签进请求体。
     public func chatDecide(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
-                           rid: String, card: ChatCard, approve: Bool, scope: String = "once") async throws -> ChatCard {
+                           rid: String, card: ChatCard, approve: Bool, scope: String = "once",
+                           beforeSend: (@Sendable () async throws -> Void)? = nil) async throws -> ChatCard {
         guard scope == "once" || (approve && scope == "turn" && card.canAllowTurn) else { throw OwnerWriteError.rejected("批准范围待核对") }
         let key: SigningKey = approve && (card.needsFaceID || scope == "turn") ? .approval : .device
         var body: [String: Any] = ["rid": rid, "card_id": card.id, "approve": approve, "digest": card.digest,
                                    "key_kind": key == .approval ? "approval" : "device"]
         if scope != "once" { body["scope"] = scope }
         let data = try await owner("chat/card", method: "POST", credential: credential, body: try json(body),
-                                   signer: signer, key: key, deviceId: deviceId)
+                                   signer: signer, key: key, deviceId: deviceId, beforeSend: beforeSend)
         return try decode(ChatCard.self, data)
     }
 

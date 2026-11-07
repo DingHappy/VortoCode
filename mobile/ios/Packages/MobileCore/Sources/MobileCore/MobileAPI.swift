@@ -16,6 +16,11 @@ public final class MobileAPI: @unchecked Sendable {
         config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 20
         session = URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
     }
+    /// Internal transport injection for offline contract tests; production uses the hardened initializer above.
+    init(entry: AssistantEntry, session: URLSession) {
+        self.entry = entry
+        self.session = session
+    }
     deinit { session.invalidateAndCancel() }
     public static var decoder: JSONDecoder {
         let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase; return decoder
