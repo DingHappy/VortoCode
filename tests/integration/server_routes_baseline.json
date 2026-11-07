@@ -1602,5 +1602,23 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/assistant/access",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/access",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/access",
+    "methods": [
+      "GET"
+    ]
   }
 ]

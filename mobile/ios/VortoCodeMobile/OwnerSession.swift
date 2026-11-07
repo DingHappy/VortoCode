@@ -42,6 +42,9 @@ final class OwnerSession {
     private var timelineEpoch = UUID()
 
     func resetTimeline() {
+        polling?.cancel()
+        turn = nil
+        chat = []
         timelineEpoch = UUID()
         timelineRequest = UUID()
         timeline = nil
@@ -213,11 +216,16 @@ final class OwnerSession {
 
     func loadChat(_ entry: AssistantEntry, _ credential: NativeCredential) async {
         guard canWrite else { return }
+        let epoch = timelineEpoch
         do {
             let history = try await api(entry).chatHistory(credential)
+            guard epoch == timelineEpoch, !Task.isCancelled else { return }
             chat = history.items
             chatRegistered = history.registered
-        } catch { say(error) }
+        } catch {
+            guard epoch == timelineEpoch, !Task.isCancelled else { return }
+            say(error)
+        }
     }
 
     /// 发一句话给助理；打开「只记下来」时改为随手记。重试复用同一个请求 id，服务端只起一个回合。
@@ -225,29 +233,36 @@ final class OwnerSession {
         if captureOnly { await capture(entry, credential); await loadChat(entry, credential); return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let device = bootstrap?.device.id, !sending, !text.isEmpty, turn?.isFinished ?? true else { return }
+        let epoch = timelineEpoch
         sending = true; defer { sending = false }
         do {
             let started = try await api(entry).chatSend(credential, signer: signer, deviceId: device,
                                                         text: String(text.prefix(4000)), requestId: chatRequest)
+            guard epoch == timelineEpoch, !Task.isCancelled else { return }
             chat.append(ChatItem(role: "user", text: text, rid: started.rid, source: "app"))
             turn = started
             draft = ""
             chatRequest = Self.newRequestId()
             note = ""
             follow(entry, credential)
-        } catch { say(error) }
+        } catch {
+            guard epoch == timelineEpoch, !Task.isCancelled else { return }
+            say(error)
+        }
     }
 
     /// 回合没结束就每 2 秒看一次；结束后重读对话（回复已写进主要聊天）。App 退到后台时停。
     func follow(_ entry: AssistantEntry, _ credential: NativeCredential) {
         polling?.cancel()
         guard let rid = turn?.rid, !(turn?.isFinished ?? true) else { return }
+        let epoch = timelineEpoch
         polling = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled else { return }
                 do {
                     let latest = try await self.api(entry).chatTurn(credential, rid: rid)
+                    guard !Task.isCancelled, epoch == self.timelineEpoch, self.turn?.rid == rid else { return }
                     self.turn = latest
                     if latest.isFinished {
                         if latest.state != "done", !latest.error.isEmpty { self.note = latest.error }
@@ -255,6 +270,7 @@ final class OwnerSession {
                         return
                     }
                 } catch {
+                    guard !Task.isCancelled, epoch == self.timelineEpoch, self.turn?.rid == rid else { return }
                     self.say(error)
                     return
                 }
@@ -266,13 +282,21 @@ final class OwnerSession {
 
     func decideCard(_ entry: AssistantEntry, _ credential: NativeCredential, _ card: ChatCard, approve: Bool) async {
         guard let device = bootstrap?.device.id, let rid = turn?.rid, !working else { return }
+        let epoch = timelineEpoch
         working = true; defer { working = false }
         do {
             _ = try await api(entry).chatDecide(credential, signer: signer, deviceId: device, rid: rid,
                                                 card: card, approve: approve)
-            turn = try await api(entry).chatTurn(credential, rid: rid)
+            guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
+            let latest = try await api(entry).chatTurn(credential, rid: rid)
+            guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
+            turn = latest
+            if latest.outcome == "unknown" { note = latest.error }
             follow(entry, credential)
-        } catch { say(error) }
+        } catch {
+            guard epoch == timelineEpoch, turn?.rid == rid, !Task.isCancelled else { return }
+            say(error)
+        }
     }
 
     /// 申请通知权限并登记推送；每次启动都重新登记（令牌可能变化），失败不影响其它功能。

@@ -35,6 +35,7 @@ import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
 import { websiteConfirmation } from "./lib/websiteConfirmation";
 import { SessionCapabilities } from "./components/SessionCapabilities";
+import { ownerAccessClient } from "./lib/ownerAccess";
 import { useSessionResources } from "./hooks/useSessionResources";
 import { SessionResources, residentHostLabel } from "./components/SessionResources";
 import { ComposerCommands } from "./components/ComposerCommands";
@@ -3094,7 +3095,7 @@ function App() {
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting} waitingUncertain={!activityComplete}
             onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setMemoryFocus(0); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
-            {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
+            {assistantTab === "audit" ? <AssistantAudit key={assistantScope} entries={auditEntries} accessClient={ownerAccessClient(activeScope, onAssistantHost(), clientRef.current)} connected={connection === "connected"} />
               : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} changes={clientRef.current} phones={clientRef.current} connected={connection === "connected"}
                   focusId={assistantGoalFocus?.client === clientRef.current && assistantGoalFocus?.scope === assistantScope ? assistantGoalFocus.id : undefined}
                   onFocusGoal={(id, owner) => {

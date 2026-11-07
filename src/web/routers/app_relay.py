@@ -24,7 +24,8 @@ CARD_PATH = "/api/assistant/app-relay/card"
 CHAT_PATH = "/api/assistant/app-relay/chat"
 OP_PATH = "/api/assistant/app-relay/op"
 TIMELINE_PATH = "/api/assistant/app-relay/timeline"
-PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH, TIMELINE_PATH)
+ACCESS_PATH = "/api/assistant/app-relay/access"
+PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH, TIMELINE_PATH, ACCESS_PATH)
 
 _turns = None
 
@@ -107,7 +108,13 @@ async def turn_status(request: Request):
     body = await _body(request)
     turn = turns().get(body.get("rid"))
     if turn is None:
-        raise HTTPException(404, "没有这一轮（可能助理重启过，请重新发送）")
+        import re
+        rid = body.get("rid")
+        if not isinstance(rid, str) or not re.fullmatch(r"app-[0-9a-f]{16}", rid):
+            raise HTTPException(404, "没有这一轮")
+        # The manager may have restarted or evicted this turn. Never infer that earlier actions did not run.
+        return {"rid": rid, "request_id": "", "state": "failed", "outcome": "unknown", "reply": "", "cards": [],
+                "error": "这一轮的进度已无法核对，助理可能重启过或记录已清理。旧审批卡不再有效；请先查看主聊天和审批记录，核对之前的动作，再决定是否发起新请求。"}
     return turn.public()
 
 
@@ -175,3 +182,10 @@ async def relay_timeline(request: Request):
         raise HTTPException(400, "limit 需要 1–200")
     from src.scheduling import timeline
     return await asyncio.to_thread(timeline.build, os.getcwd(), limit=limit)
+
+
+@router.post(ACCESS_PATH)
+async def relay_access(request: Request):
+    _guard(request)
+    from src.gateway.owner_access import snapshot
+    return await asyncio.to_thread(snapshot, os.getcwd())

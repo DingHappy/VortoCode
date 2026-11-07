@@ -37,6 +37,12 @@ struct AssistantTabs: View {
                 Text("退出会清除这台手机的安全会话，并请求常驻服务撤销它。电脑登录、其他手机和服务器任务各自保留。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            Section("权限与记录") {
+                if owner.canWrite {
+                    NavigationLink("手机权限与审批记录") { OwnerAccessView(entry: entry, session: session) }
+                        .accessibilityIdentifier("native-owner-access")
+                } else { Text(owner.readOnlyReason).font(.footnote).foregroundStyle(.secondary) }
+            }
             Section("来源核对") {
                 ReadingStatus(session: session)
                 SourceStatus(title: "助手资料", source: session.reading.profile)
@@ -54,6 +60,75 @@ struct AssistantTabs: View {
         }
     }
     private var refreshButton: some ToolbarContent { RefreshAssistantButton(entry: entry, session: session) }
+}
+
+struct OwnerAccessView: View {
+    let entry: AssistantEntry
+    let session: AssistantSession
+    @State private var snapshot: OwnerAccessSnapshot?
+    @State private var source = ""
+    @State private var error = ""
+    @State private var loading = false
+    @State private var request = UUID()
+    private var identity: String { entry.displayAddress + ":" + (session.credential?.token ?? "") }
+    private var visible: OwnerAccessSnapshot? { source == identity ? snapshot : nil }
+    var body: some View {
+        List {
+            if loading { ProgressView("正在核对权限与记录") }
+            if !error.isEmpty { Section { Text(error).foregroundStyle(.orange) } }
+            if let value = visible {
+                Section("手机发起的对话") {
+                    Text("可查资料、更新自己的事项和记忆；命令、任意文件写入、操控电脑和直接对外发送不开放。")
+                    LabeledContent("普通操作的已有授权", value: value.permissions.effectiveLevel == "reads" ? "可免逐次确认" : "每次询问")
+                    Text("读过外部内容后，已有授权失效，仍需你逐次确认。这里只查看规则，不更改权限。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("普通卡用日常钥匙；加强确认用 Face ID 批准钥匙。单次批准不扩大手机工具权限。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("最近审批记录") {
+                    Text("仅展示最近的内核决定与 App 回合卡片，不含操作正文，也不包含任务单、Codex 动作等全部领域记录。批准不代表执行完成。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if value.history.status != "current" {
+                        Text("审批记录来源待核对，当前列表可能不完整。")
+                            .foregroundStyle(.orange)
+                    }
+                    if value.history.entries.isEmpty {
+                        Text(value.history.status == "current" ? "最近读取范围内没有审批记录。" : "暂时无法确认审批记录。")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(value.history.entries) { row in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(row.label + " · " + row.outcomeLabel).font(.headline)
+                            Text(row.sourceLabel + " · " + row.scopeLabel).font(.subheadline)
+                            Text((row.recordType == "card" ? "卡片处理" : "内核决定") + " · " + (row.origin == "app" ? "App" : "助理运行端") + " · " + row.ts)
+                                .font(.caption).foregroundStyle(.secondary)
+                            if row.tainted { Text("读过外部内容后").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+                Section { Text("读取时间：" + value.generatedAt).font(.footnote).foregroundStyle(.secondary) }
+            } else if !loading && error.isEmpty { Text("尚未核对权限与记录。") }
+        }
+        .navigationTitle("权限与审批记录")
+        .task(id: identity) { snapshot = nil; source = ""; await refresh() }
+        .refreshable { await refresh() }
+        .toolbar { Button("刷新") { Task { await refresh() } }.disabled(loading) }
+    }
+    @MainActor private func refresh() async {
+        guard let credential = session.credential else { return }
+        let expected = identity, attempt = UUID()
+        request = attempt; loading = true; error = ""
+        defer { if request == attempt { loading = false } }
+        do {
+            let value = try await MobileAPI(entry: entry).ownerAccess(credential)
+            guard request == attempt, identity == expected, !Task.isCancelled else { return }
+            snapshot = value; source = expected
+        } catch {
+            guard request == attempt, identity == expected, !Task.isCancelled else { return }
+            snapshot = nil; source = ""
+            self.error = "权限与审批记录暂时读不到，请刷新核对。"
+        }
+    }
 }
 
 struct ReadingStatus: View {

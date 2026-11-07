@@ -212,25 +212,37 @@ def _normalize(record: Dict[str, Any], line_number: int) -> Dict[str, Any]:
     return item
 
 
-def list_audit(repo_root: str, limit: int = 100) -> list[Dict[str, Any]]:
-    """Return newest-first, normalized records; malformed legacy lines are skipped."""
+def audit_snapshot(repo_root: str, limit: int = 100) -> dict:
+    """Bounded read with explicit source health; unreadable history is never empty success."""
     path = Path(repo_root) / ".vortocode" / "audit.log"
-    if not path.is_file():
-        return []
     bounded = max(1, min(int(limit), _MAX_ENTRIES))
     output: list[Dict[str, Any]] = []
     try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return {"entries": [], "status": "current", "bounded": True}
+    except OSError:
+        return {"entries": [], "status": "unavailable", "bounded": True}
+    try:
         lines = _tail_lines(path)
     except OSError:
-        return []
+        return {"entries": [], "status": "unavailable", "bounded": True}
+    malformed = False
     for line_number, line in reversed(list(enumerate(lines))):
         try:
             record = json.loads(line)
             if not isinstance(record, dict):
+                malformed = True
                 continue
             output.append(_normalize(record, line_number))
         except (TypeError, ValueError):
+            malformed = True
             continue
         if len(output) >= bounded:
             break
-    return output
+    return {"entries": output, "status": "partial" if malformed or size > _MAX_READ_BYTES else "current", "bounded": True}
+
+
+def list_audit(repo_root: str, limit: int = 100) -> list[Dict[str, Any]]:
+    """Compatibility projection for existing clients."""
+    return audit_snapshot(repo_root, limit)["entries"]
