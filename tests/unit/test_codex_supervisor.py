@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.scheduling import codex_review_context as context
 from src.scheduling import codex_supervisor as sup
 from src.scheduling import codex_watch as watch
 
@@ -28,7 +29,8 @@ def _every_session_handed_over(monkeypatch):
 
 def _thread(status="active", turn_status="inProgress", tid="t1", commands=1, reply="", error="", flags=()):
     return {"id": "th1", "name": "改登录超时", "cwd": "~/proj", "status": status, "flags": list(flags),
-            "turn": {"id": tid, "status": turn_status, "request": "把登录超时改成 30 秒", "plan": "1. 改\n2. 补测试",
+            "turn": {"id": tid, "status": turn_status, "request": "把登录超时改成 30 秒",
+                     "review_context": context.capture(tid, [{"type": "userMessage", "content": [{"type": "text", "text": "把登录超时改成 30 秒"}]}]), "plan": "1. 改\n2. 补测试",
                      "commands": commands, "last_command": "pytest -q",
                      "running_command": "pytest -q" if status == "active" else "",
                      "files": ["src/login.py"], "file_count": 1, "reply": reply, "error": error}}
