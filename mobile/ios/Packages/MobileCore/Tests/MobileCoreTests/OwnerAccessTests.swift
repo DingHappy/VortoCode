@@ -70,4 +70,16 @@ final class OwnerAccessTests: XCTestCase {
         XCTAssertEqual(row.sourceStatusLabel, "Codex 已受理，执行结果仍需核对")
         XCTAssertEqual(row.decisionMetadataMissing, true)
     }
+
+    func testInterruptedAndPendingWaitingHintsNeverImplyAnApproval() throws {
+        for (outcome, label) in [("interrupted", "审批等待已中断"), ("pending", "仍待确认"), ("unknown", "结果待核对")] {
+            var raw = wire()
+            raw["history"] = ["status": "current", "bounded": true, "entries": [["id": "wait", "ts": "before", "decision": "unknown", "tainted": true,
+                "record_type": "card_wait", "origin": "app", "approval_outcome": outcome, "source_status": outcome]]]
+            let row = try decode(raw).history.entries[0]
+            XCTAssertEqual(row.recordLabel, "审批等待记录"); XCTAssertEqual(row.outcomeLabel, label)
+            XCTAssertNotNil(row.sourceStatusLabel)
+        }
+        XCTAssertEqual(OwnerWriteError.requestNeedsReview("请先核对").errorDescription, "请先核对")
+    }
 }

@@ -58,8 +58,8 @@ async def _settle(turn, states=("done", "failed", "busy", "waiting")):
 
 async def test_turn_goes_into_the_main_chat_as_the_app_entry(tmp_path, shared_chat):
     turns, _ = _turns(tmp_path)
-    turn = turns.start("req-00000001", "  明天早上提醒我交周报 ")
-    assert turns.start("req-00000001", "重发") is turn                 # 网络重发只起一次
+    turn = await turns.start("req-00000001", "  明天早上提醒我交周报 ")
+    assert await turns.start("req-00000001", "重发") is turn                 # 网络重发只起一次
     await _settle(turn, ("done",))
     assert turn.state == "done" and turn.reply == "收到：明天早上提醒我交周报"
     assert shared_chat == [("app", "明天早上提醒我交周报")]
@@ -67,7 +67,7 @@ async def test_turn_goes_into_the_main_chat_as_the_app_entry(tmp_path, shared_ch
 
 async def test_card_waits_for_a_signed_decision_then_the_turn_continues(tmp_path, shared_chat):
     turns, _ = _turns(tmp_path, ask="把「交周报」记成目标？")
-    turn = turns.start("req-00000002", "记一下")
+    turn = await turns.start("req-00000002", "记一下")
     await _settle(turn, ("waiting",))
     [card] = turn.public()["cards"]
     assert card["status"] == "pending" and card["risk"] == "normal"
@@ -82,14 +82,14 @@ async def test_card_waits_for_a_signed_decision_then_the_turn_continues(tmp_path
 
 async def test_unanswered_card_expires_as_a_denial(tmp_path, shared_chat):
     turns, _ = _turns(tmp_path, ask="记吗？", card_timeout=0.05)
-    turn = turns.start("req-00000003", "记一下")
+    turn = await turns.start("req-00000003", "记一下")
     await _settle(turn, ("done",))
     assert turn.reply == "没有记" and turn.public()["cards"][0]["status"] == "expired"
 
 
 async def test_high_risk_card_needs_the_face_id_key(tmp_path, shared_chat):
     turns, _ = _turns(tmp_path, ask="对外发送？", ask_kind="deliver")
-    turn = turns.start("req-00000004", "发出去")
+    turn = await turns.start("req-00000004", "发出去")
     await _settle(turn, ("waiting",))
     assert turn.cards[0].risk == "high"
     card = turn.cards[0].public(turn.rid)
@@ -103,7 +103,7 @@ async def test_high_risk_card_needs_the_face_id_key(tmp_path, shared_chat):
 async def test_unknown_or_sensitive_category_cannot_be_downgraded_by_prompt(tmp_path, shared_chat, kind):
     from src.gateway.audit import list_audit
     turns, _ = _turns(tmp_path, ask="只是查看，不用确认", ask_kind=kind)
-    turn = turns.start("req-typed-001", "检查")
+    turn = await turns.start("req-typed-001", "检查")
     await _settle(turn, ("waiting",))
     card = turn.public()["cards"][0]
     assert card["risk"] == "high" and card["required_key"] == "approval"
@@ -114,7 +114,7 @@ async def test_unknown_or_sensitive_category_cannot_be_downgraded_by_prompt(tmp_
     # 拒绝不应要求 Face ID。
     turns.decide(turn.rid, card["id"], False, card["digest"], "device")
     await _settle(turn, ("done",))
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == "denied" and entry["decision_source"] == "user"
     assert entry["required_key"] == "approval"
     assert "只是查看" not in (tmp_path / ".vortocode/audit.log").read_text()
@@ -139,7 +139,7 @@ async def test_deadline_checked_even_before_timer_runs_and_audited_once(tmp_path
     from src.gateway.audit import list_audit
     now = [100.0]
     turns, _ = _turns(tmp_path, ask="敏感私密正文", clock=lambda: now[0], card_timeout=60)
-    turn = turns.start("req-typed-002", "记一下")
+    turn = await turns.start("req-typed-002", "记一下")
     await _settle(turn, ("waiting",))
     [card] = turn.public()["cards"]
     now[0] += 60
@@ -149,7 +149,7 @@ async def test_deadline_checked_even_before_timer_runs_and_audited_once(tmp_path
     assert turn.reply == "没有记"
     turns._settle_card(turn, turn.cards[0], "approved", "user")  # 迟到的终态不能覆盖先前决定。
     assert turn.cards[0].status == "expired"
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == "expired" and entry["decision_source"] == "timeout"
     assert "敏感私密正文" not in (tmp_path / ".vortocode/audit.log").read_text()
 
@@ -170,7 +170,7 @@ async def test_cancelled_confirmation_closes_card_and_denies_late_response(tmp_p
     assert turn.cards[0].status == "cancelled" and turn.cards[0].future.cancelled()
     with pytest.raises(AppTurnError):
         turns.decide(turn.rid, card["id"], True, card["digest"], "device")
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == entry["decision_source"] == "cancelled"
 
 
@@ -184,7 +184,7 @@ async def test_kernel_category_and_taint_reach_app_card_together(tmp_path, share
         agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True, trust_level="reads",
                                           capability_profile="owner_device")
         mark_tainted()
-        turn = turns.start("req-typed-004", "记一下")
+        turn = await turns.start("req-typed-004", "记一下")
         await _settle(turn, ("waiting",))
         [card] = turn.public()["cards"]
         assert card["operation_kind"] == "own_data" and card["tainted"] is True
@@ -203,9 +203,9 @@ async def test_timeout_keeps_the_same_outcome_in_card_and_kernel_audits(tmp_path
     agent = turns._agent_for_turn()
     agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True,
                                      on_decision=turns.audit_decision)
-    turn = turns.start("req-typed-005", "记一下")
+    turn = await turns.start("req-typed-005", "记一下")
     await _settle(turn, ("done",))
-    entries = list_audit(str(tmp_path))
+    entries = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert len(entries) == 1
     assert all(e["approval_outcome"] == "expired" and e["decision_source"] == "timeout" for e in entries)
     assert entries[0]["operation"].startswith("App 审批卡 ")
@@ -218,12 +218,12 @@ async def test_app_user_decision_is_recorded_once_by_the_card(tmp_path, shared_c
     turns, _ = _turns(tmp_path, ask="记一下")
     agent = turns._agent_for_turn()
     agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=True, on_decision=turns.audit_decision)
-    turn = turns.start("req-user-once", "记一下")
+    turn = await turns.start("req-user-once", "记一下")
     await _settle(turn, ("waiting",))
     [card] = turn.public()["cards"]
     turns.decide(turn.rid, card["id"], approved, card["digest"], "device")
     await _settle(turn, ("done",))
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == ("approved" if approved else "denied")
     assert entry["decision_source"] == "user" and entry["operation"].startswith("App 审批卡 ")
 
@@ -238,10 +238,10 @@ async def test_app_automatic_decision_is_audited_once_without_private_operation(
     agent = turns._agent_for_turn()
     agent.confirm = make_confirm_gate(agent.confirm, can_ask_human=False, trust_level=trust,
         capability_profile="owner_device", on_decision=turns.audit_decision)
-    turn = turns.start("req-typed-006", "记一下")
+    turn = await turns.start("req-typed-006", "记一下")
     await _settle(turn, ("done",))
     assert not turn.cards and turn.reply == ("已记下" if approved else "没有记")
-    [entry] = list_audit(str(tmp_path))
+    [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["operation_kind"] == "own_data" and entry["decision_source"] == source
     assert entry["approval_scope"] == ("existing_trust" if approved else "none") and entry["session"] == turn.rid
     assert "私人事项正文" not in (tmp_path / ".vortocode/audit.log").read_text()
@@ -257,16 +257,16 @@ async def test_busy_main_chat_is_reported_not_swallowed(tmp_path, monkeypatch):
     import src.gateway.main_conversation as main_conversation
     monkeypatch.setattr(main_conversation, "run_external_turn", busy)
     turns, _ = _turns(tmp_path)
-    turn = turns.start("req-00000005", "你好")
+    turn = await turns.start("req-00000005", "你好")
     await _settle(turn, ("busy",))
     assert "稍后" in turn.error
 
 
-def test_bad_requests_are_refused(tmp_path):
+async def test_bad_requests_are_refused(tmp_path):
     turns, _ = _turns(tmp_path)
     for request_id, text in (("short", "hi"), ("req-00000006", ""), ("req-00000006", "x" * 5000)):
         with pytest.raises(AppTurnError):
-            turns.start(request_id, text)
+            await turns.start(request_id, text)
 
 
 # —— 常驻助理上的本机专用接口 ——

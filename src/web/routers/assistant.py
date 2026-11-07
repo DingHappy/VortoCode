@@ -19,7 +19,9 @@ async def owner_access():
     if current_workspace_scope() != GENERAL:
         raise HTTPException(403, "手机权限与审批记录仅在私人助理范围查看")
     from src.gateway.owner_access import snapshot
-    return await asyncio.to_thread(snapshot, os.getcwd())
+    from src.web.routers.app_relay import pending_card_refs
+    root = os.getcwd()
+    return await asyncio.to_thread(snapshot, root, live_cards=pending_card_refs(root))
 
 
 def _personal_skills():

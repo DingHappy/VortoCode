@@ -25,6 +25,8 @@ export function ownerAccessSnapshot(raw: OwnerAccessSnapshot): OwnerAccessSnapsh
   return raw;
 }
 export function approvalOutcome(outcome: unknown, decision: string): string {
+  if (outcome === "interrupted") return "审批等待已中断";
+  if (outcome === "pending") return "仍待确认";
   if (outcome === "expired") return "已过期，未放行";
   if (outcome === "cancelled") return "已取消，未放行";
   if (outcome === "approved" || (outcome == null && decision === "allowed")) return "已允许";
@@ -37,6 +39,7 @@ export type ApprovalHistoryRow = OwnerAccessSnapshot["history"]["entries"][numbe
 export function recordLabel(row: ApprovalHistoryRow): string {
   switch (row.record_type) {
     case "card": return "卡片处理";
+    case "card_wait": return "审批等待记录";
     case "decision": return "内核决定";
     case "dispatch": return "任务单";
     case "codex_action": return row.domain_kind === "message" ? "Codex 消息" : row.domain_kind === "interrupt" ? "Codex 叫停" : "Codex 动作";
@@ -50,6 +53,9 @@ export function originLabel(origin: string): string {
 
 export function domainStatus(row: ApprovalHistoryRow): string | undefined {
   if (row.source_status === undefined) return undefined;
+  if (row.record_type === "card_wait") return row.source_status === "pending" ? "当前卡片仍在等你确认，请到对话中处理"
+    : row.source_status === "interrupted" ? "当前服务已无法接续旧卡，请先核对主聊天；不会重放批准或恢复执行"
+    : "原审批等待状态无法核对，请先检查主聊天";
   const labels = row.record_type === "codex_action" ? new Map([
     ["proposed", "待批准"], ["approved", "已批准，等待交给 Codex"], ["sending", "正在交给 Codex，回执待核对"],
     ["sent", "Codex 已受理，执行结果仍需核对"], ["failed", "来源记录为未发送成功"],
@@ -64,6 +70,6 @@ export function domainStatus(row: ApprovalHistoryRow): string | undefined {
 }
 
 export function unavailableHistorySources(value: OwnerAccessSnapshot): string[] {
-  const labels = new Map([["audit", "审批审计"], ["codex", "Codex 动作"], ["dispatches", "任务单"]]);
+  const labels = new Map([["audit", "审批审计"], ["app_cards", "回合审批"], ["codex", "Codex 动作"], ["dispatches", "任务单"]]);
   return Object.entries(value.history.sources ?? {}).filter(([, status]) => status !== "current").map(([name]) => labels.get(name) ?? "未知来源");
 }

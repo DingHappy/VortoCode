@@ -51,3 +51,12 @@ it("a legacy sent record is not presented as a known human approval", () => {
   for (const text of ["结果待核对", "入口待核对", "审批时点待核对", "Codex 已受理，执行结果仍需核对", "待核对来源：", "任务单"]) expect(html).toContain(text);
   expect(html).not.toContain("已允许"); expect(html).not.toContain("已拒绝");
 });
+
+it("a persisted interrupted wait is never displayed as permission or execution", () => {
+  const data = value();
+  data.history.entries = [{ id: "wait", ts: "before", record_type: "card_wait", origin: "app", decision: "unknown", tainted: true,
+    operation_kind: "deliver", approval_outcome: "interrupted", source_status: "interrupted", approval_scope: "once" }];
+  const html = renderToStaticMarkup(<OwnerAccessDetails value={data} />);
+  for (const text of ["审批等待已中断", "审批等待记录", "不会重放批准或恢复执行", "读过外部内容后"]) expect(html).toContain(text);
+  expect(html).not.toContain("已允许"); expect(html).not.toContain("已拒绝");
+});

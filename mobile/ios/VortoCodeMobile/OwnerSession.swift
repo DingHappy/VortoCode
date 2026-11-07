@@ -45,6 +45,8 @@ final class OwnerSession {
         polling?.cancel()
         turn = nil
         chat = []
+        chatNeedsReview = false
+        chatRequest = Self.newRequestId()
         timelineEpoch = UUID()
         timelineRequest = UUID()
         timeline = nil
@@ -66,9 +68,17 @@ final class OwnerSession {
     /// 打开时输入框只记下来（随手记），不让助理去做
     var captureOnly = false
     private var chatRequest = OwnerSession.newRequestId()
+    var chatNeedsReview = false
     private var polling: Task<Void, Never>?
 
     private static func newRequestId() -> String { UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
+
+    func prepareReviewedRequest() {
+        guard chatNeedsReview else { return }
+        chatRequest = Self.newRequestId()
+        chatNeedsReview = false
+        note = "已准备新请求。请核对输入后手动发送；旧审批和执行不会恢复。"
+    }
 
     var canWrite: Bool { bootstrap?.canWrite ?? false }
     /// 这台手机的钥匙在等 Desktop 批准时的核对码
@@ -232,7 +242,7 @@ final class OwnerSession {
     func send(_ entry: AssistantEntry, _ credential: NativeCredential) async {
         if captureOnly { await capture(entry, credential); await loadChat(entry, credential); return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let device = bootstrap?.device.id, !sending, !text.isEmpty, turn?.isFinished ?? true else { return }
+        guard let device = bootstrap?.device.id, !sending, !chatNeedsReview, !text.isEmpty, turn?.isFinished ?? true else { return }
         let epoch = timelineEpoch
         sending = true; defer { sending = false }
         do {
@@ -247,6 +257,7 @@ final class OwnerSession {
             follow(entry, credential)
         } catch {
             guard epoch == timelineEpoch, !Task.isCancelled else { return }
+            if case OwnerWriteError.requestNeedsReview = error { chatNeedsReview = true }
             say(error)
         }
     }

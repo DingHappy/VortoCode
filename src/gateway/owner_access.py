@@ -56,7 +56,7 @@ def _event_order(row: dict) -> datetime:
     return when
 
 
-def snapshot(root: str) -> dict:
+def snapshot(root: str, *, live_cards: set[str] | None = None) -> dict:
     stored = get_trust_level(root)
     effective = resolve(stored, OWNER_DEVICE_PROFILE)
     history = audit_snapshot(root, 500)
@@ -75,7 +75,10 @@ def snapshot(root: str) -> dict:
             break
     from src.scheduling.codex_watch import read_action_snapshot
     from src.workflow.tasks.assistant_dispatch import read_dispatch_snapshot
-    sources = {"audit": history["status"]}
+    from src.gateway.app_approval_journal import recovery_rows
+    waiting, partial = recovery_rows(history["entries"], live_cards)
+    entries.extend(waiting)
+    sources = {"audit": history["status"], "app_cards": "partial" if partial and history["status"] == "current" else history["status"]}
     for name, record_type, read in (("codex", "codex_action", read_action_snapshot),
                                     ("dispatches", "dispatch", read_dispatch_snapshot)):
         source = read(root)

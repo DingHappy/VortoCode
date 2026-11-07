@@ -218,6 +218,8 @@ async def _relayed(path: str, body: dict):
         return _reply({"detail": str(error)}, 503)
     if status == 404 and not data.get("detail"):
         return _reply({"detail": "这台助理还没开通手机对话"}, 503)
+    if status == 409 and data.get("code") == "app_request_review_required":
+        return _reply({"detail": str(data.get("detail") or "请先核对旧请求")[:200], "code": "app_request_review_required"}, status)
     return _reply(data if status < 400 else {"detail": str(data.get("detail") or "请求没有被接受")[:200]}, status)
 
 
