@@ -1,4 +1,5 @@
 /* ── 设计变量（docs/DESIGN_SYSTEM.md 第 5 节）──────────────────────────────
+   由 design/tokens.json 生成（python scripts/design_tokens.py），不要手改；iPhone 用同一份生成 DesignTokens.swift。
    新写和迁移过的界面只用这里的 --vc-* 变量，不写死颜色、字号、圆角。
    颜色按用途命名，深色模式按同一组用途重新取值：跟随系统时走 prefers-color-scheme，
    用户手动选了浅色/深色时由 <html data-theme> 决定（见 lib/theme.ts）。
@@ -40,7 +41,6 @@
   --vc-done-bg: #eaf5ee;
   --vc-unknown-text: #52525b;
   --vc-unknown-bg: #f0f0ee;
-
   --vc-focus-ring: rgba(51, 85, 209, 0.45);
 
   /* 阴影：输入框、浮层两种，外加分段切换选中段的一层细影；卡片不用阴影 */
@@ -50,12 +50,12 @@
   --vc-tile-soul: linear-gradient(150deg, #f0425b, #b3122e);
   --vc-tile-memory: linear-gradient(150deg, #5b6cf0, #2a2fa8);
   --vc-on-tile: #ffffff;
+
   /* 制品预览的纸面：发布的网页按白底写，深色模式下也保持白底，否则没写底色的页面黑字压黑底 */
   --vc-paper: #ffffff;
 
   /* 字体 */
-  --vc-font-sans: Inter, "Noto Sans SC", "PingFang SC", -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+  --vc-font-sans: Inter, "Noto Sans SC", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --vc-font-serif: "Noto Serif SC", "Songti SC", Georgia, serif;
   --vc-font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
 
@@ -136,7 +136,7 @@
     --vc-unknown-bg: #262625;
     --vc-focus-ring: rgba(138, 160, 242, 0.55);
     --vc-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --vc-shadow-input: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
+    --vc-shadow-input: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
     --vc-shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
     --vc-tile-soul: linear-gradient(150deg, #d93a52, #8f0f26);
     --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);

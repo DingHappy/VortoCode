@@ -127,6 +127,8 @@
 
 ## 5. 视觉
 
+下表是说明；实际取值以 `design/tokens.json` 为准，Desktop 和 iPhone 都由它生成（ADR-017）。
+
 ### 颜色（浅色）
 
 | 角色 | 值 | 用途 |
@@ -240,7 +242,7 @@
 
 ## 8. 迁移
 
-- **新代码**：不写死字号、圆角和颜色，一律用变量（已有 `desktop/src/styles/tokens.css`）。
+- **新代码**：不写死字号、圆角和颜色，一律用变量。变量的唯一出处是 `design/tokens.json`，改完运行 `python scripts/design_tokens.py` 生成 `desktop/src/styles/tokens.css` 和 iPhone 的 `MobileCore/DesignTokens.swift`；生成文件不要手改（ADR-017）。
 - **迁移顺序**（ADR-016）：
   1. 先修：打开小组时主要聊天同时显示选中；打开主要聊天不停在最新一条。
   2. 侧栏改成会话列表（资料库、定制收进头像菜单）；打开 App 直接进主要聊天；改掉输入框提示和输入框上方常驻电脑那行的过时说法。
