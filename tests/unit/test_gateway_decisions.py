@@ -23,9 +23,17 @@ async def test_confirmation_cannot_be_answered_by_another_session():
     owner = _DecisionWS("owner")
     stranger = _DecisionWS("stranger")
     queue = asyncio.Queue()
-    task = asyncio.create_task(realtime._make_ws_confirm(owner, queue)("写文件？"))
+    from src.agents.gate import make_confirm_gate
+    from src.gateway.turn_bindings import TurnBindings
+    bindings = TurnBindings()
+    bindings.bind(confirm=realtime._make_ws_confirm(owner, queue))
+    gate = make_confirm_gate(bindings.ask, can_ask_human=True)
+    task = asyncio.create_task(gate("写文件？", "write"))
     event = await asyncio.wait_for(queue.get(), 1)
-    assert realtime.pending_confirmations("sid-owner")[0]["id"] == event["id"]
+    pending = realtime.pending_confirmations("sid-owner")[0]
+    assert pending["id"] == event["id"]
+    for key, value in {"operation_kind": "write", "risk": "high", "required_key": "approval", "approval_scope": "once"}.items():
+        assert event[key] == pending[key] == value
     assert realtime.pending_confirmations("sid-stranger") == []
 
     await realtime.handle_websocket_message(

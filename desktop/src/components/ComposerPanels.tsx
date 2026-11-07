@@ -1,3 +1,4 @@
+import { approvalCategory, approvalRisk } from "../lib/approval";
 // 输入框周围的几块：钉在输入框上方的确认卡片、换工作区请求、待运行队列，输入框里的附件与源码引用，
 // 以及底栏的授权方式和右下角的模型选择。只负责显示；授权、回答、执行和保存都交回 App。
 import { ChevronsUpDown, Cpu, FileText, Music, ShieldCheck, X } from "lucide-react";
@@ -40,6 +41,7 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
                 : "计划已就绪，授权后在隔离工作区继续"
               : "这一步需要你确认"}
         </strong>
+        <small>{approvalCategory(confirm.operation_kind)} · {approvalRisk(confirm.risk)} · 本按钮仅批准这一次</small>
         {website && <section className="website-confirmation" aria-label="本次网站操作">
           {confirm.tainted && <strong>{websiteCopy?.title}</strong>}
           <dl><div><dt>网站</dt><dd>{website.origin}</dd></div>

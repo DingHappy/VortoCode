@@ -113,8 +113,17 @@ public struct ChatCard: Codable, Identifiable, Sendable, Equatable {
     public let risk: String
     public let status: String
     public let digest: String
+    public let operationKind: String?
+    public let requiredKey: String?
+    public let tainted: Bool?
+    public let approvalScope: String?
+    public var categoryLabel: String {
+        ["read": "只读访问", "own_data": "你的事项", "draft": "本地草稿", "write": "文件修改",
+         "execute": "命令执行", "deliver": "对外发送", "interact": "电脑或网页操作",
+         "irreversible": "不可逆操作"][operationKind ?? ""] ?? "类别待核对"
+    }
     /// 高风险的卡批准要用需要 Face ID 的批准钥匙；普通卡点一下（日常钥匙）
-    public var needsFaceID: Bool { risk != "normal" }
+    public var needsFaceID: Bool { risk != "normal" || (requiredKey != nil && requiredKey != "device") }
     public var isPending: Bool { status == "pending" }
 }
 

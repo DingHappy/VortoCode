@@ -224,6 +224,7 @@ def pending_confirmations(session: str = "") -> list[dict]:
                 "id": cid,
                 "text": str(record.get("text") or "")[:4000],
                 "tainted": bool(record.get("tainted")),
+                **{key: record[key] for key in ("operation_kind", "risk", "required_key", "approval_scope") if key in record},
                 "session": str(record.get("session") or "")[:120],
                 "created": str(record.get("created") or "")[:80],
                 **({"website": dict(record["website"])} if record.get("website") else {}),
@@ -249,8 +250,7 @@ def _make_ws_confirm(websocket, q):
     超时/出错/取消都安全返回 False（不放行）。
     """
     async def _confirm(message: str, kind: str | None = None) -> bool:
-        # kind：内核确认门申报的操作类别（read/write/execute/deliver，见 agents/trust.py）。
-        # 这里不消费它——判定已在 gate 内完成，走到这一步就是"要问人"。
+        # 内核决定要问人；可信工具类别只投影成展示字段，不在传输层授予权限。
         import uuid
         from datetime import datetime, timezone
 
@@ -262,6 +262,8 @@ def _make_ws_confirm(websocket, q):
         tainted = bool(is_tainted())
         from src.agents.confirmation_context import website_confirmation
         website = website_confirmation()
+        from src.agents.confirmation_context import approval_details
+        approval = approval_details(kind)
         _PENDING_CONFIRMS[cid] = {
             "future": fut,
             "text": str(message)[:4000],
@@ -269,8 +271,10 @@ def _make_ws_confirm(websocket, q):
             "session": _session_key(websocket),
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "website": website,
+            **approval, "approval_scope": "once",
         }
-        q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message), tainted=tainted, website=website))
+        q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message), tainted=tainted, website=website,
+                                  **approval, approval_scope="once"))
         from src.gateway.im_runtime import start_confirmation_notice
         notice = start_confirmation_notice(message)
         reason = "answered"
@@ -278,6 +282,8 @@ def _make_ws_confirm(websocket, q):
             return bool(await asyncio.wait_for(fut, timeout=300))
         except asyncio.TimeoutError:              # 超时 → 拒绝（安全），并**告诉前端**
             reason = "timeout"
+            from src.agents.confirmation_context import record_approval_outcome
+            record_approval_outcome("expired", "timeout")
             return False
         except asyncio.CancelledError:            # 用户点了「停止」：回合整体被取消
             # 必须**单列**：CancelledError 继承 BaseException 而不是 Exception，被下面那条
@@ -841,7 +847,8 @@ async def _replay_history(websocket) -> None:
     if pending:
         item = pending[0]
         await websocket.send_json(P.make_event(
-            P.AGENT_CONFIRM, id=item["id"], text=item["text"], tainted=item["tainted"], website=item.get("website")))
+            P.AGENT_CONFIRM, id=item["id"], text=item["text"], tainted=item["tainted"], website=item.get("website"),
+            **{key: item[key] for key in ("operation_kind", "risk", "required_key", "approval_scope") if key in item}))
     await websocket.send_json(_prompt_queue_event(websocket))
 
 

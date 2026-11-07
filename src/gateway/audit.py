@@ -117,7 +117,11 @@ def record_decision_audit(
     operation: str,
     decision: bool,
     tainted: bool,
+    approval: Dict[str, Any] | None = None,
 ) -> bool:
+    from src.agents.confirmation_context import approval_context
+    metadata = approval if approval is not None else approval_context()
+    details = _approval_fields(metadata) if metadata is not None else {}
     return append_audit(repo_root, {
         "category": "decision",
         "session": _clip_text(session, 120),
@@ -125,7 +129,20 @@ def record_decision_audit(
         "operation": _clip_text(operation, 1000),
         "decision": "allowed" if decision else "denied",
         "tainted": bool(tainted),
+        **details,
     })
+
+
+def _approval_fields(value: Dict[str, Any]) -> Dict[str, str]:
+    """只保存有限元数据；不把审批正文、工具参数或凭据复制进新的历史字段。"""
+    from src.agents.trust import KINDS
+    limits = {"operation_kind": (*KINDS, "unknown"), "risk": ("normal", "high", "unknown"),
+              "required_key": ("device", "approval", "unknown"),
+              "approval_scope": ("once", "existing_trust", "none", "unknown"),
+              "decision_source": ("user", "preauthorized", "system", "timeout", "cancelled", "unknown"),
+              "approval_outcome": ("approved", "denied", "expired", "cancelled", "unknown")}
+    return {key: value[key] if isinstance(value.get(key), str) and value[key] in allowed else "unknown"
+            for key, allowed in limits.items() if key in value}
 
 
 def record_event_audit(
@@ -185,6 +202,7 @@ def _normalize(record: Dict[str, Any], line_number: int) -> Dict[str, Any]:
             operation=_clip_text(record.get("operation") or "", 1000),
             decision=decision if decision in {"allowed", "denied"} else "denied",
             tainted=bool(record.get("tainted")),
+            **_approval_fields(record),
         )
     else:
         item.update(
