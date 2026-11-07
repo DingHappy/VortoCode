@@ -1,8 +1,9 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
-import type { ReactNode } from "react";
-import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, Users, X } from "lucide-react";
-import { Button, GroupTitle, IconButton, NavItem } from "./ui";
-import { useEffect, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
+import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, ImagePlus, List, ListChecks, PanelRightClose, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, UserRound, Users, X } from "lucide-react";
+import { Button, GroupTitle, HintButton, IconButton, NavItem } from "./ui";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { tabKeyTarget } from "../lib/iconNavigation";
 import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
 import type { MemorySnapshot } from "../lib/memorySnapshot";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
@@ -76,27 +77,37 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   onOpenTeam?: (id: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const chatsId = useId(), moreButton = useRef<HTMLButtonElement>(null), scrollToggle = useRef(false);
+  useLayoutEffect(() => {
+    if (!scrollToggle.current) return;
+    scrollToggle.current = false;
+    moreButton.current?.scrollIntoView({ block: "nearest" });
+  }, [showAll]);
+  const keyword = query.trim();
   const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
   const inChat = !page && !currentTeam;
   const groups = teams.filter((team) => matches(team.title, query));
   const others = [
-    ...sideChats.filter((chat) => matches(chat.title || "新的旁聊", query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
-      label={chat.title || "新的旁聊"} current={inChat && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />),
-    ...phoneChats.filter((chat) => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
-      label={chat.title.replace(/^📱\s*/, "")} title="手机上和助理的聊天（这里只读，在手机上回复）" onClick={() => onOpenPhoneChat?.(chat.sid)} meta="手机" />),
-    ...offlineChats.filter((chat) => matches(chat.title || "本机对话", query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
-      label={chat.title || "本机对话"} title="常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）" onClick={() => onOpenOfflineChat?.(chat.sid)} meta="本机" />),
+    ...sideChats.map(chat => ({ ...chat, title: chat.title.trim() || "新的旁聊" })).filter(chat => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title} title={chat.title} current={inChat && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />),
+    ...phoneChats.map(chat => ({ ...chat, title: chat.title.trim().replace(/^📱\s*/, "").trim() || "手机对话" })).filter(chat => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title} title={`${chat.title}\n手机上和助理的聊天（这里只读，在手机上回复）`} onClick={() => onOpenPhoneChat?.(chat.sid)} meta="手机" />),
+    ...offlineChats.map(chat => ({ ...chat, title: chat.title.trim() || "本机对话" })).filter(chat => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
+      label={chat.title} title={`${chat.title}\n常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）`} onClick={() => onOpenOfflineChat?.(chat.sid)} meta="本机" />),
   ];
   // 正在看的旁聊即使排在后面也要露出来；搜索时全列
-  const activeIndex = sideChats.findIndex((chat) => chat.sid === current);
-  const limit = query || showAll ? others.length : Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
+  const activeIndex = inChat ? sideChats.findIndex((chat) => chat.sid === current) : -1;
+  const collapsedLimit = Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
+  const limit = keyword || showAll ? others.length : collapsedLimit;
+  const mainMatches = matches("主要聊天", query);
+  const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !others.length;
   return <>
     <nav className="vc-side-nav" aria-label="助理">
       <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
       {search}
     </nav>
     <div className="vc-side-recent">
-      {matches("主要聊天", query) && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
+      {mainMatches && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
         title={mainChat.preview || "主要聊天"} current={inChat && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
         meta={badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
           aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span>
@@ -106,10 +117,11 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
         label={team.title} title={`任务小组：${team.title}`} current={currentTeam === team.id} onClick={() => onOpenTeam?.(team.id)}
         meta={team.status === "active" ? <LiveDot /> : TEAM_BADGE[team.status] ? <span className="vc-team-badge">{TEAM_BADGE[team.status]}</span> : undefined} />)}
       {others.length > 0 && <GroupTitle>旁聊</GroupTitle>}
-      {others.slice(0, limit)}
-      {others.length > limit && <button type="button" className="vc-side-more" onClick={() => setShowAll(true)}>显示全部 {others.length} 条</button>}
-      {showAll && !query && others.length > SIDE_CHAT_LIMIT && <button type="button" className="vc-side-more" onClick={() => setShowAll(false)}>收起</button>}
-      {!query && sideChats.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
+      {others.length > 0 && <div className="vc-side-chats" id={chatsId}>{others.slice(0, limit)}</div>}
+      {!keyword && others.length > collapsedLimit && <button ref={moreButton} type="button" className="vc-side-more" aria-expanded={showAll} aria-controls={chatsId}
+        onClick={() => { scrollToggle.current = true; setShowAll(value => !value); }}>{showAll ? "收起" : `显示全部 ${others.length} 条`}</button>}
+      {noMatches && <p className="vc-side-hint vc-side-search-empty" role="status">未找到匹配的会话。试试其它标题关键词，或清除搜索。</p>}
+      {!keyword && others.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
     </div>
   </>;
 }
@@ -128,15 +140,15 @@ export const PANEL_PAGE: Record<AssistantTab, AssistantPage | null> = {
   feed: "tasks", schedule: "schedule", goals: "goals", identity: null, audit: null,
 };
 
-const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
-  { id: "feed", label: "动态", icon: <List aria-hidden="true" /> },
-  { id: "goals", label: "目标", icon: <Target aria-hidden="true" /> },
-  { id: "audit", label: "审核记录", icon: <ShieldCheck aria-hidden="true" /> },
-  { id: "schedule", label: "定时", icon: <Clock3 aria-hidden="true" /> },
-  { id: "identity", label: "身份", icon: <Fingerprint aria-hidden="true" /> },
+const TABS: Array<{ id: AssistantTab; label: string; hint: string; icon: ReactNode }> = [
+  { id: "feed", label: "动态", hint: "动态 · 查看进展与待处理", icon: <List aria-hidden="true" /> },
+  { id: "goals", label: "目标", hint: "目标 · 查看进度和下一步", icon: <Target aria-hidden="true" /> },
+  { id: "audit", label: "审核记录", hint: "审核记录 · 查看允许与拒绝", icon: <ShieldCheck aria-hidden="true" /> },
+  { id: "schedule", label: "定时", hint: "定时 · 查看计划和执行记录", icon: <Clock3 aria-hidden="true" /> },
+  { id: "identity", label: "身份", hint: "身份 · 资料、性格与记忆", icon: <UserRound aria-hidden="true" /> },
 ];
 
-export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
+export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
   name: string; connected: boolean; modelLabel?: string;
   avatar?: AssistantAvatar | null;
   host: AssistantHostInfo;
@@ -152,7 +164,18 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   waitingUncertain?: boolean;
   children: ReactNode;
   computer?: ReactNode;
+  id?: string;
+  toggleRef?: RefObject<HTMLButtonElement | null>;
 }) {
+  const panelId = useId();
+  const surface = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const toggle = toggleRef?.current;
+    if (toggle && document.activeElement === toggle && toggle.matches(":focus-visible")) {
+      surface.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
+    }
+  }, [toggleRef]);
+  const closePanel = () => { onClose(); toggleRef?.current?.focus({ preventScroll: true }); };
   // 连不上通常是隧道没开或网络断了：服务器上的助理还在干活，只是这台电脑看不到
   const unreachable = host.kind === "resident" && (!connected || host.reachable === false);
   const where = host.kind === "resident"
@@ -161,8 +184,8 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   const model = !connected ? "" : modelLabel === "未连接模型" ? "还没连接模型" : modelLabel ?? "";
   const badge = waiting || waitingUncertain
     ? waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}` : "";
-  return <aside className="assistant-panel vc-panel" aria-label="助理">
-    <IconButton className="vc-panel-close" label="收起面板" icon={<X />} onClick={onClose} />
+  return <aside ref={surface} id={id} className="assistant-panel vc-panel" aria-label="助理">
+    <IconButton className="vc-panel-close" label="收起面板" icon={<PanelRightClose />} onClick={closePanel} />
     <div className="vc-panel-card" data-tauri-drag-region="deep">
       <div className="vc-panel-identity-row">
         <AssistantAvatarImage name={name} avatar={avatar} size={32} />
@@ -185,13 +208,27 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
       </details>
     </div>
     <div className="vc-panel-tabs" role="tablist" aria-label="助理面板">
-      {TABS.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} title={item.label}
-        className="vc-panel-tab" onClick={() => onTab(item.id)}>
+      {TABS.map((item, index) => <HintButton key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} hint={item.hint}
+        id={`${panelId}-${item.id}`} aria-controls={`${panelId}-content`} tabIndex={tab === item.id ? 0 : -1}
+        className="vc-panel-tab" onClick={() => onTab(item.id)} onKeyDown={event => {
+          if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closePanel(); return; }
+          const target = tabKeyTarget(event.key, index, TABS.length);
+          if (target === null) return;
+          event.preventDefault(); onTab(TABS[target].id);
+          event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[id="${panelId}-${TABS[target].id}"]`)?.focus();
+        }}>
         {item.icon}
         {item.id === "feed" && badge ? <i className={`vc-panel-tab-dot${waitingUncertain && !waiting ? " is-unknown" : ""}`} role="img" aria-label={badge} /> : null}
-      </button>)}
+      </HintButton>)}
     </div>
-    <div className="assistant-panel-body">{children}</div>
+    <div className="assistant-panel-body" role="tabpanel" id={`${panelId}-content`} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}
+      onKeyDown={event => {
+        if (event.target === event.currentTarget && event.key === "Escape" && !event.nativeEvent.isComposing
+            && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault(); event.stopPropagation(); closePanel();
+        }
+      }}>{children}</div>
   </aside>;
 }
 

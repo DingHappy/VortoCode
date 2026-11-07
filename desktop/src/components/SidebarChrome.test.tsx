@@ -6,7 +6,10 @@ import { SidebarBrand, SidebarSearch, SidebarSectionTitle, WorkNav } from "./Sid
 const noop = () => {};
 
 it("the brand row offers collapsing the sidebar", () => {
-  expect(renderToStaticMarkup(<SidebarBrand onCollapse={noop} />)).toContain('aria-label="收起侧栏"');
+  const html = renderToStaticMarkup(<SidebarBrand onCollapse={noop} sidebarId="conversation-sidebar" />);
+  expect(html).toContain('aria-label="收起侧栏"');
+  expect(html).toContain('aria-expanded="true"');
+  expect(html).toContain('aria-controls="conversation-sidebar"');
 });
 
 it("search is a nav item with its shortcut until opened", () => {
@@ -14,9 +17,16 @@ it("search is a nav item with its shortcut until opened", () => {
   expect(closed).toContain("搜索");
   expect(closed).toContain("⌘K");
   expect(closed).not.toContain("<input");
+  expect(closed).toContain('aria-expanded="false"');
   const open = renderToStaticMarkup(<SidebarSearch open query="周报" placeholder="搜索聊天" onOpenChange={noop} onQuery={noop} />);
   expect(open).toContain('aria-label="搜索聊天"');
   expect(open).toContain('value="周报"');
+  const inputId = open.match(/<input[^>]+id="([^"]+)"/)?.[1];
+  expect(inputId).toBeTruthy();
+  expect(open).toContain(`for="${inputId}"`);
+  expect(open).toContain('aria-label="清除搜索"');
+  const empty = renderToStaticMarkup(<SidebarSearch open query="" placeholder="搜索聊天" onOpenChange={noop} onQuery={noop} />);
+  expect(empty).not.toContain('aria-label="清除搜索"');
 });
 
 it("work nav has four pages, marks the open one, and needs a connection for a new chat", () => {

@@ -91,6 +91,11 @@
   font-size: var(--vc-size-body);
 }
 
+.vc-side-search-wrap { position: relative; }
+.vc-side-search-wrap.has-query .vc-side-search { padding-right: calc(var(--vc-control-h) + var(--vc-space-2)); }
+.vc-side-search-clear.vc-btn--icon { position: absolute; right: var(--vc-space-1); top: 0; }
+.vc-side-search-empty { overflow-wrap: anywhere; }
+
 .vc-side-recent {
   display: flex;
   flex: 1 1 auto;
@@ -105,6 +110,8 @@
   padding: var(--vc-space-4) 10px var(--vc-space-1);
   font-weight: var(--vc-weight-regular);
 }
+
+.vc-side-chats { display: flex; flex-direction: column; gap: inherit; }
 
 /* 「最近」里的条目：高 32，除主要聊天外不带图标 */
 .vc-nav-item.vc-nav-item--recent {

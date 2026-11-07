@@ -2,44 +2,65 @@
 //
 // 搜索框开合由 App 持有：⌘K 在侧栏收起时也要能打开它。查询词给项目与会话列表共用。
 // 分区的折叠状态也留在 App：切到助理模式再切回来，工作台的分区要保持原样，而那时分区已经卸载过。
-import type { ReactNode } from "react";
-import { ChevronDown, Library, ListChecks, PanelLeft, Puzzle, Search, SquarePen, Target } from "lucide-react";
+import { useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
+import { ChevronDown, Library, ListChecks, PanelLeftClose, Puzzle, Search, SquarePen, Target, X } from "lucide-react";
 import { IconButton, NavItem } from "./ui";
 
-export function SidebarBrand({ onCollapse }: { onCollapse: () => void }) {
+export function SidebarBrand({ onCollapse, collapseRef, sidebarId }: {
+  onCollapse: () => void; collapseRef?: RefObject<HTMLButtonElement | null>; sidebarId?: string;
+}) {
   return (
     <div className="vc-side-brand" data-tauri-drag-region="deep">
       <span className="vc-side-logo" aria-hidden="true">V</span>
       <strong>VortoCode</strong>
-      <IconButton label="收起侧栏" icon={<PanelLeft />} onClick={onCollapse} />
+      <IconButton label="收起侧栏" icon={<PanelLeftClose />} buttonRef={collapseRef} aria-expanded="true" aria-controls={sidebarId} onClick={onCollapse} />
     </div>
   );
 }
 
 /** 「搜索 ⌘K」：点开后就地出现输入框，Esc 收起。 */
-export function SidebarSearch({ open, query, placeholder, onOpenChange, onQuery }: {
+export function SidebarSearch({ open, query, placeholder, onOpenChange, onQuery, focusRequest = 0 }: {
   open: boolean;
   query: string;
   placeholder: string;
   onOpenChange: (open: boolean) => void;
   onQuery: (query: string) => void;
+  /** A new shortcut request focuses an already open search, including after revealing the sidebar. */
+  focusRequest?: number;
 }) {
+  const input = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null);
+  const restoreTrigger = useRef(false), inputId = useId();
+  useLayoutEffect(() => {
+    if (open) input.current?.focus({ preventScroll: true });
+    else if (restoreTrigger.current) { restoreTrigger.current = false; trigger.current?.focus({ preventScroll: true }); }
+  }, [open, focusRequest]);
   if (!open) {
-    return <NavItem icon={<Search />} label="搜索" meta="⌘K" onClick={() => onOpenChange(true)} />;
+    return <NavItem buttonRef={trigger} icon={<Search aria-hidden="true" />} label="搜索" meta="⌘K" aria-expanded="false" onClick={() => onOpenChange(true)} />;
   }
   return (
-    <label className="vc-side-search">
+    <div className={`vc-side-search-wrap${query ? " has-query" : ""}`} onKeyDown={event => {
+      if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation(); restoreTrigger.current = true;
+        onQuery(""); onOpenChange(false);
+      }
+    }}>
+    <label className="vc-side-search" htmlFor={inputId}>
       <Search aria-hidden="true" />
       <input
-        autoFocus
+        ref={input}
+        id={inputId}
         value={query}
         aria-label={placeholder}
         placeholder={placeholder}
         onChange={(event) => onQuery(event.target.value)}
         onBlur={() => { if (!query) onOpenChange(false); }}
-        onKeyDown={(event) => { if (event.key === "Escape") { onQuery(""); onOpenChange(false); } }}
       />
     </label>
+    {query && <IconButton className="vc-side-search-clear" label="清除搜索" icon={<X aria-hidden="true" />} onClick={() => {
+      onQuery(""); input.current?.focus({ preventScroll: true });
+    }} />}
+    </div>
   );
 }
 

@@ -1,0 +1,10 @@
+html, body, #root { min-width: 0; height: auto; overflow: auto; }
+body { margin: 0; background: var(--vc-bg); color: var(--vc-text); font: var(--vc-size-body)/1.7 var(--vc-font-sans); }
+.qa-attachment { max-width: 800px; margin: var(--vc-space-6) auto; padding: var(--vc-space-4); }
+.qa-attachment h1 { font-size: var(--vc-size-heading); }
+.qa-attachment-controls { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); }
+.qa-attachment-controls button { background: var(--vc-fill); color: var(--vc-text); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); padding: var(--vc-space-2); font: inherit; cursor: pointer; }
+.qa-attachment-composer { margin: var(--vc-space-5) 0; padding-bottom: var(--vc-space-2); }
+.qa-attachment.narrow .qa-attachment-composer { width: min(360px, 100%); }
+.qa-attachment-composer textarea { min-height: 84px; }
+.qa-attachment output { display: block; color: var(--vc-muted); }

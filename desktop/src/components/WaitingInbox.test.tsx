@@ -3,6 +3,9 @@ import { expect, it } from "vitest";
 import { WaitingInbox, waitingTeams } from "./WaitingInbox";
 import type { FeedItem } from "../lib/activityFeed";
 import type { TeamSummary } from "../types";
+import { currentTeams } from "../lib/teamAttention";
+import { assistantAttention } from "../lib/assistantAttention";
+import { taskFeedItem } from "../lib/activityFeed";
 
 const team = (over: Partial<TeamSummary> = {}): TeamSummary => ({
   id: "t1", objective: "比较三家向量数据库", status: "review", mode: "open", waiting_reason: "", used: {}, limits: { parallel: 2 },
@@ -46,4 +49,21 @@ it("异常有独立入口；来源不全时照实说，不当成没有", () => {
 it("断线时不能验收", () => {
   expect(render({ connected: false })).toMatch(/<button type="button" class="primary" disabled="">验收通过/);
   expect(waitingTeams([team({ status: "done" }), team({ status: "failed" })])).toEqual([]);
+});
+
+it("切换运行端后，旧小组不出现在等你处理或侧栏计数，新小组只出现一次", () => {
+  const oldClient = {}, newClient = {}, oldTeam = team({ objective: "旧电脑小组" });
+  for (const source of [null, { client: oldClient, scope: "old" }, { client: newClient, scope: "old" }]) {
+    const groups = currentTeams([oldTeam], source, newClient, "new");
+    const html = render({ items: [], teams: groups, connected: true });
+    expect(html).not.toContain("旧电脑小组"); expect(html).not.toContain("验收通过");
+    expect(waitingTeams(groups)).toHaveLength(0);
+  }
+  const newTeam = team({ id: "new", objective: "新电脑小组" });
+  const groups = currentTeams([newTeam], { client: newClient, scope: "new" }, newClient, "new");
+  const summary = assistantAttention([taskFeedItem({ id: "new", kind: "team", status: "review" })], groups);
+  const html = render({ items: summary.decisions, teams: groups });
+  expect(html.match(/<li>/g)).toHaveLength(1);
+  expect(html).toContain("新电脑小组");
+  expect(summary.decisions.length + waitingTeams(groups).length).toBe(1);
 });

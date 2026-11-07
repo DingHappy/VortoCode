@@ -1,5 +1,5 @@
 // 侧栏项、分组标题、列表行、卡片、菜单、空状态（docs/DESIGN_SYSTEM.md 第 6 节）。
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode, RefObject } from "react";
 import { joinClass } from "./Button";
 
 type NavItemProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & {
@@ -7,12 +7,14 @@ type NavItemProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & 
   label: ReactNode;
   meta?: ReactNode;
   current?: boolean;
+  buttonRef?: RefObject<HTMLButtonElement | null>;
 };
 
-export function NavItem({ icon, label, meta, current = false, className, type = "button", ...rest }: NavItemProps) {
+export function NavItem({ icon, label, meta, current = false, className, type = "button", buttonRef, ...rest }: NavItemProps) {
   return (
     <button
       {...rest}
+      ref={buttonRef}
       type={type}
       aria-current={current ? "page" : undefined}
       className={joinClass("vc-nav-item", className)}

@@ -11,6 +11,19 @@ it("projects only known public fields", () => {
   const raw = snapshot();
   expect(parseSessionResources({ ...raw, secret: "hidden", items: [{ ...raw.items[0], cookie: "hidden" }] })).toEqual(raw);
 });
+
+it("accepts bounded declaration metadata without coercing write tools into read-only tools", () => {
+  const tool_inventory = { version: 1, truncated: false, items: [{ name: "edit_file", read_only: false, required_capabilities: ["write_repo"], secret: "hidden" }] };
+  const view = parseSessionResources({ ...snapshot(), tool_inventory });
+  expect(view?.tool_inventory?.items).toEqual([{ name: "edit_file", read_only: false, required_capabilities: ["write_repo"] }]);
+  for (const invalid of [{ ...tool_inventory, version: 2 }, { ...tool_inventory, items: [{ ...tool_inventory.items[0], read_only: "false" }] },
+    { ...tool_inventory, items: Array(257).fill(tool_inventory.items[0]) }, { ...tool_inventory, items: [tool_inventory.items[0], tool_inventory.items[0]] }]) {
+    const compatibleResources = parseSessionResources({ ...snapshot(), tool_inventory: invalid });
+    expect(compatibleResources?.items).toHaveLength(1);
+    expect(compatibleResources?.tool_inventory).toBeUndefined();
+  }
+  expect(parseSessionResources(snapshot())?.tool_inventory).toBeUndefined();
+});
 it.each([null, {}, { ...snapshot(), version: 2 }, { ...snapshot(), observed_at: "bad" },
   { ...snapshot(), status: "ready" }, { ...snapshot(), truncated: "false" },
   { ...snapshot(), items: [...snapshot().items, ...snapshot().items] },

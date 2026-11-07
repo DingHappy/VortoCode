@@ -173,6 +173,15 @@ export function ComposerModelPicker({ residentModel, onResident, checked, choice
   );
 }
 
+export function AttachmentReadStatus({ pending, onCancel }: { pending: number; onCancel: () => void }) {
+  if (!pending) return null;
+  return <div className="attachment-read-status" role="status"><span>正在读取 {pending} 个附件，读完后可发送</span>
+    <button type="button" onClick={event => {
+      const input = event.currentTarget.closest(".composer")?.querySelector("textarea");
+      onCancel(); input?.focus();
+    }}>取消读取</button></div>;
+}
+
 /** 随这条消息发出的附件：图片显示缩略图，其余显示类型图标和文件名。 */
 export function AttachmentChips({ items, onRemove }: { items: Attachment[]; onRemove: (id: string) => void }) {
   if (items.length === 0) return null;
