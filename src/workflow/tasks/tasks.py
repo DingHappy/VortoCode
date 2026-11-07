@@ -189,7 +189,9 @@ class TaskLedger:
             tmp.write_text(json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(p)
             return True
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError) as error:
+            # 调用方只拿到 False、对外只说「未能保存」；原因写进日志，否则只能靠猜（2026-11-04 小组建不起来就是这样）
+            _LOGGER.warning("task ledger save failed: task=%s %s: %s", tid, type(error).__name__, error)
             return False
 
     def load(self, tid: str, *, max_bytes: int | None = None) -> Optional[BackgroundTask]:
