@@ -1,4 +1,9 @@
-import type { ApprovalMetadata } from "../types";
+import type { ApprovalMetadata, WorkspaceScope } from "../types";
+
+/** 手机连接的是常驻助理；本机通用引擎的权限不能显示成手机权限。 */
+export function ownerAccessClient<T>(scope: WorkspaceScope, onHost: boolean, client: T | null): T | null {
+  return scope === "general" && onHost ? client : null;
+}
 
 export interface OwnerAccessSnapshot {
   schema_version: number;
