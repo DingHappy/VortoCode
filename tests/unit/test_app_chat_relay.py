@@ -374,6 +374,18 @@ def test_card_decision_is_signed_with_the_declared_key(owner, relayed):  # noqa:
     assert right.status_code == 200 and relayed[-1][1]["envelope"]["key_kind"] == "approval"
 
 
+def test_scope_choice_is_in_signed_forwarded_body_and_cannot_be_changed(owner, relayed):  # noqa: F811
+    import base64, json
+    client, headers, device_id, _root = owner
+    _, _device, approval = bind(client, headers)
+    body = {"rid": "app-" + "a" * 16, "card_id": "card-abc", "approve": True, "digest": "d" * 64, "key_kind": "approval", "scope": "turn"}
+    tampered = json.dumps({**body, "scope": "always"}).encode()
+    assert signed(client, headers, device_id, "/api/mobile/native/chat/card", body, approval, tamper=tampered).status_code == 401
+    assert not relayed
+    assert signed(client, headers, device_id, "/api/mobile/native/chat/card", body, approval).status_code == 200
+    assert json.loads(base64.b64decode(relayed[-1][1]["envelope"]["body"])) == body
+
+
 def test_chat_is_unavailable_until_the_relay_is_configured(owner, monkeypatch):  # noqa: F811
     client, headers, device_id, _root = owner
     _, device, _ = bind(client, headers)

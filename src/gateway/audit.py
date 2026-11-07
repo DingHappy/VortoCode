@@ -149,7 +149,7 @@ def _approval_fields(value: Dict[str, Any]) -> Dict[str, str]:
     from src.agents.trust import KINDS
     limits = {"operation_kind": (*KINDS, "unknown"), "risk": ("normal", "high", "unknown"),
               "required_key": ("device", "approval", "unknown"),
-              "approval_scope": ("once", "existing_trust", "none", "unknown"),
+              "approval_scope": ("once", "turn", "existing_trust", "none", "unknown"),
               "decision_source": ("user", "preauthorized", "system", "timeout", "cancelled", "unknown"),
               "approval_outcome": ("approved", "denied", "expired", "cancelled", "unknown")}
     fields = {key: value[key] if isinstance(value.get(key), str) and value[key] in allowed else "unknown"

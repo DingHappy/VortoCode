@@ -91,7 +91,7 @@ def snapshot(root: str, *, live_cards: set[str] | None = None) -> dict:
     return {"schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "permissions": {"profile": OWNER_DEVICE_PROFILE, "stored_level": stored,
                 "effective_level": effective, "ceiling": ceiling(OWNER_DEVICE_PROFILE),
-                "scopes": ["once"], "taint_revokes_preauthorization": True,
+                "scopes": ["once", "turn"], "taint_revokes_preauthorization": True,
                 "write_tools": sorted(OWNER_DEVICE_WRITE_TOOLS),
                 "categories": [{**approval_details(kind), "preauthorized": pre_authorized(effective, kind)} for kind in KINDS]},
             "history": {"entries": entries[:100], "status": status, "bounded": True, "sources": sources}}

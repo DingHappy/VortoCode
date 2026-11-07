@@ -17,6 +17,8 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Optional
 
+from src.agents.scoped_approval import ApprovalDecision
+
 logger = logging.getLogger(__name__)
 
 # 判定三态。
@@ -89,13 +91,14 @@ def decide(*, tainted: bool, pre_authorized: bool, can_ask_human: bool) -> str:
 
 
 def make_confirm_gate(
-    ask_human: Optional[Callable[..., Awaitable[bool]]] = None,
+    ask_human: Optional[Callable[..., Awaitable[bool | ApprovalDecision]]] = None,
     *,
     auto_approve: bool = False,
     can_ask_human: bool = False,
     on_decision: Optional[Callable[[str, bool, bool], Any]] = None,
     trust_level: Any = None,
     capability_profile: Optional[str] = None,
+    enable_turn_scope: bool = False,
 ) -> Callable[..., Awaitable[bool]]:
     """把 `decide()` 包成工具直接可用的 ``async (message) -> bool`` 确认门。
 
@@ -119,6 +122,8 @@ def make_confirm_gate(
     档位只影响 ``pre_authorized`` 这一维，且**先被能力档案夹一次**（无人值守永远 ASK、外部会话
     最高 READS）。``auto_approve=True``（CLI 的 ``--yes``）等价于 FULL，行为与此前完全一致。
     工具用 ``gate(message, kind=...)`` 申报操作类别；不申报按最重的"写"算。
+    ``enable_turn_scope`` 只由可信宿主开启；仍需当前真实回合、允许档案和类别，回调的范围选择
+    必须经内核核对才可建立临时授权。旧布尔回调只批准一次。
     """
     from src.agents.taint import is_tainted
     from src.agents.trust import FULL, pre_authorized, resolve
@@ -145,12 +150,15 @@ def make_confirm_gate(
     async def gated(message: str, kind: Optional[str] = None) -> bool:
         operation = str(message)                   # 原始操作文案（端展示"拒了什么"用这个）
         tainted = is_tainted()
-        verdict = decide(tainted=tainted, pre_authorized=pre_authorized(_level(), kind),
+        from src.agents.scoped_approval import consume_scope, make_offer, offering
+        offer = make_offer(kind, enabled=enable_turn_scope, profile=capability_profile, can_ask=can_ask_human and ask_human is not None)
+        scoped = not tainted and consume_scope(offer)
+        verdict = decide(tainted=tainted, pre_authorized=scoped or pre_authorized(_level(), kind),
                          can_ask_human=can_ask_human)
         from src.agents.confirmation_context import approval_context, presenting_approval, record_approval_outcome
         source = "preauthorized" if verdict == ALLOW else "system" if verdict == DENY or ask_human is None else "user"
-        scope = "existing_trust" if verdict == ALLOW else "none" if source == "system" else "once"
-        with presenting_approval(kind, source=source, scope=scope):
+        scope = "turn" if scoped else "existing_trust" if verdict == ALLOW else "none" if source == "system" else "once"
+        with presenting_approval(kind, source=source, scope=scope), offering(offer if not tainted else None):
             if verdict == ALLOW:
                 _tell(operation, True, tainted)        # 自动放行也要留痕，不能静默
                 return True
@@ -165,7 +173,17 @@ def make_confirm_gate(
             # ——否则「运行 xxx · 2 分 13 秒」里那两分钟其实是用户在倒水（见 agents/wait_clock.py）。
             try:
                 async with waiting():
-                    ok = bool(await request(ask_human, prompt, kind))
+                    answer = await request_raw(ask_human, prompt, kind)
+                    ok = bool(answer)
+                    if isinstance(answer, ApprovalDecision) and answer.scope != "once":
+                        ok = answer.approved is True and answer.scope == "turn" and offer is not None
+                        if ok:
+                            from src.agents.confirmation_context import record_approval_scope
+                            granted = not is_tainted() and offer.grant()
+                            # 用户明确批准过此操作；范围失效只降为本次，不补充或恢复范围。
+                            record_approval_scope("turn" if granted else "once")
+                        else:
+                            record_approval_outcome("denied", "system")
             except asyncio.CancelledError:
                 record_approval_outcome("cancelled", "cancelled")
                 _tell(operation, False, tainted)
@@ -190,6 +208,12 @@ def is_kernel_gate(confirm: Any) -> bool:
 
 async def request(confirm: Optional[Callable[..., Awaitable[bool]]],
                   message: str, kind: Optional[str] = None) -> bool:
+    """工具侧消费原有布尔结果；宿主到内核之间用 request_raw 保留范围选择。"""
+    return bool(await request_raw(confirm, message, kind))
+
+
+async def request_raw(confirm: Optional[Callable[..., Awaitable[Any]]],
+                      message: str, kind: Optional[str] = None) -> Any:
     """调用确认门并申报操作类别，同时容得下"只收一个参数"的老式 confirm。
 
     工具侧不该关心对面是内核 gate（``(message, kind)``）还是端自己传的裸回调（``(message)``，
@@ -206,4 +230,4 @@ async def request(confirm: Optional[Callable[..., Awaitable[bool]]],
         inspect.signature(confirm).bind("message", "kind")
     except (TypeError, ValueError):
         take_kind = False
-    return bool(await (confirm(message, kind) if take_kind else confirm(message)))
+    return await (confirm(message, kind) if take_kind else confirm(message))

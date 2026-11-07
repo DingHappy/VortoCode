@@ -35,6 +35,9 @@ final class OwnerAccessTests: XCTestCase {
             permissions.merge(update) { _, value in value }; raw["permissions"] = permissions
             XCTAssertThrowsError(try decode(raw).validate())
         }
+        var bounded = wire(); var permissions = bounded["permissions"] as! [String: Any]
+        permissions["scopes"] = ["once", "turn"]; bounded["permissions"] = permissions
+        XCTAssertNoThrow(try decode(bounded).validate())
     }
     func testLostTurnHasNoActionableCardsEvenWithStaleCardPayload() throws {
         let raw: [String: Any] = ["rid": "app-lost", "request_id": "", "state": "waiting", "outcome": "unknown", "reply": "", "error": "进度无法核对",

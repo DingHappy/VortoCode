@@ -89,7 +89,7 @@ INBOUND: Dict[str, _Spec] = {
     AGENT_QUEUE_REMOVE: (("id",), ()),
     AGENT_QUEUE_SEND_NOW: (("id",), ()),
     AGENT_CONFIRM_CHECK: (("id", "nonce"), ()),
-    AGENT_CONFIRM_RESPONSE: (("id",), ("ok",)),
+    AGENT_CONFIRM_RESPONSE: (("id",), ("ok", "scope")),
     AGENT_TTS: (("id", "text"), ()),         # 无 id 的应答前端无法归位，白白烧一次合成 → 必填
     WORKSPACE_EDIT: (("path", "content", "expected_sha256"), ("rid",)),
     TASK_LIST: ((), ()),
@@ -119,7 +119,7 @@ OUTBOUND: Dict[str, _Spec] = {
     # attach 客户端跨进程拿不到 serve 侧的污点状态，若靠字符串匹配警示横幅来推断，
     # 就是 fail-open：serve 换个版本/改个措辞，客户端的 --yes 又会在污点回合放行。
     # 可选字段（老客户端忽略即可，不破冻结协议）；**客户端读不到它时必须按"可能有污点"处理**。
-    AGENT_CONFIRM: (("id", "text"), ("tainted", "website", "operation_kind", "risk", "required_key", "approval_scope")),  # Display only; no new approval semantics.
+    AGENT_CONFIRM: (("id", "text"), ("tainted", "website", "operation_kind", "risk", "required_key", "approval_scope", "scope_options", "scope_limits")),
     AGENT_CONFIRM_STATE: (("id", "nonce", "pending"), ()),
     AGENT_CONFIRM_CLOSED: (("id",), ("reason",)),
     AGENT_DIFF: (("diff",), ("title",)),     # diff=unified diff 文本（serve 侧已截断）；title=一句话语境

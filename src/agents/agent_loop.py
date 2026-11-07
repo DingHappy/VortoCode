@@ -39,6 +39,7 @@ from src.agents.backends.execution import (
     ExecutionState, new_run_id, process_instance,
 )
 from src.agents.gate import make_confirm_gate  # noqa: F401
+from src.agents.scoped_approval import approval_turn, close_current_scope
 from src.agents.notice import housekeeping
 from src.agents.tool_results import (
     RESULTS_PREFIX, UNKNOWN_RESULT, decode_tool_results, encode_tool_results,
@@ -1640,6 +1641,7 @@ class MainAgent:
                              "依据已有结果回答，并说明尚未核实的内容。"))
         return admitted, used + len(admitted), self._web_budget_exhausted
 
+    @approval_turn
     async def run_turn(
         self,
         user_text: str,
@@ -1721,6 +1723,7 @@ class MainAgent:
             report_error = ExecutionFailure("execution_failed", str(error), effect="possible")
             raise
         finally:
+            close_current_scope()
             if say is not None:
                 note = self._unverified_writes_note()
                 if note:

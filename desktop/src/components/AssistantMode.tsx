@@ -303,7 +303,7 @@ export function AssistantAudit({ entries, now, accessClient, connected = false }
           <span className="assistant-audit-text">
             <strong>{title}</strong>
             {rest.length > 0 && <span>{rest.join(" ").slice(0, 120)}</span>}
-            {entry.operation_kind && <small>{approvalCategory(entry.operation_kind)} · {approvalSource(entry.decision_source)} · {entry.approval_scope === "once" ? "仅本次" : entry.approval_scope === "existing_trust" ? "既有授权范围" : "无新增授权"}</small>}
+            {entry.operation_kind && <small>{approvalCategory(entry.operation_kind)} · {approvalSource(entry.decision_source)} · {entry.approval_scope === "once" ? "仅本次" : entry.approval_scope === "turn" ? "本轮同类" : entry.approval_scope === "existing_trust" ? "既有授权范围" : "无新增授权"}</small>}
             <small>{entry.approval_outcome === "expired" ? "已过期，未放行" : entry.approval_outcome === "cancelled" ? "已取消，未放行" : entry.decision === "allowed" ? "已允许" : "已拒绝"}{entry.tainted ? " · 读过外部内容后" : ""}{entry.ts ? ` · ${ago(entry.ts, now)}` : ""}</small>
           </span>
         </li>;

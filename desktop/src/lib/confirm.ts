@@ -20,13 +20,13 @@ export async function confirmAction(message: string, call: Invoke = invoke): Pro
 export type ConfirmationReplyState = "idle" | "sending" | "awaiting" | "failed";
 /** Transport success is not an approval receipt; stale replies cannot update a new card. */
 export function createConfirmationReply<C>(read: () => {client:C|null;scope:string;id:string;state?:ConfirmationReplyState},
-  send:(client:C,id:string,ok:boolean)=>Promise<void>,
+  send:(client:C,id:string,ok:boolean,scope?:"once"|"turn")=>Promise<void>,
   publish:(id:string,state:ConfirmationReplyState,error:string)=>void) {
   let generation=0;
   let active:{client:C;scope:string;id:string}|null=null;
   return {
     close(id?:string) { if(!id || active?.id===id){generation++;active=null;} },
-    async submit(id:string,ok:boolean) {
+    async submit(id:string,ok:boolean,scope:"once"|"turn"="once") {
       const now=read();
       if(!now.client || now.id!==id || now.state==='sending' || now.state==='awaiting' || now.state==='failed')return;
       if(active && active.client===now.client && active.scope===now.scope && active.id===id)return;
@@ -34,7 +34,7 @@ export function createConfirmationReply<C>(read: () => {client:C|null;scope:stri
       const target={client:now.client,scope:now.scope,id};active=target;
       const current=()=>{const n=read();return ticket===generation && n.client===target.client && n.scope===target.scope && n.id===id;};
       publish(id,'sending','');
-      try {await send(target.client,id,ok);if(current())publish(id,'awaiting','');}
+      try {await send(target.client,id,ok,scope);if(current())publish(id,'awaiting','');}
       catch {if(current())publish(id,'failed','发送结果未确认，请先核对运行端状态；不会自动重发批准。');}
       finally {if(ticket===generation)active=null;}
     },

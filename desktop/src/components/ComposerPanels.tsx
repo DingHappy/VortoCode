@@ -20,7 +20,7 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
   connected: boolean;
   onTrust: (level: TrustLevel) => void;
   onCheck: () => void;
-  onAnswer: (ok: boolean) => void;
+  onAnswer: (ok: boolean, scope?: "once" | "turn") => void;
 }) {
   // plan 阶段结束请求动手，与"删文件/跑命令"那类确认不是一回事：前者是本次任务继续往下走的一次性授权，
   // 后者是单个危险动作。文案分开，人才知道自己在批什么。**污点提示优先级最高**——那是安全提示，任何时候都不能被别的文案盖掉。
@@ -62,6 +62,13 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
           allowLabel={websiteCopy?.allow ?? (plan ? "授权继续" : "允许一次")}
           denyLabel={websiteCopy?.deny}
           onCheck={onCheck} onAnswer={onAnswer} />
+        {confirm.tainted === false && confirm.risk === "normal" && ["own_data", "draft"].includes(confirm.operation_kind ?? "") && confirm.scope_options?.includes("turn")
+          && confirm.scope_limits && Number.isInteger(confirm.scope_limits.max_actions) && confirm.scope_limits.max_actions > 0 && confirm.scope_limits.max_actions <= 10
+          && Number.isInteger(confirm.scope_limits.ttl_seconds) && confirm.scope_limits.ttl_seconds > 0 && confirm.scope_limits.ttl_seconds <= 600 && <div>
+          <button disabled={!connected || (confirm.responseState !== undefined && confirm.responseState !== "idle")}
+            onClick={() => onAnswer(true, "turn")}>本轮同类允许（最多 {confirm.scope_limits.max_actions} 次）</button>
+          <small>含本次，仅覆盖{confirm.operation_kind === "own_data" ? "你的事项" : "本地草稿"}类操作。从本轮开始最多 {Math.ceil(confirm.scope_limits.ttl_seconds / 60)} 分钟，回合结束或读过外部内容后失效。</small>
+        </div>}
       </div>
     </section>
   );

@@ -67,6 +67,8 @@ def owner_said(text: str, *, coverage: float = 0.8) -> bool:
 
 def mark_tainted() -> None:
     """标记本回合**真的摄入了**不可信外部内容（web/search/MCP）。"""
+    from src.agents.scoped_approval import revoke_turn_grants
+    revoke_turn_grants()
     _tainted.set(True)
     _source.set("external")
 
@@ -76,6 +78,8 @@ def mark_channel_untrusted() -> None:
 
     不会把已有的 "external" 降级：真读过网页这件事一旦发生就不能被冲淡。
     """
+    from src.agents.scoped_approval import revoke_turn_grants
+    revoke_turn_grants()
     _tainted.set(True)
     if _source.get() != "external":
         _source.set("channel")
@@ -87,6 +91,8 @@ def mark_context_external() -> None:
     共享主要聊天后，Telegram 转来的文字、上几轮读过的网页结果都留在历史里；主人终端的一句
     「继续」不能把它们洗白成干净输入。不降级已有的 external / channel 来源，只影响措辞。
     """
+    from src.agents.scoped_approval import revoke_turn_grants
+    revoke_turn_grants()
     _tainted.set(True)
     if _source.get() not in ("external", "channel"):
         _source.set("context")

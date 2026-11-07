@@ -19,6 +19,24 @@ const card = (text: string, tainted = false) => renderToStaticMarkup(
   <ConfirmCard confirm={{ id: "c1", text, tainted }} trust={null} trustBusy={false} connected
     onTrust={noop} onCheck={noop} onAnswer={noop} />);
 
+it("offers bounded approval only for a clean server-authorized low-risk category", () => {
+  const render = (patch: Partial<PendingConfirmation> = {}, connected = true) => renderToStaticMarkup(
+    <ConfirmCard confirm={{ id: "c", text: "update", tainted: false, operation_kind: "own_data", risk: "normal",
+      scope_options: ["once", "turn"], scope_limits: { max_actions: 10, ttl_seconds: 600 }, ...patch }}
+      trust={null} trustBusy={false} connected={connected} onTrust={noop} onCheck={noop} onAnswer={noop} />);
+  expect(render()).toContain("本轮同类允许"); expect(render()).toContain("含本次，仅覆盖你的事项类操作");
+  expect(render({operation_kind:"draft"})).toContain("仅覆盖本地草稿类操作");
+  for (const patch of [{tainted:true}, {tainted:undefined}, {risk:"high"}, {operation_kind:"deliver"}, {operation_kind:"read"},
+    {scope_options:["once"]}, {scope_limits:undefined}, {scope_limits:{max_actions:11,ttl_seconds:600}},
+    {scope_limits:{max_actions:10,ttl_seconds:601}}, {scope_limits:{max_actions:0,ttl_seconds:600}}]) {
+    expect(render(patch)).not.toContain("本轮同类允许");
+  }
+  for (const state of ["sending", "awaiting", "failed"] as const) {
+    expect(render({responseState:state})).toMatch(/<button disabled="">本轮同类允许/);
+  }
+  expect(render({},false)).toMatch(/<button disabled="">本轮同类允许/);
+});
+
 it("names what is being approved, and the taint warning always wins", () => {
   expect(card("删除 build/ 目录？")).toContain("这一步需要你确认");
   expect(card("删除 build/ 目录？")).toContain("允许一次");

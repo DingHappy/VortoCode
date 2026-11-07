@@ -20,7 +20,7 @@ def test_projection_clamps_policy_and_omits_private_operation_and_tool_payload(t
     value = snapshot(str(tmp_path))
     permissions = value["permissions"]
     assert permissions["stored_level"] == "full" and permissions["effective_level"] == "reads"
-    assert permissions["scopes"] == ["once"] and permissions["taint_revokes_preauthorization"]
+    assert permissions["scopes"] == ["once", "turn"] and permissions["taint_revokes_preauthorization"]
     categories = {r["operation_kind"]: r for r in permissions["categories"]}
     assert categories["own_data"]["preauthorized"] and not categories["deliver"]["preauthorized"]
     assert not categories["interact"]["preauthorized"] and not categories["irreversible"]["preauthorized"]

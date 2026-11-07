@@ -303,7 +303,7 @@ function App() {
   const confirmationReplyRef = useRef<ReturnType<typeof createConfirmationReply<GatewayClient>> | null>(null);
   if (!confirmationReplyRef.current) confirmationReplyRef.current = createConfirmationReply(
     () => ({...confirmationViewRef.current,client:clientRef.current}),
-    (client,id,ok) => client.send({type:"agent_confirm_response",id,ok}),
+    (client,id,ok,scope="once") => client.send({type:"agent_confirm_response",id,ok,scope}),
     (id,responseState,responseError) => setPendingConfirm(current => current?.id===id ? {...current,responseState,responseError} : current));
   const confirmationCheckRef = useRef<{id:string;nonce:string;client:GatewayClient;scope:string}|null>(null);
   const [workspaceRequest, setWorkspaceRequest] = useState<WorkspaceRequest | null>(null);
@@ -890,6 +890,8 @@ function App() {
               risk: typeof event.risk === "string" ? event.risk : undefined,
               required_key: typeof event.required_key === "string" ? event.required_key : undefined,
               approval_scope: typeof event.approval_scope === "string" ? event.approval_scope : undefined,
+              scope_options: Array.isArray(event.scope_options) ? event.scope_options.filter((scope): scope is string => typeof scope === "string") : undefined,
+              scope_limits: event.scope_limits,
             });
             void refreshDecisions();
             void refreshSessions();
@@ -1991,8 +1993,8 @@ function App() {
     });
   };
 
-  const answerConfirmationById = async (id: string, ok: boolean) => {
-    await confirmationReplyRef.current?.submit(id,ok);
+  const answerConfirmationById = async (id: string, ok: boolean, scope: "once" | "turn" = "once") => {
+    await confirmationReplyRef.current?.submit(id,ok,scope);
     void refreshDecisions();
     void refreshAudit();
   };
@@ -2010,9 +2012,9 @@ function App() {
     },8000);
   };
 
-  const answerConfirmation = async (ok: boolean) => {
+  const answerConfirmation = async (ok: boolean, scope: "once" | "turn" = "once") => {
     if (!pendingConfirm) return;
-    await answerConfirmationById(pendingConfirm.id, ok);
+    await answerConfirmationById(pendingConfirm.id, ok, scope);
   };
 
   // selectJournalDay / continueFromYesterday 已随 journal 域收进 useJournal（S6b）。
@@ -2974,7 +2976,7 @@ function App() {
             )}
             {pendingConfirm && (
               <ConfirmCard confirm={pendingConfirm} trust={trust} trustBusy={trustBusy} connected={connection === "connected"}
-                onTrust={changeTrustLevel} onCheck={() => void checkConfirmation()} onAnswer={(ok) => void answerConfirmation(ok)} />
+                onTrust={changeTrustLevel} onCheck={() => void checkConfirmation()} onAnswer={(ok, scope) => void answerConfirmation(ok, scope)} />
             )}
 
             {workspaceRequest && (
