@@ -139,3 +139,17 @@ async def test_tainted_mcp_confirm_shows_one_banner_and_audits_raw_operation(mcp
         assert decisions[0].startswith('MCP 工具 `')
     finally:
         taint.reset_taint(); await manager.shutdown()
+
+
+def test_task_ledger_save_failure_logs_the_cause(tmp_path, caplog):
+    # 2026-11-04：小组根记录里混进一个函数，写盘失败只返回 False，界面只说「未能保存」，日志里也没有原因
+    import logging
+    from src.workflow.tasks.tasks import BackgroundTask, TaskLedger
+
+    ledger = TaskLedger(str(tmp_path))
+    task = BackgroundTask.new("team", "查资料")
+    task.owner_session = lambda: "sid"  # type: ignore[assignment]
+    with caplog.at_level(logging.WARNING, logger="src.workflow.tasks.tasks"):
+        assert ledger.save(task) is False
+    assert task.id in caplog.text and "TypeError" in caplog.text
+    assert not list(tmp_path.rglob(f"{task.id}.json"))
