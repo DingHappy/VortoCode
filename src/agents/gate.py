@@ -176,11 +176,12 @@ def make_confirm_gate(
                     answer = await request_raw(ask_human, prompt, kind)
                     ok = bool(answer)
                     if isinstance(answer, ApprovalDecision) and answer.scope != "once":
-                        ok = (answer.approved is True and answer.scope == "turn" and not is_tainted()
-                              and offer is not None and offer.grant())
+                        ok = answer.approved is True and answer.scope == "turn" and offer is not None
                         if ok:
                             from src.agents.confirmation_context import record_approval_scope
-                            record_approval_scope("turn")
+                            granted = not is_tainted() and offer.grant()
+                            # 用户明确批准过此操作；范围失效只降为本次，不补充或恢复范围。
+                            record_approval_scope("turn" if granted else "once")
                         else:
                             record_approval_outcome("denied", "system")
             except asyncio.CancelledError:

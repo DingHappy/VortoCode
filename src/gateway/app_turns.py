@@ -270,8 +270,6 @@ class AppTurns:
             raise AppTurnError("卡片内容已变化，请刷新后再确认")
         if not isinstance(scope, str) or scope not in card.scope_options or (not approve and scope != "once"):
             raise AppTurnError("这张卡不支持这个批准范围")
-        if scope == "turn" and (card.scope_offer is None or not card.scope_offer.valid()):
-            raise AppTurnError("本轮授权范围已失效，请只允许这一次或拒绝")
         if approve and card.scope_keys[scope] == "approval" and key_kind != "approval":
             raise AppTurnError("这一步需要 Face ID 批准")
         card.selected_scope = scope

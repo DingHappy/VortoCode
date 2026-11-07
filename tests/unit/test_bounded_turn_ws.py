@@ -12,7 +12,7 @@ from src.web.routers import realtime
 from tests.unit.test_gateway_decisions import _DecisionWS
 
 
-@pytest.mark.parametrize("failure", [None, "scope", "expired", "tainted", "save_failed", "sensitive"])
+@pytest.mark.parametrize("failure", [None, "scope", "expired", "tainted", "grant_race", "save_failed", "sensitive"])
 async def test_scope_choice_uses_owner_future_and_durable_audit(tmp_path, monkeypatch, failure):
     monkeypatch.chdir(tmp_path)
     owner, stranger = _DecisionWS("scope-owner"), _DecisionWS("scope-stranger")
@@ -37,13 +37,26 @@ async def test_scope_choice_uses_owner_future_and_durable_audit(tmp_path, monkey
     if failure == "scope": response["scope"] = "always"
     elif failure == "expired": record["scope_offer"].state.clock = lambda: record["scope_offer"].state.born + 600
     elif failure == "tainted": record["scope_offer"].state.revoke()
+    elif failure == "grant_race":
+        monkeypatch.setattr("src.agents.scoped_approval.ScopeOffer.grant", lambda _self: False)
     elif failure == "save_failed":
         monkeypatch.setattr("src.gateway.audit.record_decision_audit", lambda *_a, **_k: False)
     await realtime.handle_websocket_message(owner, response)
-    assert await asyncio.wait_for(task, 1) == ((True, True) if failure is None else (False, False))
+    if failure in {"expired", "tainted", "grant_race"}:
+        closed = await asyncio.wait_for(q.get(), 1)
+        assert closed["type"] == "agent_confirm_closed" and closed["id"] == event["id"]
+        followup = await asyncio.wait_for(q.get(), 1)
+        if failure != "grant_race":
+            assert followup["scope_options"] == ["once"]
+        await realtime.handle_websocket_message(owner, {"type": "agent_confirm_response", "id": followup["id"], "ok": False})
+    expected = (True, True) if failure is None else (True, False) if failure in {"expired", "tainted", "grant_race"} else (False, False)
+    assert await asyncio.wait_for(task, 1) == expected
     assert event["id"] not in realtime._PENDING_CONFIRMS
     # A processed card cannot grant anything to a later turn.
     await realtime.handle_websocket_message(owner, response)
     if failure is None:
         [entry] = list_audit(str(tmp_path))
         assert entry["approval_scope"] == "turn" and entry["decision_source"] == "user"
+    elif failure in {"expired", "tainted"}:
+        [entry] = list_audit(str(tmp_path))
+        assert entry["approval_scope"] == "once" and entry["approval_outcome"] == "approved"

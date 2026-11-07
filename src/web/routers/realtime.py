@@ -153,15 +153,17 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
                 fut.set_result(bool(message.get("ok")))
             else:
                 offer = pending.get("scope_offer") if isinstance(pending, dict) else None
-                valid = scope == "turn" and message.get("ok") is True and offer is not None and offer.valid()
+                valid = scope == "turn" and message.get("ok") is True and offer is not None
+                effective_scope = "turn" if valid and offer.valid() else "once"
                 if valid:
                     from src.gateway.audit import record_decision_audit
                     valid = record_decision_audit(pending["root"], session=pending["session"], mode="build",
-                        operation="本轮同类授权", decision=True, tainted=False,
-                        approval={"operation_kind": offer.kind, "approval_scope": "turn", "decision_source": "user", "approval_outcome": "approved"}, durable=True)
+                        operation="本轮同类授权" if effective_scope == "turn" else "本次操作批准", decision=True,
+                        tainted=bool(pending.get("tainted") or offer.state.tainted),
+                        approval={"operation_kind": offer.kind, "approval_scope": effective_scope, "decision_source": "user", "approval_outcome": "approved"}, durable=True)
                 if not valid:
                     pending["scope_rejected"] = True
-                fut.set_result(ApprovalDecision(True, "turn") if valid else False)
+                fut.set_result(ApprovalDecision(True, effective_scope) if valid else False)
 
     elif msg_type == P.AGENT_TTS:             # 「🔊 播放」：把某条回复合成成语音回传前端播放
         await handle_tts_message(websocket, message)

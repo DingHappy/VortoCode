@@ -113,14 +113,16 @@ async def test_concurrent_confirmations_share_a_cap_without_replenishing_it():
         asks.append(current_offer())
         if len(asks) == 12: arrived.set()
         await release.wait()
-        return ApprovalDecision(True, "turn")
+        return ApprovalDecision(True, "turn") if current_offer() else True
     gate = make_confirm_gate(ask, can_ask_human=True, capability_profile="local", enable_turn_scope=True)
-    with turn_approval_scope():
+    with turn_approval_scope() as state:
         tasks = [asyncio.create_task(gate("own", "own_data")) for _ in range(12)]
         await asyncio.wait_for(arrived.wait(), 1)
         release.set()
-        assert sorted(await asyncio.gather(*tasks)) == [False, False] + [True] * 10
-        assert not await gate("cannot replenish", "own_data")
+        assert await asyncio.gather(*tasks) == [True] * 12
+        assert state.grants["own_data"] == 0
+        assert await gate("explicit once after exhaustion", "own_data")
+        assert asks[-1] is None and state.grants["own_data"] == 0
         # A distinct low-risk category needs its own explicit approval.
         assert await gate("draft", "draft")
 
@@ -144,14 +146,63 @@ async def test_cancellation_closes_the_real_turn_scope(tmp_path, monkeypatch):
     assert states[0].active is False
 
 
-async def test_taint_during_confirmation_rejects_the_range_choice():
+async def test_taint_during_confirmation_keeps_only_the_explicit_single_approval():
     reset_taint()
     async def ask(*_args):
         assert current_offer() is not None
         mark_tainted()
         return ApprovalDecision(True, "turn")
-    with turn_approval_scope():
-        assert not await make_confirm_gate(ask, can_ask_human=True, capability_profile="local", enable_turn_scope=True)("own", "own_data")
+    seen = []
+    with turn_approval_scope() as state:
+        assert await make_confirm_gate(ask, can_ask_human=True, capability_profile="local", enable_turn_scope=True,
+                                      on_decision=lambda *_args: seen.append(approval_context()))("own", "own_data")
+        assert state.tainted and not state.grants
+    assert seen[0]["approval_scope"] == "once" and seen[0]["approval_outcome"] == "approved"
+    assert seen[0]["decision_source"] == "user"
+
+
+@pytest.mark.parametrize("change", ["expired", "exhausted", "revoked"])
+async def test_a_failed_range_grant_never_turns_an_explicit_approval_into_a_rejection(change):
+    reset_taint(); now = [0.0]; asked, seen = [], []
+    async def ask(*_args):
+        offer = current_offer(); asked.append(offer)
+        if offer is None:
+            return True
+        if change == "expired": now[0] = 600
+        elif change == "exhausted": offer.state.grants[offer.kind] = 0
+        else: offer.state.revoke()
+        return ApprovalDecision(True, "turn")
+    gate = make_confirm_gate(ask, can_ask_human=True, capability_profile="local", enable_turn_scope=True,
+                             on_decision=lambda *_args: seen.append(approval_context()))
+    with turn_approval_scope(clock=lambda: now[0]):
+        assert await gate("first", "own_data")
+        assert await gate("another explicit approval", "own_data")
+    assert len(asked) == 2 and asked[0] is not None and asked[1] is None
+    assert all(row["approval_scope"] == "once" and row["decision_source"] == "user"
+               and row["approval_outcome"] == "approved" for row in seen)
+
+
+async def test_app_range_grant_race_preserves_the_approved_card_and_single_action(tmp_path, shared_chat, monkeypatch):
+    from src.agents.scoped_approval import ScopeOffer
+    seen, results = [], []
+    class Agent:
+        history = []
+        @approval_turn
+        async def run_turn(self, *_args, **_kwargs):
+            reset_taint()
+            gate = make_confirm_gate(manager._confirm, can_ask_human=True, capability_profile="owner_device",
+                                     enable_turn_scope=True, on_decision=lambda *_args: seen.append(approval_context()))
+            results.append(await gate("own", "own_data"))
+            return "done"
+    manager = AppTurns(str(tmp_path), lambda _confirm: Agent())
+    turn = manager.start("req-scope-race-001", "own")
+    await _settle(turn, ("waiting",))
+    card = turn.cards[0]
+    manager.decide(turn.rid, card.id, True, card.digest(turn.rid), "approval", scope="turn")
+    monkeypatch.setattr(ScopeOffer, "grant", lambda _self: False)
+    await _settle(turn, ("done",))
+    assert card.status == "approved" and results == [True]
+    assert seen[0]["approval_scope"] == "once" and seen[0]["approval_outcome"] == "approved"
 
 
 @pytest.mark.parametrize("failure", ["expired", "tainted", "save_failed", "changed_limits"])
@@ -175,6 +226,12 @@ async def test_app_pending_range_is_rechecked_before_execution(tmp_path, shared_
     elif failure == "tainted": card.scope_offer.state.revoke()
     elif failure == "save_failed": monkeypatch.setattr(audit, "record_decision_audit", lambda *_a, **_k: False)
     else: monkeypatch.setattr(scoped_approval, "MAX_ACTIONS", 9)
+    if failure in {"expired", "tainted"}:
+        manager.decide(turn.rid, card.id, True, digest, "approval", scope="turn")
+        await _settle(turn, ("done",))
+        assert results == [True] and card.status == "approved"
+        assert not card.scope_offer.state.grants
+        return
     with pytest.raises(AppTurnError): manager.decide(turn.rid, card.id, True, digest, "approval", scope="turn")
     assert not results and card.status == "pending"
     manager.decide(turn.rid, card.id, False, card.digest(turn.rid), "device")
