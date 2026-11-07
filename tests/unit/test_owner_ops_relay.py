@@ -21,10 +21,12 @@ def ledger(monkeypatch):
     calls = []
 
     async def approve(root, dispatch_id, **_kwargs):
+        assert _kwargs == {"origin": "app", "decision_source": "user"}
         calls.append(("approve", dispatch_id))
         return {**items[0], "status": "sent"}
 
-    def cancel(root, dispatch_id):
+    def cancel(root, dispatch_id, *, origin, decision_source):
+        assert origin == "app" and decision_source == "user"
         calls.append(("cancel", dispatch_id))
         return {**items[0], "status": "cancelled"}
 

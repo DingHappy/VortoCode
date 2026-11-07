@@ -10,6 +10,6 @@ export function approvalRisk(risk: unknown): string {
   return risk === "normal" ? "普通确认" : risk === "high" ? "加强确认" : "级别待核对";
 }
 export function approvalSource(source: unknown): string {
-  const labels: Record<string, string> = { user: "人工确认", preauthorized: "既有授权", system: "系统决定", timeout: "超时", cancelled: "已取消" };
+  const labels: Record<string, string> = { user: "人工确认", automatic_review: "后台审核", preauthorized: "既有授权", system: "系统决定", timeout: "超时", cancelled: "已取消" };
   return typeof source === "string" && Object.prototype.hasOwnProperty.call(labels, source) ? labels[source] : "来源待核对";
 }

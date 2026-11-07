@@ -86,11 +86,15 @@ struct OwnerAccessView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("最近审批记录") {
-                    Text("仅展示最近的内核决定与 App 回合卡片，不含操作正文，也不包含任务单、Codex 动作等全部领域记录。批准不代表执行完成。")
+                    Text("有限汇总内核决定、App 回合卡片、Codex 动作和任务单，不含操作正文。当前领域记录之外的归档尚未汇总；批准不代表执行完成。")
                         .font(.footnote).foregroundStyle(.secondary)
                     if value.history.status != "current" {
                         Text("审批记录来源待核对，当前列表可能不完整。")
                             .foregroundStyle(.orange)
+                    }
+                    if !value.history.unavailableLabels.isEmpty {
+                        Text("待核对来源：" + value.history.unavailableLabels.joined(separator: "、"))
+                            .font(.footnote).foregroundStyle(.orange)
                     }
                     if value.history.entries.isEmpty {
                         Text(value.history.status == "current" ? "最近读取范围内没有审批记录。" : "暂时无法确认审批记录。")
@@ -100,8 +104,10 @@ struct OwnerAccessView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(row.label + " · " + row.outcomeLabel).font(.headline)
                             Text(row.sourceLabel + " · " + row.scopeLabel).font(.subheadline)
-                            Text((row.recordType == "card" ? "卡片处理" : "内核决定") + " · " + (row.origin == "app" ? "App" : "助理运行端") + " · " + row.ts)
+                            Text(row.recordLabel + " · " + row.originLabel + " · " + (row.ts.isEmpty ? "审批时点待核对" : row.ts))
                                 .font(.caption).foregroundStyle(.secondary)
+                            if row.decisionMetadataMissing == true { Text("审批来源与时点没有完整记录，请人工核对。").font(.caption).foregroundStyle(.secondary) }
+                            if let status = row.sourceStatusLabel { Text("当前来源状态：" + status).font(.caption).foregroundStyle(.secondary) }
                             if row.tainted { Text("读过外部内容后").font(.caption).foregroundStyle(.secondary) }
                         }
                     }

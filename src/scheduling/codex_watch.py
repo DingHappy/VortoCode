@@ -573,10 +573,17 @@ def _actions_path(root: str) -> Path:
     return Path(root) / ".vortocode" / "codex" / "actions.json"
 
 
-def load_actions(root: str, *, strict: bool = False) -> List[dict]:
+def load_actions(root: str, *, strict: bool = False, max_bytes: int | None = None) -> List[dict]:
     try:
-        data = json.loads(_actions_path(root).read_text(encoding="utf-8"))
-        if strict and not isinstance(data, list):
+        if max_bytes is None:
+            raw = _actions_path(root).read_bytes()
+        else:
+            with _actions_path(root).open("rb") as handle:
+                raw = handle.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise ValueError("动作记录超过读取上限")
+        data = json.loads(raw.decode("utf-8"))
+        if strict and (not isinstance(data, list) or any(not isinstance(item, dict) for item in data)):
             raise ValueError("动作记录格式损坏")
         return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
     except FileNotFoundError:
@@ -585,6 +592,19 @@ def load_actions(root: str, *, strict: bool = False) -> List[dict]:
         if strict:
             raise
         return []
+
+
+def read_action_snapshot(root: str) -> dict:
+    """Read local action data without expiring, claiming or contacting a core."""
+    try:
+        items = load_actions(root, strict=True, max_bytes=2 * 1024 * 1024)
+    except (OSError, ValueError):
+        return {"items": [], "status": "unavailable"}
+    valid = [item for item in items if isinstance(item.get("id"), str) and isinstance(item.get("status"), str)]
+    if len({item["id"] for item in valid}) != len(valid):
+        return {"items": [], "status": "unavailable"}
+    return {"items": list(reversed(valid))[:100],
+            "status": "partial" if len(valid) != len(items) or len(items) > 100 else "current"}
 
 
 def _save_actions(root: str, items: List[dict]) -> None:
@@ -926,12 +946,21 @@ def _goal_action_current(root: str, action_id: str) -> None:
         raise CodexActionError(str(error)) from error
 
 
-def decide_action(root: str, action_id: str, approved: bool) -> dict:
+def decide_action(root: str, action_id: str, approved: bool, *, origin: str = "unknown", decision_source: str = "unknown") -> dict:
     with _handover_lock(root), _actions_lock(root):
         if approved:
             _expire_stale_actions(root)       # 批准前按最新进度再核一次：过时的不放行
             _goal_action_current(root, action_id)
-        return _change(root, action_id, {"proposed"}, status="approved" if approved else "cancelled")
+        current = next((item for item in load_actions(root) if item.get("id") == action_id), {})
+        from src.agents.approval_records import record_approval
+        record = dict(current)
+        try:
+            record_approval(record, "approved" if approved else "denied", at=_now().isoformat(), origin=origin, source=decision_source)
+        except ValueError as error:
+            raise CodexActionError("审批记录待核对，未改变决定") from error
+        return _change(root, action_id, {"proposed"}, status="approved" if approved else "cancelled",
+                       approval_events=record["approval_events"],
+                       approval_events_truncated=record.get("approval_events_truncated", False))
 
 
 def claim_action(root: str, action_id: str) -> dict:

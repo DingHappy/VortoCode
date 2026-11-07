@@ -31,13 +31,13 @@ def test_projection_clamps_policy_and_omits_private_operation_and_tool_payload(t
     assert before == (tmp_path / ".vortocode/audit.log").read_bytes()
 
 
-def test_projection_keeps_card_events_and_legacy_decisions_distinct(tmp_path):
-    for op, metadata in [("old", None), ("App 审批卡 card-1", {"approval_outcome": "expired", "decision_source": "timeout"})]:
+def test_projection_keeps_typed_card_events_and_omits_untyped_domain_audits(tmp_path):
+    for op, metadata in [("old", None), ("App 审批卡 card-1", {"operation_kind": "own_data",
+                                                          "approval_outcome": "expired", "decision_source": "timeout"})]:
         audit.record_decision_audit(str(tmp_path), session="app-test", mode="build", operation=op,
                                     decision=False, tainted=True, approval=metadata)
-    card, legacy = snapshot(str(tmp_path))["history"]["entries"]
+    [card] = snapshot(str(tmp_path))["history"]["entries"]
     assert card["record_type"] == "card" and card["approval_outcome"] == "expired"
-    assert legacy["record_type"] == "decision" and "operation_kind" not in legacy
 
 
 def test_unreadable_or_malformed_history_never_becomes_empty_success(tmp_path, monkeypatch):
@@ -52,13 +52,16 @@ def test_unreadable_or_malformed_history_never_becomes_empty_success(tmp_path, m
         raise OSError("blocked")
 
     monkeypatch.setattr(audit, "_tail_lines", unreadable)
-    assert snapshot(str(tmp_path))["history"] == {"entries": [], "status": "unavailable", "bounded": True}
+    history = snapshot(str(tmp_path))["history"]
+    assert history["entries"] == [] and history["status"] == "unavailable" and history["bounded"]
+    assert history["sources"]["audit"] == "unavailable"
 
 
 def test_projection_is_bounded_and_ids_do_not_expose_legacy_values(tmp_path):
     folder = tmp_path / ".vortocode"
     folder.mkdir()
-    rows = [{"category": "decision", "id": f"private-path-{n}", "operation": "private", "decision": "denied"} for n in range(600)]
+    rows = [{"category": "decision", "id": f"private-path-{n}", "operation": "private", "decision": "denied",
+             "operation_kind": "own_data"} for n in range(600)]
     (folder / "audit.log").write_text("\n".join(json.dumps(r) for r in rows))
     value = snapshot(str(tmp_path))
     assert len(value["history"]["entries"]) == 100 and value["history"]["bounded"]
