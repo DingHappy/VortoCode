@@ -45,3 +45,44 @@ describe("installUpdate", () => {
     expect(calls).toEqual(["install_update"]);
   });
 });
+
+describe("progressText", () => {
+  it("shows percent, megabytes, retries and the install phase", async () => {
+    const { progressText } = await import("./updateCheck");
+    expect(progressText(null)).toBe("正在更新…");
+    expect(progressText({ downloaded: 19_000_000, total: 38_000_000, attempt: 1 })).toBe("正在下载 50%");
+    expect(progressText({ downloaded: 0, total: 38_000_000, attempt: 2 })).toBe("正在下载 0%（第 2 次）");
+    expect(progressText({ downloaded: 3 * 1048576, total: null, attempt: 1 })).toBe("正在下载 3.0 MB");
+    expect(progressText({ downloaded: 38_000_000, total: 38_000_000, attempt: 3 })).toBe("正在安装…");
+  });
+});
+
+describe("installUpdate progress", () => {
+  it("forwards progress events while installing and stops listening afterwards", async () => {
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.resetModules();
+    vi.doMock("@tauri-apps/api/event", () => ({
+      listen: async (name: string, callback: (event: { payload: unknown }) => void) => {
+        expect(name).toBe("update-progress");
+        handler = callback;
+        return unlisten;
+      },
+    }));
+    vi.doMock("@tauri-apps/api/core", () => ({
+      invoke: async (command: string) => {
+        if (command === "install_update") {
+          handler?.({ payload: { downloaded: 5, total: 10, attempt: 1 } });
+          throw new Error("下载更新包失败（试了 3 次）");
+        }
+        return undefined;
+      },
+    }));
+    const { installUpdate } = await import("./updateCheck");
+    const seen: unknown[] = [];
+    await expect(installUpdate((progress) => seen.push(progress))).rejects.toThrow("试了 3 次");
+    expect(seen).toEqual([{ downloaded: 5, total: 10, attempt: 1 }]);
+    expect(unlisten).toHaveBeenCalledOnce();
+    vi.doUnmock("@tauri-apps/api/event");
+  });
+});

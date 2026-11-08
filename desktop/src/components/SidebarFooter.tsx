@@ -4,7 +4,7 @@ import { Archive, CircleUser, Laptop, Puzzle, RefreshCw, Server, Settings2, Smar
 import { useEffect, useRef, useState } from "react";
 
 import { errorText } from "../lib/errorText";
-import { installUpdate, type UpdateCheck } from "../lib/updateCheck";
+import { installUpdate, progressText, type UpdateCheck, type UpdateProgress } from "../lib/updateCheck";
 import type { SidebarIdentity } from "../lib/vortoAccount";
 import type { SettingsSection } from "../lib/settingsNavigation";
 import { Button, Menu, MenuItem, MenuSeparator, NavItem } from "./ui";
@@ -32,12 +32,13 @@ export function SidebarFooter({ identity, update, resident, onOpenSettings, onLi
   onLibrary?: () => void;
   onCustomize?: () => void;
   /** 测试替身；默认走 Rust 侧的下载、验签、安装和重启 */
-  install?: () => Promise<unknown>;
+  install?: (onProgress?: (progress: UpdateProgress) => void) => Promise<unknown>;
   /** 测试和验收页用：一开始就展开头像菜单 */
   menuOpen?: boolean;
 }) {
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState("");
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [menuOpen, setMenuOpen] = useState(initialMenuOpen);
   const rowRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -73,11 +74,11 @@ export function SidebarFooter({ identity, update, resident, onOpenSettings, onLi
         <Button variant="secondary" disabled={updating} className="vc-side-update"
           title={updateError || `VortoOne ${update.latest} 已发布，点击更新并重启`}
           onClick={() => {
-            setUpdating(true); setUpdateError("");
-            void install()
+            setUpdating(true); setUpdateError(""); setUpdateProgress(null);
+            void install(setUpdateProgress)
               .catch((error) => setUpdateError(errorText(error, "更新失败，可在设置 → 高级 → 更新里重试或下载")))
-              .finally(() => setUpdating(false));
-          }}>{updating ? "正在更新…" : `新版本 ${update.latest}`}</Button>
+              .finally(() => { setUpdating(false); setUpdateProgress(null); });
+          }}>{updating ? progressText(updateProgress) : updateError ? "更新失败，点击重试" : `新版本 ${update.latest}`}</Button>
       )}
       <div className="vc-side-account-row" ref={rowRef}>
         {menuOpen && <Menu className="vc-side-menu" aria-label="账号菜单">
