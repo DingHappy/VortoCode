@@ -12,11 +12,14 @@ struct AssistantShell: View {
     @State private var detail: AssistantSegment?
     @State private var showSettings = false
     @State private var showSearch = false
+    @State private var openTeam: TeamRoute?
+    @State private var openSideChat: SideChatRoute?
     @Environment(\.scenePhase) private var scenePhase
 
     private var name: String? { session.reading.profile.data?.name ?? session.credential?.name }
     private var waiting: [WaitingItem] {
-        WaitingItem.collect(cards: owner.turn?.pendingCards ?? [], decisions: owner.decisions, dispatches: owner.dispatches)
+        WaitingItem.collect(cards: owner.turn?.pendingCards ?? [], decisions: owner.decisions, dispatches: owner.dispatches,
+                            teams: owner.teams)
     }
     /// 动态里有来源没读到时，「等你处理」的件数可能不全
     private var waitingUncertain: Bool {
@@ -33,7 +36,8 @@ struct AssistantShell: View {
         ZStack(alignment: .leading) {
             NavigationStack {
                 ChatView(entry: entry, session: session, owner: owner, waiting: waiting,
-                         waitingUncertain: waitingUncertain, openActivity: { detail = .feed })
+                         waitingUncertain: waitingUncertain, openActivity: { detail = .feed },
+                         openTeam: { openTeam = TeamRoute(id: $0) })
                     .navigationTitle(VCCopy.Nav.mainChat)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbarBackground(Palette.bg, for: .navigationBar)
@@ -48,6 +52,10 @@ struct AssistantShell: View {
                     .accessibilityLabel("关闭会话列表").accessibilityAddTraits(.isButton)
                     .transition(.opacity)
                 AssistantDrawer(name: name, contact: session.contact, waiting: waiting.count, statusLine: statusLine,
+                                teams: owner.teams, sideChats: owner.sideChats, listNote: owner.conversationsError,
+                                writable: owner.canWrite,
+                                openTeam: { drawerOpen = false; openTeam = TeamRoute(id: $0) },
+                                openSideChat: { drawerOpen = false; openSideChat = SideChatRoute(sid: $0) },
                                 close: { drawerOpen = false },
                                 openDetail: { drawerOpen = false; detail = .feed },
                                 openSearch: { drawerOpen = false; showSearch = true },
@@ -62,6 +70,8 @@ struct AssistantShell: View {
         }
         .sheet(isPresented: $showSettings) { NavigationStack { SettingsView(entry: entry, session: session, owner: owner) } }
         .sheet(isPresented: $showSearch) { NavigationStack { ChatSearchView(owner: owner) } }
+        .sheet(item: $openTeam) { route in NavigationStack { TeamChatView(teamId: route.id, entry: entry, session: session, owner: owner) } }
+        .sheet(item: $openSideChat) { route in NavigationStack { SideChatView(sid: route.sid, entry: entry, session: session) } }
         // 每次登录 / 恢复会话：读写入能力，必要时绑定钥匙、登记推送、读对话
         .task(id: session.credential?.token) {
             owner.resetTimeline()
@@ -128,6 +138,12 @@ struct AssistantDrawer: View {
     let contact: ContactStatus
     let waiting: Int
     let statusLine: AssistantStatusLine
+    let teams: [TeamSummary]
+    let sideChats: [SideChatSummary]
+    let listNote: String
+    let writable: Bool
+    let openTeam: (String) -> Void
+    let openSideChat: (String) -> Void
     let close: () -> Void
     let openDetail: () -> Void
     let openSearch: () -> Void
@@ -164,17 +180,36 @@ struct AssistantDrawer: View {
                 .accessibilityAddTraits(.isSelected)
                 .accessibilityIdentifier("native-drawer-main-chat")
 
-            group(VCCopy.Nav.teams, "手机上还不能打开任务小组，请在电脑上查看群聊和验收。")
-            group(VCCopy.Nav.sideChats, "手机上还不能打开旁聊，请在电脑上查看。")
-
-            Spacer()
+            ScrollView {
+                VStack(alignment: .leading, spacing: VCSpace.space5) {
+                    if !writable {
+                        group(VCCopy.Nav.teams, "这台手机开通对话后，这里会列出任务小组和旁聊。")
+                    } else {
+                        section(VCCopy.Nav.teams, isEmpty: teams.isEmpty, empty: "现在没有任务小组。") {
+                            ForEach(teams) { team in
+                                row(title: team.objective, detail: team.statusLabel, waiting: team.needsOwner,
+                                    dimmed: !team.isLive) { openTeam(team.id) }
+                                    .accessibilityIdentifier("native-drawer-team")
+                            }
+                        }
+                        section(VCCopy.Nav.sideChats, isEmpty: sideChats.isEmpty, empty: "电脑上开的旁聊会列在这里，手机上只能看。") {
+                            ForEach(sideChats.prefix(8)) { chat in
+                                row(title: chat.title, detail: "\(chat.messages) 条", waiting: false, dimmed: false) { openSideChat(chat.sid) }
+                                    .accessibilityIdentifier("native-drawer-side-chat")
+                            }
+                        }
+                        if !listNote.isEmpty { Text(listNote).font(.caption).foregroundStyle(Palette.waitText) }
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
 
             Label(contact.text(), systemImage: contact.isProblem ? "wifi.exclamationmark" : "desktopcomputer")
                 .font(.caption).foregroundStyle(contact.isProblem ? Palette.dangerText : Palette.muted).lineLimit(3)
             HStack(spacing: VCSpace.space2) {
-                Button(action: openSettings) { Label(VCCopy.Nav.settings, systemImage: "gearshape") }
+                Button(action: openSettings) { Label(VCCopy.Nav.settings, systemImage: "gearshape").lineLimit(1).fixedSize() }
                     .buttonStyle(VCSecondaryButtonStyle()).accessibilityIdentifier("native-drawer-settings")
-                Button(action: openSearch) { Label(VCCopy.Nav.search, systemImage: "magnifyingglass") }
+                Button(action: openSearch) { Label(VCCopy.Nav.search, systemImage: "magnifyingglass").lineLimit(1).fixedSize() }
                     .buttonStyle(VCSecondaryButtonStyle()).accessibilityIdentifier("native-drawer-search")
             }
         }
@@ -183,6 +218,28 @@ struct AssistantDrawer: View {
         .background(Palette.sidebar.ignoresSafeArea())
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
+    }
+
+    @ViewBuilder private func section<Rows: View>(_ title: String, isEmpty: Bool, empty: String,
+                                                  @ViewBuilder rows: () -> Rows) -> some View {
+        VStack(alignment: .leading, spacing: VCSpace.space1) {
+            Text(title).font(.caption.weight(.medium)).foregroundStyle(Palette.muted)
+            if isEmpty { Text(empty).font(.footnote).foregroundStyle(Palette.secondary) } else { rows() }
+        }
+    }
+
+    private func row(title: String, detail: String, waiting: Bool, dimmed: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: VCSpace.space2) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline).foregroundStyle(dimmed ? Palette.muted : Palette.text).lineLimit(1)
+                    Text(detail).font(.caption).foregroundStyle(waiting ? Palette.waitText : Palette.muted).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if waiting { Circle().fill(Palette.waitDot).frame(width: 8, height: 8) }
+            }
+            .padding(.horizontal, VCSpace.space3).frame(minHeight: 44).contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 
     private func group(_ title: String, _ note: String) -> some View {
@@ -452,5 +509,297 @@ struct SourceStatus<Value: Codable & Sendable>: View {
                     .foregroundStyle(.secondary)
             }
         }.font(.footnote)
+    }
+}
+
+
+// MARK: - 任务小组与旁聊（ADR-017 M3）
+
+struct TeamRoute: Identifiable { let id: String }
+struct SideChatRoute: Identifiable { let sid: String; var id: String { sid } }
+
+/// 小组群聊（对应 Desktop 的 TeamChat）：成员、经过、交付与原文。在群里说话、验收 / 退回要 Face ID，停止用日常钥匙。
+/// 成员读过外部内容时，相关消息标出来，只当纯文本显示。
+struct TeamChatView: View {
+    let teamId: String
+    let entry: AssistantEntry
+    let session: AssistantSession
+    let owner: OwnerSession
+    @State private var chat: TeamChat?
+    @State private var loadError = ""
+    @State private var draft = ""
+
+    init(teamId: String, entry: AssistantEntry, session: AssistantSession, owner: OwnerSession, initial: TeamChat? = nil) {
+        self.teamId = teamId; self.entry = entry; self.session = session; self.owner = owner
+        _chat = State(initialValue: initial)
+    }
+    @State private var rejecting = false
+    @State private var reason = ""
+    @State private var confirmStop = false
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: VCSpace.space4) {
+                        if let chat {
+                            header(chat)
+                            ForEach(Array(chat.messages.enumerated()), id: \.offset) { _, message in bubble(message) }
+                        } else if loadError.isEmpty {
+                            ProgressView("正在读取群聊…").frame(maxWidth: .infinity).padding(.top, VCSpace.space8)
+                        }
+                        if !loadError.isEmpty { Text(loadError).font(.footnote).foregroundStyle(Palette.waitText) }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }
+                    .padding(.horizontal, VCSpace.space4).padding(.vertical, VCSpace.space3)
+                }
+                .refreshable { await load() }
+                .onChange(of: chat?.messages.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
+                if !owner.note.isEmpty {
+                    Text(owner.note).font(.footnote).foregroundStyle(Palette.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, VCSpace.space4).padding(.top, VCSpace.space2)
+                }
+                if let chat { actions(chat) }
+            }
+        }
+        .background(Palette.bg)
+        .navigationTitle(VCCopy.Nav.teams).navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } }
+            if chat?.team.isLive == true {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("停止小组", role: .destructive) { confirmStop = true }
+                    } label: { Image(systemName: "ellipsis") }.accessibilityLabel("更多")
+                }
+            }
+        }
+        .confirmationDialog("停止这个小组？", isPresented: $confirmStop, titleVisibility: .visible) {
+            Button("停止", role: .destructive) { run(.stop) }
+        } message: { Text("在做的成员会被叫停；已经做的不会撤回。") }
+        // 打开着就每 5 秒读一次，小组在做时能看到新进展
+        .task(id: "\(teamId):\(scenePhase == .active)") {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                await load()
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            }
+        }
+    }
+
+    private func header(_ chat: TeamChat) -> some View {
+        VStack(alignment: .leading, spacing: VCSpace.space2) {
+            HStack(spacing: VCSpace.space2) {
+                StatusPill(text: TeamStatus.label(chat.team.status), kind: pillKind(chat.team.status))
+                if let project = chat.team.project { Text(project).font(.caption).foregroundStyle(Palette.muted) }
+            }
+            Text(chat.team.objective).font(.headline).foregroundStyle(Palette.text).textSelection(.enabled)
+            if let acceptance = chat.team.acceptance, !acceptance.isEmpty {
+                Text("验收标准：" + acceptance.joined(separator: "；")).font(.footnote).foregroundStyle(Palette.secondary)
+            }
+            if !chat.members.isEmpty {
+                Text(chat.members.map { $0.name + ($0.working ? "（在做）" : "") }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(Palette.muted)
+            }
+            if chat.team.tainted == true {
+                Label("成员读过外部内容，标了提醒的消息请核对原文再决定", systemImage: "exclamationmark.triangle")
+                    .font(.footnote).foregroundStyle(Palette.waitText)
+            }
+        }.vcCard()
+    }
+
+    @ViewBuilder private func bubble(_ message: TeamChat.Message) -> some View {
+        if message.isSystem {
+            Text(message.text).font(.caption).foregroundStyle(Palette.muted).frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
+        } else if message.fromOwner {
+            HStack {
+                Spacer(minLength: VCSpace.space10)
+                Text(message.text).font(.body).foregroundStyle(Palette.text).textSelection(.enabled)
+                    .padding(.horizontal, VCSpace.space4).padding(.vertical, VCSpace.space2 + 2)
+                    .background(Palette.fill, in: RoundedRectangle(cornerRadius: VCRadius.bubble, style: .continuous))
+            }
+        } else {
+            VStack(alignment: .leading, spacing: VCSpace.space1) {
+                HStack(spacing: VCSpace.space2) {
+                    Text(message.speakerLabel).font(.caption.weight(.medium)).foregroundStyle(Palette.secondary)
+                    if message.mention == "owner" { StatusPill(text: VCCopy.Status.waiting, kind: .waiting) }
+                    if message.kind == "submitted" { StatusPill(text: "交付", kind: .done) }
+                }
+                CollapsibleText(text: message.text)
+                if message.tainted == true {
+                    Text("含外部内容，请核对").font(.caption).foregroundStyle(Palette.waitText)
+                }
+                if let evidence = message.evidence, !evidence.isEmpty {
+                    VStack(alignment: .leading, spacing: VCSpace.space2) {
+                        Text("交付与原文").font(.caption.weight(.medium)).foregroundStyle(Palette.muted)
+                        ForEach(Array(evidence.enumerated()), id: \.offset) { _, item in
+                            VStack(alignment: .leading, spacing: 2) {
+                                if let text = item.text, !text.isEmpty { Text(text).font(.footnote.weight(.medium)).foregroundStyle(Palette.text) }
+                                if let proof = item.evidence, !proof.isEmpty { Text(proof).font(.footnote).foregroundStyle(Palette.secondary).textSelection(.enabled) }
+                            }
+                        }
+                    }.vcCard(padding: VCSpace.space3)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func actions(_ chat: TeamChat) -> some View {
+        VStack(alignment: .leading, spacing: VCSpace.space2) {
+            switch chat.team.status {
+            case "review":
+                if rejecting {
+                    TextField("写明要改什么", text: $reason, axis: .vertical).lineLimit(1...4)
+                        .padding(VCSpace.space3)
+                        .background(Palette.surface, in: RoundedRectangle(cornerRadius: VCRadius.control, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: VCRadius.control, style: .continuous).strokeBorder(Palette.border))
+                    HStack {
+                        Button("取消") { rejecting = false; reason = "" }.buttonStyle(VCSecondaryButtonStyle())
+                        Spacer()
+                        Button("退回（Face ID）") { run(.reject(reason)) }.buttonStyle(VCPrimaryButtonStyle())
+                            .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || owner.working)
+                    }
+                } else {
+                    HStack {
+                        Button("退回…") { rejecting = true }.buttonStyle(VCSecondaryButtonStyle(danger: true))
+                        Spacer()
+                        Button("验收通过（Face ID）") { run(.accept) }.buttonStyle(VCPrimaryButtonStyle())
+                            .accessibilityIdentifier("native-team-accept")
+                    }.disabled(owner.working)
+                }
+            case "active", "waiting":
+                if chat.team.status == "waiting", let reason = chat.team.waitingReason, !reason.isEmpty, chat.team.tainted != true {
+                    Text("小组在等你：" + reason).font(.caption).foregroundStyle(Palette.waitText).lineLimit(3)
+                }
+                HStack(alignment: .bottom, spacing: VCSpace.space2) {
+                    TextField(chat.team.status == "waiting" ? "回复小组…" : "在群里说…", text: $draft, axis: .vertical)
+                        .lineLimit(1...4).padding(.vertical, VCSpace.space3).padding(.horizontal, VCSpace.space3)
+                    Button { run(.message(draft)) } label: {
+                        Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 36, height: 36)
+                            .foregroundStyle(Palette.onInk)
+                            .background(canSend ? Palette.ink : Palette.muted.opacity(0.4), in: Circle())
+                    }.frame(width: 44, height: 44).disabled(!canSend)
+                        .accessibilityLabel("发送（需要 Face ID）").accessibilityIdentifier("native-team-send")
+                }
+                .background(Palette.surface, in: RoundedRectangle(cornerRadius: VCRadius.input, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: VCRadius.input, style: .continuous).strokeBorder(Palette.border))
+                Text("发出会叫醒小组接着做，需要 Face ID。").font(.caption).foregroundStyle(Palette.muted)
+            default:
+                Text("小组已结束（\(TeamStatus.label(chat.team.status))），只能查看。").font(.footnote).foregroundStyle(Palette.muted)
+            }
+        }
+        .padding(.horizontal, VCSpace.space3).padding(.vertical, VCSpace.space2)
+        .background(Palette.bg)
+    }
+
+    private var canSend: Bool {
+        owner.canWrite && !owner.working && session.credential != nil
+            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func pillKind(_ status: String) -> StatusPill.Kind {
+        switch status {
+        case "active": return .running
+        case "waiting", "review": return .waiting
+        case "done": return .done
+        case "failed": return .failed
+        default: return .unknown
+        }
+    }
+
+    private func run(_ action: OwnerSession.TeamAction) {
+        guard let credential = session.credential else { return }
+        Task {
+            if await owner.act(on: teamId, action, entry, credential) {
+                if case .message = action { draft = "" }
+                if case .reject = action { rejecting = false; reason = "" }
+                await load()
+            }
+        }
+    }
+
+    @MainActor private func load() async {
+        guard let credential = session.credential else { return }
+        do {
+            let value = try await MobileAPI(entry: entry).team(credential, id: teamId)
+            guard !Task.isCancelled else { return }
+            chat = value
+            loadError = ""
+        } catch {
+            guard !Task.isCancelled else { return }
+            loadError = chat == nil ? "群聊暂时读不到，下拉重试。" : "最新进展暂时读不到，下面是上次的内容。"
+        }
+    }
+}
+
+/// 很长的成员结果先显示开头，点「展开全文」看完整的。
+struct CollapsibleText: View {
+    let text: String
+    @State private var expanded = false
+    private var long: Bool { text.count > 600 }
+    var body: some View {
+        VStack(alignment: .leading, spacing: VCSpace.space1) {
+            Text(long && !expanded ? String(text.prefix(600)) + "…" : text)
+                .font(.body).foregroundStyle(Palette.text).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if long {
+                Button(expanded ? "收起" : "展开全文") { expanded.toggle() }.font(.caption).foregroundStyle(Palette.secondary)
+            }
+        }
+    }
+}
+
+/// 旁聊（Desktop 上开的其它会话）：手机上只读。接着聊请在电脑上，或在主要聊天里说。
+struct SideChatView: View {
+    let sid: String
+    let entry: AssistantEntry
+    let session: AssistantSession
+    @State private var transcript: SideChatTranscript?
+    @State private var loadError = ""
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: VCSpace.space4) {
+                Text("旁聊在手机上只能看。要接着聊，请在电脑上打开这段，或者在主要聊天里说。")
+                    .font(.footnote).foregroundStyle(Palette.muted).vcCard(padding: VCSpace.space3)
+                if let transcript {
+                    ForEach(Array(transcript.items.enumerated()), id: \.offset) { _, item in
+                        if item.isMine {
+                            HStack {
+                                Spacer(minLength: VCSpace.space10)
+                                Text(item.text).font(.body).foregroundStyle(Palette.text).textSelection(.enabled)
+                                    .padding(.horizontal, VCSpace.space4).padding(.vertical, VCSpace.space2 + 2)
+                                    .background(Palette.fill, in: RoundedRectangle(cornerRadius: VCRadius.bubble, style: .continuous))
+                            }
+                        } else {
+                            Text(item.text).font(.body).foregroundStyle(Palette.text).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading).lineSpacing(3)
+                        }
+                    }
+                } else if loadError.isEmpty {
+                    ProgressView("正在读取…").frame(maxWidth: .infinity)
+                }
+                if !loadError.isEmpty { Text(loadError).font(.footnote).foregroundStyle(Palette.waitText) }
+            }
+            .padding(.horizontal, VCSpace.space4).padding(.vertical, VCSpace.space3)
+        }
+        .background(Palette.bg)
+        .navigationTitle(transcript?.title ?? VCCopy.Nav.sideChats).navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } } }
+        .refreshable { await load() }
+        .task(id: sid) { await load() }
+    }
+
+    @MainActor private func load() async {
+        guard let credential = session.credential else { return }
+        do {
+            transcript = try await MobileAPI(entry: entry).sideChat(credential, sid: sid)
+            loadError = ""
+        } catch {
+            loadError = "这段旁聊暂时读不到，下拉重试。"
+        }
     }
 }

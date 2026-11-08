@@ -38,6 +38,10 @@ final class OwnerSession {
     var changes: [OwnerChange] = []
     var timeline: ActivityTimeline?
     var timelineError = ""
+    /// 任务小组与旁聊（ADR-017 M3）；读不到时保留上次的，另有提示
+    var teams: [TeamSummary] = []
+    var sideChats: [SideChatSummary] = []
+    var conversationsError = ""
     private var timelineRequest = UUID()
     private var timelineEpoch = UUID()
     var chatApproval = ChatApprovalState()
@@ -56,6 +60,9 @@ final class OwnerSession {
         timelineRequest = UUID()
         timeline = nil
         timelineError = ""
+        teams = []
+        sideChats = []
+        conversationsError = ""
     }
     var note = ""
     var working = false
@@ -143,6 +150,56 @@ final class OwnerSession {
             dispatches = try await orders
         } catch { say(error) }
         await refreshTimeline(entry, credential)
+        await refreshConversations(entry, credential)
+    }
+
+    /// 抽屉里的小组和旁聊。旧服务没有这两个接口（404）时安静地留空。
+    func refreshConversations(_ entry: AssistantEntry, _ credential: NativeCredential) async {
+        guard canWrite, !Task.isCancelled else { return }
+        let epoch = timelineEpoch
+        do {
+            async let teamList = api(entry).teams(credential)
+            async let chatList = api(entry).sideChats(credential)
+            let (loadedTeams, loadedChats) = try await (teamList, chatList)
+            guard epoch == timelineEpoch, !Task.isCancelled else { return }
+            teams = loadedTeams
+            sideChats = loadedChats
+            conversationsError = ""
+        } catch {
+            guard epoch == timelineEpoch, !Task.isCancelled else { return }
+            if error as? MobileError == .unauthorized { sessionExpired?(); return }
+            conversationsError = "小组和旁聊暂时读不到，列表可能不是最新的。"
+        }
+    }
+
+    // —— 小组群聊里的操作：在群里说话、验收 / 退回要 Face ID，停止用日常钥匙 ——
+
+    enum TeamAction { case message(String), accept, reject(String), stop }
+
+    /// 做一个小组操作；成功返回 true，失败把原因写进 note。
+    func act(on teamId: String, _ action: TeamAction, _ entry: AssistantEntry, _ credential: NativeCredential) async -> Bool {
+        guard canWrite, let device = bootstrap?.device.id, !working else { return false }
+        working = true; defer { working = false }
+        do {
+            let client = api(entry)
+            switch action {
+            case .message(let text):
+                _ = try await client.teamMessage(credential, signer: signer, deviceId: device, teamId: teamId, text: String(text.prefix(2000)))
+            case .accept:
+                _ = try await client.teamDecide(credential, signer: signer, deviceId: device, teamId: teamId, accept: true, note: "")
+            case .reject(let note):
+                _ = try await client.teamDecide(credential, signer: signer, deviceId: device, teamId: teamId, accept: false,
+                                             note: String(note.prefix(2000)))
+            case .stop:
+                _ = try await client.teamStop(credential, signer: signer, deviceId: device, teamId: teamId)
+            }
+            note = ""
+            await refreshConversations(entry, credential)
+            return true
+        } catch {
+            say(error)
+            return false
+        }
     }
 
     func decide(_ entry: AssistantEntry, _ credential: NativeCredential, _ decision: PendingDecision, approve: Bool) async {

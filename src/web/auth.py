@@ -54,7 +54,10 @@ _EXEMPT_EXACT = {"/", "/review", "/mobile", "/mobile/", "/mobile/manage",
                  "/api/assistant/app-relay/turn", "/api/assistant/app-relay/status",
                  "/api/assistant/app-relay/card", "/api/assistant/app-relay/chat",
                  "/api/assistant/app-relay/op", "/api/assistant/app-relay/timeline",
-                 "/api/assistant/app-relay/access"}
+                 "/api/assistant/app-relay/access",
+                 "/api/assistant/app-relay/teams", "/api/assistant/app-relay/team",
+                 "/api/assistant/app-relay/team-op", "/api/assistant/app-relay/side-chats",
+                 "/api/assistant/app-relay/side-chat"}
 
 
 # 手机端自带凭据的路由：不走管理员令牌，改由路由自己的依赖校验（设备令牌、配对窗口 + 逐次证明、
@@ -87,6 +90,12 @@ MOBILE_SELF_AUTHENTICATED = frozenset({
     # 动态时间线：读要求钥匙已被信任；恢复被暂停的目标要日常钥匙签名
     ("GET", "/api/mobile/native/timeline"), ("POST", "/api/mobile/native/goal-advance/resume"),
     ("GET", "/api/mobile/native/access"),
+    # 任务小组：读要求钥匙已被信任；在群里说话、验收 / 退回要批准钥匙（Face ID），停止用日常钥匙（ADR-017 M3）
+    ("GET", "/api/mobile/native/teams"), ("GET", "/api/mobile/native/team"),
+    ("POST", "/api/mobile/native/team/message"), ("POST", "/api/mobile/native/team/decide"),
+    ("POST", "/api/mobile/native/team/stop"),
+    # 旁聊：只读，要求钥匙已被信任
+    ("GET", "/api/mobile/native/side-chats"), ("GET", "/api/mobile/native/side-chat"),
 })
 
 

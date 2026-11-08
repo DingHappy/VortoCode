@@ -338,3 +338,53 @@ async def resume_goal(request: Request):
         body = await _signed(request, grant, "device")
         return await _execute(request, grant, "device", "resume_goal", {"goal_id": body.get("goal_id")})
     return await _guarded(request, handle)
+
+
+# —— 任务小组与旁聊（ADR-017 M3）：经本机专用接口转给常驻助理（小组调度器和会话都在那里） ——
+
+_TEAM_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_SID_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
+
+
+def _read_only(path: str, body_of=lambda request: {}):
+    async def route(request: Request):
+        async def handle(grant):
+            if not _trusted(grant):
+                return _reply({"detail": "这台手机还没获得对话权限"}, 403)
+            body = body_of(request)
+            if body is None:
+                return _reply({"detail": "没有这一项"}, 404)
+            return await _relayed(path, body)
+        return await _guarded(request, handle)
+    return route
+
+
+def _query(name: str, pattern: "re.Pattern[str]"):
+    def read(request: Request):
+        value = request.query_params.get(name, "")
+        return {name: value} if pattern.fullmatch(value) else None
+    return read
+
+
+router.add_api_route("/api/mobile/native/teams", _read_only("/api/assistant/app-relay/teams"), methods=["GET"])
+router.add_api_route("/api/mobile/native/team",
+                     _read_only("/api/assistant/app-relay/team", _query("id", _TEAM_ID_RE)), methods=["GET"])
+router.add_api_route("/api/mobile/native/side-chats", _read_only("/api/assistant/app-relay/side-chats"), methods=["GET"])
+router.add_api_route("/api/mobile/native/side-chat",
+                     _read_only("/api/assistant/app-relay/side-chat", _query("sid", _SID_RE)), methods=["GET"])
+
+
+def _team_write(kind: str):
+    """小组写操作：在群里说话、验收 / 退回要批准钥匙（Face ID），停止用日常钥匙；常驻助理会再验一遍。"""
+    async def route(request: Request):
+        async def handle(grant):
+            await _signed(request, grant, kind)
+            return await _relayed("/api/assistant/app-relay/team-op",
+                                  {"envelope": await _envelope(request, grant, kind)})
+        return await _guarded(request, handle)
+    return route
+
+
+router.add_api_route("/api/mobile/native/team/message", _team_write("approval"), methods=["POST"])
+router.add_api_route("/api/mobile/native/team/decide", _team_write("approval"), methods=["POST"])
+router.add_api_route("/api/mobile/native/team/stop", _team_write("device"), methods=["POST"])

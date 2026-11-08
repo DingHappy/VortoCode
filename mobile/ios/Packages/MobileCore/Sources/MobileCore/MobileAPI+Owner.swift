@@ -192,6 +192,52 @@ extension MobileAPI {
         return try decode(ChatCard.self, data)
     }
 
+    // —— 任务小组与旁聊（ADR-017 M3）——
+
+    public func teams(_ credential: NativeCredential) async throws -> [TeamSummary] {
+        try decode(TeamList.self, try await owner("teams", method: "GET", credential: credential)).teams
+    }
+
+    public func team(_ credential: NativeCredential, id: String) async throws -> TeamChat {
+        try decode(TeamChat.self, try await owner("team", method: "GET", credential: credential,
+                                                  query: [URLQueryItem(name: "id", value: id)]))
+    }
+
+    /// 在小组群里说话（等你时就是回复）。用批准钥匙签：会叫醒小组接着干活，所以要 Face ID。
+    public func teamMessage(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                            teamId: String, text: String) async throws -> TeamChat.Team {
+        let data = try await owner("team/message", method: "POST", credential: credential,
+                                   body: try json(["team_id": teamId, "text": text]),
+                                   signer: signer, key: .approval, deviceId: deviceId)
+        return try decode(TeamOpResult.self, data).team
+    }
+
+    /// 验收通过 / 退回（退回要写原因）。都用批准钥匙（Face ID）。
+    public func teamDecide(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                           teamId: String, accept: Bool, note: String) async throws -> TeamChat.Team {
+        let data = try await owner("team/decide", method: "POST", credential: credential,
+                                   body: try json(["team_id": teamId, "accept": accept, "note": note]),
+                                   signer: signer, key: .approval, deviceId: deviceId)
+        return try decode(TeamOpResult.self, data).team
+    }
+
+    /// 停止小组：往安全的方向走，用日常钥匙。
+    public func teamStop(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                         teamId: String) async throws -> TeamChat.Team {
+        let data = try await owner("team/stop", method: "POST", credential: credential,
+                                   body: try json(["team_id": teamId]), signer: signer, deviceId: deviceId)
+        return try decode(TeamOpResult.self, data).team
+    }
+
+    public func sideChats(_ credential: NativeCredential) async throws -> [SideChatSummary] {
+        try decode(SideChatList.self, try await owner("side-chats", method: "GET", credential: credential)).chats
+    }
+
+    public func sideChat(_ credential: NativeCredential, sid: String) async throws -> SideChatTranscript {
+        try decode(SideChatTranscript.self, try await owner("side-chat", method: "GET", credential: credential,
+                                                            query: [URLQueryItem(name: "sid", value: sid)]))
+    }
+
     /// 登记推送：APNs 设备令牌（十六进制）和解密推送正文用的公钥。App 每次启动都调。
     public func registerPush(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
                              apnsToken: String, pushKey: String, environment: String) async throws {

@@ -24,9 +24,14 @@ PATH_OPS = {
     "/api/mobile/native/chat/send": "chat_send",
     "/api/mobile/native/chat/card": "chat_card",
     "/api/mobile/native/goal-advance/resume": "resume_goal",
+    "/api/mobile/native/team/message": "team_message",
+    "/api/mobile/native/team/decide": "team_decide",
+    "/api/mobile/native/team/stop": "team_stop",
 }
 # 批准时必须是批准钥匙（Face ID）签的操作。对话里的卡片按卡片自己的风险级别在 AppTurns 里判。
 _APPROVAL_OPS = {"decide_codex", "dispatch"}
+# 不论批准还是拒绝都要批准钥匙：在小组群里说话、退回都会叫醒小组接着干活，验收会结束小组（ADR-017 M3）
+_ALWAYS_APPROVAL_OPS = {"team_message", "team_decide"}
 _MAX_BODY = 16 * 1024
 
 
@@ -85,6 +90,8 @@ def open_envelope(root: str, envelope: Any, *, now: Optional[float] = None) -> T
         raise EnvelopeRejected("请求体无效")
     if op in _APPROVAL_OPS and data.get("approve") is True and fields["key_kind"] != "approval":
         raise EnvelopeRejected("批准需要批准钥匙")
+    if op in _ALWAYS_APPROVAL_OPS and fields["key_kind"] != "approval":
+        raise EnvelopeRejected("这个操作需要批准钥匙")
     if op == "chat_card" and data.get("key_kind") != fields["key_kind"]:
         raise EnvelopeRejected("声明的钥匙与签名的钥匙不一致")
     return op, data, fields["device_id"], fields["key_kind"]

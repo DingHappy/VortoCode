@@ -25,7 +25,13 @@ CHAT_PATH = "/api/assistant/app-relay/chat"
 OP_PATH = "/api/assistant/app-relay/op"
 TIMELINE_PATH = "/api/assistant/app-relay/timeline"
 ACCESS_PATH = "/api/assistant/app-relay/access"
-PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH, TIMELINE_PATH, ACCESS_PATH)
+TEAMS_PATH = "/api/assistant/app-relay/teams"
+TEAM_PATH = "/api/assistant/app-relay/team"
+TEAM_OP_PATH = "/api/assistant/app-relay/team-op"
+SIDE_CHATS_PATH = "/api/assistant/app-relay/side-chats"
+SIDE_CHAT_PATH = "/api/assistant/app-relay/side-chat"
+PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH, TIMELINE_PATH, ACCESS_PATH,
+         TEAMS_PATH, TEAM_PATH, TEAM_OP_PATH, SIDE_CHATS_PATH, SIDE_CHAT_PATH)
 
 _turns = None
 
@@ -200,3 +206,136 @@ async def relay_access(request: Request):
     from src.gateway.owner_access import snapshot
     root = os.getcwd()
     return await asyncio.to_thread(snapshot, root, live_cards=pending_card_refs(root))
+
+
+# —— 任务小组与旁聊（ADR-017 M3）：手机上看群聊、回复、验收或退回；旁聊只读 ——
+
+_TEAM_ID = r"[A-Za-z0-9_-]{1,64}"
+_SID = r"[A-Za-z0-9_-]{1,80}"
+_PHONE_PREFIXES = ("telegram-", "dingtalk-")
+_MAX_TEAM_MESSAGES = 200
+_MAX_TEXT = 6000
+
+
+def _team_summary(view: dict, updated: str) -> dict:
+    return {"id": view["id"], "objective": view["objective"], "status": view["status"], "mode": view["mode"],
+            "waiting_reason": view.get("waiting_reason") or "", "project": view.get("project"),
+            "tainted": bool(view.get("tainted")), "updated_at": updated,
+            "members": [{"name": item["name"], "role": item["role"]} for item in view.get("members") or []]}
+
+
+@router.post(TEAMS_PATH)
+async def relay_teams(request: Request):
+    """进行中的小组和最近结束的几个（与 Desktop 侧栏同一来源），只给列表需要的字段。"""
+    _guard(request)
+    from src.web.routers import teams as team_routes
+    listing = await team_routes.list_teams()
+    return {"teams": [_team_summary(item, item.get("updated_at") or "") for item in listing["teams"]]}
+
+
+@router.post(TEAM_PATH)
+async def relay_team(request: Request):
+    """一个小组的群聊：成员、经过（最近 200 条，每条最多 6000 字）。成员结果可能含外部内容，按 tainted 标出。"""
+    _guard(request)
+    import re
+    body = await _body(request)
+    team_id = body.get("id")
+    if not isinstance(team_id, str) or not re.fullmatch(_TEAM_ID, team_id):
+        raise HTTPException(404, "没有这个小组")
+    from src.web.routers import teams as team_routes
+    data = await team_routes.team_transcript(team_id)
+    messages = []
+    for row in data["messages"][-_MAX_TEAM_MESSAGES:]:
+        item = {key: row.get(key) for key in ("at", "speaker", "kind", "member", "role", "mention") if row.get(key)}
+        item["text"] = str(row.get("text") or "")[:_MAX_TEXT]
+        item["tainted"] = bool(row.get("tainted"))
+        if row.get("evidence"):
+            item["evidence"] = [{"criterion": str(entry.get("criterion") or "")[:500],
+                                 "text": str(entry.get("text") or "")[:2000],
+                                 "evidence": str(entry.get("evidence") or "")[:2000]} for entry in row["evidence"][:20]]
+        messages.append(item)
+    members = [{key: member.get(key) for key in ("name", "role", "title", "engine", "state", "rounds", "delivered", "failures")}
+               for member in data["members"]]
+    return {"team": data["team"], "members": members, "messages": messages}
+
+
+_TEAM_OPS = {"team_message": ("team_id", "text"), "team_decide": ("team_id", "accept", "note"), "team_stop": ("team_id",)}
+
+
+@router.post(TEAM_OP_PATH)
+async def relay_team_op(request: Request):
+    """手机签过名的小组操作，再验一遍签名；在群里说话和验收 / 退回必须是批准钥匙（Face ID）签的，
+    停止用日常钥匙（见 relay_envelope）。执行和 Desktop 同一组函数，审计写「在手机上」。"""
+    _guard(request)
+    import re
+    op, data, _kind = _opened(await _body(request), set(_TEAM_OPS))
+    team_id = data.get("team_id")
+    if not isinstance(team_id, str) or not re.fullmatch(_TEAM_ID, team_id):
+        raise HTTPException(400, "需要小组 id")
+    from src.web.routers import teams as team_routes
+    if op == "team_message":
+        text = data.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+            raise HTTPException(400, "消息需要 1–2000 字")
+        team_routes.apply_message(team_id, text.strip(), via="在手机上")
+    elif op == "team_decide":
+        accept, note = data.get("accept"), data.get("note", "")
+        if not isinstance(accept, bool) or not isinstance(note, str) or len(note) > 2000:
+            raise HTTPException(400, "需要 {team_id, accept, note}")
+        team_routes.apply_decision(team_id, accept, note.strip(), via="在手机上")
+    else:
+        team_routes.apply_stop(team_id, via="在手机上", where="手机上")
+    return await relay_team_view(team_id)
+
+
+async def relay_team_view(team_id: str) -> dict:
+    from src.web.routers import teams as team_routes
+    data = await team_routes.team_transcript(team_id)
+    return {"team": data["team"]}
+
+
+def _side_chat_sids(root: str) -> list[dict]:
+    from src.gateway.main_conversation import main_chat_key
+    from src.gateway.session_store import list_sessions
+    main = main_chat_key(root)
+    out = []
+    for summary in list_sessions(root):
+        sid = str(summary.get("sid") or "")
+        if (not sid or f"sid-{sid}" == main or sid == main or sid.startswith(_PHONE_PREFIXES)
+                or not summary.get("has_content") or not summary.get("messages")):
+            continue
+        out.append(summary)
+    return out
+
+
+@router.post(SIDE_CHATS_PATH)
+async def relay_side_chats(request: Request):
+    """旁聊列表（与 Desktop 侧栏同一规则：不含主要聊天和 Telegram / 钉钉上的会话），最近 20 段，只读。"""
+    _guard(request)
+    from datetime import datetime, timezone
+    chats = await asyncio.to_thread(_side_chat_sids, os.getcwd())
+    return {"chats": [{"sid": item["sid"], "title": str(item.get("title") or item["sid"])[:120],
+                       "messages": int(item.get("messages") or 0),
+                       "updated_at": datetime.fromtimestamp(float(item.get("updated") or 0), timezone.utc).isoformat()}
+                      for item in chats[:20]]}
+
+
+@router.post(SIDE_CHAT_PATH)
+async def relay_side_chat(request: Request):
+    """一段旁聊的记录（最近 200 条），只读：手机上不接着这段聊。"""
+    _guard(request)
+    import re
+    body = await _body(request)
+    sid = body.get("sid")
+    if not isinstance(sid, str) or not re.fullmatch(_SID, sid):
+        raise HTTPException(404, "没有这段旁聊")
+    root = os.getcwd()
+    allowed = {item["sid"] for item in await asyncio.to_thread(_side_chat_sids, root)}
+    if sid not in allowed:
+        raise HTTPException(404, "没有这段旁聊")
+    from src.gateway.session_store import load_session, title_from_transcript
+    data = load_session(root, f"sid-{sid}") or {}
+    items = [{"role": item.get("role"), "text": str(item.get("text") or "")[:_MAX_TEXT], "at": item.get("at")}
+             for item in data.get("transcript") or []
+             if isinstance(item, dict) and item.get("role") in ("user", "assistant")]
+    return {"sid": sid, "title": str(data.get("title") or title_from_transcript(items))[:120], "items": items[-200:]}
