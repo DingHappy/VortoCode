@@ -125,6 +125,20 @@ Desktop 同一段对话可见。回合中途要确认的动作变成待批准卡
 | `GET /api/mobile/native/chat` | 会话 + 钥匙已信任 | 主要聊天最近 50 条（各入口都有，标来源），只给正文 |
 | `POST /api/mobile/native/chat/card` | 会话 + 签名（`key_kind` 声明用哪把钥匙并一起签进去） | `{rid, card_id, approve, digest, key_kind}`；级别不够的卡由助理拒绝 |
 
+**任务小组与旁聊（ADR-017 M3）**：同样经本机专用接口转给常驻助理（小组调度器和会话都在那里）。小组写操作执行的是 Desktop 那一组函数（`web/routers/teams.py` 的 `apply_*`），审计写「在手机上」。
+
+| 方法与路径 | 身份 | 效果 |
+| --- | --- | --- |
+| `GET /api/mobile/native/teams` | 会话 + 钥匙已信任 | 进行中的小组和最近结束的 10 个：目标、状态、等你的原因、是否读过外部内容、成员 |
+| `GET /api/mobile/native/team?id=` | 会话 + 钥匙已信任 | 群聊：成员状态、经过（最近 200 条，每条 ≤6000 字，外部内容标 `tainted`）、交付证据 |
+| `POST /api/mobile/native/team/message` | 会话 + **批准钥匙**（Face ID） | `{team_id, text}`：在群里说话（等你时就是回复），叫醒小组；已交付时拒，请验收或退回 |
+| `POST /api/mobile/native/team/decide` | 会话 + **批准钥匙**（Face ID） | `{team_id, accept, note}`：验收通过（结束小组，不合并代码）或退回（要写原因，叫醒小组） |
+| `POST /api/mobile/native/team/stop` | 会话 + 日常钥匙 | `{team_id}`：停止小组 |
+| `GET /api/mobile/native/side-chats` | 会话 + 钥匙已信任 | 旁聊列表（不含主要聊天和 Telegram / 钉钉会话），最近 20 段 |
+| `GET /api/mobile/native/side-chat?sid=` | 会话 + 钥匙已信任 | 一段旁聊最近 200 条，只读 |
+
+回话和退回不论内容都会让小组在常驻电脑上继续干活，所以和批 Codex 动作一样要批准钥匙；停止往安全方向走，用日常钥匙。常驻助理拆签名请求时按路径再核一次钥匙类别。
+
 **常驻助理再验一遍签名（2026-11-02，纵深防御）**：手机网关在公网上，转发时不再摘出参数，而是把手机签过名的
 原始请求（方法、路径、请求体、时间戳、nonce、签名、设备）原样转过去；常驻助理用设备登记里的公钥再验签、核对设备没撤销、
 时间新鲜、nonce 没用过（与网关各记一份），**操作由签进去的路径决定**，批准类操作要批准钥匙（`gateway/relay_envelope.py`）。

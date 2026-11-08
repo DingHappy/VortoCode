@@ -1620,5 +1620,77 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/mobile/native/teams",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/team",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/side-chats",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/side-chat",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/team/message",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/team/decide",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/team/stop",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/teams",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/team",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/team-op",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/side-chats",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/side-chat",
+    "methods": [
+      "POST"
+    ]
   }
 ]

@@ -223,6 +223,8 @@ struct ChatView: View {
     let waitingUncertain: Bool
     /// Codex 动作和任务单在助理详情的「动态」里处理
     let openActivity: () -> Void
+    /// 小组在它自己的群聊里处理
+    var openTeam: (String) -> Void = { _ in }
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var typing: Bool
     @State private var waitingExpanded = false
@@ -231,9 +233,11 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
                 WaitingBand(items: waiting, uncertain: waitingUncertain, expanded: $waitingExpanded) { item in
-                    if item.kind == .card {
-                        withAnimation { proxy.scrollTo(item.id, anchor: .top) }
-                    } else { openActivity() }
+                    switch item.kind {
+                    case .card: withAnimation { proxy.scrollTo(item.id, anchor: .top) }
+                    case .team: openTeam(String(item.id.dropFirst("team:".count)))
+                    default: openActivity()
+                    }
                 }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: VCSpace.space4) {

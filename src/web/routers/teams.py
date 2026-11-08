@@ -3,7 +3,8 @@
 - 读：列表与详情都是 ``TeamService`` 由代码拼的结构化视图，外加成员每轮的结果原文、交付分支、协调记录里的
   事件流水和交付证据。成员结果与交付证据可能含外部内容，按 ``tainted`` 标给前端，前端只当纯文本显示。
 - 写：停止、验收（通过 / 退回）、回话。都是主人在 Desktop 上亲手点的，等同于在对话里确认；记进决策审计。
-  换成员仍走对话里的确认卡。小组不设额度。
+  换成员仍走对话里的确认卡。小组不设额度。手机 App（ADR-017 M3）经本机转发调用同一组 ``apply_*``，
+  审计里写明「在手机上」。
 - 只有装配了任务小组调度器的进程（常驻助理）才有这些数据；别的进程返回空列表 / 409。
 """
 from __future__ import annotations
@@ -110,17 +111,41 @@ def _conflict(action):
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
-@router.post("/api/teams/{team_id}/decide")
-async def decide_team(team_id: str, body: TeamDecision):
+def apply_decision(team_id: str, accept: bool, note: str, *, via: str = "") -> Any:
+    """验收通过 / 退回（退回要写原因，并叫醒小组按意见继续）。``via`` 是审计里的入口说明，如「在手机上」。"""
+    runner = _runner()
+    _get(team_id)
+    if not accept and not note.strip():
+        raise HTTPException(status_code=422, detail="退回要写明原因")
+    root = _conflict(lambda: runner.service.decide(team_id, accept, note))
+    _audit(root, via + ("验收通过" if accept else "退回"))
+    if not accept:
+        runner.wake(team_id, "主人退回了交付，按意见继续")
+    return root
+
+
+def apply_message(team_id: str, text: str, *, via: str = "", verb: str = "在群里回复") -> Any:
+    """主人在群里说话：小组在等你时就是回复；在做时转给协调人，它下一回合醒来看到。交付后请用验收 / 退回。"""
     runner = _runner()
     root = _get(team_id)
-    if not body.accept and not body.note.strip():
-        raise HTTPException(status_code=422, detail="退回要写明原因")
-    root = _conflict(lambda: runner.service.decide(team_id, body.accept, body.note))
-    _audit(root, "验收通过" if body.accept else "退回")
-    if not body.accept:
-        runner.wake(team_id, "主人退回了交付，按意见继续")
-    return _detail(root)
+    if root.status == "review":
+        raise HTTPException(status_code=409, detail="小组已交付：请点验收通过，或写明要改什么再退回")
+    root = _conflict(lambda: runner.service.owner_reply(team_id, text))
+    _audit(root, via + verb)
+    runner.wake(team_id, "主人在群里说话了" if root.status == "active" else "主人回复了")
+    return root
+
+
+def apply_stop(team_id: str, *, via: str = "", where: str = "Desktop 上") -> None:
+    runner = _runner()
+    _get(team_id)
+    root = _conflict(lambda: runner.stop(team_id, f"主人在{where}停止"))
+    _audit(root, via + "停止")
+
+
+@router.post("/api/teams/{team_id}/decide")
+async def decide_team(team_id: str, body: TeamDecision):
+    return _detail(apply_decision(team_id, body.accept, body.note))
 
 
 @router.post("/api/teams/{team_id}/reply")
@@ -135,10 +160,7 @@ async def reply_team(team_id: str, body: TeamReply):
 
 @router.post("/api/teams/{team_id}/stop")
 async def stop_team(team_id: str):
-    runner = _runner()
-    _get(team_id)
-    root = _conflict(lambda: runner.stop(team_id, "主人在 Desktop 上停止"))
-    _audit(root, "停止")
+    apply_stop(team_id)
     return _detail(_get(team_id))
 
 
@@ -160,12 +182,6 @@ class TeamMessage(BaseModel):
 
 @router.post("/api/teams/{team_id}/message")
 async def message_team(team_id: str, body: TeamMessage):
-    """主人在群里说话：小组在等你时就是回复；在做时转给协调人，它下一回合醒来看到。交付后请用验收 / 退回。"""
-    runner = _runner()
-    root = _get(team_id)
-    if root.status == "review":
-        raise HTTPException(status_code=409, detail="小组已交付：请点验收通过，或写明要改什么再退回")
-    root = _conflict(lambda: runner.service.owner_reply(team_id, body.text))
-    _audit(root, "在群里回复")
-    runner.wake(team_id, "主人在群里说话了" if root.status == "active" else "主人回复了")
+    """主人在群里说话（见 apply_message）。"""
+    apply_message(team_id, body.text)
     return await team_transcript(team_id)

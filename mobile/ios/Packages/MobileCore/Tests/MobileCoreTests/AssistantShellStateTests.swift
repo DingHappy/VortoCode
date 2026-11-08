@@ -58,3 +58,45 @@ final class AssistantShellStateTests: XCTestCase {
         XCTAssertEqual(ApprovalLabels.source(nil), "来源待核对")
     }
 }
+
+final class TeamModelsTests: XCTestCase {
+    private func decode<T: Decodable>(_ type: T.Type, _ raw: [String: Any]) throws -> T {
+        try MobileAPI.decoder.decode(T.self, from: JSONSerialization.data(withJSONObject: raw))
+    }
+
+    func testTeamsNeedingTheOwnerJoinTheWaitingBand() throws {
+        let list = try decode(TeamList.self, ["teams": [
+            ["id": "t1", "objective": "比较三家云", "status": "review", "mode": "auto", "waiting_reason": "", "project": NSNull(),
+             "tainted": false, "updated_at": "2026-11-07T10:00:00", "members": [["name": "研究员", "role": "web-researcher"]]],
+            ["id": "t2", "objective": "写周报", "status": "waiting", "mode": "auto", "waiting_reason": "预算多少？\n第二行",
+             "project": "VortoCode", "tainted": false, "updated_at": NSNull()],
+            ["id": "t3", "objective": "查机票", "status": "waiting", "mode": "auto", "waiting_reason": "请打开这个链接",
+             "project": NSNull(), "tainted": true, "updated_at": NSNull()],
+            ["id": "t4", "objective": "整理资料", "status": "active", "mode": "auto", "waiting_reason": "", "project": NSNull(),
+             "tainted": false, "updated_at": NSNull()]]])
+        XCTAssertEqual(list.teams.map(\.statusLabel), ["交付了，等你验收", "需要你回复", "需要你回复", "在忙"])
+        let items = WaitingItem.collect(cards: [], decisions: [], dispatches: [], teams: list.teams)
+        XCTAssertEqual(items.map(\.id), ["team:t1", "team:t2", "team:t3"])
+        XCTAssertEqual(items[1].detail, "预算多少？")
+        XCTAssertEqual(items[2].detail, "查机票")          // 读过外部内容的小组不把它的问题原文放进提醒
+        XCTAssertTrue(items[2].tainted)
+    }
+
+    func testTeamChatAndSideChatDecode() throws {
+        let chat = try decode(TeamChat.self, [
+            "team": ["id": "t1", "objective": "比较三家云", "status": "review", "mode": "auto", "waiting_reason": "",
+                     "used": ["rounds": 3], "project": NSNull(), "tainted": true, "acceptance": ["给推荐"], "updated_at": "x"],
+            "members": [["name": "研究员", "role": "web-researcher", "title": "网页研究", "engine": "vortocode",
+                         "state": "working", "rounds": 2, "delivered": 1, "failures": 0]],
+            "messages": [["speaker": "owner", "kind": "owner_reply", "text": "500 以内", "tainted": false],
+                         ["speaker": "member", "kind": "result", "member": "研究员", "text": "A 最便宜", "tainted": true],
+                         ["speaker": "coordinator", "kind": "submitted", "text": "推荐 A", "tainted": true,
+                          "evidence": [["criterion": "0", "text": "给推荐", "evidence": "价格表"]]]]])
+        XCTAssertTrue(chat.members[0].working)
+        XCTAssertEqual(chat.messages.map(\.speakerLabel), ["你", "研究员", "协调人"])
+        XCTAssertEqual(chat.messages[2].evidence?.first?.evidence, "价格表")
+        let side = try decode(SideChatTranscript.self, ["sid": "s1", "title": "查机票",
+                                                        "items": [["role": "user", "text": "下周去上海", "at": NSNull()]]])
+        XCTAssertTrue(side.items[0].isMine)
+    }
+}

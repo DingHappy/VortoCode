@@ -87,7 +87,9 @@ _GENERAL_HTTP_PATTERNS = (
                # 任务单：只读常驻助理已有的任务单，下发 / 撤回交给常驻助理执行
                r"|dispatches|dispatch"
                # 动态时间线（只读汇总）与恢复被暂停的目标
-               r"|timeline|access|goal-advance/resume))"),
+               r"|timeline|access|goal-advance/resume"
+               # 任务小组（群聊、回话、验收 / 退回、停止）与旁聊（只读），都转给常驻助理（ADR-017 M3）
+               r"|teams|team|team/(message|decide|stop)|side-chats|side-chat))"),
     re.compile(r"/api/runtime-activity"),  # 只读进程活动计数，不授予任务、文件或命令能力。
     re.compile(r"/api/cron/[^/]+/(enabled|history)"),
 )

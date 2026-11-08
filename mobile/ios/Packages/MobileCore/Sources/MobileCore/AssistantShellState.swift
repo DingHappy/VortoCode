@@ -37,6 +37,8 @@ public struct WaitingItem: Identifiable, Equatable, Sendable {
         case decision
         /// 等你下发的任务单
         case dispatch
+        /// 任务小组：交付了等你验收，或在等你回答
+        case team
     }
     public let id: String
     public let kind: Kind
@@ -45,7 +47,7 @@ public struct WaitingItem: Identifiable, Equatable, Sendable {
     public let tainted: Bool
 
     public static func collect(cards: [ChatCard], decisions: [PendingDecision],
-                               dispatches: [DispatchProposal]) -> [WaitingItem] {
+                               dispatches: [DispatchProposal], teams: [TeamSummary] = []) -> [WaitingItem] {
         let fromCards: [WaitingItem] = cards.map { card in
             WaitingItem(id: "card:" + card.id, kind: .card, title: "需要你确认 · " + card.categoryLabel,
                         detail: firstLine(card.text), tainted: card.tainted == true)
@@ -59,7 +61,14 @@ public struct WaitingItem: Identifiable, Equatable, Sendable {
             WaitingItem(id: "dispatch:" + proposal.id, kind: .dispatch, title: "任务单 · " + (proposal.project ?? "项目"),
                         detail: proposal.title, tainted: proposal.tainted)
         }
-        return fromCards + fromDecisions + fromDispatches
+        let fromTeams: [WaitingItem] = teams.filter(\.needsOwner).map { team in
+            let detail = team.status == "waiting" && !(team.waitingReason ?? "").isEmpty && !team.tainted
+                ? team.waitingReason ?? "" : team.objective
+            return WaitingItem(id: "team:" + team.id, kind: .team, title: "\(VCCopy.Nav.teams) · " + team.statusLabel,
+                               detail: firstLine(detail), tainted: team.tainted)
+        }
+        // 和 Desktop 一样：小组排在确认卡之后、Codex 动作和任务单之前
+        return fromCards + fromTeams + fromDecisions + fromDispatches
     }
 
     static func firstLine(_ text: String) -> String {
