@@ -30,7 +30,9 @@ _CANDIDATES = (
 )
 _LINUX_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge")
 
-PROFILE_DIR = home_state_dir() / "browser-profile"
+def _default_profile_dir() -> Path:
+    # 用时才定位：state_dir 会顺手把旧的 ~/.vortocode 搬过来，导入模块不该有这种副作用
+    return home_state_dir() / "browser-profile"
 _COMMAND_TIMEOUT = 30.0
 
 
@@ -56,7 +58,7 @@ def find_browser() -> Optional[str]:
 class CdpBrowser:
     """一个独立浏览器实例 + 一个受控标签页（flatten 会话）。"""
 
-    def __init__(self, executable: str, profile_dir: Path = PROFILE_DIR, *, device_mode: str = "desktop"):
+    def __init__(self, executable: str, profile_dir: Optional[Path] = None, *, device_mode: str = "desktop"):
         if device_mode not in {"desktop", "mobile"}:
             raise ValueError("Unknown browser device mode")
         self.device_mode = device_mode
@@ -64,7 +66,7 @@ class CdpBrowser:
         self._fds = set()
         self._transport = None
         self.executable = executable
-        self.profile_dir = profile_dir
+        self.profile_dir = profile_dir or _default_profile_dir()
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._writer_fd: Optional[int] = None
         self._reader: Optional[asyncio.StreamReader] = None

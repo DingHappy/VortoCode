@@ -11,6 +11,23 @@ from src.utils import state_dir as sd
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="需要 git")
 
 
+@pytest.fixture(autouse=True)
+def _migration_on(monkeypatch):
+    monkeypatch.delenv("VORTOONE_STATE_DIR_MIGRATION", raising=False)
+
+
+def test_migration_switched_off_only_locates(tmp_path, monkeypatch):
+    """关掉搬家：只认位置，什么都不改（测试套件默认这样，见 conftest）。"""
+    monkeypatch.setenv("VORTOONE_STATE_DIR_MIGRATION", "off")
+    (tmp_path / ".vortocode").mkdir()
+    assert sd.state_dir(tmp_path) == tmp_path / ".vortocode"
+    assert not (tmp_path / ".vortocode").is_symlink() and not (tmp_path / ".vortoone").exists()
+    monkeypatch.delenv("VORTOONE_STATE_DIR_MIGRATION")
+    assert sd.state_dir(tmp_path) == tmp_path / ".vortoone"
+    monkeypatch.setenv("VORTOONE_STATE_DIR_MIGRATION", "off")
+    assert sd.state_dir(tmp_path) == tmp_path / ".vortoone"            # 搬过之后关掉也认新目录
+
+
 def _git(root, *args):
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True).stdout
 
@@ -132,3 +149,17 @@ def test_concurrent_movers_end_up_with_one_directory_and_one_link(tmp_path, monk
     monkeypatch.setattr(sd.os, "rename", racing_rename)
     assert sd.state_dir(tmp_path) == tmp_path / ".vortoone"
     assert (tmp_path / ".vortoone").is_dir()
+
+
+def test_importing_modules_never_moves_anything(tmp_path):
+    """搬家只在用到时发生，导入模块不许有这种副作用（曾有两个模块级常量在导入时定位家目录）。"""
+    import sys
+    from pathlib import Path
+    (tmp_path / ".vortocode").mkdir()
+    root = Path(__file__).resolve().parents[2]
+    env = {k: v for k, v in os.environ.items() if k != "VORTOONE_STATE_DIR_MIGRATION"}
+    env["HOME"] = str(tmp_path)
+    subprocess.run([sys.executable, "-c", "import src.cli, src.agents.project, src.browser.cdp, src.web.server"],
+                   cwd=root, env=env, check=True, capture_output=True)
+    assert (tmp_path / ".vortocode").is_dir() and not (tmp_path / ".vortocode").is_symlink()
+    assert not (tmp_path / ".vortoone").exists()

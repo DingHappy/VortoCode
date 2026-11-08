@@ -190,6 +190,7 @@ VortoOne 读取的全部 `VORTOONE_*` 环境变量。常用项的示例与注释
 | `VORTOONE_HOOK_ISSUE_STORE` | Hook 问题记录文件。 | `workflow/workbench/hook_issues.py` |
 | `VORTOONE_CHANGE_SOURCE_STORE` | 变更来源记录文件。 | `workflow/review/change_sources.py` |
 | `VORTOONE_RESIDENT_PROJECTS` | 常驻电脑的项目登记表文件。 | `workflow/workbench/resident_projects.py` |
+| `VORTOONE_STATE_DIR_MIGRATION` | 设 `off` 时不把旧状态目录（`.vortocode`、Application Support/VortoCode 等）搬到新名字，只认位置：新目录在用新的，没搬就用旧的。默认会搬（ADR-018 批次 C）；测试套件默认关掉。 | `utils/state_dir.py` |
 | `VORTOONE_MAX_RUN_FILES` | 控制台运行记录保留条数（默认 200；0、负数或非法值按默认处理，不会清空）。 | `workflow/workbench/runs.py` |
 
 ## 内部变量：由 Desktop、沙箱或父进程注入，不要手动设置
