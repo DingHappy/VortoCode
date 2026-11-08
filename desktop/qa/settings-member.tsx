@@ -18,7 +18,7 @@ const member: DesktopLlmProfileStatus = {
   contextWindow: 1048576, contextWindowSource: "service", models: ["mimo-v2.6-pro"],
   modelInfo: [{ id: "mimo-v2.6-pro", category: "omni", capabilities: ["vision", "audio_input", "tools", "reasoning"], tier: "coding", contextWindow: 1048576 }],
   account: { username: "vc_1", displayName: "me@example.com", keySource: "vortocode_member", planName: "中度", planExpiry: now + 30 * day },
-  providers: [], configPath: "~/Library/Application Support/com.vorto.vortocode/llm-profile.json",
+  providers: [], configPath: "~/Library/Application Support/com.vorto.vortoone/llm-profile.json",
 };
 const profile: DesktopLlmProfileStatus = guest
   ? { configured: false, baseUrl: "", model: "", provider: "custom", requiresKey: true, providers: [] }

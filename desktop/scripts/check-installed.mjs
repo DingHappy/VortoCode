@@ -6,7 +6,7 @@
 // 用法：npm run check:installed [-- 期望版本]（默认取 tauri.conf.json 的版本）
 import { spawnSync } from "node:child_process";
 import { connect } from "node:net";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,20 @@ export const APP = existsSync("/Applications/VortoOne.app") || !existsSync("/App
   ? "/Applications/VortoOne.app" : "/Applications/VortoCode.app";
 export const APP_BINARY = `${APP}/Contents/MacOS/vortocode-desktop`;
 export const RUNTIME_BINARY = `${APP}/Contents/Resources/runtime/vortocode-runtime`;
+// 数据目录跟着 bundle id（ADR-018 批次 D 起是 com.vorto.vortoone；新版第一次启动时从旧 id 搬过来，旧位置留链接）
+export const BUNDLE_ID = "com.vorto.vortoone";
+export const LEGACY_BUNDLE_ID = "com.vorto.vortocode";
+export const APP_SUPPORT = join(homedir(), "Library/Application Support", BUNDLE_ID);
+const LEGACY_APP_SUPPORT = join(homedir(), "Library/Application Support", LEGACY_BUNDLE_ID);
+
+/** 数据目录的状态：new = 只有新的（或旧的是链接）；legacy = 还没搬；both = 两个都是真目录；none = 都没有。 */
+export function bundleDirState(newPath = APP_SUPPORT, legacyPath = LEGACY_APP_SUPPORT) {
+  const kind = (path) => { try { return lstatSync(path).isSymbolicLink() ? "link" : "dir"; } catch { return "none"; } };
+  const now = kind(newPath), old = kind(legacyPath);
+  if (now === "dir") return old === "dir" ? "both" : "new";
+  return old === "dir" ? "legacy" : "none";
+}
+
 export const LATEST_URL = "https://github.com/DingHappy/VortoCode/releases/latest/download/latest.json";
 
 export const MANUAL_CHECKS = [
@@ -128,8 +142,14 @@ async function main() {
   add("残留的旧引擎", strays.length === 0,
     strays.length ? `有 ${strays.length} 个不是这个 App 启动的引擎：${strays.map((item) => item.pid).join(", ")}` : "没有", strays.length > 0);
 
+  const dirs = bundleDirState();
+  add("数据目录", dirs === "new", {
+    new: `在 ${BUNDLE_ID}`, legacy: `还在旧的 ${LEGACY_BUNDLE_ID}，新版启动时没搬过来（看 desktop.log 的 data.bundle_dirs）`,
+    both: `${BUNDLE_ID} 和 ${LEGACY_BUNDLE_ID} 都是真目录，App 用的是新的`, none: "没有数据目录",
+  }[dirs]);
+
   try {
-    const recovery = JSON.parse(readFileSync(join(homedir(), "Library/Application Support/com.vorto.vortocode/gateway-recovery.json"), "utf8"));
+    const recovery = JSON.parse(readFileSync(join(APP_SUPPORT, "gateway-recovery.json"), "utf8"));
     const general = (recovery.runtimes || []).find((item) => item.runtimeId === "general");
     const alive = general && runtimes.some((item) => item.pid === general.pid);
     add("恢复记录", Boolean(alive), general ? `通用会话 pid ${general.pid}${alive ? "，和正在跑的一致" : "，但这个进程不在了"}` : "没有通用会话的记录");
@@ -139,7 +159,7 @@ async function main() {
 
   let registry = null;
   try {
-    registry = JSON.parse(readFileSync(join(homedir(), "Library/Application Support/com.vorto.vortocode/projects.json"), "utf8"));
+    registry = JSON.parse(readFileSync(join(APP_SUPPORT, "projects.json"), "utf8"));
   } catch { /* 没有注册表：当作没登记常驻电脑 */ }
   const resident = findResidentHost(registry);
   if (resident) {

@@ -109,6 +109,10 @@ fn append_to(path: &Path, line: &str) -> std::io::Result<()> {
 
 /// 写一条诊断日志。写不了就算了：诊断日志绝不能影响 App 本身。
 pub(crate) fn diag(level: &str, event: &str, detail: &str) {
+    // 单元测试不写用户真实的日志目录
+    if cfg!(test) {
+        return;
+    }
     let Some(path) = diagnostics_log_path() else { return };
     let line = format_line(SystemTime::now(), level, event, detail);
     if let Ok(_guard) = WRITE_LOCK.lock() {

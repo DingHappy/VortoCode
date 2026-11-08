@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { APP_BINARY, MANUAL_CHECKS, RUNTIME_BINARY, findResidentHost, parseLocalNetworkBlocks, parseProcesses, summarize } from "./check-installed.mjs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { APP_BINARY, MANUAL_CHECKS, RUNTIME_BINARY, bundleDirState, findResidentHost, parseLocalNetworkBlocks, parseProcesses, summarize } from "./check-installed.mjs";
 
 test("finds the installed app, its runtimes with ports, and stray runtimes from elsewhere", () => {
   const ps = [
@@ -51,4 +54,21 @@ test("counts local network blocks from the unified log", () => {
   ].join("\n");
   assert.deepEqual(parseLocalNetworkBlocks(log), { count: 2, pids: [18894] });
   assert.deepEqual(parseLocalNetworkBlocks(""), { count: 0, pids: [] });
+});
+
+test("reports whether the data directory moved to the new bundle id", () => {
+  const root = mkdtempSync(join(tmpdir(), "vortoone-bundle-dirs-"));
+  const now = join(root, "new.id"), old = join(root, "old.id");
+  try {
+    assert.equal(bundleDirState(now, old), "none");
+    mkdirSync(old);
+    assert.equal(bundleDirState(now, old), "legacy");
+    mkdirSync(now);
+    assert.equal(bundleDirState(now, old), "both");
+    rmSync(old, { recursive: true });
+    symlinkSync("new.id", old);
+    assert.equal(bundleDirState(now, old), "new");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

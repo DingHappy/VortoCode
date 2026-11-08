@@ -15,7 +15,7 @@ for (const mode of ["success", "backup-failure", "stage-failure", "published-fai
     const inspect = path => {
       const text = payload(path);
       if (mode === "published-failure" && path === target && text === "new") throw new Error("verification failed after publish");
-      return { identifier: "com.vorto.vortocode", designatedRequirement: mode === "identity-change" && text === "new" ? "different" : "stable", appSha256: text, sidecarSha256: text };
+      return { identifier: "com.vorto.vortoone", designatedRequirement: mode === "identity-change" && text === "new" ? "different" : "stable", appSha256: text, sidecarSha256: text };
     };
     const copy = (from, to) => {
       if (mode === "backup-failure" && from === target) throw new Error("backup save failed");
