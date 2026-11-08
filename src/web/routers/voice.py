@@ -35,10 +35,10 @@ _TOOLS: List[Dict[str, Any]] = [
      "description": "查主人现在有什么要处理的事、哪些任务在做。用户问「今天有什么事」「有什么要我处理的」时用。",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "dispatch_status",
-     "description": "查交给 VortoCode 的任务单进展。用户问「那个任务做完了吗」时用；keyword 是任务里的关键词，可留空看最近几张。",
+     "description": "查交给 VortoOne 的任务单进展。用户问「那个任务做完了吗」时用；keyword 是任务里的关键词，可留空看最近几张。",
      "inputSchema": {"type": "object", "properties": {"keyword": {"type": "string"}}}},
     {"name": "propose_task",
-     "description": ("用户想让 VortoCode 去做一件开发或维护的事时用。只会记下一张提议，"
+     "description": ("用户想让 VortoOne 去做一件开发或维护的事时用。只会记下一张提议，"
                      "要主人在手机或电脑上确认后才会开始；告诉用户这一点。request 写清楚要做什么。"),
      "inputSchema": {"type": "object", "required": ["request"],
                      "properties": {"request": {"type": "string"},

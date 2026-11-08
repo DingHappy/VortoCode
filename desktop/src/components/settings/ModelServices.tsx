@@ -143,7 +143,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   const remove = (provider: DesktopLlmProviderStatus) => run(async () => {
     const member = provider.id === MEMBER_PROVIDER_ID;
     if (!await confirmAction(member
-      ? "把会员模型移出列表？以后可以在 设置 → 常规 →「VortoCode 账号」里重新加入。"
+      ? "把会员模型移出列表？以后可以在 设置 → 常规 →「VortoOne 账号」里重新加入。"
       : `删除「${provider.name}」？它的 Key 会从本机配置中移除。`)) return;
     await applied(await invoke<DesktopLlmProfileStatus>("remove_llm_provider", { id: provider.id, expectedRevision: profile?.revision ?? null }), member ? "已移出会员模型" : `已删除 ${provider.name}`);
   }, "删除失败");
@@ -195,7 +195,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
         {hasDefault && profile && (
           <li className="model-service default">
             <div className="model-service-copy">
-              <strong>{defaultIsMember ? `VortoCode 会员${profile.account?.planName ? ` · ${profile.account.planName}` : ""}` : defaultServiceLabel(profile)}<em>默认</em></strong>
+              <strong>{defaultIsMember ? `VortoOne 会员${profile.account?.planName ? ` · ${profile.account.planName}` : ""}` : defaultServiceLabel(profile)}<em>默认</em></strong>
               <span>
                 {defaultIsMember ? "账号自动管理" : host(profile.baseUrl)} · {profile.model}
                 {(profile.contextWindow ?? 0) > 0 ? ` · 上下文 ${formatTokenCount(profile.contextWindow)}` : ""}
@@ -233,7 +233,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
         {!hasDefault && providers.length === 0 && (
           <li className="model-service empty"><div className="model-service-copy">
             <strong>还没有模型服务</strong>
-            <span>添加一个就能开始对话：VortoCode 会员登录即用；也可以接本机模型或自己的 Key。</span>
+            <span>添加一个就能开始对话：VortoOne 会员登录即用；也可以接本机模型或自己的 Key。</span>
           </div></li>
         )}
       </ul>
@@ -246,7 +246,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
       {adding && (
         <div className="model-service-chooser" role="group" aria-label="选择要添加的服务">
           <div className="model-service-kind">
-            <strong>VortoCode 会员</strong>
+            <strong>VortoOne 会员</strong>
             <span>登录账号即可使用，不用填地址和 Key</span>
             {memberListed ? <em>已添加</em>
               : membership?.member && membership.keyEnabled ? <button className="primary" onClick={() => void addMember()} disabled={busy}>加入</button>

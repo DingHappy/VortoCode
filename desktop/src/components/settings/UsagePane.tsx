@@ -30,7 +30,7 @@ function TokenPlanUsage({ account }: { account: DesktopAccount }) {
     <div className="settings-stack">
       <section className="settings-card" aria-label="Token Plan">
         <div className="settings-card-head">
-          <strong>{member ? "VortoCode 会员" : "Token Plan（Desktop 套餐）"}</strong>
+          <strong>{member ? "VortoOne 会员" : "Token Plan（Desktop 套餐）"}</strong>
           <button onClick={() => void openUrl(member ? ACCOUNT_MANAGE_URL : PLAN_URL).catch((failure) => setError(errorText(failure, "无法打开浏览器")))}>{member ? "管理会员" : "查看用量"}</button>
         </div>
         {live ? <div className="usage-metrics">

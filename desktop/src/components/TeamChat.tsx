@@ -11,7 +11,7 @@ export type TeamChatClient = Pick<GatewayClient, "getTeamTranscript" | "messageT
 const STATUS: Record<string, string> = {
   active: "进行中", waiting: "等你决定", review: "交付了，等你验收", done: "你已验收", failed: "失败了", cancelled: "已停止",
 };
-const ENGINE: Record<string, string> = { vortocode: "VortoCode", opencode: "OpenCode", "deepseek-harness": "DeepSeek Harness" };
+const ENGINE: Record<string, string> = { vortocode: "VortoOne", opencode: "OpenCode", "deepseek-harness": "DeepSeek Harness" };
 const STATE: Record<TeamChatMember["state"], string> = { working: "在做", queued: "排队中", idle: "空闲" };
 const LONG = 600;
 const LIVE = ["active", "waiting", "review"];

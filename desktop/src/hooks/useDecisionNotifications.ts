@@ -49,7 +49,7 @@ export function useDecisionNotifications({ runtimeInboxes, decisionItems, curren
           return;
         }
         sendNotification({
-          title: "VortoCode 有新的待决策事项",
+          title: "VortoOne 有新的待决策事项",
           body: `新增 ${unseen.length} 项高优先级事项，打开 Desktop 查看。`,
         });
       } catch {
@@ -71,7 +71,7 @@ export function useDecisionNotifications({ runtimeInboxes, decisionItems, curren
       let granted = await isPermissionGranted();
       if (!granted) granted = (await requestPermission()) === "granted";
       if (!granted) {
-        onBanner("系统没有授予通知权限；VortoCode 不会反复请求");
+        onBanner("系统没有授予通知权限；VortoOne 不会反复请求");
         return;
       }
       takeUnseen(globalNotificationItems, notifiedDecisionIdsRef.current, true);

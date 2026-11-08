@@ -44,7 +44,7 @@ it("keeps current and failed work visible even if the turn has output", () => {
 it("uses workbench authors outside assistant mode", () => {
   const html = renderToStaticMarkup(<ChatHistory {...props} assistant={false} />);
   expect(html).toContain('<div class="message-author">你</div>');
-  expect(html).toContain('<div class="message-author">VortoCode</div>');
+  expect(html).toContain('<div class="message-author">VortoOne</div>');
 });
 
 it("exposes exact turn anchors and highlights only the selected turn", () => {

@@ -11,9 +11,9 @@ export function feedbackMailto(info: DesktopBuildInfo = desktopBuildInfo, system
     "怎么出现的（操作步骤）：",
     "",
     "—— 以下信息帮助我们排查，可删 ——",
-    `版本：VortoCode ${info.version}（${info.buildId}）`,
+    `版本：VortoOne ${info.version}（${info.buildId}）`,
     `系统：${system}`,
   ].join("\n");
-  const query = `subject=${encodeURIComponent(`VortoCode ${info.version} 问题反馈`)}&body=${encodeURIComponent(body)}`;
+  const query = `subject=${encodeURIComponent(`VortoOne ${info.version} 问题反馈`)}&body=${encodeURIComponent(body)}`;
   return `mailto:${FEEDBACK_EMAIL}?${query}`;
 }

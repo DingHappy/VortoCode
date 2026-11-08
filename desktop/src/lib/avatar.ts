@@ -19,7 +19,7 @@ export function avatarInitial(name: string): string {
 /** 同一个名字永远同一个色相，换了名字颜色跟着变。 */
 export function avatarHue(name: string): number {
   let hash = 0;
-  for (const ch of name.trim() || "VortoCode") hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  for (const ch of name.trim() || "VortoOne") hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
   return hash % 360;
 }
 

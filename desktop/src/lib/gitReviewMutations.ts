@@ -66,7 +66,7 @@ export function gitReviewMutations(deps: {
     }
   }
   const applyGitAction = (action: GitReviewAction, path: string, hunk?: GitReviewHunk) => run("action",
-    () => action === "revert" ? `撤销 ${hunk ? `${path} 的 ${hunk.id}` : path} 的本地修改？这会丢弃对应内容，且不可从 VortoCode 恢复。` : null,
+    () => action === "revert" ? `撤销 ${hunk ? `${path} 的 ${hunk.id}` : path} 的本地修改？这会丢弃对应内容，且不可从 VortoOne 恢复。` : null,
     client => client.applyGitReviewAction({ action, path, scope: action === "unstage" ? "staged" : "working",
       hunk_id: hunk?.id, expected_sha256: hunk?.sha256, confirm: action === "revert" }),
     async (result, view, current) => {
@@ -89,7 +89,7 @@ export function gitReviewMutations(deps: {
     if (!deps.view().prTitle.trim() || !deps.view().prBase.trim()) return Promise.resolve();
     return run("delivery", view => `把当前分支 ${view.snapshot?.branch} push 到 origin，并向 ${view.prBase.trim()} 创建 Draft PR？`,
       (client, view) => client.openGitReviewPr({ title: view.prTitle.trim(), base: view.prBase.trim(),
-        body: "由 VortoCode Desktop 在逐文件、逐 hunk 审查后创建。", confirm: true }),
+        body: "由 VortoOne Desktop 在逐文件、逐 hunk 审查后创建。", confirm: true }),
       async (result, _view, current) => {
         deps.banner(`Draft PR 已创建：${result.url}`);
         await deps.refreshPrDelivery();

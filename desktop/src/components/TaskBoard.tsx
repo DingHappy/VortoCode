@@ -58,7 +58,7 @@ export function TaskBoard({ sources, currentRuntimeId, onOpen, onOpenGoals }: Pr
       </div>
       {items.length === 0 && scopedSources.length > 0 && scopedSources.every((source) => !source.error && source.snapshot?.version === 1) && <div className="task-board-welcome">
         <strong>还没有进行中的工作</strong>
-        <p>在对话里说「帮我在某某项目里做……」，VortoCode 会拆成任务在后台做；需要你确认、正在做和做完的，都会出现在这里。</p>
+        <p>在对话里说「帮我在某某项目里做……」，VortoOne 会拆成任务在后台做；需要你确认、正在做和做完的，都会出现在这里。</p>
       </div>}
       {scopedSources.map((source) => <div className={`task-board-source ${source.error ? "degraded" : ""}`} key={source.runtimeId}>
         <strong>{source.label}</strong><span>{source.error ? "暂时连不上，状态未知；恢复后自动刷新"

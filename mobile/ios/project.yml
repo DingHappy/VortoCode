@@ -22,7 +22,7 @@ targets:
     info:
       path: VortoCodeMobile/Info.plist
       properties:
-        CFBundleDisplayName: VortoCode
+        CFBundleDisplayName: VortoOne
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleURLTypes:
@@ -64,7 +64,7 @@ targets:
     info:
       path: VortoCodeNotification/Info.plist
       properties:
-        CFBundleDisplayName: VortoCode 通知
+        CFBundleDisplayName: VortoOne 通知
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         VCKeychainGroup: $(AppIdentifierPrefix)com.vortocode.mobile.shared

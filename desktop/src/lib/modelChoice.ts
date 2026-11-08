@@ -189,9 +189,9 @@ export const MANAGE_MODELS = "__manage_models__";
 
 /** 默认服务在模型菜单里的分组名：让人一眼分清本机模型和线上服务。 */
 export function defaultServiceLabel(profile: DesktopLlmProfileStatus | null): string {
-  if (profile?.account?.keySource === "vortocode_member") return "VortoCode 会员";
+  if (profile?.account?.keySource === "vortocode_member") return "VortoOne 会员";
   if (profile?.provider === "local") return "本机模型";
-  if (profile?.provider === "vortocode") return "VortoCode";
+  if (profile?.provider === "vortocode") return "VortoOne";
   try { return profile?.baseUrl ? new URL(profile.baseUrl).host : "默认服务"; } catch { return "默认服务"; }
 }
 

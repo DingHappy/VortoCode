@@ -12,7 +12,7 @@ def _remember(root, *contents):
 
 
 def test_profile_defaults_and_round_trip(tmp_path):
-    assert profile.load_profile(str(tmp_path)) == {"name": "VortoCode", "soul": "", "about_you": ""}
+    assert profile.load_profile(str(tmp_path)) == {"name": "VortoOne", "soul": "", "about_you": ""}
     saved = profile.save_profile(str(tmp_path), name="  小 V \\n" + "长" * 40, about_you="宁波，做 AI 编码工具。")
     assert saved["name"].startswith("小 V") and len(saved["name"]) == profile.MAX_NAME
     assert saved["about_you"] == "宁波，做 AI 编码工具。"
@@ -50,7 +50,7 @@ def test_profile_and_memory_routes(tmp_path, monkeypatch):
     from src.web.server import app
 
     client = TestClient(app)
-    assert client.get("/api/assistant/profile").json()["name"] == "VortoCode"
+    assert client.get("/api/assistant/profile").json()["name"] == "VortoOne"
     assert client.put("/api/assistant/profile", json={"name": " "}).status_code == 400
     assert client.put("/api/assistant/profile", json={"name": "小V", "about_you": "在宁波", "soul": "说话简短"}).json() == {
         "name": "小V", "soul": "说话简短", "about_you": "在宁波"}

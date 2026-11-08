@@ -594,7 +594,7 @@ async def _patrol_phone_keys(ctx: PatrolContext) -> None:
         if item["device_id"] in told["pending"]:
             continue
         text = (f"📱 有一台手机申请手机写入权限（核对码 {item['code']}）。是你本人在登录，就在 Desktop 助理面板里"
-                "对一下核对码再批准；不是你，请拒绝，并尽快修改 VortoCode 账号密码。")
+                "对一下核对码再批准；不是你，请拒绝，并尽快修改 VortoOne 账号密码。")
         if await _notify_accepted(ctx.notify, text):
             told["pending"] = (told["pending"] + [item["device_id"]])[-50:]
     for entry in requests["trusted"]:

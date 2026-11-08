@@ -12,7 +12,7 @@ export function SidebarBrand({ onCollapse, collapseRef, sidebarId }: {
   return (
     <div className="vc-side-brand" data-tauri-drag-region="deep">
       <span className="vc-side-logo" aria-hidden="true">V</span>
-      <strong>VortoCode</strong>
+      <strong>VortoOne</strong>
       <IconButton label="收起侧栏" icon={<PanelLeftClose />} buttonRef={collapseRef} aria-expanded="true" aria-controls={sidebarId} onClick={onCollapse} />
     </div>
   );

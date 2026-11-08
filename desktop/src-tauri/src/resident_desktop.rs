@@ -741,7 +741,7 @@ pub(crate) async fn open_resident_desktop(app: AppHandle) -> Result<Status, Stri
         .map_err(|_| "画面地址无效")?;
     let port = url.port().ok_or("画面端口无效")?;
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(url))
-        .title("远程桌面 · VortoCode")
+        .title("远程桌面 · VortoOne")
         .inner_size(1200.0, 850.0)
         .min_inner_size(640.0, 480.0)
         .on_navigation(move |url| allowed_navigation(url, port))

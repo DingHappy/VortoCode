@@ -27,7 +27,7 @@ export const ChatHistory = memo(function ChatHistory({ messages, activityGroups,
       {assistant
         ? message.role === "assistant" && message.source
           ? <div className="message-author"><span className="message-source">{message.source === "team" ? "任务小组" : "回复在手机上"}</span></div> : null
-        : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
+        : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoOne" : "Runtime"}</div>}
       <div className="message-body">
         {message.role === "user" && sourceLabel(message.source) && <div className="message-source">{sourceLabel(message.source)}</div>}
         {message.images && message.images.length > 0 && <div className="message-images">

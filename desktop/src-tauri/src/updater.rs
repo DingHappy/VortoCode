@@ -78,11 +78,11 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
     // 装完要重启：原生确认在 webview 之外，说清楚正在进行的对话会中断
     let dialog_app = app.clone();
     let prompt = format!(
-        "下载并安装 VortoCode {version}？\n\n装好后 App 会自动重启，本机正在进行的对话会中断；常驻电脑上的助理和后台任务不受影响。"
+        "下载并安装 VortoOne {version}？\n\n装好后 App 会自动重启，本机正在进行的对话会中断；常驻电脑上的助理和后台任务不受影响。"
     );
     let confirmed = tauri::async_runtime::spawn_blocking(move || {
         with_main_window_parent(&dialog_app, dialog_app.dialog().message(prompt))
-            .title("更新 VortoCode")
+            .title("更新 VortoOne")
             .kind(MessageDialogKind::Info)
             .buttons(MessageDialogButtons::OkCancelCustom("更新并重启".into(), "稍后".into()))
             .blocking_show()

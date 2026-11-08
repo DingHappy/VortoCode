@@ -57,7 +57,7 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
       announceAccountChanged();
       setLoggingIn(false);
       if (member?.member && member.keyEnabled && !member.inUse && !modelConfigured) {
-        await useMember("你是 VortoCode 会员。现在就用会员模型开始吗？不用再填服务地址和 Key。");
+        await useMember("你是 VortoOne 会员。现在就用会员模型开始吗？不用再填服务地址和 Key。");
       }
     } catch (error) { setNote(errorText(error, "登录没有完成")); }
     finally { setLoggingIn(false); }
@@ -65,8 +65,8 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
 
   const logout = async () => {
     const message = membership?.inUse || membership?.listed
-      ? "退出 VortoCode 账号？这台电脑会从账号的设备列表里移除，会员模型 Key 也会从本机删除。"
-      : "退出 VortoCode 账号？这台电脑会从账号的设备列表里移除。";
+      ? "退出 VortoOne 账号？这台电脑会从账号的设备列表里移除，会员模型 Key 也会从本机删除。"
+      : "退出 VortoOne 账号？这台电脑会从账号的设备列表里移除。";
     if (!await confirmAction(message)) return;
     setBusy(true); setNote("");
     const wasInUse = Boolean(membership?.inUse || membership?.listed);
@@ -85,7 +85,7 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
   // 已经配了别的默认模型（本机模型、自己的 Key）时，会员模型是「加进模型列表」，默认的不动
   const useMember = async (question = modelConfigured
     ? "把会员模型加进模型列表？现在的默认模型不变，在输入框的模型菜单里随时切换。"
-    : "用 VortoCode 会员模型作为默认模型服务？") => {
+    : "用 VortoOne 会员模型作为默认模型服务？") => {
     if (!await confirmAction(question)) return;
     setBusy(true); setNote("");
     try {
@@ -101,9 +101,9 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
   const signedIn = Boolean(status?.signedIn) && !loggingIn;
   const line = signedIn ? membershipLine(membership) : null;
   const action = signedIn ? membershipAction(status, membership) : null;
-  return <section className="settings-card" aria-label="VortoCode 账号">
+  return <section className="settings-card" aria-label="VortoOne 账号">
     <div className="settings-card-head">
-      <strong>VortoCode 账号</strong>
+      <strong>VortoOne 账号</strong>
       {loggingIn
         ? <button onClick={() => void cancelAccountLogin()}>取消</button>
         : signedIn

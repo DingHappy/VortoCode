@@ -157,6 +157,6 @@ def start_confirmation_notice(message: str) -> asyncio.Task | None:
     """
     if _OWNER_NOTIFIER is None:
         return None
-    text = ("⚠ VortoCode 需要操作确认，请回到发起请求的客户端允许或拒绝。\n"
+    text = ("⚠ VortoOne 需要操作确认，请回到发起请求的客户端允许或拒绝。\n"
             "这条消息仅作提醒，在 TG 回复不会批准这项操作。\n" + str(message)[:1000])
     return asyncio.create_task(notify_owner(text))
