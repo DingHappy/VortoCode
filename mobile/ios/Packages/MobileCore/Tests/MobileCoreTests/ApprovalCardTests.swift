@@ -28,7 +28,8 @@ final class ApprovalCardTests: XCTestCase {
         let ordinary = try card(["operation_kind": "own_data", "required_key": "device"])
         XCTAssertFalse(ordinary.needsFaceID)
         XCTAssertEqual(ordinary.categoryLabel, "你的事项")
-        XCTAssertEqual(try card(["operation_kind": "future_kind"]).categoryLabel, "类别待核对")
+        // 不认识的类别和 Desktop 一样显示「未分类操作」（design/copy.json）
+        XCTAssertEqual(try card(["operation_kind": "future_kind"]).categoryLabel, "未分类操作")
     }
 
     func testBoundedChoiceRequiresAllServerFieldsAndNeverCoversSensitiveKinds() throws {

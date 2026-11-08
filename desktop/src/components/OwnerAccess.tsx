@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { GatewayClient } from "../gateway";
 import type { OwnerAccessSnapshot } from "../lib/ownerAccess";
 import { approvalOutcome, domainStatus, originLabel, recordLabel, unavailableHistorySources } from "../lib/ownerAccess";
-import { approvalCategory, approvalSource } from "../lib/approval";
+import { approvalCategory, approvalScope, approvalSource } from "../lib/approval";
 
 export function OwnerAccessDetails({ value }: { value: OwnerAccessSnapshot }) {
   return <>
@@ -16,7 +16,7 @@ export function OwnerAccessDetails({ value }: { value: OwnerAccessSnapshot }) {
     {!value.history.entries.length && <p>{value.history.status === "current" ? "最近读取范围内没有审批记录。" : "暂时无法确认审批记录。"}</p>}
     <ul className="assistant-audit">{value.history.entries.map(row => <li key={row.id}><span className="assistant-audit-text">
       <strong>{row.record_type === "dispatch" || row.record_type === "codex_action" ? recordLabel(row) : approvalCategory(row.operation_kind)} · {approvalOutcome(row.approval_outcome, row.decision)}</strong>
-      <small>{approvalSource(row.decision_source)} · {row.approval_scope === "once" ? "仅本次" : row.approval_scope === "turn" ? "本轮同类" : row.approval_scope === "existing_trust" ? "既有授权范围" : row.approval_scope === "none" ? "无新增授权" : "范围待核对"}</small>
+      <small>{approvalSource(row.decision_source)} · {approvalScope(row.approval_scope)}</small>
       <small>{recordLabel(row)} · {originLabel(row.origin)} · {row.ts || "审批时点待核对"}{row.tainted ? " · 读过外部内容后" : ""}</small>
       {row.decision_metadata_missing && <small>审批来源与时点没有完整记录，请人工核对。</small>}
       {domainStatus(row) && <small>当前来源状态：{domainStatus(row)}</small>}

@@ -59,3 +59,37 @@ def test_duplicate_or_partial_theme_values_are_rejected(tmp_path):
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError):
         _module().load(path)
+
+
+def test_shared_copy_reaches_both_ends():
+    # design/copy.json 的每条文案在 Desktop 的 copy.generated.ts 和 iPhone 的 Copy.swift 里都在，而且一字不差
+    tokens = _module()
+    copy = tokens.load_copy()
+    ts = tokens.render_copy_ts(copy)
+    swift = tokens.render_copy_swift(copy)
+    for group in copy["groups"]:
+        for key, text in group["strings"].items():
+            assert f"    {key}: {json.dumps(text, ensure_ascii=False)}," in ts, (group["name"], key)
+            assert f"public static let {tokens._snake_camel(key)} = {json.dumps(text, ensure_ascii=False)}" in swift
+        fallback = group.get("fallback")
+        if fallback:
+            unknown = fallback.get("unknown", fallback["missing"])
+            assert f"{group['name']}: {{ missing: {json.dumps(fallback['missing'], ensure_ascii=False)}, " \
+                   f"unknown: {json.dumps(unknown, ensure_ascii=False)} }}," in ts
+            assert f"public static let unknown = {json.dumps(unknown, ensure_ascii=False)}" in swift
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda data: data["groups"].append(dict(data["groups"][0])),                      # 分组名重复
+    lambda data: data["groups"][0]["strings"].update({"Bad-Key": "x"}),              # 键不合法
+    lambda data: data["groups"][3].update({"fallback": {"unknown": "x"}}),           # 有 unknown 没有 missing
+    lambda data: data["groups"][3]["strings"].update({"label": "x"}),                # 和生成的函数名冲突
+    lambda data: data["groups"][0]["strings"].update({"feed": " "}),                 # 空文案
+])
+def test_bad_copy_is_rejected(tmp_path, mutate):
+    data = json.loads((ROOT / "design" / "copy.json").read_text(encoding="utf-8"))
+    mutate(data)
+    path = tmp_path / "copy.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError):
+        _module().load_copy(path)
