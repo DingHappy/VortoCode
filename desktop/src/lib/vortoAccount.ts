@@ -48,7 +48,7 @@ export const applyMembership = () => invoke<DesktopLlmProfileStatus>("account_us
 
 /** 当前模型服务的 Key 从哪来，给人看的说法。 */
 export function keySourceLabel(keySource: string | undefined): string {
-  if (keySource === MEMBER_KEY_SOURCE) return "VortoCode 会员";
+  if (keySource === MEMBER_KEY_SOURCE) return "VortoOne 会员";
   if (keySource === "token_plan") return "Token Plan";
   return "按量 Key";
 }
@@ -93,8 +93,8 @@ export interface SidebarIdentity {
 
 /** 左下角显示谁：VortoCode 账号本人（不是模型服务），会员时带上档位。 */
 export function sidebarIdentity(status: VortoAccountStatus | null, membership: VortoMembership | null): SidebarIdentity {
-  if (!status) return { initial: "", name: "VortoCode 账号", detail: "", title: "VortoCode 账号" };
-  if (!status.signedIn) return { initial: "", name: "登录", detail: "", title: "登录 VortoCode 账号" };
+  if (!status) return { initial: "", name: "VortoOne 账号", detail: "", title: "VortoOne 账号" };
+  if (!status.signedIn) return { initial: "", name: "登录", detail: "", title: "登录 VortoOne 账号" };
   const name = status.email || "已登录";
   const detail = membership?.member
     ? `${membership.planName}会员${creditsLow(membership) ? " · 额度不足" : ""}`

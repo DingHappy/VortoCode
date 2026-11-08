@@ -132,19 +132,19 @@ describe("resolveModelChoice", () => {
 describe("modelMenuSections", () => {
   const local = {
     configured: true, baseUrl: "http://127.0.0.1:11500/v1", model: "Qwen3.6-35B-A3B-4bit", provider: "local" as const, requiresKey: false,
-    providers: [{ id: "vortocode_member", name: "VortoCode 会员", baseUrl: "https://relay.example.com/v1", models: ["mimo-v2.6-pro"], hasKey: true }],
+    providers: [{ id: "vortocode_member", name: "VortoOne 会员", baseUrl: "https://relay.example.com/v1", models: ["mimo-v2.6-pro"], hasKey: true }],
   };
 
   it("separates local models from the member models added as a provider", () => {
     const sections = modelMenuSections(modelChoices(local), local);
     expect(sections.map((section) => [section.label, section.choices.map((choice) => choice.value)])).toEqual([
       ["本机模型", ["Qwen3.6-35B-A3B-4bit"]],
-      ["VortoCode 会员", ["vortocode_member:mimo-v2.6-pro"]],
+      ["VortoOne 会员", ["vortocode_member:mimo-v2.6-pro"]],
     ]);
   });
 
   it("names the default service by where it runs", () => {
-    expect(defaultServiceLabel({ ...local, account: { username: "u", displayName: "u", keySource: "vortocode_member" } })).toBe("VortoCode 会员");
+    expect(defaultServiceLabel({ ...local, account: { username: "u", displayName: "u", keySource: "vortocode_member" } })).toBe("VortoOne 会员");
     expect(defaultServiceLabel({ ...local, provider: "custom", baseUrl: "https://api.deepseek.com/v1" })).toBe("api.deepseek.com");
     expect(defaultServiceLabel(null)).toBe("默认服务");
   });

@@ -244,7 +244,7 @@ struct ChatView: View {
                         if !owner.canWrite {
                             notice(owner.readOnlyReason)
                         } else if !owner.chatRegistered {
-                            notice("主要聊天还没开通：先在电脑上的 VortoCode 里打开一次助理对话。")
+                            notice("主要聊天还没开通：先在电脑上的 VortoOne 里打开一次助理对话。")
                         } else if owner.chat.isEmpty && owner.turn == nil {
                             notice("跟助理说件事吧。比如「帮我把这周要交的东西列一下」。")
                         }

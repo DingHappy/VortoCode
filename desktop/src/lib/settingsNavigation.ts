@@ -1,5 +1,5 @@
 export const SETTINGS_SECTIONS = [
-  { id: "account", label: "账号与用量", description: "账号、会员与模型用量，集中查看。", scope: "账号状态来自 VortoCode；模型额度以服务端返回为准。" },
+  { id: "account", label: "账号与用量", description: "账号、会员与模型用量，集中查看。", scope: "账号状态来自 VortoOne；模型额度以服务端返回为准。" },
   { id: "model", label: "模型与执行", description: "选择模型服务，安排研究、实现与审查的分工。", scope: "保存在这台 Mac。模型与执行者配置不自动同步到常驻实例。" },
   { id: "computer", label: "电脑与连接", description: "连接常驻助手、查看远程画面，管理本机工作区。", scope: "助手服务、远程画面和本机引擎分别连接，各自报告状态。连接画面不会授予助手操作权限。" },
   { id: "permissions", label: "权限与自动化", description: "决定助手能做什么，以及哪些操作需要你确认。", scope: "授权级别属于当前工作区；浏览器与桌面开关配置在本机。自动化仍遵守各自的能力限制。" },
@@ -16,7 +16,7 @@ export function settingsPage(section: SettingsSection): SettingsPage {
 }
 
 export const SETTINGS_ITEMS: Array<{ id: string; page: SettingsPage; label: string; keywords: string }> = [
-  { id: "account", page: "account", label: "VortoCode 账号与会员", keywords: "登录 退出 注册 套餐 额度 token plan quota usage 用量 计费" },
+  { id: "account", page: "account", label: "VortoOne 账号与会员", keywords: "登录 退出 注册 套餐 额度 token plan quota usage 用量 计费" },
   { id: "mobile-account", page: "account", label: "手机与常驻助手", keywords: "手机 同账号 关联 解除 配对 移动端" },
   { id: "services", page: "model", label: "模型服务与 API Key", keywords: "供应商 omlx 本地 端侧 openai deepseek kimi glm minimax relay https 默认 地址" },
   { id: "roles", page: "model", label: "模型与执行者分工", keywords: "研究 实现 审查 评判器 codex claude cli 核心 子 agent 实验" },

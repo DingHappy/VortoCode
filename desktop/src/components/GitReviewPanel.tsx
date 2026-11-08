@@ -351,7 +351,7 @@ export function GitReviewPanel({
           <div className="git-hunk-head">
             <div>
               <b title={`稳定变更标识 ${hunk.id}`}>{hunk.id.slice(0, 10)}</b>
-              <em className={`git-source ${hunk.source}`} title={hunk.source_at ? `${hunk.source_tool || "edit"} · ${hunk.source_at}` : "未发现 VortoCode 记录"}>
+              <em className={`git-source ${hunk.source}`} title={hunk.source_at ? `${hunk.source_tool || "edit"} · ${hunk.source_at}` : "未发现 VortoOne 记录"}>
                 {hunk.source === "agent" ? "Agent" : hunk.source === "user" ? "你修改" : hunk.source === "hook" ? "Hook" : hunk.source === "mixed" ? "混合修改" : "外部修改"}
               </em>
               <span>{hunk.header}</span>

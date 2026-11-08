@@ -22,5 +22,5 @@ it("assistant mode greets by time of day in one line; the workbench has its own 
 it("the first-run card offers the member model or your own", () => {
   const noop = () => {};
   expect(renderToStaticMarkup(<FirstRunCard signedIn onAccount={noop} onModel={noop} />)).toContain("使用会员模型");
-  expect(renderToStaticMarkup(<FirstRunCard signedIn={false} onAccount={noop} onModel={noop} />)).toContain("登录 VortoCode 账号");
+  expect(renderToStaticMarkup(<FirstRunCard signedIn={false} onAccount={noop} onModel={noop} />)).toContain("登录 VortoOne 账号");
 });

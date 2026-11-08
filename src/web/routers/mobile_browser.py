@@ -36,7 +36,7 @@ def native_return(values: dict):
     return HTMLResponse(
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
         f'<meta http-equiv="refresh" content="0;url={destination}">'
-        f'<title>返回 VortoCode</title><body><a href="{destination}">返回 VortoCode App</a></body></html>',
+        f'<title>返回 VortoOne</title><body><a href="{destination}">返回 VortoOne App</a></body></html>',
         headers={
             **_PRIVATE,
             "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",

@@ -18,7 +18,7 @@ MAX_ABOUT = 2000
 MAX_SOUL = 2000
 BRIEF_ITEMS = 30
 BRIEF_CHARS = 2000
-DEFAULT_NAME = "VortoCode"
+DEFAULT_NAME = "VortoOne"
 
 
 def _state(root: str) -> Path:

@@ -8,7 +8,7 @@ const STATUS: Record<TeamStatus, string> = {
   active: "进行中", waiting: "等你决定", review: "交付了，等你验收", done: "你已验收", failed: "失败了", cancelled: "已停止",
 };
 const ROLE: Record<string, string> = { "web-researcher": "研究员", reviewer: "审查员", developer: "开发" };
-const ENGINE: Record<string, string> = { vortocode: "VortoCode", opencode: "OpenCode", "deepseek-harness": "DeepSeek Harness" };
+const ENGINE: Record<string, string> = { vortocode: "VortoOne", opencode: "OpenCode", "deepseek-harness": "DeepSeek Harness" };
 const CHILD: Record<string, string> = {
   queued: "排队中", running: "在做", done: "交回了", failed: "失败", cancelled: "已取消", interrupted: "被打断",
 };

@@ -36,7 +36,7 @@ ROLES: Dict[str, Dict[str, Any]] = {
 }
 
 # 成员的执行框架（ADR-014 S2）。vortocode = 进程内自有 agent；其余经 ACP 起外部框架，权限按角色逐次判定。
-ENGINES: Dict[str, str] = {"vortocode": "VortoCode", "opencode": "OpenCode", "deepseek-harness": "DeepSeek Harness"}
+ENGINES: Dict[str, str] = {"vortocode": "VortoOne", "opencode": "OpenCode", "deepseek-harness": "DeepSeek Harness"}
 # 还不能按成员换模型的框架（DeepSeek Harness 用它 ACP 档案里的默认模型）
 _ENGINES_WITHOUT_MODEL = ("deepseek-harness",)
 

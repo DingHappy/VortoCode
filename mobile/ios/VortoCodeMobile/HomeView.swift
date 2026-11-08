@@ -35,7 +35,7 @@ struct HomeView: View {
                         Image("Brand").resizable().scaledToFit().frame(width: 44, height: 44)
                             .clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("VortoCode").font(.headline)
+                            Text("VortoOne").font(.headline)
                             Text("你的常驻助手").font(.subheadline).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -53,7 +53,7 @@ struct HomeView: View {
                     if !session.note.isEmpty { Text(session.note).font(.subheadline).foregroundStyle(Palette.waitText).accessibilityIdentifier("session-note") }
                     if !session.pendingLogouts.isEmpty { PendingLogoutView(session: session) }
                     VStack(alignment: .leading, spacing: 22) {
-                        capability("person.crop.circle.badge.checkmark", "同账号登录", "沿用 VortoCode 账号，日常登录无需手动核对码。")
+                        capability("person.crop.circle.badge.checkmark", "同账号登录", "沿用 VortoOne 账号，日常登录无需手动核对码。")
                         capability("bubble.left.and.bubble.right", "对话", "和电脑、Telegram 上是同一段对话；需要你确认的事以卡片出现。")
                         capability("lock.shield", "权限清楚", "手机发起的对话只能查资料、改你自己的事项和记忆；执行命令和对外发送要到电脑上做。")
                     }

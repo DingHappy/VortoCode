@@ -39,13 +39,13 @@ def runtime_host_note() -> str:
     name = socket.gethostname().split(".")[0][:60] or "这台电脑"
     system = {"Darwin": "macOS", "Linux": "Linux", "Windows": "Windows"}.get(platform.system(), platform.system() or "未知系统")
     if os.getenv(ENV_VAR, "").strip():
-        where = (f"你运行在用户自己的电脑「{name}」（{system}）上，由 VortoCode Desktop 启动："
+        where = (f"你运行在用户自己的电脑「{name}」（{system}）上，由 VortoOne Desktop 启动："
                  "Desktop 关掉或电脑合上，你就停了，交代的事不会接着做。")
     elif watch_enabled():
-        where = (f"你运行在常驻电脑「{name}」（{system}）上的 VortoCode 服务里：它一直开着，"
+        where = (f"你运行在常驻电脑「{name}」（{system}）上的 VortoOne 服务里：它一直开着，"
                  "用户合上笔记本、关掉 Desktop，你照常在这里工作；用户通过 Desktop、手机或聊天软件连过来找你。")
     else:
-        where = f"你运行在电脑「{name}」（{system}）上一个独立的 VortoCode 服务里，不随 Desktop 开关。"
+        where = f"你运行在电脑「{name}」（{system}）上一个独立的 VortoOne 服务里，不随 Desktop 开关。"
     return ("【你在哪台电脑上】" + where + "这台电脑就是你的电脑，不要说自己没有电脑。"
             "你在上面能做什么只看工具清单：没有对应工具的事（开网页、点按钮、跑命令）如实说缺哪类工具。")
 

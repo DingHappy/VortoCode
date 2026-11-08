@@ -217,7 +217,7 @@ pub(crate) async fn resident_account_status(
 async fn confirm(app: &AppHandle, selected: &Target, bind: bool) -> Result<bool, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     let action = if bind {
-        "关联当前 VortoCode 账号"
+        "关联当前 VortoOne 账号"
     } else {
         "解除账号关联"
     };

@@ -71,7 +71,7 @@ export function SidebarFooter({ identity, update, resident, onOpenSettings, onLi
       )}
       {update && (
         <Button variant="secondary" disabled={updating} className="vc-side-update"
-          title={updateError || `VortoCode ${update.latest} 已发布，点击更新并重启`}
+          title={updateError || `VortoOne ${update.latest} 已发布，点击更新并重启`}
           onClick={() => {
             setUpdating(true); setUpdateError("");
             void install()

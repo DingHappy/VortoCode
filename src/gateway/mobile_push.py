@@ -24,7 +24,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-PLACEHOLDER = "有一条新消息，打开 VortoCode 查看"
+PLACEHOLDER = "有一条新消息，打开 VortoOne 查看"
 _TOKEN = re.compile(r"[0-9a-f]{64,200}")
 _HOSTS = {"production": "https://api.push.apple.com", "sandbox": "https://api.sandbox.push.apple.com"}
 _JWT_TTL = 30 * 60                     # APNs 要求 1 小时内换新、不早于 20 分钟；取中间
@@ -89,7 +89,7 @@ def _jwt(now: float) -> str:
 
 
 def payload(registration: dict, text: str) -> dict:
-    return {"aps": {"alert": {"title": "VortoCode", "body": PLACEHOLDER}, "mutable-content": 1, "sound": "default"},
+    return {"aps": {"alert": {"title": "VortoOne", "body": PLACEHOLDER}, "mutable-content": 1, "sound": "default"},
             "enc": encrypt(registration["key"], text[:2000])}
 
 

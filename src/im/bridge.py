@@ -435,7 +435,7 @@ class IMBridge:
             if self.session_role == "research_read":
                 hello = "🔎 只读项目助手已就绪；可读取和检索所选项目。开发与审批请回 Desktop 或原总助手处理。"
             if self.notification_only:
-                hello = "🔔 VortoCode 通知已就绪；任务完成、失败或需要确认时提醒你，请在 Desktop 处理任务与确认。"
+                hello = "🔔 VortoOne 通知已就绪；任务完成、失败或需要确认时提醒你，请在 Desktop 处理任务与确认。"
             if warn:
                 hello += "\n" + warn
             await self._safe_send(hello)
@@ -1295,7 +1295,7 @@ class IMBridge:
         except Exception:  # noqa: BLE001
             import logging
             logging.getLogger("vortocode.im").warning("Codex 动作决定未能记入审计：%s", action_id)
-        await self._safe_send("👍 已批准，Mac 上的 VortoCode 会在半分钟内交给 Codex，结果再通知你。" if approved
+        await self._safe_send("👍 已批准，Mac 上的 VortoOne 会在半分钟内交给 Codex，结果再通知你。" if approved
                               else "好，不发了。")
 
     async def _bg_confirm(self, message: str) -> bool:

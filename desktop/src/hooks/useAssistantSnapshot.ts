@@ -18,7 +18,7 @@ import type {
   AssistantScheduleItem, CodexAction, ConnectionState, MemoryProposal, PhoneChat,
 } from "../types";
 
-const DEFAULT_PROFILE: AssistantProfile = { name: "VortoCode", soul: "", about_you: "" };
+const DEFAULT_PROFILE: AssistantProfile = { name: "VortoOne", soul: "", about_you: "" };
 
 export function useAssistantSnapshot({ clientRef, assistantScope, assistantScopeRef, connection, connectorsOpen }: {
   clientRef: RefObject<GatewayClient | null>;

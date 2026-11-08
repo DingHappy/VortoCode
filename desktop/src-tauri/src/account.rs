@@ -204,9 +204,9 @@ pub fn parse_callback(request_line: &str, expected_state: &str) -> Callback {
     }
 }
 
-const CALLBACK_PAGE: &str = "<!doctype html><meta charset=utf-8><title>VortoCode</title>\
+const CALLBACK_PAGE: &str = "<!doctype html><meta charset=utf-8><title>VortoOne</title>\
 <body style=\"font:16px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:90vh\">\
-<p>{message}可以关掉这个页面，回到 VortoCode。</p>";
+<p>{message}可以关掉这个页面，回到 VortoOne。</p>";
 
 fn respond(stream: &mut TcpStream, status: &str, message: &str) {
     let body = CALLBACK_PAGE.replace("{message}", message);
@@ -428,7 +428,7 @@ pub(super) async fn runtime_proof(app: &AppHandle, state: &AccountState) -> Resu
     let mut slot = state.access.lock().await;
     let mut session = load_session()?
         .filter(|session| session.base_url == base)
-        .ok_or("请先登录当前 VortoCode 账号")?;
+        .ok_or("请先登录当前 VortoOne 账号")?;
     let access = ensure_access(app, &base, &mut slot, &mut session).await
         .map_err(|_| "当前账号暂时无法核验，请重新检查登录状态")?;
     let mut response = http(app)?.get(format!("{base}/api/me")).bearer_auth(&access).send().await
@@ -677,7 +677,7 @@ async fn signed_in_access(
     let base = base_url()?;
     let mut slot = state.access.lock().await;
     let Some(mut session) = load_session()?.filter(|session| session.base_url == base) else {
-        return Err("还没有登录 VortoCode 账号".into());
+        return Err("还没有登录 VortoOne 账号".into());
     };
     let access = ensure_access(app, &base, &mut slot, &mut session).await.map_err(|error| error.message())?;
     let client = http(app)?;

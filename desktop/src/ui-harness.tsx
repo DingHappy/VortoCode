@@ -172,7 +172,7 @@ function Harness() {
           <Card>
             <ul className="vc-list">
               <ListRow lead={<CalendarDays />} title="读取下周日程" description="来自日历插件 · 2 分钟前" trail={<StatusPill status="done" />} />
-              <ListRow lead={<MessageSquare />} title="提醒 Codex 补测试" description="VortoCode · 等你决定发不发" trail={<StatusPill status="wait" />} />
+              <ListRow lead={<MessageSquare />} title="提醒 Codex 补测试" description="VortoOne · 等你决定发不发" trail={<StatusPill status="wait" />} />
               <ListRow lead={<ListChecks />} title="整理赚钱方向的调研" description="常驻助理 · 已用 12 分钟" trail="12 分钟" />
             </ul>
           </Card>

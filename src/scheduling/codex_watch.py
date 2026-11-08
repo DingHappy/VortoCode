@@ -450,7 +450,7 @@ def _overview(state: dict, now: datetime, handed: Optional[set] = None) -> str:
     """Render one observation, so overview and details cannot mix report versions."""
     received = _parse(state.get("received_at"))
     if not received:
-        return "还没收到过 Codex 的进度：需要在 Mac 上开着 VortoCode Desktop（设置 → 能力里开启「让助理查看 Codex」），并且 Codex 在运行。"
+        return "还没收到过 Codex 的进度：需要在 Mac 上开着 VortoOne（Desktop）（设置 → 能力里开启「让助理查看 Codex」），并且 Codex 在运行。"
     lines = []
     stale = not timedelta(0) <= now - received <= STALE_AFTER
     age_text = _ago((now - received).total_seconds()) if received <= now else "时间待核对"

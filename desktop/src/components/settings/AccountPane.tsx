@@ -75,7 +75,7 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
 
   return (
     <div className="settings-stack">
-      <p className="settings-intro">账号用于 VortoCode 云端服务。使用本地或第三方模型，可直接前往「模型」设置，无需登录。</p>
+      <p className="settings-intro">账号用于 VortoOne 云端服务。使用本地或第三方模型，可直接前往「模型」设置，无需登录。</p>
 
       {account ? (
         <section className="settings-card account-card" aria-label="当前账号">
@@ -87,7 +87,7 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
             <button onClick={() => void logout()} disabled={busy}>退出登录</button>
           </div>
           <dl className="account-facts">
-            <div><dt>使用中</dt><dd>{member ? "VortoCode 会员" : account.keySource === "token_plan" ? "Token Plan（Desktop 套餐）" : "按量 Key（VortoCode Desktop）"}</dd></div>
+            <div><dt>使用中</dt><dd>{member ? "VortoOne 会员" : account.keySource === "token_plan" ? "Token Plan（Desktop 套餐）" : "按量 Key（Desktop）"}</dd></div>
             {account.planName && <div><dt>套餐</dt><dd>{account.planName}{account.planExpiry ? ` · ${formatExpiry(account.planExpiry)}` : ""}</dd></div>}
           </dl>
           <div className="settings-card-foot">
@@ -97,7 +97,7 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
         </section>
       ) : (
         <section className="settings-card account-card" aria-label="登录">
-          <div className="settings-card-head"><strong>登录 VortoCode</strong></div>
+          <div className="settings-card-head"><strong>登录 VortoOne</strong></div>
           <form
             className="account-form"
             onSubmit={(event) => { event.preventDefault(); void login(false); }}

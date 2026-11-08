@@ -40,10 +40,10 @@ export function FirstRunCard({ signedIn, onAccount, onModel }: { signedIn: boole
   return (
     <div className="first-run-card">
       <strong>先接一个模型，就能开始</strong>
-      <p>VortoCode 本身不带模型，两种方式任选一种：</p>
+      <p>VortoOne 本身不带模型，两种方式任选一种：</p>
       <div className="first-run-actions">
         <button className="primary" onClick={onAccount}>
-          {signedIn ? "使用会员模型" : "登录 VortoCode 账号"}
+          {signedIn ? "使用会员模型" : "登录 VortoOne 账号"}
           <small>会员直接用，不用填地址和 Key</small>
         </button>
         <button onClick={onModel}>

@@ -33,7 +33,7 @@ export function RemoteProjectDialog({ purpose = "project", onClose, onRegistered
   return <div className="modal-backdrop"><section className="settings-modal remote-project-dialog" role="dialog" aria-modal="true" aria-label={title}>
     <h2>{title}</h2>
     <p>{assistant
-      ? "让助理住在一台一直开着的服务器上：你交代完就可以合上笔记本，它接着做，回来在「动态」里看结果。服务器上要先跑一个通用范围的 VortoCode 服务。"
+      ? "让助理住在一台一直开着的服务器上：你交代完就可以合上笔记本，它接着做，回来在「动态」里看结果。服务器上要先跑一个通用范围的 VortoOne 服务。"
       : "查看服务器上的任务、日志与队列，在本地下达任务和处理确认。关闭桌面后，服务器继续执行；TG 只负责通知。"}</p>
     <label>名称<input value={name} onChange={(e) => setName(e.target.value)} placeholder={assistant ? "常驻电脑" : "我的服务器"} disabled={busy} /></label>
     <label>服务地址<input autoFocus value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} placeholder={assistant ? "http://内网主机:8081" : "http://内网主机:8080"} disabled={busy} /></label>

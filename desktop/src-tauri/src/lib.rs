@@ -489,7 +489,7 @@ async fn set_experimental_workers(app: AppHandle, enabled: bool) -> Result<bool,
         let dialog_app = app.clone();
         let confirmed = tauri::async_runtime::spawn_blocking(move || {
             with_main_window_parent(&dialog_app, dialog_app.dialog().message(
-                "实验功能：开启后，隔离开发里的「实现 / 审查」可以按你在模型分工里选的 cli:codex / cli:claude，交给这台电脑上你本人登录的 CLI 执行（消耗你的订阅额度）。\n\n拆解、隔离、验证、确认和开 PR 仍由 VortoCode 负责；CLI 拿不到 GitHub 令牌。默认关闭，随时可以关掉。",
+                "实验功能：开启后，隔离开发里的「实现 / 审查」可以按你在模型分工里选的 cli:codex / cli:claude，交给这台电脑上你本人登录的 CLI 执行（消耗你的订阅额度）。\n\n拆解、隔离、验证、确认和开 PR 仍由 VortoOne 负责；CLI 拿不到 GitHub 令牌。默认关闭，随时可以关掉。",
             ))
             .title("开启实验功能：外部执行者")
             .kind(MessageDialogKind::Warning)
@@ -1174,7 +1174,7 @@ async fn confirm_action(app: AppHandle, message: String) -> Result<bool, String>
     let message = confirm_action_message(&message);
     tauri::async_runtime::spawn_blocking(move || {
         with_main_window_parent(&app, app.dialog().message(message))
-            .title("VortoCode")
+            .title("VortoOne")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom("确认".into(), "取消".into()))
             .blocking_show()
@@ -1838,7 +1838,7 @@ mod promote_tests {
     fn promoting_refuses_member_and_empty_providers() {
         let mut profile = local_default();
         profile.providers.push(DesktopLlmProvider {
-            id: MEMBER_PROVIDER_ID.into(), name: "VortoCode 会员".into(),
+            id: MEMBER_PROVIDER_ID.into(), name: "VortoOne 会员".into(),
             base_url: format!("{RELAY_ORIGIN}/v1"), api_key: "sk-m".into(), models: vec!["m".into()],
         });
         assert!(promote_provider(profile.clone(), MEMBER_PROVIDER_ID).is_err());
@@ -1908,7 +1908,7 @@ mod tests {
         let initial = store.snapshot(|| read_llm_profile_file(&path)).unwrap();
         let mut profile = default_llm_profile();
         profile.api_key = "test-default-key".into();
-        let member = DesktopLlmProvider { id: MEMBER_PROVIDER_ID.into(), name: "VortoCode 会员".into(),
+        let member = DesktopLlmProvider { id: MEMBER_PROVIDER_ID.into(), name: "VortoOne 会员".into(),
             base_url: RELAY_BASE_URL.into(), api_key: "sk-test-member".into(), models: vec![RELAY_DEFAULT_MODEL.into(), "other-member-model".into()] };
         let other = DesktopLlmProvider { id: "other".into(), name: "Other".into(), base_url: "https://other.example.test/v1".into(),
             api_key: "test-other-key".into(), models: vec!["other-model".into()] };

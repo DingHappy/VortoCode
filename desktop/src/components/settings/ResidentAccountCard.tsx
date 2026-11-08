@@ -43,6 +43,6 @@ export function ResidentAccountCard({ projectId }: { projectId?: string }) {
     window.addEventListener(ACCOUNT_CHANGED_EVENT, changed);
     return () => { current.dispose(); if (controller.current === current) controller.current = null; window.removeEventListener(ACCOUNT_CHANGED_EVENT, changed); };
   }, [projectId]);
-  if (!projectId) return <section className="settings-card" aria-label="手机与常驻助手"><strong>手机与常驻助手</strong><p className="settings-card-note">请先在“电脑与连接”中登记常驻电脑，再关联当前 VortoCode 账号。手机入口连接常驻助手，本机项目不会自动成为手机助手。</p></section>;
+  if (!projectId) return <section className="settings-card" aria-label="手机与常驻助手"><strong>手机与常驻助手</strong><p className="settings-card-note">请先在“电脑与连接”中登记常驻电脑，再关联当前 VortoOne 账号。手机入口连接常驻助手，本机项目不会自动成为手机助手。</p></section>;
   return <ResidentAccountStatus state={state} onRefresh={() => void controller.current?.refresh()} onUpdate={bind => void controller.current?.update(bind)} />;
 }

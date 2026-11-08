@@ -272,7 +272,7 @@ pub(crate) async fn upsert_member_provider(
     }
     let provider = normalize_llm_provider(DesktopLlmProvider {
         id: MEMBER_PROVIDER_ID.into(),
-        name: "VortoCode 会员".into(),
+        name: "VortoOne 会员".into(),
         base_url: format!("{RELAY_ORIGIN}/v1"),
         api_key: with_sk_prefix(key),
         models: Vec::new(),
@@ -335,7 +335,7 @@ pub(crate) fn default_as_provider(profile: &DesktopLlmProfile, taken: &[DesktopL
         .and_then(|url| url.host_str().map(str::to_string))
         .unwrap_or_default();
     let (base_id, name) = if member {
-        (MEMBER_PROVIDER_ID.to_string(), "VortoCode 会员".to_string())
+        (MEMBER_PROVIDER_ID.to_string(), "VortoOne 会员".to_string())
     } else if llm_provider(&profile.base_url) == "local" {
         ("local".to_string(), "本机模型".to_string())
     } else {

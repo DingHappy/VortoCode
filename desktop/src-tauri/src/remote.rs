@@ -546,7 +546,7 @@ pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
             .into(),
         Some(51) => "网络不通（Network is unreachable）：检查网络或隧道".into(),
         _ => match error.kind() {
-            ErrorKind::ConnectionRefused => "常驻电脑拒绝连接：VortoCode 服务可能没在运行".into(),
+            ErrorKind::ConnectionRefused => "常驻电脑拒绝连接：VortoOne 服务可能没在运行".into(),
             ErrorKind::TimedOut => "连接超时：常驻电脑可能关机或网络不通".into(),
             _ => "网络不可达或被拒绝".into(),
         },

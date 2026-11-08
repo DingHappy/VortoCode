@@ -43,7 +43,7 @@ describe("membershipLine", () => {
 
 describe("keySourceLabel", () => {
   it("names where the model key came from", () => {
-    expect(keySourceLabel(MEMBER_KEY_SOURCE)).toBe("VortoCode 会员");
+    expect(keySourceLabel(MEMBER_KEY_SOURCE)).toBe("VortoOne 会员");
     expect(keySourceLabel("token_plan")).toBe("Token Plan");
     expect(keySourceLabel("pay_as_you_go")).toBe("按量 Key");
   });
@@ -65,7 +65,7 @@ describe("sidebarIdentity", () => {
   });
   it("invites signing in, and stays neutral while loading", () => {
     expect(sidebarIdentity({ ...signedIn, signedIn: false, email: "" }, null).name).toBe("登录");
-    expect(sidebarIdentity(null, null)).toMatchObject({ initial: "", name: "VortoCode 账号" });
+    expect(sidebarIdentity(null, null)).toMatchObject({ initial: "", name: "VortoOne 账号" });
   });
 });
 

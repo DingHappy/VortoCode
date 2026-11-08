@@ -311,7 +311,7 @@ export function SettingsModal({
       onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); if (event.nativeEvent.isComposing) event.preventDefault(); } }}
       onCancel={event => { event.preventDefault(); requestLeave(onClose); }}>
       <nav className="settings-nav" aria-label="设置分类">
-        <div className="settings-brand"><SlidersHorizontal size={18} /><h2>设置</h2><span>VortoCode</span></div>
+        <div className="settings-brand"><SlidersHorizontal size={18} /><h2>设置</h2><span>VortoOne</span></div>
         <div className="settings-search-wrap"><Search size={15} aria-hidden="true" /><input type="search" className="settings-search" value={query}
           onChange={event => setQuery(event.target.value)} placeholder="搜索设置项" aria-label="搜索设置" /></div>
         <div className="settings-nav-group">
@@ -505,8 +505,8 @@ export function SettingsModal({
                         <time>{new Date(recoveryRecord.updatedAt * 1_000).toLocaleString("zh-CN")}</time>
                       </div>
                       <p>{recoveryRecord.status === "crashed"
-                        ? "上次工作区意外停止，VortoCode 可以重新启动并恢复项目配置。"
-                        : "检测到上次没有完成退出清理。VortoCode 会先尝试恢复，失败后启动新的本地引擎。"}</p>
+                        ? "上次工作区意外停止，VortoOne 可以重新启动并恢复项目配置。"
+                        : "检测到上次没有完成退出清理。VortoOne 会先尝试恢复，失败后启动新的本地引擎。"}</p>
                       <code title={recoveryRecord.repoRoot}>{recoveryRecord.repoRoot}</code>
                       <div className="recovery-actions">
                         <button disabled={saving} onClick={() => void onDismissRecovery()}>忽略记录</button>

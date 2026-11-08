@@ -432,6 +432,22 @@ Harness、OpenCode、Pi 等），由主 agent 管理与协调；不要固定流�
 
 ---
 
+## ADR-018：产品改名 VortoOne（2026-11-08）
+
+**背景**：产品已经从「AI 编码 Agent」变成常驻个人助理（ADR-011、ADR-016、ADR-017），名字里的「Code」让人以为只是写代码的工具。iPhone 准备上 TestFlight，App Store Connect 里的 App 还没建，现在改名成本最低。
+
+**决定**（丁开心 2026-11-08 确认）：
+
+1. Desktop 和 iPhone 统一叫 **VortoOne**：「一个常驻助理、一段主要聊天、电脑和手机是同一个它」。
+2. **第一步（本次）只改用户看得到的文字**：两端界面、iPhone 桌面名和通知扩展名、Desktop 窗口标题、助理默认名字、账号与会员的叫法、推送标题、Telegram / 钉钉里发给主人的话、手机网页、语音工具说明、助理系统提示里对自己运行环境的描述。
+3. **不改的标识**：bundle id（`com.vortocode.mobile`、`com.vorto.vortocode`）、推送 topic、钥匙串分组、`Application Support/VortoCode` 和 `Logs/VortoCode` 等路径、中转站套餐名「VortoCode Desktop」（Desktop 拿它匹配账号套餐）、User-Agent、小组引擎 id `vortocode`、仓库名、Python 包、`vc` / `vortocode` 命令、服务名、开发者用的 CLI 与服务启动输出、发给内部 Agent 的提示。这些用户看不到，改了会断推送、钥匙串、自动更新或账号匹配。
+4. **第二步（单独做）**：Desktop 的 App 包名（`productName`，决定 Dock、菜单栏、「访达」和 `/Applications/` 里的名字）。它牵动自动更新替换路径、macOS 本地网络放行记录、发布与安装核对脚本，要单独发一版并在真机上验证更新。在那之前，Dock 和系统设置里仍显示 VortoCode，所以「本地网络」那段指引里保留 VortoCode。
+5. 账号服务（独立仓库）的登录页品牌另行更新。
+
+**以后加界面文字**：给用户看的地方写 VortoOne；上面第 3 条里的标识照旧。
+
+---
+
 ## 待决策(占位)
 
 - [ ] **代码 embedding 用什么**?bge-m3 自部署 / OpenAI text-embedding-3 / Voyage

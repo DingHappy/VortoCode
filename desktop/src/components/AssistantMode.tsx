@@ -415,7 +415,7 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   // 名片卡写名字和「关于你」；SOUL、记忆是两张彩色卡，代表助理本身（设计规范里唯一允许渐变的地方）
   return <section className="assistant-section vc-identity">
     <div className="vc-identity-card">
-      <span className="vc-identity-name">{profile.name || "VortoCode"}</span>
+      <span className="vc-identity-name">{profile.name || "VortoOne"}</span>
       <span className={`vc-identity-about${profile.about_you ? "" : " empty"}`}>{profile.about_you || "关于你：在哪、做什么、习惯怎么被汇报"}</span>
       <button className="vc-identity-edit" onClick={onEdit}><PencilLine aria-hidden="true" />编辑资料</button>
       {onAvatar && <div className="vc-identity-avatar-actions">

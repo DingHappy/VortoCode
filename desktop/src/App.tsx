@@ -2934,7 +2934,7 @@ function App() {
 
             {streaming && (
               <article className="message assistant streaming">
-                {appMode !== "assistant" && <div className="message-author">VortoCode <span>正在回复</span></div>}
+                {appMode !== "assistant" && <div className="message-author">VortoOne <span>正在回复</span></div>}
                 <div className="message-body"><MarkdownMessage text={streaming} /><i className="cursor" data-rid={streamingRid} /></div>
               </article>
             )}
@@ -2963,14 +2963,14 @@ function App() {
                 常驻电脑没连上，现在是这台电脑上的本机助理：派活、简报和合上笔记本后继续做，都要连上常驻电脑。
                 {residentFailure && <> 原因：{residentFailure}</>}
                 {isLocalNetworkBlocked(residentFailure)
-                  ? <button onClick={() => void relaunchApp().catch((error) => setBanner(`没能重新打开：${String(error)}`))}>重新打开 VortoCode</button>
+                  ? <button onClick={() => void relaunchApp().catch((error) => setBanner(`没能重新打开：${String(error)}`))}>重新打开 VortoOne</button>
                   : <button onClick={() => void changeAppMode("assistant")} disabled={projectSwitching}>重新连接</button>}
               </div>
             )}
             {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && messages.length > 0 && (
               <div className="composer-notice" role="status">
                 还没有连接模型，消息不会有回复。
-                <button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>{vortoAccount.status?.signedIn ? "使用会员模型" : "登录 VortoCode 账号"}</button>
+                <button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>{vortoAccount.status?.signedIn ? "使用会员模型" : "登录 VortoOne 账号"}</button>
                 <button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>用自己的模型</button>
               </div>
             )}
@@ -3088,7 +3088,7 @@ function App() {
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
-          : <AssistantPanel id="assistant-panel" toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
+          : <AssistantPanel id="assistant-panel" toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
