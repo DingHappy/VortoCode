@@ -41,7 +41,7 @@ async def test_read_file_text_still_plain_str(tmp_path):
 
 @pytest.mark.asyncio
 async def test_read_file_oversize_image_refused(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MAX_IMAGE_BYTES", "8")
+    monkeypatch.setenv("VORTOONE_MAX_IMAGE_BYTES", "8")
     (tmp_path / "big.png").write_bytes(_PNG)              # 32 字节 > 上限 8
     agent = _agent(tmp_path)
     raw = await agent.tools["read_file"].handler({"path": "big.png"})

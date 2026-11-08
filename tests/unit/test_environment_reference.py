@@ -1,4 +1,4 @@
-"""docs/ENVIRONMENT.md 与代码里读取的 VORTOCODE_* 变量两头对齐。
+"""docs/ENVIRONMENT.md 与代码里读取的 VORTOONE_* 变量两头对齐。
 
 这不是在用源码子串「证明」某个防护存在（那类测试本仓不写）；它只管一份清单的完整性：
 新加变量忘了写文档、或删了变量文档还留着，都会在这里报出来。
@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-NAME = re.compile(r"VORTOCODE_[A-Z0-9_]+")
+NAME = re.compile(r"VORTOONE_[A-Z0-9_]+")
 
 
 def _names(text: str) -> set[str]:

@@ -29,7 +29,7 @@ permissions:
 ```
 
 仅在用户已有授权的 external/unattended 会话中，显式启用配置并选择原MCP入口。
-Web仍要求 `VORTOCODE_WEB_MCP=1`；没有自动启用、扫描第三方配置或扩大凭据权限。
+Web仍要求 `VORTOONE_WEB_MCP=1`；没有自动启用、扫描第三方配置或扩大凭据权限。
 Desktop项目/Scratch的local边界仍拒绝外部MCP；General不加载仓库Skill。
 Desktop插件页现有当前会话连接状态、手动连接/重试；local会话显示受限且禁用按钮。`ask`规则没有人工确认门时仍拒绝。
 

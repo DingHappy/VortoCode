@@ -41,7 +41,7 @@ def _fake_delivery(monkeypatch, *, fix):
 async def test_agent_path_uses_real_tool_loop_and_independent_acceptance(tmp_path, monkeypatch, fix):
     from src.llm.client import add_usage, usage_scope
     _fake_delivery(monkeypatch, fix=fix)
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "0")
 
     class ScriptedLLM:
         calls = 0

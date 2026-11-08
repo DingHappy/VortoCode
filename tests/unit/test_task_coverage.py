@@ -339,8 +339,8 @@ async def test_typed_http_cursor_recovery_and_coverage_state(tmp_path, monkeypat
     import httpx
     from src.web.server import app
     service, source, _, _ = fixture(tmp_path, fillers=4)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "coverage-local")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "coverage-local")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     monkeypatch.setattr("src.web.routers.delegations.get_dispatch_service", lambda: service)
     headers = {"Authorization": "Bearer coverage-local"}
     path = f"/api/delegations/{source.id}/dependency-scans"

@@ -54,9 +54,9 @@ async def test_activity_counts_queued_workers_and_does_not_scan_historical_ledge
     manager = RunManager(str(tmp_path))
     terminal = TerminalManager(str(tmp_path))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_MODEL_CONFIGURATION_REVISION", "revision-test")
-    monkeypatch.setenv("VORTOCODE_CONFIGURATION_LAUNCH_ID", "launch-test")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_MODEL_CONFIGURATION_REVISION", "revision-test")
+    monkeypatch.setenv("VORTOONE_CONFIGURATION_LAUNCH_ID", "launch-test")
     monkeypatch.setattr(tasks, "get_runner", lambda: runner)
     monkeypatch.setattr(runs, "get_run_manager", lambda: manager)
     monkeypatch.setattr(terminals, "get_terminal_manager", lambda: terminal)
@@ -115,8 +115,8 @@ async def test_activity_endpoint_keeps_auth_and_general_scope_boundaries(monkeyp
     from src.gateway.configuration_receipt import end_configuration_receipt
     end_configuration_receipt()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "test-activity-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "test-activity-token")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.get("/api/runtime-activity")).status_code in (401, 403)
         headers = {"Authorization": "Bearer test-activity-token"}

@@ -87,7 +87,7 @@ async def _check_relay() -> Check:
 async def _check_serve() -> Check:
     """serve 可达性：attach 模式的前提；不在只算 warn（CLI/TUI 会自动回退进程内）。"""
     import aiohttp
-    url = (os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080").rstrip("/")
+    url = (os.getenv("VORTOONE_SERVE_URL") or "http://127.0.0.1:8080").rstrip("/")
     try:
         # 本地检查**刻意不吃代理环境**：NO_PROXY 没配时，127.0.0.1 走代理会被误路由、
         # 把在跑的 serve 误报成不可达。local_session 让这个选择在调用点写明白。
@@ -176,8 +176,8 @@ async def _check_im_liveness() -> Check:
     读 serve 的 `/api/im/status`（走鉴权，token 从环境取；没设 token 的部署直接放行）。
     """
     import aiohttp
-    url = (os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080").rstrip("/")
-    token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
+    url = (os.getenv("VORTOONE_SERVE_URL") or "http://127.0.0.1:8080").rstrip("/")
+    token = os.getenv("VORTOONE_API_TOKEN", "").strip()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         # 同 _check_serve：本地检查不吃代理环境，否则 127.0.0.1 会被误路由成"不可达"
@@ -186,7 +186,7 @@ async def _check_im_liveness() -> Check:
                              timeout=aiohttp.ClientTimeout(total=_TIMEOUT)) as r:
                 if r.status in (401, 403):
                     return Check("im-live", "warn",
-                                 "serve 要鉴权而 VORTOCODE_API_TOKEN 没配到本地环境——"
+                                 "serve 要鉴权而 VORTOONE_API_TOKEN 没配到本地环境——"
                                  "查不了桥活性（配上同一个 token 再跑）")
                 if r.status != 200:
                     return Check("im-live", "warn", f"取桥活性失败（HTTP {r.status}）")
@@ -284,7 +284,7 @@ def _check_external_workers() -> Check:
         info = describe_worker(worker)
         if not info["binary"]:
             level = "fail"
-            parts.append(f"{role}={worker}：找不到命令（安装后重启，或设 VORTOCODE_{worker.upper()}_BIN）")
+            parts.append(f"{role}={worker}：找不到命令（安装后重启，或设 VORTOONE_{worker.upper()}_BIN）")
             continue
         if info["logged_in"] is False:
             level = "fail"
@@ -298,6 +298,17 @@ def _check_external_workers() -> Check:
                             f"模型 {info['model']}" if info.get("model") else "模型 CLI 默认") if b]
         parts.append(f"{role}={worker}（{'，'.join(bits)}）")
     return Check("workers", level, "；".join(parts))
+
+
+def _check_env_names() -> Check:
+    """还在用改名前的 `VORTOCODE_*`？照常生效（启动时换成 `VORTOONE_*`），提醒有空改掉（ADR-018）。"""
+    from src.env_compat import legacy_env_names
+    legacy = legacy_env_names()
+    if not legacy:
+        return Check("env-names", "ok", "环境变量都是新名字 VORTOONE_*")
+    shown = "、".join(legacy[:5]) + (f" 等 {len(legacy)} 个" if len(legacy) > 5 else "")
+    return Check("env-names", "warn",
+                 f"还在用旧名字 {shown}：照常生效，有空把配置里的 VORTOCODE_ 改成 VORTOONE_")
 
 
 async def run_checks(cwd: str) -> List[Check]:
@@ -315,6 +326,7 @@ async def run_checks(cwd: str) -> List[Check]:
         ("im-live", _check_im_liveness),
         ("schedule-tz", lambda: _check_schedule_timezone(cwd)),
         ("workers", _check_external_workers),
+        ("env-names", _check_env_names),
     ]
     out: List[Check] = []
     for name, fn in plan:

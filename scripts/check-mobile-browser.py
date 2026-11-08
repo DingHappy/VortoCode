@@ -122,10 +122,10 @@ def main(args):
             sys.path.insert(0, str(ROOT))
             admin = secrets.token_urlsafe(32)
             os.environ.update(
-                VORTOCODE_API_TOKEN=admin,
-                VORTOCODE_WORKSPACE_SCOPE="general",
-                VORTOCODE_ACCOUNT_URL=f"http://127.0.0.1:{metadata['port']}",
-                VORTOCODE_MOBILE_PUBLIC_ORIGIN=origin,
+                VORTOONE_API_TOKEN=admin,
+                VORTOONE_WORKSPACE_SCOPE="general",
+                VORTOONE_ACCOUNT_URL=f"http://127.0.0.1:{metadata['port']}",
+                VORTOONE_MOBILE_PUBLIC_ORIGIN=origin,
             )
             from src.web.server import app
             from src.memory.assistant_profile import save_profile
@@ -173,7 +173,7 @@ def main(args):
             ):
                 registration_path = "/api/mobile/account/registration"
                 initial = bridge.request(port, "GET", registration_path, admin)
-                assert initial["account_issuer"] == os.environ["VORTOCODE_ACCOUNT_URL"]
+                assert initial["account_issuer"] == os.environ["VORTOONE_ACCOUNT_URL"]
                 assert initial["mobile_entry_url"] == origin + "/mobile"
                 registered = bridge.request(
                     port,
@@ -182,7 +182,7 @@ def main(args):
                     admin,
                     {
                         "access_token": metadata["desktop"],
-                        "issuer": os.environ["VORTOCODE_ACCOUNT_URL"],
+                        "issuer": os.environ["VORTOONE_ACCOUNT_URL"],
                         "name": "手机验收助手",
                         "revision": initial["revision"],
                         "instance_id": initial["instance_id"],

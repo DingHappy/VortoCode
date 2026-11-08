@@ -176,7 +176,7 @@ class _Sandbox:
         self._notifier = im_runtime._OWNER_NOTIFIER
         # 提示式协议：ScriptedLLM 吐的是裸 JSON 工具调用，native 模式下不会被解析成工具调用。
         # 沙箱关掉：canary 不跑 shell，别让宿主机缺 bubblewrap 变成假红。
-        for k, v in (("VORTOCODE_NATIVE_TOOLS", "0"), ("VORTOCODE_SANDBOX", "off")):
+        for k, v in (("VORTOONE_NATIVE_TOOLS", "0"), ("VORTOONE_SANDBOX", "off")):
             self._env[k] = os.environ.get(k)
             os.environ[k] = v
         return self

@@ -107,7 +107,7 @@ async def test_run_isolated_task_propagates_strict_error_and_cleans_up(tmp_path)
 
 async def test_dev_isolated_reports_channel_error(tmp_path, monkeypatch):
     _init_repo(tmp_path)
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
 
     async def _fail(*a, **k):
         raise TimeoutError("mock 502 Bad Gateway")
@@ -207,7 +207,7 @@ async def test_im_chat_surfaces_error_instead_of_empty(tmp_path):
 # ---------------------------------------------------------------- 沙箱标记（护城河可通行性）
 
 def test_run_tests_marks_sandbox_env(tmp_path, monkeypatch):
-    """流水线在沙箱里跑验证时必须注入 VORTOCODE_IN_SANDBOX=1。
+    """流水线在沙箱里跑验证时必须注入 VORTOONE_IN_SANDBOX=1。
 
     真机复盘 2026-07-25：沙箱按设计禁 fork PTY，4 条 terminal 用例在里面必红 →
     验证关对**任何**候选改动一律判红，隔离 dev 流水线 100% 堵死。用例靠这个标记
@@ -239,7 +239,7 @@ def test_run_tests_marks_sandbox_env(tmp_path, monkeypatch):
     monkeypatch.setattr(wt.subprocess, "run", _fake_run)
 
     wt.run_tests(str(tmp_path), ["true"])
-    assert seen["env"].get("VORTOCODE_IN_SANDBOX") == "1"
+    assert seen["env"].get("VORTOONE_IN_SANDBOX") == "1"
 
 
 def test_sandboxed_terminal_tests_skip_themselves():
@@ -250,5 +250,5 @@ def test_sandboxed_terminal_tests_skip_themselves():
         [sys.executable, "-m", "pytest", "-q", "tests/unit/test_gateway_terminals.py",
          "--collect-only", "-q"],
         capture_output=True, text=True,
-        env={**os.environ, "VORTOCODE_IN_SANDBOX": "1"})
+        env={**os.environ, "VORTOONE_IN_SANDBOX": "1"})
     assert r.returncode == 0, r.stdout + r.stderr

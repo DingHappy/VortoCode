@@ -229,7 +229,7 @@ async def test_http_resume_replays_finished_child_and_reports_save_failure(tmp_p
     monkeypatch.setattr(task_events, "broadcast_task_update", source_updates.append)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(tasks, "_RUNNER", runner)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "recovery-test")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "recovery-test")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:
         endpoint = f"/api/tasks/{source.id}/resume"
         assert (await client.post(endpoint)).status_code == 401

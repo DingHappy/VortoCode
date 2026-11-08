@@ -26,13 +26,13 @@ def _slugify(title: str) -> str:
     return s.strip("-")[:40] or "artifact"
 
 
-# 制品体积上限：默认 16 MiB（对齐 Claude Code），VORTOCODE_ARTIFACT_MAX_BYTES 可覆盖。
+# 制品体积上限：默认 16 MiB（对齐 Claude Code），VORTOONE_ARTIFACT_MAX_BYTES 可覆盖。
 DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 
 
 def max_bytes() -> int:
     try:
-        v = int(os.getenv("VORTOCODE_ARTIFACT_MAX_BYTES") or DEFAULT_MAX_BYTES)
+        v = int(os.getenv("VORTOONE_ARTIFACT_MAX_BYTES") or DEFAULT_MAX_BYTES)
         return v if v > 0 else DEFAULT_MAX_BYTES
     except ValueError:
         return DEFAULT_MAX_BYTES
@@ -229,8 +229,8 @@ class ArtifactStore:
 
 
 def artifact_url(base_url: Optional[str], artifact_id: str) -> str:
-    """拼可点链接。base_url 缺省读 VORTOCODE_WEB_BASE，再缺省 http://127.0.0.1:8080。"""
-    base = (base_url or os.getenv("VORTOCODE_WEB_BASE") or "http://127.0.0.1:8080").rstrip("/")
+    """拼可点链接。base_url 缺省读 VORTOONE_WEB_BASE，再缺省 http://127.0.0.1:8080。"""
+    base = (base_url or os.getenv("VORTOONE_WEB_BASE") or "http://127.0.0.1:8080").rstrip("/")
     return f"{base}/artifact/{artifact_id}"
 
 
@@ -285,7 +285,7 @@ def build_artifact_tools(
         try:
             meta = store.publish(title or (artifact_id or ""), html, artifact_id, kind=kind)
         except ValueError as e:
-            return f"发布失败：{e}。请精简内容，或调大环境变量 VORTOCODE_ARTIFACT_MAX_BYTES。"
+            return f"发布失败：{e}。请精简内容，或调大环境变量 VORTOONE_ARTIFACT_MAX_BYTES。"
         url = artifact_url(base_url, meta["id"])
         if on_published is not None:
             try:

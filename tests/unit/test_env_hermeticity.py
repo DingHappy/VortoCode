@@ -1,7 +1,7 @@
 """套件必须与**机器自带的凭据/开关**隔开——`.env` 里有什么都不该改变测试结论。
 
 CLAUDE.md 教人敲的是裸命令 `python -m pytest tests/ -q`。在 `.env` 里配了
-`VORTOCODE_API_TOKEN` 的机器上（生产机就是这样），改之前那条命令会红 55 条，
+`VORTOONE_API_TOKEN` 的机器上（生产机就是这样），改之前那条命令会红 55 条，
 报错还长得像代码坏了：`KeyError: 'artifacts'`——其实是鉴权开着、返回 401，响应体里根本
 没有那个键。
 
@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-_AMBIENT = ("OPENAI_API_KEY", "VORTOCODE_API_TOKEN",
-            "VORTOCODE_ENABLE_SHELL", "VORTOCODE_ENABLE_BROWSER")
+_AMBIENT = ("OPENAI_API_KEY", "VORTOONE_API_TOKEN",
+            "VORTOONE_ENABLE_SHELL", "VORTOONE_ENABLE_BROWSER")
 
 
 @pytest.mark.parametrize("name", _AMBIENT)
@@ -27,8 +27,8 @@ def test_ambient_credentials_are_neutral_inside_the_suite(name):
 
 def test_a_test_can_still_opt_into_a_value(monkeypatch):
     """夹具给的是默认不是禁令：真要这个值的用例照常覆盖得了。"""
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "explicit")
-    assert os.getenv("VORTOCODE_API_TOKEN") == "explicit"
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "explicit")
+    assert os.getenv("VORTOONE_API_TOKEN") == "explicit"
 
 
 def test_empty_string_blocks_dotenv_but_deleting_the_key_does_not(tmp_path):
@@ -37,8 +37,8 @@ def test_empty_string_blocks_dotenv_but_deleting_the_key_does_not(tmp_path):
     `load_dotenv(override=False)` 的判据是"键在不在 os.environ 里"，空串也算在。于是两种
     "清掉"的写法效果完全相反：
 
-        VORTOCODE_API_TOKEN=""        → dotenv 不覆盖 → 真的空
-        env -u VORTOCODE_API_TOKEN    → 键没了 → dotenv 从 .env 读回来 → 反而有值
+        VORTOONE_API_TOKEN=""        → dotenv 不覆盖 → 真的空
+        env -u VORTOONE_API_TOKEN    → 键没了 → dotenv 从 .env 读回来 → 反而有值
 
     2026-09-10 我用后者去验生产机，把 55 条环境失败误判成回归。这里用**真的 dotenv**
     在临时目录上验，不打真网也不碰仓库的 .env。

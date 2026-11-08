@@ -11,10 +11,10 @@ def registered(monkeypatch):
     monkeypatch.setenv("OPENAI_API_BASE", "https://relay.example/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "relay-key")
     monkeypatch.setenv("DEFAULT_MODEL", "main-model")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_DEEPSEEK_BASE", "https://api.deepseek.example/v1")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_DEEPSEEK_KEY", "ds-key")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_NOKEY_BASE", "https://nokey.example/v1")
-    monkeypatch.delenv("VORTOCODE_PROVIDER_NOKEY_KEY", raising=False)
+    monkeypatch.setenv("VORTOONE_PROVIDER_DEEPSEEK_BASE", "https://api.deepseek.example/v1")
+    monkeypatch.setenv("VORTOONE_PROVIDER_DEEPSEEK_KEY", "ds-key")
+    monkeypatch.setenv("VORTOONE_PROVIDER_NOKEY_BASE", "https://nokey.example/v1")
+    monkeypatch.delenv("VORTOONE_PROVIDER_NOKEY_KEY", raising=False)
 
 
 def test_chat_target_only_for_registered_usable_providers(registered):
@@ -70,9 +70,9 @@ async def test_switching_closes_the_old_pool_on_next_use(registered):
 @pytest.mark.parametrize("base", ["http://127.0.0.1:11434/v1", "http://localhost:1234/v1", "https://localhost:1234/v1"])
 def test_keyless_local_provider_routes_agent_without_cloud_credentials(registered, monkeypatch, base):
     from src.llm.providers import client_for_spec, reset_cache, resolve
-    monkeypatch.setenv("VORTOCODE_PROVIDER_LOCAL_BASE", base)
-    monkeypatch.delenv("VORTOCODE_PROVIDER_LOCAL_KEY", raising=False)
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "review=local:qwen:7b")
+    monkeypatch.setenv("VORTOONE_PROVIDER_LOCAL_BASE", base)
+    monkeypatch.delenv("VORTOONE_PROVIDER_LOCAL_KEY", raising=False)
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "review=local:qwen:7b")
     reset_cache()
     provider, model = chat_target("local:qwen:7b")
     assert (provider.base_url, provider.api_key, model) == (base, "not-required", "qwen:7b")
@@ -86,15 +86,15 @@ def test_keyless_local_provider_routes_agent_without_cloud_credentials(registere
 
 @pytest.mark.parametrize("base", ["http://localhost.evil.test/v1", "http://127.0.0.1.evil.test/v1", "http://localhost@evil.test/v1", "http://user@localhost/v1", "http://localhost:bad/v1", "http://192.168.1.2:1234/v1", "ftp://localhost/v1", "http://localhost/v1?token=abc", "http://localhost/v1#abc"])
 def test_local_exemption_does_not_accept_remote_or_ambiguous_urls(registered, monkeypatch, base):
-    monkeypatch.setenv("VORTOCODE_PROVIDER_LOCAL_BASE", base)
-    monkeypatch.delenv("VORTOCODE_PROVIDER_LOCAL_KEY", raising=False)
+    monkeypatch.setenv("VORTOONE_PROVIDER_LOCAL_BASE", base)
+    monkeypatch.delenv("VORTOONE_PROVIDER_LOCAL_KEY", raising=False)
     assert chat_target("local:qwen:7b") is None
 
 
 def test_local_service_own_key_is_retained_and_switch_back_restores_original(registered, monkeypatch):
     from src.agents.agent_loop import MainAgent
-    monkeypatch.setenv("VORTOCODE_PROVIDER_LOCAL_BASE", "http://localhost:1234/v1")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_LOCAL_KEY", "local-only-key")
+    monkeypatch.setenv("VORTOONE_PROVIDER_LOCAL_BASE", "http://localhost:1234/v1")
+    monkeypatch.setenv("VORTOONE_PROVIDER_LOCAL_KEY", "local-only-key")
     agent = MainAgent.__new__(MainAgent)
     agent._llm = LLMClient(LLMConfig(base_url="https://relay.example/v1", api_key="relay-key", model="main-model"))
     agent.set_model("local:qwen:7b")
@@ -146,13 +146,13 @@ async def test_missing_sdk_does_not_silently_send_a_tool_request_as_plain_chat(m
 
 
 def test_omlx_provider_id_keeps_model_id_and_its_own_auth_contract(registered, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_PROVIDER_OMLX_BASE", "http://127.0.0.1:8100/v1")
-    monkeypatch.delenv("VORTOCODE_PROVIDER_OMLX_KEY", raising=False)
+    monkeypatch.setenv("VORTOONE_PROVIDER_OMLX_BASE", "http://127.0.0.1:8100/v1")
+    monkeypatch.delenv("VORTOONE_PROVIDER_OMLX_KEY", raising=False)
     provider, model = chat_target("omlx:Qwen3.6-35B-A3B-4bit")
     assert provider.api_key == "not-required"
     assert model == "Qwen3.6-35B-A3B-4bit"
-    monkeypatch.setenv("VORTOCODE_PROVIDER_OMLX_BASE", "http://127.0.0.1:11500/v1")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_OMLX_KEY", "fixture-omlx-own-token")
+    monkeypatch.setenv("VORTOONE_PROVIDER_OMLX_BASE", "http://127.0.0.1:11500/v1")
+    monkeypatch.setenv("VORTOONE_PROVIDER_OMLX_KEY", "fixture-omlx-own-token")
     provider, model = chat_target("omlx:Qwen3.6-35B-A3B-4bit")
     assert provider.api_key == "fixture-omlx-own-token"
     assert provider.base_url == "http://127.0.0.1:11500/v1"

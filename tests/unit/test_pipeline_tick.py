@@ -344,7 +344,7 @@ def test_the_notification_points_at_the_review_console(repo, monkeypatch):
     一屏几十行的选题池在手机上读不了，把全文塞进推送人反而更不会读。所以通知给的是
     指路，不是内容——但手机上直接回 /ok 的快捷路径仍然留着（有时你就是想一眼看完直接批）。
     """
-    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://192.168.1.20:8080")
+    monkeypatch.setenv("VORTOONE_PUBLIC_BASE_URL", "http://192.168.1.20:8080")
     _start(repo)
     notify = Recorder()
     asyncio.run(tick(repo, execute=_ok, notify=notify))
@@ -355,7 +355,7 @@ def test_the_notification_points_at_the_review_console(repo, monkeypatch):
 
 def test_no_link_when_the_console_address_is_not_configured(repo, monkeypatch):
     """没配公共地址就**一个字都不加**——配错了世界也不该变坏（与卡片模板同一条纪律）。"""
-    monkeypatch.delenv("VORTOCODE_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("VORTOONE_PUBLIC_BASE_URL", raising=False)
     _start(repo)
     notify = Recorder()
     asyncio.run(tick(repo, execute=_ok, notify=notify))
@@ -365,7 +365,7 @@ def test_no_link_when_the_console_address_is_not_configured(repo, monkeypatch):
 @pytest.mark.parametrize("bad", ["javascript:alert(1)", "file:///etc/passwd", "ftp://x"])
 def test_a_non_http_console_address_is_refused(repo, monkeypatch, bad):
     """钉钉消息里的链接会被点。`javascript:` 这类 scheme 从配置渗进消息就是埋雷。"""
-    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", bad)
+    monkeypatch.setenv("VORTOONE_PUBLIC_BASE_URL", bad)
     _start(repo)
     notify = Recorder()
     asyncio.run(tick(repo, execute=_ok, notify=notify))

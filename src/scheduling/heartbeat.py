@@ -8,7 +8,7 @@
 
 值班惯例（公开合同见 `docs/OPS.md` 的“开关矩阵”）：
 - **检查单文件注入**：一个检查单文件（默认 `.vortocode/HEARTBEAT.md`，可用 `checklist=` 参数或
-  env `VORTOCODE_HEARTBEAT_CHECKLIST` 换）就是值班职责本身，作为本回合的任务清单注入。
+  env `VORTOONE_HEARTBEAT_CHECKLIST` 换）就是值班职责本身，作为本回合的任务清单注入。
 - **检查单按不可信输入处理**：它是本地文件，但无人值守下本地文件同样可能被污染（这正是
   `UNATTENDED_PROFILE` 不给出网工具的理由）。正文进 `<vortocode_untrusted_memory>` 数据边界，
   `MainAgent.run_turn` 见到该标记即 `mark_tainted()`——本回合**一切免确认授权失效**，
@@ -27,7 +27,7 @@ from typing import Awaitable, Callable, List, Optional
 _OK_TOKEN = "HEARTBEAT_OK"
 _HEARTBEAT_MD = "HEARTBEAT.md"
 _BACKLOG_MD = "BACKLOG.md"
-_CHECKLIST_ENV = "VORTOCODE_HEARTBEAT_CHECKLIST"
+_CHECKLIST_ENV = "VORTOONE_HEARTBEAT_CHECKLIST"
 _MAX_CHECKLIST_CHARS = 8000                                   # 轻上下文是心跳的成本前提，硬顶
 _UNTRUSTED_OPEN = "<vortocode_untrusted_memory>"              # 内核认这一个数据边界标记
 _UNTRUSTED_CLOSE = "</vortocode_untrusted_memory>"
@@ -39,8 +39,8 @@ _CHECK_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")       # 检查单条目�
 
 # --------------------------------------------------------------------- 配置 / 时段
 def heartbeat_every_seconds() -> int:
-    """心跳间隔（env VORTOCODE_HEARTBEAT_EVERY，如 '30m' / '2h' / '900'，默认 30m）。"""
-    raw = (os.getenv("VORTOCODE_HEARTBEAT_EVERY", "30m") or "30m").strip().lower()
+    """心跳间隔（env VORTOONE_HEARTBEAT_EVERY，如 '30m' / '2h' / '900'，默认 30m）。"""
+    raw = (os.getenv("VORTOONE_HEARTBEAT_EVERY", "30m") or "30m").strip().lower()
     m = re.fullmatch(r"(\d+)\s*([smh]?)", raw)
     if not m:
         return 1800
@@ -129,7 +129,7 @@ class Checklist:
 
 
 def resolve_checklist_path(repo_root: str, checklist: Optional[str] = None) -> Optional[Path]:
-    """检查单文件路径：显式参数 > env `VORTOCODE_HEARTBEAT_CHECKLIST` > 默认 `.vortocode/HEARTBEAT.md`。
+    """检查单文件路径：显式参数 > env `VORTOONE_HEARTBEAT_CHECKLIST` > 默认 `.vortocode/HEARTBEAT.md`。
 
     自定义路径经 `resolve_within()` 限定在工作目录内（绝对路径 / `..` 越界 → None，不读）。
     """
@@ -230,10 +230,10 @@ async def run_heartbeat(
       - action=claimed：领了一条 backlog 并 submit 后台任务（产出 draft PR）
       - action=ok：值班无事（HEARTBEAT_OK）→ **无事静默**：不通知、不写会话历史，只落一行台账
       - action=surfaced：值班有事，已 notify 用户（台账同样记一行）
-    submit/notify/run_session 可注入（测试/接线）；model 缺省用 env VORTOCODE_HEARTBEAT_MODEL；
-    checklist 缺省用 env VORTOCODE_HEARTBEAT_CHECKLIST，再缺省 `.vortocode/HEARTBEAT.md`。
+    submit/notify/run_session 可注入（测试/接线）；model 缺省用 env VORTOONE_HEARTBEAT_MODEL；
+    checklist 缺省用 env VORTOONE_HEARTBEAT_CHECKLIST，再缺省 `.vortocode/HEARTBEAT.md`。
     """
-    window = parse_active_hours(active_hours or os.getenv("VORTOCODE_HEARTBEAT_HOURS"))
+    window = parse_active_hours(active_hours or os.getenv("VORTOONE_HEARTBEAT_HOURS"))
     if hour is None:
         from datetime import datetime
         hour = datetime.now().hour
@@ -256,7 +256,7 @@ async def run_heartbeat(
     if run_session is None:
         from src.gateway.session import run_isolated_session
         run_session = run_isolated_session
-    model = model or os.getenv("VORTOCODE_HEARTBEAT_MODEL") or None
+    model = model or os.getenv("VORTOONE_HEARTBEAT_MODEL") or None
     resp = await run_session(repo_root, prompt_for_checklist(doc),
                              mode="plan", model=model, light=True)
     if is_ok_response(resp):

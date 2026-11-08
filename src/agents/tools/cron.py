@@ -17,14 +17,14 @@ from src.agents.tools._common import _truthy
 
 def _scheduler_on() -> bool:
     import os
-    return str(os.getenv("VORTOCODE_CRON", "")).strip().lower() in ("1", "true", "yes", "on")
+    return str(os.getenv("VORTOONE_CRON", "")).strip().lower() in ("1", "true", "yes", "on")
 
 
-# 只用 Desktop 时本机引擎固定关掉调度（VORTOCODE_CRON=0）：作业写得进去、显示「已启用」，却永远不会到点跑。
+# 只用 Desktop 时本机引擎固定关掉调度（VORTOONE_CRON=0）：作业写得进去、显示「已启用」，却永远不会到点跑。
 # 建/启用时必须当面说清，不然用户等到第二天才发现提醒没来。
 _SCHEDULER_OFF = ("\n⚠️ 这台机器上的调度**没有打开**（只用 Desktop 时就是这样）：作业不会自动跑，到点也没人执行。"
                   "可以用 cron_run 手动跑一次；要按时自动跑，需要一台一直开着、以常驻方式运行的电脑"
-                  "（服务带 VORTOCODE_CRON=1 启动）。")
+                  "（服务带 VORTOONE_CRON=1 启动）。")
 
 
 def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list[Tool]:
@@ -32,7 +32,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
 
     为什么要有（真机 2026-07-27）：用户问"能不能设置定时任务"，agent 答"我目前没有设置定时
     任务的能力"，然后推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoOne 自己的
-    cron 子系统当时就跑在那台机器上（`VORTOCODE_CRON=1`，relay_duty 每天 02:00）。就工具而言
+    cron 子系统当时就跑在那台机器上（`VORTOONE_CRON=1`，relay_duty 每天 02:00）。就工具而言
     它没说谎（确实一个 cron 工具都没有），但把主人推去用外部服务是实打实的错——**产品有的
     能力，agent 却不知道**。#218 当初刻意只开了只读 REST 面（"无人值守修改面先观察后设计"），
     观察够了，这里补上写面。
@@ -58,7 +58,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         jobs = load_jobs(repo_root)
         if not jobs:
             return ("cron.yaml 里还没有任何作业。用 cron_add 建一个（只建 prompt 作业）。"
-                    "注意：调度循环要服务带 VORTOCODE_CRON=1 起才转。")
+                    "注意：调度循环要服务带 VORTOONE_CRON=1 起才转。")
         on = _scheduler_on()
         state, now = CronState(repo_root), _dt.now()
         lines = [f"调度总开关：{'✅ 开' if on else '⛔ 关（作业不会自动跑，仍可 cron_run 手动触发）'}"]

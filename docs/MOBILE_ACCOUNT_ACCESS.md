@@ -21,7 +21,7 @@
 
 1. 已构建 `mobile/`，并配置 Gateway 管理员身份。
 2. 可信 Desktop/服务端通过原内部接口将助手登记到经过核验的账号。Desktop 设置 → 账号与用量 → 手机与常驻助手已提供“关联当前账号 / 解除关联”；原生确认后使用钥匙串中的身份完成操作，不要求用户复制令牌。
-3. Gateway 配置 `VORTOCODE_MOBILE_PUBLIC_ORIGIN=https://assistant.example.com` 与原 `VORTOCODE_ACCOUNT_URL`。
+3. Gateway 配置 `VORTOONE_MOBILE_PUBLIC_ORIGIN=https://assistant.example.com` 与原 `VORTOONE_ACCOUNT_URL`。
 4. 账号服务配置 `ACCOUNT_MOBILE_REDIRECT_URIS=https://assistant.example.com/api/mobile/account/callback`；多个已登记回调用逗号分隔。不配置时手机客户端保持禁用。
 5. 两侧部署更新后再启用 HTTPS 入口。反向代理保留实际 Host，并仅从可信代理接受协议转发；请求 origin 必须与配置一致。
 

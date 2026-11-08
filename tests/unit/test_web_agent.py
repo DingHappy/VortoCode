@@ -564,7 +564,7 @@ async def test_web_ensure_mcp_connects_once(monkeypatch):
         calls["connect"] += 1
         return FakeMgr(), [Tool("mcp__s__t", "[MCP:s] t", {}, _h, read_only=False)]
     monkeypatch.setattr(mt, "connect_mcp", fake_connect)
-    monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")        # 网页 MCP 是 opt-in
+    monkeypatch.setenv("VORTOONE_WEB_MCP", "1")        # 网页 MCP 是 opt-in
 
     agent = MainAgent([])
     says = []
@@ -584,7 +584,7 @@ async def test_web_ensure_mcp_no_config_is_noop(monkeypatch):
     async def fake_connect(repo, **kwargs):
         return None, []
     monkeypatch.setattr(mt, "connect_mcp", fake_connect)
-    monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")        # opt-in 开着，但无配置 → 仍是 no-op
+    monkeypatch.setenv("VORTOONE_WEB_MCP", "1")        # opt-in 开着，但无配置 → 仍是 no-op
     agent = MainAgent([])
     await realtime._ensure_mcp(agent, lambda _m: None)
     assert agent.mcp.manager is None and not any(n.startswith("mcp__") for n in agent.tools)
@@ -592,11 +592,11 @@ async def test_web_ensure_mcp_no_config_is_noop(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_web_ensure_mcp_default_off_never_connects(monkeypatch):
-    # 默认（未设 VORTOCODE_WEB_MCP）绝不连——防回归：自动连会让坏 mcp.yaml 卡死每回合
+    # 默认（未设 VORTOONE_WEB_MCP）绝不连——防回归：自动连会让坏 mcp.yaml 卡死每回合
     import src.agents.mcp_tools as mt
     from src.agents.main_agent import MainAgent
     from src.web.routers import realtime
-    monkeypatch.delenv("VORTOCODE_WEB_MCP", raising=False)
+    monkeypatch.delenv("VORTOONE_WEB_MCP", raising=False)
     called = {"n": 0}
 
     async def boom_connect(repo):
@@ -623,7 +623,7 @@ async def test_web_ensure_mcp_failure_surfaces_exception_type(monkeypatch):
         raise TimeoutError()  # str(e) == ''，裸 {e} 会丢信息
 
     monkeypatch.setattr(mt, "connect_mcp", boom_connect)
-    monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")
+    monkeypatch.setenv("VORTOONE_WEB_MCP", "1")
 
     agent = MainAgent([])
     agent.mcp.tried = False  # 重置，确保会走连接逻辑
@@ -1397,7 +1397,7 @@ async def test_git_review_change_poll_publishes_structured_session_event(tmp_pat
     (tmp_path / "watch.txt").write_text("before\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(tmp_path), "add", "watch.txt"], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "base"], check=True)
-    monkeypatch.setenv("VORTOCODE_CHANGE_SOURCE_STORE", str(tmp_path.parent / "watch-source.json"))
+    monkeypatch.setenv("VORTOONE_CHANGE_SOURCE_STORE", str(tmp_path.parent / "watch-source.json"))
     ws = _FakeWS(sid="git-watch")
     key = _key(ws)
     realtime._SESSIONS[key] = {

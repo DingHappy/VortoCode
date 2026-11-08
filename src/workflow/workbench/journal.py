@@ -158,7 +158,7 @@ def _summary_count(journal: Dict[str, Any], field: str) -> int:
 
 def _duty_reconciliation(repo_root: str, day: str, cron_runs: list) -> Optional[Dict[str, Any]]:
     """「应跑 vs 实跑」对账（B8-② 静默死亡检测）：最怕的不是作业失败（失败会留痕、会通报），
-    是调度器整个没醒（launchd 挂了 / VORTOCODE_CRON 没开 / serve 死了）——那时一切都静悄悄。
+    是调度器整个没醒（launchd 挂了 / VORTOONE_CRON 没开 / serve 死了）——那时一切都静悄悄。
     每天的 Journal 固定落这一节，晨读一眼看出"昨晚该跑的到底跑没跑"。确定性对账，零 LLM。
 
     应跑：按启用作业的 schedule 推算当天窗口（今天只算到当前时刻，别把还没到点的报成没跑；
@@ -219,7 +219,7 @@ def _duty_reconciliation(repo_root: str, day: str, cron_runs: list) -> Optional[
     note = ""
     if missing:
         note = (f"⚠ {len(missing)} 个应跑作业没有任何运行痕迹（{', '.join(missing[:6])}）——"
-                "查：serve 是否在跑、VORTOCODE_CRON 是否为 1、launchd 是否存活"
+                "查：serve 是否在跑、VORTOONE_CRON 是否为 1、launchd 是否存活"
                 if not ran else
                 f"⚠ {len(missing)} 个应跑作业缺勤（{', '.join(missing[:6])}），但其它作业跑了"
                 "——多半是该作业到点时 serve 恰好不在，或 schedule 判定有出入")

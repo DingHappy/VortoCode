@@ -31,7 +31,7 @@ def current_workspace_scope() -> str:
     Project remains the compatibility default for CLI/TUI and manually started
     gateways.  Desktop always sets the variable explicitly.
     """
-    return normalize_workspace_scope(os.getenv("VORTOCODE_WORKSPACE_SCOPE"))
+    return normalize_workspace_scope(os.getenv("VORTOONE_WORKSPACE_SCOPE"))
 
 
 def workspace_scope_snapshot(workdir: str) -> dict[str, object]:
@@ -117,7 +117,7 @@ def http_workspace_requirement(path: str, scope: str | None = None) -> str | Non
     if active != GENERAL:
         return None
     normalized = "/" + str(path or "").lstrip("/")
-    if normalized == "/api/trust" and os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1":
+    if normalized == "/api/trust" and os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1":
         return None  # Desktop General can select read approval without gaining a project.
     if normalized in ("/", "/mobile", "/mobile/", "/mobile/manage", "/ws", "/api/extensions/mcp", "/api/extensions/mcp/connect"):
         return None

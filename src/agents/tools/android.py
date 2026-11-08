@@ -21,7 +21,7 @@ _WAIT = "Android 已暂停；请真人处理认证/系统弹窗并核对应用�
 
 def android_control_enabled(kind, *, profile, can_ask_human, workspace_scope):
     return (kind == "web" and profile == "local" and can_ask_human and workspace_scope == "project"
-            and os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1" and os.getenv("VORTOCODE_ENABLE_ANDROID_CONTROL") == "1")
+            and os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1" and os.getenv("VORTOONE_ENABLE_ANDROID_CONTROL") == "1")
 
 
 class AndroidSession:

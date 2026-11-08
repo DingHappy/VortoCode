@@ -32,20 +32,20 @@ def test_ct_eq_non_ascii_input_does_not_raise():
 # ── _token_ok / ws_token_ok：行为不变 ────────────────────────────────
 
 def test_no_token_configured_allows(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     assert _token_ok(_FakeRequest()) is True   # 未配 token：本地开发放行
 
 
 def test_bearer_header_accept_reject(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "the-secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "the-secret")
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     assert _token_ok(_FakeRequest(headers={"authorization": "Bearer the-secret"})) is True
     assert _token_ok(_FakeRequest(headers={"authorization": "Bearer wrong"})) is False
 
 
 def test_x_api_token_and_cookie(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "the-secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "the-secret")
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     assert _token_ok(_FakeRequest(headers={"x-api-token": "the-secret"})) is True
     assert _token_ok(_FakeRequest(cookies={"vortocode_session": "the-secret"})) is True
@@ -53,14 +53,14 @@ def test_x_api_token_and_cookie(monkeypatch):
 
 
 def test_token_ok_non_ascii_header_no_500(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "the-secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "the-secret")
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     # 不抛异常即通过（回归：曾用 == 时无碍，换 compare_digest 后靠 encode 兜底）
     assert _token_ok(_FakeRequest(headers={"x-api-token": "naïve-\U0001f511"})) is False
 
 
 def test_ws_token_ok_parity(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "the-secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "the-secret")
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     assert ws_token_ok(_FakeRequest(headers={"authorization": "Bearer the-secret"})) is True
     assert ws_token_ok(_FakeRequest(cookies={"vortocode_session": "the-secret"})) is True

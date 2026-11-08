@@ -158,7 +158,7 @@ async def test_real_executor_caps_role_and_environment_budget_and_inherits_untru
         seen.append(agent)
         return agent
     monkeypatch.setattr(adapter, "MainAgent", factory)
-    monkeypatch.setenv("VORTOCODE_MAX_STEPS", "100")
+    monkeypatch.setenv("VORTOONE_MAX_STEPS", "100")
     service, runner = make_service(tmp_path, execute=lambda task, parent: adapter.execute_dispatch(str(tmp_path), task, parent))
     task, _ = service.submit(session="owner", request_id="r", prompt="分析", max_steps=2, acceptance=["验收要求"])
     await runner.join(task.id)
@@ -176,8 +176,8 @@ async def test_http_submit_query_review_followup_and_validation(tmp_path, monkey
     service, runner = make_service(tmp_path)
     monkeypatch.setattr(delegations, "get_dispatch_service", lambda: service)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:
         payload = {"session": "owner", "request_id": "req", "prompt": "分析模块"}
@@ -200,7 +200,7 @@ async def test_http_submit_query_review_followup_and_validation(tmp_path, monkey
                         {**payload, "capabilities": ["host_process"]}):
             assert (await client.post("/api/delegations", json=invalid)).status_code in {400, 422}
         assert (await client.post("/api/delegations", json={**payload, "prompt": "different"})).status_code == 409
-        monkeypatch.setenv("VORTOCODE_API_TOKEN", "test-admin-secret")
+        monkeypatch.setenv("VORTOONE_API_TOKEN", "test-admin-secret")
         assert (await client.get("/api/delegations/capabilities")).status_code == 401
         headers = {"Authorization": "Bearer test-admin-secret"}
         caps = await client.get("/api/delegations/capabilities", headers=headers)
@@ -208,7 +208,7 @@ async def test_http_submit_query_review_followup_and_validation(tmp_path, monkey
         check = caps.json()["automatic_check"]
         assert check["available"] is False and "count_input_tokens" in check["missing"]
         assert check["limits"]["tokens"] == 8000 and check["reason"]
-        monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+        monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
         assert (await client.post("/api/delegations", headers=headers, json=payload)).status_code == 409
 
 

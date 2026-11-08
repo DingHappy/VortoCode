@@ -11,8 +11,8 @@ async def scheduler_loop(stop_event, *, cwd, runner, notify):
     from src.scheduling import cron as _cron
     from src.scheduling import heartbeat as _hb
 
-    cron_on = os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
-    hb_on = os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
+    cron_on = os.getenv("VORTOONE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
+    hb_on = os.getenv("VORTOONE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
     hb_every = _hb.heartbeat_every_seconds()
     last_hb = 0.0
 

@@ -8,7 +8,7 @@
   Bing 国内可达，RSS 输出格式稳定、无验证码（HTML 端点会回 JS challenge 空壳，别用）。
 
 DDG 网络层挂过一次（污染/超时）即**进程内粘性降级**为 Bing 优先（同 native-tools 回退哲学）；
-`VORTOCODE_SEARCH_BACKEND=ddg|bing` 可显式钉死单后端。一切失败都优雅降级成 '(' 开头的
+`VORTOONE_SEARCH_BACKEND=ddg|bing` 可显式钉死单后端。一切失败都优雅降级成 '(' 开头的
 说明串（不抛），调用方原样回灌给模型。
 
 复用 web_fetch 的安全基建：同一个 `_urlopen` 发请求接口（便于测试 monkeypatch、不触网）+
@@ -138,7 +138,7 @@ _BACKENDS = {"ddg": _search_ddg, "bing": _search_bing}
 
 def _backend_order() -> list[str]:
     """后端尝试顺序：env 钉死单后端 > DDG 挂过则 Bing 优先 > 默认 DDG 优先。"""
-    pref = (os.getenv("VORTOCODE_SEARCH_BACKEND") or "").strip().lower()
+    pref = (os.getenv("VORTOONE_SEARCH_BACKEND") or "").strip().lower()
     if pref in ("ddg", "duckduckgo"):
         return ["ddg"]
     if pref == "bing":

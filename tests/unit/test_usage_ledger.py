@@ -50,7 +50,7 @@ def test_old_days_roll_off_and_a_broken_ledger_never_breaks_calls(tmp_path, monk
     ledger.record(1, 1, source="对话", today=TODAY - timedelta(days=61))
     ledger.record(1, 1, source="对话", today=TODAY)
     assert set(json.loads(ledger._path().read_text())) == {TODAY.isoformat()}
-    monkeypatch.setenv("VORTOCODE_USAGE_DIR", str(tmp_path / "file"))
+    monkeypatch.setenv("VORTOONE_USAGE_DIR", str(tmp_path / "file"))
     (tmp_path / "file").write_text("not a dir")
     ledger.record(1, 1, today=TODAY)                                   # 写不了：安静跳过
     assert ledger.day_usage(TODAY) == {}

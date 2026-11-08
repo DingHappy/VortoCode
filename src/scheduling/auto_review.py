@@ -7,10 +7,10 @@
 - 读过外部内容（污点）后拟的 → 一律交给主人，不送审；
 - 只有 ``AUTO_KINDS`` 里的类别可以被放行（主人 2026-11-02 定：改自己的事项、给常驻电脑项目派活）；
   给 Codex 发话 / 叫停、对外发送、花钱、删除不在其中，永远交给主人；
-- 派活每天最多 ``daily_dispatch_cap()`` 张（``VORTOCODE_AUTO_DISPATCH_PER_DAY``，默认 3），用完就交给主人。
+- 派活每天最多 ``daily_dispatch_cap()`` 张（``VORTOONE_AUTO_DISPATCH_PER_DAY``，默认 3），用完就交给主人。
 
 每次审核写一行记录（``.vortocode/dispatches/auto_review.jsonl``）：类别、提议摘要、结论、理由、时间，
-方便事后核对和调整。``VORTOCODE_AUTO_REVIEW=0`` 关闭（全部交给主人，等于原来的行为）。
+方便事后核对和调整。``VORTOONE_AUTO_REVIEW=0`` 关闭（全部交给主人，等于原来的行为）。
 """
 from __future__ import annotations
 
@@ -40,12 +40,12 @@ _SYSTEM = """你是主人的个人助理系统里的**审核员**，负责审核
 
 
 def enabled() -> bool:
-    return os.getenv("VORTOCODE_AUTO_REVIEW", "1").strip() != "0"
+    return os.getenv("VORTOONE_AUTO_REVIEW", "1").strip() != "0"
 
 
 def daily_dispatch_cap() -> int:
     try:
-        return max(0, min(20, int(os.getenv("VORTOCODE_AUTO_DISPATCH_PER_DAY", "3"))))
+        return max(0, min(20, int(os.getenv("VORTOONE_AUTO_DISPATCH_PER_DAY", "3"))))
     except ValueError:
         return 3
 

@@ -1,6 +1,6 @@
 """手机 App 对话的本机转发接口（ADR-012 阶段 A）：只给同机的手机网关用。
 
-手机网关核对完原生会话和设备签名，带专用令牌 ``VORTOCODE_APP_RELAY_TOKEN`` 经回环地址转进来；
+手机网关核对完原生会话和设备签名，带专用令牌 ``VORTOONE_APP_RELAY_TOKEN`` 经回环地址转进来；
 本接口不收主 API 令牌，这个令牌也进不了别的接口；只接受回环来源，只在常驻助理（通用范围）开放，
 不设令牌 = 端点不存在（404）。
 
@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter()
 
-TOKEN_ENV = "VORTOCODE_APP_RELAY_TOKEN"
+TOKEN_ENV = "VORTOONE_APP_RELAY_TOKEN"
 TURN_PATH = "/api/assistant/app-relay/turn"
 STATUS_PATH = "/api/assistant/app-relay/status"
 CARD_PATH = "/api/assistant/app-relay/card"

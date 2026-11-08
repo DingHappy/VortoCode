@@ -6,13 +6,13 @@
 
 检查分三档，**未配置的档跳过且不算异常**（跳过 ≠ 通过，报告里明说）：
 - 免鉴权：`GET /api/status`（存活 + 重启检测）、`GET /api/pricing`（DB 读路径活着）。
-- 用户 key（`VORTOCODE_RELAY_SK`）：`GET /dashboard/billing/usage`（token 鉴权链路端到端）。
-- 管理 token（`VORTOCODE_RELAY_ADMIN_TOKEN`）：`GET /api/channel_pool`（上游渠道冷却/禁用）、
-  `GET /api/log/stat`（当日消耗，可配阈值 `VORTOCODE_RELAY_DAILY_QUOTA_LIMIT`）。
+- 用户 key（`VORTOONE_RELAY_SK`）：`GET /dashboard/billing/usage`（token 鉴权链路端到端）。
+- 管理 token（`VORTOONE_RELAY_ADMIN_TOKEN`）：`GET /api/channel_pool`（上游渠道冷却/禁用）、
+  `GET /api/log/stat`（当日消耗，可配阈值 `VORTOONE_RELAY_DAILY_QUOTA_LIMIT`）。
 
 重启检测：`/api/status` 的 `start_time` 与上次巡检快照（`.vortocode/duty/relay-state.json`）
 比对——变了就报异常（可能是 OOM/崩溃）。中转站的 version 是写死的，分不出发布；所以发布脚本
-可以向常驻助理报一次事件型运维报到（source 默认 ``relay-deploy``，``VORTOCODE_RELAY_DEPLOY_SOURCE`` 可改）：
+可以向常驻助理报一次事件型运维报到（source 默认 ``relay-deploy``，``VORTOONE_RELAY_DEPLOY_SOURCE`` 可改）：
 上次巡检之后有发布报到，重启就算正常发布、不报红；没有就照旧报异常（宁保守）。
 报告只含数值与原因，**绝不回显任何 token**。
 """
@@ -29,7 +29,7 @@ from typing import Callable, List, Optional, Tuple
 from urllib import error as _urlerror
 from urllib import request as _urlrequest
 
-# 项目维护的默认 relay；部署者可用 VORTOCODE_RELAY_URL 指向自己的兼容服务。
+# 项目维护的默认 relay；部署者可用 VORTOONE_RELAY_URL 指向自己的兼容服务。
 DEFAULT_RELAY_URL = "https://token.vortotech.com"
 _TIMEOUT = 10.0
 _STATE_REL = Path(".vortocode") / "duty" / "relay-state.json"
@@ -159,7 +159,7 @@ def _check_pricing(fetch: Fetch, base: str) -> CheckResult:
 
 def _check_billing(fetch: Fetch, base: str, sk: str) -> CheckResult:
     if not sk:
-        return CheckResult("计费探针 /dashboard/billing/usage", None, "跳过（未配 VORTOCODE_RELAY_SK）")
+        return CheckResult("计费探针 /dashboard/billing/usage", None, "跳过（未配 VORTOONE_RELAY_SK）")
     status, payload, error = _get_json(fetch, f"{base}/dashboard/billing/usage",
                                        {"Authorization": f"Bearer {sk}"})
     if error or status != 200 or payload is None:
@@ -172,7 +172,7 @@ def _check_billing(fetch: Fetch, base: str, sk: str) -> CheckResult:
 
 def _check_channel_pool(fetch: Fetch, base: str, admin: str) -> CheckResult:
     if not admin:
-        return CheckResult("渠道池 /api/channel_pool", None, "跳过（未配 VORTOCODE_RELAY_ADMIN_TOKEN）")
+        return CheckResult("渠道池 /api/channel_pool", None, "跳过（未配 VORTOONE_RELAY_ADMIN_TOKEN）")
     status, payload, error = _get_json(fetch, f"{base}/api/channel_pool",
                                        {"Authorization": admin})
     if error or status != 200 or payload is None:
@@ -197,7 +197,7 @@ def _check_channel_pool(fetch: Fetch, base: str, admin: str) -> CheckResult:
 def _check_daily_quota(fetch: Fetch, base: str, admin: str, limit: Optional[float],
                        now: float) -> CheckResult:
     if not admin:
-        return CheckResult("当日消耗 /api/log/stat", None, "跳过（未配 VORTOCODE_RELAY_ADMIN_TOKEN）")
+        return CheckResult("当日消耗 /api/log/stat", None, "跳过（未配 VORTOONE_RELAY_ADMIN_TOKEN）")
     local_midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
     url = (f"{base}/api/log/stat?type=2"
            f"&start_timestamp={int(local_midnight.timestamp())}&end_timestamp={int(now)}")
@@ -219,10 +219,10 @@ def run_duty(repo_root: str, *, fetch: Fetch = _default_fetch,
              env: Optional[dict] = None, now: Optional[float] = None) -> Tuple[int, str]:
     """跑一轮巡检，返回 (退出码, 报告文本)。0=全部正常；1=有异常。跳过项不影响退出码。"""
     environ = os.environ if env is None else env
-    base = str(environ.get("VORTOCODE_RELAY_URL") or DEFAULT_RELAY_URL).strip().rstrip("/")
-    sk = str(environ.get("VORTOCODE_RELAY_SK") or "").strip()
-    admin = str(environ.get("VORTOCODE_RELAY_ADMIN_TOKEN") or "").strip()
-    raw_limit = str(environ.get("VORTOCODE_RELAY_DAILY_QUOTA_LIMIT") or "").strip()
+    base = str(environ.get("VORTOONE_RELAY_URL") or DEFAULT_RELAY_URL).strip().rstrip("/")
+    sk = str(environ.get("VORTOONE_RELAY_SK") or "").strip()
+    admin = str(environ.get("VORTOONE_RELAY_ADMIN_TOKEN") or "").strip()
+    raw_limit = str(environ.get("VORTOONE_RELAY_DAILY_QUOTA_LIMIT") or "").strip()
     try:
         limit: Optional[float] = float(raw_limit) if raw_limit else None
     except ValueError:
@@ -231,7 +231,7 @@ def run_duty(repo_root: str, *, fetch: Fetch = _default_fetch,
 
     state = _load_state(repo_root)
     results: List[CheckResult] = []
-    source = str(environ.get("VORTOCODE_RELAY_DEPLOY_SOURCE") or "relay-deploy").strip()
+    source = str(environ.get("VORTOONE_RELAY_DEPLOY_SOURCE") or "relay-deploy").strip()
     status_result, new_state = _check_status(fetch, base, state,
                                              lambda since: _deploy_since(repo_root, source, since))
     new_state["checked_at"] = moment

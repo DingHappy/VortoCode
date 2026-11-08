@@ -1,7 +1,7 @@
 """运维心跳报到：家里其它机器的定时活（备份同步、恢复演练）向常驻助理报平安或报失败；
 另有 /api/ops/notice 转一条要告诉主人的事（账号服务的新注册、付款），限每天条数。
 
-专用令牌 ``VORTOCODE_OPS_TOKEN``，不收主 API 令牌，这个令牌也进不了别的接口；不设令牌 = 端点不存在（404）。
+专用令牌 ``VORTOONE_OPS_TOKEN``，不收主 API 令牌，这个令牌也进不了别的接口；不设令牌 = 端点不存在（404）。
 只在常驻助理（通用范围）开放。失败与「失败后恢复」立刻推到手机；「该报没报」由常驻助理的巡检发现。
 
 GET ``/api/ops/heartbeats`` 是给 Desktop 今日概览的只读状态，走主 API 令牌（和其它 /api 一样），
@@ -18,7 +18,7 @@ router = APIRouter()
 PATH = "/api/ops/heartbeat"
 STATUS_PATH = "/api/ops/heartbeats"
 NOTICE_PATH = "/api/ops/notice"
-TOKEN_ENV = "VORTOCODE_OPS_TOKEN"
+TOKEN_ENV = "VORTOONE_OPS_TOKEN"
 
 
 def _guard(request: Request) -> None:

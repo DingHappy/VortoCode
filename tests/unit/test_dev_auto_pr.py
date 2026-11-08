@@ -79,8 +79,8 @@ async def test_real_review_workers_and_pr_gate(tmp_path, monkeypatch, outcome):
 
     _init_repo_on_branch(tmp_path, "dev")
     _patch_pipeline(monkeypatch)
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "correctness,security")
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW", "1")
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW_PERSPECTIVES", "correctness,security")
     calls = []
     pushed = []
     repair_calls = []
@@ -221,7 +221,7 @@ async def test_no_pr_when_integration_red(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_review_gate_runs_before_pr(tmp_path, monkeypatch):
     """开 PR 时（open_pr=True）：集成绿后先跑 PR 前审查段，再开 PR。"""
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")            # 覆盖 conftest 的默认关
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW", "1")            # 覆盖 conftest 的默认关
     _init_repo_on_branch(tmp_path, "dev")
     _patch_pipeline(monkeypatch, integration_ok=True)
     import src.agents.review as review
@@ -244,7 +244,7 @@ async def test_review_gate_runs_before_pr(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_review_gate_skipped_when_no_pr(tmp_path, monkeypatch):
     """只落本地分支（open_pr 未给）：**不**跑审查段（#120 P1：审查只在真开 PR 时跑）。"""
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")            # 即便开关开着，无 PR 也不跑
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW", "1")            # 即便开关开着，无 PR 也不跑
     _init_repo_on_branch(tmp_path, "dev")
     _patch_pipeline(monkeypatch, integration_ok=True)
     import src.agents.review as review

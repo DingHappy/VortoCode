@@ -9,8 +9,8 @@ from src.browser.verify import run_browser_probe
 
 
 pytestmark = pytest.mark.skipif(
-    os.getenv("VORTOCODE_LIVE_BROWSER") != "1",
-    reason="set VORTOCODE_LIVE_BROWSER=1 after installing Playwright Chromium",
+    os.getenv("VORTOONE_LIVE_BROWSER") != "1",
+    reason="set VORTOONE_LIVE_BROWSER=1 after installing Playwright Chromium",
 )
 
 

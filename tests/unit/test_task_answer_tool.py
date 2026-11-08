@@ -202,8 +202,8 @@ async def test_web_assembly_and_http_share_runner_updates_and_handoff(tmp_path, 
         collaboration.finish(task.id, task.collaboration["round"], "shared runtime result")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "answer-test-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "answer-test-token")
     monkeypatch.setattr(tasks, "_RUNNER", runner)
     monkeypatch.setattr(adapter, "execute_dispatch", execute)
     monkeypatch.setattr(task_events, "broadcast_task_update", updates.append)
@@ -256,8 +256,8 @@ async def test_real_service_child_asks_parent_answers_and_bounded_child_resumes(
 
     runner = TaskRunner(str(tmp_path), worker, max_concurrent=1)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
-    monkeypatch.setenv("VORTOCODE_MAX_STEPS", "100")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_MAX_STEPS", "100")
     monkeypatch.setattr(tasks, "_RUNNER", runner)
     monkeypatch.setattr(adapter, "MainAgent", child_factory)
     dispatch = task_dispatch.get_dispatch_service()

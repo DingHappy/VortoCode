@@ -23,7 +23,7 @@ def _bridge(tmp_path, **kw):
 
 @pytest.fixture(autouse=True)
 def _default_window(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_IM_HELLO_QUIET_MIN", raising=False)
+    monkeypatch.delenv("VORTOONE_IM_HELLO_QUIET_MIN", raising=False)
 
 
 def test_first_start_always_speaks(tmp_path):
@@ -59,7 +59,7 @@ def test_broken_stamp_falls_back_to_speaking(tmp_path, junk):
 
 def test_zero_window_restores_old_behavior(tmp_path, monkeypatch):
     """设 0 = 每次都说，等于加这个功能之前的行为——留给想要它的人。"""
-    monkeypatch.setenv("VORTOCODE_IM_HELLO_QUIET_MIN", "0")
+    monkeypatch.setenv("VORTOONE_IM_HELLO_QUIET_MIN", "0")
     b = _bridge(tmp_path)
     b._mark_hello_said()
     assert b._should_say_hello() is True
@@ -68,7 +68,7 @@ def test_zero_window_restores_old_behavior(tmp_path, monkeypatch):
 @pytest.mark.parametrize("bogus", ["很久", "-5", "abc"])
 def test_bogus_window_does_not_crash_startup(tmp_path, monkeypatch, bogus):
     """窗口值写错不该让桥起不来——回落默认，且判定仍然可用。"""
-    monkeypatch.setenv("VORTOCODE_IM_HELLO_QUIET_MIN", bogus)
+    monkeypatch.setenv("VORTOONE_IM_HELLO_QUIET_MIN", bogus)
     b = _bridge(tmp_path)
     assert isinstance(b._should_say_hello(), bool)
 
@@ -80,7 +80,7 @@ async def test_warning_is_never_suppressed(tmp_path, monkeypatch):
     那种配错的表现是"机器人装死"，提醒漏一次可能让人排查一整晚——
     去重是为了省噪音，不能把唯一的诊断线索一起省掉。
     """
-    monkeypatch.setenv("VORTOCODE_IM_ALLOW_FROM", "someone-else")
+    monkeypatch.setenv("VORTOONE_IM_ALLOW_FROM", "someone-else")
     adapter = FakeAdapter()
     b = IMBridge(str(tmp_path), adapter, OWNER, channel="test", llm=ScriptedLLM("x"),
                  allow_from={"someone-else"})

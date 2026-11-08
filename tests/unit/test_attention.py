@@ -15,7 +15,7 @@ from src.workflow.tasks.decisions import build_decision_queue
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
     path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(path))
 
 
 def _run(run_id, status, updated, command="python -m src.scheduling.relay_duty", kind="cron", job=""):

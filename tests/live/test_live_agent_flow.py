@@ -1,15 +1,15 @@
 """真模型 live 验证层：确认主 agent 对话流程在**真实 LLM** 上真站得住（不只是 mock 绿）。
 
 设计原则（对齐"框架要通用、跨模型"）：
-- **按模型参数化**：同一批行为测试对 VORTOCODE_LIVE_MODELS 里的**每个模型**各跑一遍，
-  验证框架不是只为某个模型调好的。默认取 DEFAULT_MODEL；可 `VORTOCODE_LIVE_MODELS=a,b,c` 指定多个。
+- **按模型参数化**：同一批行为测试对 VORTOONE_LIVE_MODELS 里的**每个模型**各跑一遍，
+  验证框架不是只为某个模型调好的。默认取 DEFAULT_MODEL；可 `VORTOONE_LIVE_MODELS=a,b,c` 指定多个。
 - **断言看结果、不看格式**：只断言"用了工具/答案落地到文件内容/分支名来自 env"这类与模型无关的产出，
   不依赖某模型的措辞或输出风格。
 - **默认跳过**：CI/普通 pytest 不跑（不触网、不烧 token）。要跑：
 
-      VORTOCODE_LIVE_TESTS=1 OPENAI_API_KEY=... pytest tests/live -q
+      VORTOONE_LIVE_TESTS=1 OPENAI_API_KEY=... pytest tests/live -q
       # 跨多个模型：
-      VORTOCODE_LIVE_TESTS=1 VORTOCODE_LIVE_MODELS=mimo-v2.5,mimo-v2.5-pro pytest tests/live -q
+      VORTOONE_LIVE_TESTS=1 VORTOONE_LIVE_MODELS=mimo-v2.5,mimo-v2.5-pro pytest tests/live -q
 
 真机曾据此发现真 bug（如系统提示没放开并行 → 任何模型都不批量）。
 """
@@ -18,13 +18,13 @@ import subprocess
 
 import pytest
 
-_LIVE = os.getenv("VORTOCODE_LIVE_TESTS") == "1" and bool(os.getenv("OPENAI_API_KEY"))
+_LIVE = os.getenv("VORTOONE_LIVE_TESTS") == "1" and bool(os.getenv("OPENAI_API_KEY"))
 _MODELS = [m.strip() for m in
-           (os.getenv("VORTOCODE_LIVE_MODELS") or os.getenv("DEFAULT_MODEL") or "mimo-v2.5").split(",")
+           (os.getenv("VORTOONE_LIVE_MODELS") or os.getenv("DEFAULT_MODEL") or "mimo-v2.5").split(",")
            if m.strip()]
 
 pytestmark = pytest.mark.skipif(
-    not _LIVE, reason="live 测试：需 VORTOCODE_LIVE_TESTS=1 + OPENAI_API_KEY（可选 VORTOCODE_LIVE_MODELS）")
+    not _LIVE, reason="live 测试：需 VORTOONE_LIVE_TESTS=1 + OPENAI_API_KEY（可选 VORTOONE_LIVE_MODELS）")
 
 
 @pytest.fixture

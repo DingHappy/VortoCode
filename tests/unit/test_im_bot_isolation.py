@@ -173,16 +173,16 @@ def test_channel_cannot_escape_the_bot_persona_namespace(tmp_path, channel):
 
 
 def test_invalid_config_is_rejected_by_the_shared_embedded_and_standalone_parser(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_IM_CONVERSATION", "isloated")
+    monkeypatch.setenv("VORTOONE_IM_CONVERSATION", "isloated")
     with pytest.raises(im_service.IMConfigError):
         im_service.load_conversation()
-    monkeypatch.setenv("VORTOCODE_IM_CONVERSATION", "isolated")
+    monkeypatch.setenv("VORTOONE_IM_CONVERSATION", "isolated")
     assert im_service.load_conversation() == "isolated"
 
 
 async def test_embedded_isolated_bot_does_not_take_or_clear_primary_notification_routes(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_IM_CONVERSATION", "isolated")
-    monkeypatch.setenv("VORTOCODE_IM_ROLE", "interactive")
+    monkeypatch.setenv("VORTOONE_IM_CONVERSATION", "isolated")
+    monkeypatch.setenv("VORTOONE_IM_ROLE", "interactive")
     sent, registered = [], []
 
     async def primary(text):
@@ -205,8 +205,8 @@ async def test_embedded_isolated_bot_does_not_take_or_clear_primary_notification
 
 
 def test_notification_only_role_cannot_be_combined_with_isolated_conversation(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_IM_CONVERSATION", "isolated")
-    monkeypatch.setenv("VORTOCODE_IM_ROLE", "notify")
+    monkeypatch.setenv("VORTOONE_IM_CONVERSATION", "isolated")
+    monkeypatch.setenv("VORTOONE_IM_ROLE", "notify")
     with pytest.raises(im_service.IMConfigError, match="notification route"):
         im_service.start_embedded("telegram", str(tmp_path), adapter=AccountAdapter(), owner="owner-1",
                                   runner=FakeRunner(), register_worker=lambda worker: None)

@@ -23,7 +23,7 @@ def _status() -> dict:
     repo_root = os.getcwd()
     profile = _capability_profile()
     stored = get_trust_level(repo_root)
-    desktop = os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1"
+    desktop = os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1"
     approval_profile = "external" if desktop else profile
     return {
         "level": stored,
@@ -41,7 +41,7 @@ def _capability_profile() -> str:
     """与 realtime 装配会话时同一套判定——两处不一致会让界面报出一个假的上限。"""
     from src.gateway.workspace_scope import GENERAL, current_workspace_scope
 
-    desktop_trusted = (os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1"
+    desktop_trusted = (os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1"
                        and current_workspace_scope() != GENERAL)
     return "local" if desktop_trusted else "external"
 

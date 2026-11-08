@@ -37,14 +37,14 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
 
 # 各通道**必须**有的凭证键。缺任何一个，桥都会 fail-closed 拒启（见 gateway/im_service）。
 REQUIRED_KEYS: Dict[str, Tuple[str, ...]] = {
-    "dingtalk": ("VORTOCODE_DD_CLIENT_ID", "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_DD_OWNER_ID"),
-    "telegram": ("VORTOCODE_TG_TOKEN", "VORTOCODE_TG_OWNER_ID"),
+    "dingtalk": ("VORTOONE_DD_CLIENT_ID", "VORTOONE_DD_CLIENT_SECRET", "VORTOONE_DD_OWNER_ID"),
+    "telegram": ("VORTOONE_TG_TOKEN", "VORTOONE_TG_OWNER_ID"),
 }
 
 # 判"两个助手是不是共用了同一个机器人"看哪个键。**只比对，不打印**。
 _IDENTITY_KEY: Dict[str, str] = {
-    "dingtalk": "VORTOCODE_DD_CLIENT_ID",
-    "telegram": "VORTOCODE_TG_TOKEN",
+    "dingtalk": "VORTOONE_DD_CLIENT_ID",
+    "telegram": "VORTOONE_TG_TOKEN",
 }
 
 DEFAULT_ROSTER = ".vortocode/assistants.yaml"
@@ -191,10 +191,10 @@ def _check_one(a: Assistant) -> List[Finding]:
                                 f"桥会 fail-closed 拒启"))
 
     # 白名单漏了自己：最难猜的一种配错。表现是"机器人不理我 + 每个确认都等到超时被拒"。
-    owner_key = {"dingtalk": "VORTOCODE_DD_OWNER_ID", "telegram": "VORTOCODE_TG_OWNER_ID"}.get(a.channel)
-    allow_raw = keys.get({"dingtalk": "VORTOCODE_DD_ALLOW_FROM",
-                          "telegram": "VORTOCODE_TG_ALLOW_FROM"}.get(a.channel, ""),
-                         keys.get("VORTOCODE_IM_ALLOW_FROM"))
+    owner_key = {"dingtalk": "VORTOONE_DD_OWNER_ID", "telegram": "VORTOONE_TG_OWNER_ID"}.get(a.channel)
+    allow_raw = keys.get({"dingtalk": "VORTOONE_DD_ALLOW_FROM",
+                          "telegram": "VORTOONE_TG_ALLOW_FROM"}.get(a.channel, ""),
+                         keys.get("VORTOONE_IM_ALLOW_FROM"))
     if owner_key and allow_raw is not None:
         owner = keys.get(owner_key, "")
         allowed = {p for p in re.split(r"[,\s;]+", allow_raw) if p}
@@ -295,5 +295,5 @@ def env_template(channel: str) -> str:
     lines += [f"{k}=" for k in keys]
     lines += ["OPENAI_API_KEY=",
               "# 可选：入站白名单（不设 = 只放 owner；设成空 = 全拒，连 owner 也拒）",
-              f"# VORTOCODE_{'DD' if channel == 'dingtalk' else 'TG'}_ALLOW_FROM="]
+              f"# VORTOONE_{'DD' if channel == 'dingtalk' else 'TG'}_ALLOW_FROM="]
     return "\n".join(lines) + "\n"

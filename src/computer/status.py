@@ -66,7 +66,7 @@ def read_local_computer_status() -> dict:
     python = shutil.which("python3", path="/usr/local/bin:/usr/bin:/bin")
     if not python:
         return _base("unavailable")
-    # Do not follow VORTOCODE_DESKTOP_TARGET or workspace settings: this status
+    # Do not follow VORTOONE_DESKTOP_TARGET or workspace settings: this status
     # belongs to the runtime serving the request, never a different computer.
     env = {"HOME": str(home), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
     child = None

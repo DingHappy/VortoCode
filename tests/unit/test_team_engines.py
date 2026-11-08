@@ -1,6 +1,6 @@
 """任务小组的外部框架成员（ADR-014 S2）：OpenCode / DeepSeek Harness 经 ACP 接成成员。
 
-用一个假的 ACP 框架放在 ``$VORTOCODE_WORKER_HOME/bin/opencode``，离线验证：权限按角色判定、框架配置
+用一个假的 ACP 框架放在 ``$VORTOONE_WORKER_HOME/bin/opencode``，离线验证：权限按角色判定、框架配置
 全部设成「要问」、令牌只在环境里、工作目录用完即删、研究员结果带污点、没装 / 没配端点时如实失败。
 """
 import json
@@ -42,8 +42,8 @@ FAKE = textwrap.dedent(r'''
             with open(os.environ["FAKE_LOG"], "w") as log:
                 json.dump({"argv": sys.argv, "cwd": params["cwd"], "cwd_exists": os.path.isdir(params["cwd"]),
                            "home": os.environ.get("HOME"), "path0": os.environ["PATH"].split(os.pathsep)[0],
-                           "config": os.environ.get("OPENCODE_CONFIG_CONTENT"), "key": os.environ.get("VORTOCODE_RELAY_KEY"),
-                           "base": os.environ.get("VORTOCODE_RELAY_BASE"), "gh": os.environ.get("GH_TOKEN")}, log)
+                           "config": os.environ.get("OPENCODE_CONFIG_CONTENT"), "key": os.environ.get("VORTOONE_RELAY_KEY"),
+                           "base": os.environ.get("VORTOONE_RELAY_BASE"), "gh": os.environ.get("GH_TOKEN")}, log)
             send({"jsonrpc": "2.0", "id": rid, "result": {"sessionId": "s1"}})
         elif method == "session/prompt":
             sid = params["sessionId"]
@@ -68,7 +68,7 @@ def engine_home(tmp_path, monkeypatch):
     fake.write_text(f"#!{sys.executable}\n" + FAKE)
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     log = tmp_path / "fake.json"
-    monkeypatch.setenv("VORTOCODE_WORKER_HOME", str(home))
+    monkeypatch.setenv("VORTOONE_WORKER_HOME", str(home))
     monkeypatch.setenv("FAKE_LOG", str(log))
     monkeypatch.setenv("OPENAI_API_BASE", "https://relay.example/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-relay-secret")
@@ -109,12 +109,12 @@ def test_opencode_config_asks_for_everything_and_never_contains_the_key(engine_h
     env = team_engines.engine_env("opencode", "")
     config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
     assert "sk-relay-secret" not in env["OPENCODE_CONFIG_CONTENT"]
-    assert config["provider"]["vorto"]["options"] == {"baseURL": "{env:VORTOCODE_RELAY_BASE}", "apiKey": "{env:VORTOCODE_RELAY_KEY}"}
+    assert config["provider"]["vorto"]["options"] == {"baseURL": "{env:VORTOONE_RELAY_BASE}", "apiKey": "{env:VORTOONE_RELAY_KEY}"}
     assert config["model"] == "vorto/deepseek-v4-flash"
     permission = config["permission"]
     assert permission["*"] == "ask" and permission["bash"] == "ask" and permission["edit"] == "ask"
     assert all(permission[key] == "deny" for key in ("task", "external_directory", "question", "skill"))
-    assert env["VORTOCODE_RELAY_KEY"] == "sk-relay-secret" and "GH_TOKEN" not in env
+    assert env["VORTOONE_RELAY_KEY"] == "sk-relay-secret" and "GH_TOKEN" not in env
 
 
 def test_deepseek_harness_is_read_only_and_uses_the_messages_root(engine_home):

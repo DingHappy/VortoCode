@@ -1,10 +1,11 @@
+import "./env-names.mjs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 export function findPythonWithModule(moduleName) {
   const executable = process.platform === "win32" ? "python.exe" : "python";
   const candidates = [
-    process.env.VORTOCODE_PYTHON,
+    process.env.VORTOONE_PYTHON,
     process.env.VIRTUAL_ENV && join(process.env.VIRTUAL_ENV, process.platform === "win32" ? "Scripts" : "bin", executable),
     process.env.CONDA_PYTHON_EXE,
     process.env.CONDA_PREFIX && join(process.env.CONDA_PREFIX, process.platform === "win32" ? "python.exe" : "bin/python"),
@@ -27,7 +28,7 @@ export function findPythonWithModule(moduleName) {
   }
   throw new Error([
     `No Python interpreter with ${moduleName} is available.`,
-    `Set VORTOCODE_PYTHON or install it with: python -m pip install ${moduleName}`,
+    `Set VORTOONE_PYTHON or install it with: python -m pip install ${moduleName}`,
     ...failures,
   ].join("\n"));
 }

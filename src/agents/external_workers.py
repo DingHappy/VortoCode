@@ -4,21 +4,21 @@ VortoOne 仍是中介：拆解、worktree 隔离、自测重试、逐件与集�
 这里只把「谁来写 / 谁来审」换成外部 CLI。`ExternalWorkerAgent` 与 `MainAgent` 同样暴露
 `run_turn(message, mode, emit)`，所以 `dev_tools` 只在两个工厂点换实现即可。
 
-**实验功能，默认关闭**：必须同时设 `VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS=1`，否则角色表一律不生效，
+**实验功能，默认关闭**：必须同时设 `VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS=1`，否则角色表一律不生效，
 实现与审查照旧走 VortoOne 自己的子 Agent。主线以自研框架为准，这条路只供试用。
 
 配置（只认主进程环境变量，不读仓库文件——能改仓库的不该能换执行者）::
 
-    VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS=1
-    VORTOCODE_EXTERNAL_WORKERS=implement=codex,review=claude
-    VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800        # 单次运行秒数，超时杀整个进程组
-    VORTOCODE_CODEX_BIN / VORTOCODE_CLAUDE_BIN    # 可选：CLI 路径（缺省走 PATH）
-    VORTOCODE_WORKER_HOME=~/.vortocode/workers    # 常驻模式：CLI 用这里的专用登录与配置
+    VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS=1
+    VORTOONE_EXTERNAL_WORKERS=implement=codex,review=claude
+    VORTOONE_EXTERNAL_WORKER_TIMEOUT=1800        # 单次运行秒数，超时杀整个进程组
+    VORTOONE_CODEX_BIN / VORTOONE_CLAUDE_BIN    # 可选：CLI 路径（缺省走 PATH）
+    VORTOONE_WORKER_HOME=~/.vortocode/workers    # 常驻模式：CLI 用这里的专用登录与配置
 
 两种模式（别混）：
-- **本机模式**（没设 VORTOCODE_WORKER_HOME）：Desktop / 终端在你自己的电脑上跑，CLI 用你的个人
+- **本机模式**（没设 VORTOONE_WORKER_HOME）：Desktop / 终端在你自己的电脑上跑，CLI 用你的个人
   登录，并透传你个人配置里的模型选择。
-- **常驻模式**（设了 VORTOCODE_WORKER_HOME）：常驻电脑上的服务。CLI 只用该目录下的专用登录与配置
+- **常驻模式**（设了 VORTOONE_WORKER_HOME）：常驻电脑上的服务。CLI 只用该目录下的专用登录与配置
   （`codex/` 作 CODEX_HOME、`claude/` 作 CLAUDE_CONFIG_DIR），不碰服务账号 home 下任何人的个人配置。
   用 `vc workers login codex|claude` 登录进去。
 
@@ -56,8 +56,8 @@ logger = logging.getLogger(__name__)
 
 WORKERS = ("codex", "claude")
 ROLES = ("implement", "review")
-ROLE_ENV = "VORTOCODE_EXTERNAL_WORKERS"
-TIMEOUT_ENV = "VORTOCODE_EXTERNAL_WORKER_TIMEOUT"
+ROLE_ENV = "VORTOONE_EXTERNAL_WORKERS"
+TIMEOUT_ENV = "VORTOONE_EXTERNAL_WORKER_TIMEOUT"
 DEFAULT_TIMEOUT = 1800
 # 交付（push / 开 PR）只由 VortoOne 做；外部执行者拿不到仓库写令牌。
 _EXTRA_STRIPPED = frozenset({"GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN"})
@@ -143,7 +143,7 @@ def parse_role_workers(raw: str) -> dict[str, str]:
     return table
 
 
-EXPERIMENTAL_ENV = "VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS"
+EXPERIMENTAL_ENV = "VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS"
 
 
 def experimental_enabled() -> bool:
@@ -181,7 +181,7 @@ def _search_dirs() -> list[Path]:
 
 
 def worker_binary(worker: str) -> Optional[str]:
-    override = os.getenv(f"VORTOCODE_{worker.upper()}_BIN", "").strip()
+    override = os.getenv(f"VORTOONE_{worker.upper()}_BIN", "").strip()
     if override:
         return override
     found = shutil.which(worker)
@@ -240,7 +240,7 @@ def _toml_value(value: Any) -> Optional[str]:
     return None
 
 
-WORKER_HOME_ENV = "VORTOCODE_WORKER_HOME"
+WORKER_HOME_ENV = "VORTOONE_WORKER_HOME"
 
 
 def worker_home() -> Optional[Path]:
@@ -510,7 +510,7 @@ async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system:
     publish()
     binary = worker_binary(worker)
     if not binary:
-        run.error = f"找不到 {worker} 命令：请先安装并登录，或设置 VORTOCODE_{worker.upper()}_BIN"
+        run.error = f"找不到 {worker} 命令：请先安装并登录，或设置 VORTOONE_{worker.upper()}_BIN"
         run.failure_code = "unavailable"
         publish()
         return run
@@ -614,7 +614,7 @@ def describe_event(worker: str, event: WorkerEvent) -> str:
 # ── 不可用 → 切换到内置子 Agent ────────────────────────────────────────────
 # 「执行者不可用」（没装、没登录、额度/限流）和「执行者干砸了」是两回事：前者换个执行者就能继续，
 # 后者交给流水线原有的重试与自修复。只有前者切换，并让该执行者冷却一段时间，后面的块直接用内置的。
-COOLDOWN_ENV = "VORTOCODE_EXTERNAL_WORKER_COOLDOWN_MIN"
+COOLDOWN_ENV = "VORTOONE_EXTERNAL_WORKER_COOLDOWN_MIN"
 _UNAVAILABLE_SIGNALS = (
     "找不到", "not logged in", "please run /login", "run /login", "login required", "unauthorized",
     "authentication", "oauth token", "invalid api key", "401", "usage limit", "rate limit",

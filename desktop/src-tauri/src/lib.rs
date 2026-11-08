@@ -26,6 +26,7 @@ mod llm_profile;
 mod llm_services;
 mod updater;
 mod diagnostics;
+mod env_names;
 use llm_profile::*;
 use llm_services::*;
 use updater::*;
@@ -318,12 +319,12 @@ fn find_local_browser() -> Option<String> {
 fn configure_browser_control(command: &mut Command, preferences: &DesktopPreferences) {
     match (preferences.browser_control, find_local_browser()) {
         (true, Some(browser)) => {
-            command.env("VORTOCODE_ENABLE_BROWSER_CONTROL", "1");
-            command.env("VORTOCODE_BROWSER_PATH", browser);
+            command.env("VORTOONE_ENABLE_BROWSER_CONTROL", "1");
+            command.env("VORTOONE_BROWSER_PATH", browser);
         }
         _ => {
-            command.env_remove("VORTOCODE_ENABLE_BROWSER_CONTROL");
-            command.env_remove("VORTOCODE_BROWSER_PATH");
+            command.env_remove("VORTOONE_ENABLE_BROWSER_CONTROL");
+            command.env_remove("VORTOONE_BROWSER_PATH");
         }
     }
 }
@@ -331,9 +332,9 @@ fn configure_browser_control(command: &mut Command, preferences: &DesktopPrefere
 /// 实验开关只在引擎启动处按偏好打开；configure_llm_profile 那边一律先清掉，不从父进程继承。
 fn configure_experimental_workers(command: &mut Command, preferences: &DesktopPreferences) {
     if preferences.experimental_external_workers {
-        command.env("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS", "1");
+        command.env("VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS", "1");
     } else {
-        command.env_remove("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS");
+        command.env_remove("VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS");
     }
 }
 
@@ -378,8 +379,8 @@ const ASSISTANT_HOST_ROOT: &str = "@assistant";
 /// 登记了常驻电脑、且没关掉「让助理查看 Codex」时，本机通用引擎带上常驻助理的地址和令牌：
 /// 引擎里的 Codex 观察员据此把 Codex 进度报过去。只给通用范围那一个引擎，免得几个引擎重复报。
 fn configure_codex_watch(command: &mut Command, app: &AppHandle, scope: &str, preferences: &DesktopPreferences) {
-    command.env_remove("VORTOCODE_CODEX_REPORT_URL");
-    command.env_remove("VORTOCODE_CODEX_REPORT_TOKEN");
+    command.env_remove("VORTOONE_CODEX_REPORT_URL");
+    command.env_remove("VORTOONE_CODEX_REPORT_TOKEN");
     if scope != GENERAL_SCOPE || preferences.codex_watch_disabled {
         return;
     }
@@ -399,8 +400,8 @@ fn configure_codex_watch(command: &mut Command, app: &AppHandle, scope: &str, pr
     else {
         return;
     };
-    command.env("VORTOCODE_CODEX_REPORT_URL", host.base_url.trim_end_matches('/'));
-    command.env("VORTOCODE_CODEX_REPORT_TOKEN", token.trim());
+    command.env("VORTOONE_CODEX_REPORT_URL", host.base_url.trim_end_matches('/'));
+    command.env("VORTOONE_CODEX_REPORT_TOKEN", token.trim());
 }
 
 #[tauri::command(async)]
@@ -419,7 +420,7 @@ fn set_codex_watch_enabled(app: AppHandle, enabled: bool) -> Result<bool, String
 
 /// 桌面操作只在引擎启动处按偏好打开；偏好里的目标不合法（比如手改坏了）就按关闭处理。
 fn configure_desktop_control(command: &mut Command, preferences: &DesktopPreferences) {
-    for key in ["VORTOCODE_ENABLE_DESKTOP_CONTROL", "VORTOCODE_DESKTOP_TARGET", "VORTOCODE_DESKTOP_DISPLAY", "VORTOCODE_DESKTOP_APPS"] {
+    for key in ["VORTOONE_ENABLE_DESKTOP_CONTROL", "VORTOONE_DESKTOP_TARGET", "VORTOONE_DESKTOP_DISPLAY", "VORTOONE_DESKTOP_APPS"] {
         command.env_remove(key);
     }
     if !preferences.desktop_control {
@@ -427,9 +428,9 @@ fn configure_desktop_control(command: &mut Command, preferences: &DesktopPrefere
     }
     let (Ok(target), Ok(apps)) = (normalize_desktop_target(&preferences.desktop_target),
         normalize_desktop_apps(&preferences.desktop_apps)) else { return };
-    command.env("VORTOCODE_ENABLE_DESKTOP_CONTROL", "1");
-    command.env("VORTOCODE_DESKTOP_TARGET", target);
-    command.env("VORTOCODE_DESKTOP_APPS", apps);
+    command.env("VORTOONE_ENABLE_DESKTOP_CONTROL", "1");
+    command.env("VORTOONE_DESKTOP_TARGET", target);
+    command.env("VORTOONE_DESKTOP_APPS", apps);
 }
 
 fn desktop_control_status(preferences: &DesktopPreferences) -> DesktopControlStatus {
@@ -1385,7 +1386,7 @@ fn clear_gateway_recovery(app: AppHandle, runtime_id: Option<String>) -> Result<
 }
 
 fn smoke_marker_path() -> Result<Option<PathBuf>, String> {
-    let raw = std::env::var("VORTOCODE_DESKTOP_SMOKE_FILE").unwrap_or_default();
+    let raw = env_names::var("VORTOONE_DESKTOP_SMOKE_FILE").unwrap_or_default();
     if raw.trim().is_empty() {
         return Ok(None);
     }
@@ -2079,7 +2080,7 @@ mod tests {
             Some(OsStr::new("model-1"))
         );
         assert_eq!(
-            env.get(OsStr::new("VORTOCODE_MODEL_CONTEXT_WINDOW"))
+            env.get(OsStr::new("VORTOONE_MODEL_CONTEXT_WINDOW"))
                 .and_then(Option::as_deref),
             Some(OsStr::new("65536"))
         );
@@ -2139,7 +2140,7 @@ mod tests {
             .get_envs()
             .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
             .collect::<HashMap<_, _>>();
-        assert_eq!(env.get(OsStr::new("VORTOCODE_ENABLE_BROWSER_CONTROL")), Some(&None));
+        assert_eq!(env.get(OsStr::new("VORTOONE_ENABLE_BROWSER_CONTROL")), Some(&None));
     }
 
     fn sample_provider(id: &str) -> DesktopLlmProvider {
@@ -2244,11 +2245,11 @@ mod tests {
             .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
             .collect::<HashMap<_, _>>();
         assert_eq!(
-            env.get(OsStr::new("VORTOCODE_PROVIDER_DEEPSEEK_BASE")).and_then(Option::as_deref),
+            env.get(OsStr::new("VORTOONE_PROVIDER_DEEPSEEK_BASE")).and_then(Option::as_deref),
             Some(OsStr::new("https://api.example.com/v1"))
         );
         assert_eq!(
-            env.get(OsStr::new("VORTOCODE_PROVIDER_DEEPSEEK_KEY")).and_then(Option::as_deref),
+            env.get(OsStr::new("VORTOONE_PROVIDER_DEEPSEEK_KEY")).and_then(Option::as_deref),
             Some(OsStr::new("key"))
         );
         let status = serde_json::to_string(&desktop_llm_profile_status(Some(&profile))).unwrap();
@@ -2311,7 +2312,7 @@ mod tests {
             .get_envs()
             .map(|(key, _)| key.to_string_lossy().to_string())
             .collect::<Vec<_>>();
-        assert!(names.contains(&"VORTOCODE_PROVIDER_DEEPSEEK_KEY".to_string()));
+        assert!(names.contains(&"VORTOONE_PROVIDER_DEEPSEEK_KEY".to_string()));
         assert!(!names.contains(&"OPENAI_API_KEY".to_string()));
     }
 
@@ -2345,7 +2346,7 @@ mod tests {
             .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
             .collect::<HashMap<_, _>>();
         assert_eq!(
-            env.get(OsStr::new("VORTOCODE_MODEL_CHOICES")).and_then(Option::as_deref),
+            env.get(OsStr::new("VORTOONE_MODEL_CHOICES")).and_then(Option::as_deref),
             Some(OsStr::new("main,other"))
         );
         profile.models.clear();
@@ -2353,7 +2354,7 @@ mod tests {
         configure_llm_profile(&mut command, Some(&profile));
         assert!(command
             .get_envs()
-            .any(|(key, value)| key == OsStr::new("VORTOCODE_MODEL_CHOICES") && value.is_none()));
+            .any(|(key, value)| key == OsStr::new("VORTOONE_MODEL_CHOICES") && value.is_none()));
     }
 
     #[test]
@@ -2419,7 +2420,7 @@ mod tests {
             configure_llm_profile(&mut command, Some(profile));
             command
                 .get_envs()
-                .find(|(key, _)| *key == OsStr::new("VORTOCODE_MODEL_CHOICES"))
+                .find(|(key, _)| *key == OsStr::new("VORTOONE_MODEL_CHOICES"))
                 .and_then(|(_, value)| value.map(OsStr::to_owned))
         };
         assert_eq!(choices(&profile).as_deref(), Some(OsStr::new("main")));
@@ -3498,10 +3499,10 @@ mod tests {
         );
         assert_eq!(command.get_current_dir(), Some(Path::new("/tmp/vortocode")));
         assert!(command.get_envs().any(|(key, value)| {
-            key == OsStr::new("VORTOCODE_API_TOKEN") && value == Some(OsStr::new("test-token"))
+            key == OsStr::new("VORTOONE_API_TOKEN") && value == Some(OsStr::new("test-token"))
         }));
         assert!(command.get_envs().any(|(key, value)| {
-            key == OsStr::new("VORTOCODE_WORKSPACE_SCOPE")
+            key == OsStr::new("VORTOONE_WORKSPACE_SCOPE")
                 && value == Some(OsStr::new(PROJECT_SCOPE))
         }));
     }
@@ -3520,7 +3521,7 @@ mod tests {
         );
         let expected = std::process::id().to_string();
         assert!(command.get_envs().any(|(key, value)| {
-            key == OsStr::new("VORTOCODE_SUPERVISOR_PID")
+            key == OsStr::new("VORTOONE_SUPERVISOR_PID")
                 && value == Some(OsStr::new(expected.as_str()))
         }));
     }
@@ -3532,7 +3533,7 @@ mod tests {
             8123, "", PROJECT_SCOPE,
         );
         for (name, expected) in [
-            ("VORTOCODE_IM", ""), ("VORTOCODE_CRON", "0"), ("VORTOCODE_HEARTBEAT", "0"),
+            ("VORTOONE_IM", ""), ("VORTOONE_CRON", "0"), ("VORTOONE_HEARTBEAT", "0"),
         ] {
             assert!(command.get_envs().any(|(key, value)| {
                 key == OsStr::new(name) && value == Some(OsStr::new(expected))
@@ -3571,9 +3572,9 @@ mod tests {
         assert_eq!(command.get_current_dir(), Some(Path::new("/tmp/project")));
         assert!(command
             .get_envs()
-            .any(|(key, value)| { key == OsStr::new("VORTOCODE_API_TOKEN") && value.is_none() }));
+            .any(|(key, value)| { key == OsStr::new("VORTOONE_API_TOKEN") && value.is_none() }));
         assert!(command.get_envs().any(|(key, value)| {
-            key == OsStr::new("VORTOCODE_WORKSPACE_SCOPE")
+            key == OsStr::new("VORTOONE_WORKSPACE_SCOPE")
                 && value == Some(OsStr::new(PROJECT_SCOPE))
         }));
     }
@@ -4183,8 +4184,8 @@ mod tests {
         let mut command = Command::new("fixture");
         configure_llm_profile(&mut command, Some(&profile));
         let env = command.get_envs().map(|(key, value)| (key.to_str().unwrap().to_string(), value.map(|value| value.to_str().unwrap().to_string()))).collect::<HashMap<_, _>>();
-        assert_eq!(env["VORTOCODE_MODEL_ROLES"].as_deref(), Some("implement=default:code-model,research=worker:small:tag,review=default:review-model"));
-        assert_eq!(env["VORTOCODE_PROVIDER_WORKER_KEY"].as_deref(), Some("synthetic-worker-key"));
+        assert_eq!(env["VORTOONE_MODEL_ROLES"].as_deref(), Some("implement=default:code-model,research=worker:small:tag,review=default:review-model"));
+        assert_eq!(env["VORTOONE_PROVIDER_WORKER_KEY"].as_deref(), Some("synthetic-worker-key"));
         assert_eq!(env["OPENAI_API_KEY"].as_deref(), Some(profile.api_key.as_str()));
     }
 
@@ -4209,7 +4210,7 @@ mod tests {
         assert!(!profile.role_models.contains_key("review"));
         let mut command = Command::new("fixture");
         configure_llm_profile(&mut command, Some(&sample_llm_profile()));
-        assert_eq!(command.get_envs().find(|(key, _)| *key == "VORTOCODE_MODEL_ROLES").unwrap().1, Some(std::ffi::OsStr::new("")));
+        assert_eq!(command.get_envs().find(|(key, _)| *key == "VORTOONE_MODEL_ROLES").unwrap().1, Some(std::ffi::OsStr::new("")));
     }
 
     #[test]
@@ -4225,8 +4226,8 @@ mod tests {
         let mut command = Command::new("fixture");
         configure_external_workers(&mut command, &profile);
         let env = command.get_envs().map(|(key, value)| (key.to_str().unwrap().to_string(), value.map(|value| value.to_str().unwrap().to_string()))).collect::<HashMap<_, _>>();
-        assert_eq!(env["VORTOCODE_MODEL_ROLES"].as_deref(), Some("research=default:small"));
-        assert_eq!(env["VORTOCODE_EXTERNAL_WORKERS"].as_deref(), Some("implement=codex,review=claude"));
+        assert_eq!(env["VORTOONE_MODEL_ROLES"].as_deref(), Some("research=default:small"));
+        assert_eq!(env["VORTOONE_EXTERNAL_WORKERS"].as_deref(), Some("implement=codex,review=claude"));
     }
 
     #[test]
@@ -4235,13 +4236,13 @@ mod tests {
         let old: DesktopPreferences = serde_json::from_str(r#"{"browserControl": true}"#).unwrap();
         assert!(!old.experimental_external_workers);                        // 旧偏好文件：关闭
         let mut command = Command::new("fixture");
-        command.env("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS", "1");      // 假装从父进程继承了
+        command.env("VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS", "1");      // 假装从父进程继承了
         configure_llm_profile(&mut command, Some(&sample_llm_profile()));
         configure_experimental_workers(&mut command, &DesktopPreferences::default());
-        assert_eq!(command.get_envs().find(|(k, _)| *k == "VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS").unwrap().1, None);
+        assert_eq!(command.get_envs().find(|(k, _)| *k == "VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS").unwrap().1, None);
         let on = DesktopPreferences { experimental_external_workers: true, ..Default::default() };
         configure_experimental_workers(&mut command, &on);
-        assert_eq!(command.get_envs().find(|(k, _)| *k == "VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS").unwrap().1,
+        assert_eq!(command.get_envs().find(|(k, _)| *k == "VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS").unwrap().1,
                    Some(std::ffi::OsStr::new("1")));
     }
 
@@ -4254,23 +4255,23 @@ mod tests {
         let old: DesktopPreferences = serde_json::from_str(r#"{"browserControl": true}"#).unwrap();
         assert!(!old.desktop_control);                                     // 旧偏好文件：关闭
         let mut command = Command::new("fixture");
-        command.env("VORTOCODE_ENABLE_DESKTOP_CONTROL", "1");             // 假装从父进程继承了
-        command.env("VORTOCODE_DESKTOP_TARGET", "ssh:someone@elsewhere");
+        command.env("VORTOONE_ENABLE_DESKTOP_CONTROL", "1");             // 假装从父进程继承了
+        command.env("VORTOONE_DESKTOP_TARGET", "ssh:someone@elsewhere");
         configure_desktop_control(&mut command, &DesktopPreferences::default());
-        assert_eq!(env_of(&command, "VORTOCODE_ENABLE_DESKTOP_CONTROL"), Some(None));
-        assert_eq!(env_of(&command, "VORTOCODE_DESKTOP_TARGET"), Some(None));
+        assert_eq!(env_of(&command, "VORTOONE_ENABLE_DESKTOP_CONTROL"), Some(None));
+        assert_eq!(env_of(&command, "VORTOONE_DESKTOP_TARGET"), Some(None));
 
         let on = DesktopPreferences { desktop_control: true, desktop_target: "ssh:dev@desktop-vm.lan".into(),
             desktop_apps: "firefox,mousepad".into(), ..Default::default() };
         configure_desktop_control(&mut command, &on);
-        assert_eq!(env_of(&command, "VORTOCODE_ENABLE_DESKTOP_CONTROL"), Some(Some(std::ffi::OsStr::new("1"))));
-        assert_eq!(env_of(&command, "VORTOCODE_DESKTOP_TARGET"), Some(Some(std::ffi::OsStr::new("ssh:dev@desktop-vm.lan"))));
-        assert_eq!(env_of(&command, "VORTOCODE_DESKTOP_APPS"), Some(Some(std::ffi::OsStr::new("firefox,mousepad"))));
+        assert_eq!(env_of(&command, "VORTOONE_ENABLE_DESKTOP_CONTROL"), Some(Some(std::ffi::OsStr::new("1"))));
+        assert_eq!(env_of(&command, "VORTOONE_DESKTOP_TARGET"), Some(Some(std::ffi::OsStr::new("ssh:dev@desktop-vm.lan"))));
+        assert_eq!(env_of(&command, "VORTOONE_DESKTOP_APPS"), Some(Some(std::ffi::OsStr::new("firefox,mousepad"))));
 
         // 偏好文件被手改出非法目标：按关闭处理，不把它交给引擎
         let broken = DesktopPreferences { desktop_target: "ssh:-oProxyCommand=x".into(), ..on };
         configure_desktop_control(&mut command, &broken);
-        assert_eq!(env_of(&command, "VORTOCODE_ENABLE_DESKTOP_CONTROL"), Some(None));
+        assert_eq!(env_of(&command, "VORTOONE_ENABLE_DESKTOP_CONTROL"), Some(None));
     }
 
     #[test]
@@ -4345,7 +4346,7 @@ mod tests {
         }
         let mut command = Command::new("fixture");
         configure_external_workers(&mut command, &sample_llm_profile());
-        assert_eq!(command.get_envs().find(|(key, _)| *key == "VORTOCODE_EXTERNAL_WORKERS").unwrap().1,
+        assert_eq!(command.get_envs().find(|(key, _)| *key == "VORTOONE_EXTERNAL_WORKERS").unwrap().1,
                    Some(std::ffi::OsStr::new("")));
     }
 

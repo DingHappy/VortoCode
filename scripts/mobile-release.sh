@@ -10,13 +10,13 @@
 # 重启手机网关不会登出手机：原生会话加密落盘，重启后恢复（gateway/mobile_session_store.py）。
 set -euo pipefail
 
-DEPLOY_DIR="${VORTOCODE_DEPLOY_DIR:-$HOME/personal_project/VortoCode}"
-ENV_FILE="${VORTOCODE_MOBILE_ENV_FILE:-$HOME/.config/vortocode-mobile/environment}"
-RELEASES="${VORTOCODE_MOBILE_RELEASES:-$HOME/.local/share/vortocode-mobile/releases}"
-SERVICE="${VORTOCODE_MOBILE_SERVICE:-vortocode-mobile}"
-PORT="${VORTOCODE_MOBILE_PORT:-18081}"
+DEPLOY_DIR="${VORTOONE_DEPLOY_DIR:-${VORTOCODE_DEPLOY_DIR:-$HOME/personal_project/VortoCode}}"
+ENV_FILE="${VORTOONE_MOBILE_ENV_FILE:-${VORTOCODE_MOBILE_ENV_FILE:-$HOME/.config/vortocode-mobile/environment}}"
+RELEASES="${VORTOONE_MOBILE_RELEASES:-${VORTOCODE_MOBILE_RELEASES:-$HOME/.local/share/vortocode-mobile/releases}}"
+SERVICE="${VORTOONE_MOBILE_SERVICE:-${VORTOCODE_MOBILE_SERVICE:-vortocode-mobile}}"
+PORT="${VORTOONE_MOBILE_PORT:-${VORTOCODE_MOBILE_PORT:-18081}}"
 CHECKER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mobile-route-check.py"
-CADDY_FILE="${VORTOCODE_MOBILE_CADDYFILE:-$HOME/.config/vortocode-https/Caddyfile}"
+CADDY_FILE="${VORTOONE_MOBILE_CADDYFILE:-${VORTOCODE_MOBILE_CADDYFILE:-$HOME/.config/vortocode-https/Caddyfile}}"
 DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
 
@@ -24,12 +24,15 @@ say() { printf '%s\n' "$*"; }
 fail() { say "✗ $*" >&2; exit 1; }
 
 [[ -f "$ENV_FILE" ]] || fail "找不到手机网关环境文件：$ENV_FILE"
+# 改名前写的环境文件里还是旧键名 VORTOCODE_MOBILE_RELEASE（ADR-018 批次 B），沿用文件里现有的那个
+RELEASE_KEY=VORTOONE_MOBILE_RELEASE
+grep -q '^VORTOONE_MOBILE_RELEASE=' "$ENV_FILE" || RELEASE_KEY=VORTOCODE_MOBILE_RELEASE
 [[ -d "$DEPLOY_DIR/.git" ]] || fail "部署目录不是 Git 仓库：$DEPLOY_DIR"
 if [[ -n "$(git -C "$DEPLOY_DIR" status --porcelain --untracked-files=no)" ]]; then
   fail "部署目录有未提交的改动；先恢复干净再发布（快照只从已提交的代码生成）"
 fi
 commit="$(git -C "$DEPLOY_DIR" rev-parse HEAD)"
-current="$(sed -n 's/^VORTOCODE_MOBILE_RELEASE=//p' "$ENV_FILE" | tail -1)"
+current="$(sed -n "s/^$RELEASE_KEY=//p" "$ENV_FILE" | tail -1)"
 current_dir="$RELEASES/$current"
 [[ -n "$current" && -d "$current_dir/web/mobile" ]] || fail "当前快照缺少 web/mobile（手机网页的构建产物），无法带入新快照：$current_dir"
 
@@ -97,7 +100,7 @@ backup="$ENV_FILE.before-$(date +%Y%m%d%H%M%S)"
 cp -p "$ENV_FILE" "$backup"
 switch_to() {
   local from="$1" to="$2"
-  sed -i.tmp "s#releases/$from\$#releases/$to#; s#^VORTOCODE_MOBILE_RELEASE=$from\$#VORTOCODE_MOBILE_RELEASE=$to#" "$ENV_FILE"
+  sed -i.tmp "s#releases/$from\$#releases/$to#; s#^$RELEASE_KEY=$from\$#$RELEASE_KEY=$to#" "$ENV_FILE"
   rm -f "$ENV_FILE.tmp"
 }
 restarts() { systemctl --user show -p NRestarts --value "$SERVICE"; }
@@ -118,10 +121,10 @@ rollback_on_exit() {
 }
 trap rollback_on_exit EXIT
 switch_to "$current" "$release"
-grep -q "^VORTOCODE_MOBILE_RELEASE=$release\$" "$ENV_FILE" || fail "环境文件没有按预期切换"
+grep -q "^$RELEASE_KEY=$release\$" "$ENV_FILE" || fail "环境文件没有按预期切换"
 systemctl --user restart "$SERVICE"
 before="$(restarts)"          # 手动重启后再取基线：之后再涨就是起来又崩了
-sleep "${VORTOCODE_MOBILE_SETTLE_SECONDS:-12}"
+sleep "${VORTOONE_MOBILE_SETTLE_SECONDS:-${VORTOCODE_MOBILE_SETTLE_SECONDS:-12}}"
 if [[ "$(systemctl --user is-active "$SERVICE")" == active && "$(restarts)" == "$before" ]] && check_routes "$target"; then
   rollback_required=0
   say "✓ 手机网关已切换到 $release 并通过核对（环境文件备份：${backup}）"

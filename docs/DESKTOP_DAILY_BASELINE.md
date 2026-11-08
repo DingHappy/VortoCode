@@ -39,10 +39,10 @@ MCP在插件页手动连接/重试；Skill按项目加载，General不加载仓�
 ```bash
 npm test
 npm run test:delivery
-VORTOCODE_NOTARY_PROFILE='' npm run bundle:dev-signed
+VORTOONE_NOTARY_PROFILE='' npm run bundle:dev-signed
 npm run install:built-signed
 npm run verify:installed
-VORTOCODE_RUNTIME_BIN=/Applications/VortoCode.app/Contents/Resources/runtime/vortocode-runtime npm run sidecar:smoke
+VORTOONE_RUNTIME_BIN=/Applications/VortoCode.app/Contents/Resources/runtime/vortocode-runtime npm run sidecar:smoke
 ```
 
 `install:built-signed`只安装已构建签名且与证据匹配的包，不重复构建。

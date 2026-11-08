@@ -34,13 +34,13 @@ data = root / "workspace"
 data.mkdir(exist_ok=True)
 os.chdir(data)
 for key in list(os.environ):
-    if key.startswith(("VORTOCODE_", "AUTODEV_", "OPENAI_", "LLM_", "ANTHROPIC_")) or key == "DEFAULT_MODEL":
+    if key.startswith(("VORTOONE_", "AUTODEV_", "OPENAI_", "LLM_", "ANTHROPIC_")) or key == "DEFAULT_MODEL":
         os.environ.pop(key, None)
 # Public fixture token, never a user credential.
-os.environ.update(VORTOCODE_WORKSPACE_SCOPE="general", VORTOCODE_API_TOKEN="goal-integration-only",
-                  OPENAI_API_KEY="", VORTOCODE_ENABLE_SHELL="0", VORTOCODE_ENABLE_BROWSER="0",
-                  VORTOCODE_IM="", VORTOCODE_OWNER_NOTIFY_URL="", VORTOCODE_CRON="0", VORTOCODE_HEARTBEAT="0",
-                  VORTOCODE_USAGE_DIR=str(root / "usage"))
+os.environ.update(VORTOONE_WORKSPACE_SCOPE="general", VORTOONE_API_TOKEN="goal-integration-only",
+                  OPENAI_API_KEY="", VORTOONE_ENABLE_SHELL="0", VORTOONE_ENABLE_BROWSER="0",
+                  VORTOONE_IM="", VORTOONE_OWNER_NOTIFY_URL="", VORTOONE_CRON="0", VORTOONE_HEARTBEAT="0",
+                  VORTOONE_USAGE_DIR=str(root / "usage"))
 sys.path.insert(0, str(runtime))
 
 from src.llm.client import LLMClient  # noqa: E402

@@ -26,7 +26,7 @@ noVNC 保留为可选的实时画面、人工操作、登录、验证码和故�
 已接入的只读状态合同：
 
 - `src/computer/status.py` 只检查当前运行端固定私有目录里的桌面组件，不跟随
-  `VORTOCODE_DESKTOP_TARGET`、项目参数或本地控制器去 SSH 抓图。检查有超时，失败/过期
+  `VORTOONE_DESKTOP_TARGET`、项目参数或本地控制器去 SSH 抓图。检查有超时，失败/过期
   不报就绪，只返回服务、控制权、查看器数量及密码库元数据。
 - 已有 `GET /api/resident/projects` 保留 `projects`，增加 `computer` 字段；没有新增路由。
   `execution_location=runtime_host` 表明状态来自服务所在电脑，不是用户笔记本的推断。
@@ -267,7 +267,7 @@ python3 ~/.local/share/vortocode/computer/resident-desktop.py takeover
 
 同时满足才会装配这组工具：
 
-- 主进程环境设了 `VORTOCODE_ENABLE_DESKTOP_CONTROL=1`（默认不设 = 关闭）；
+- 主进程环境设了 `VORTOONE_ENABLE_DESKTOP_CONTROL=1`（默认不设 = 关闭）；
 - 会话是 Web / Desktop（`kind=web`），且问得到人（`can_ask_human`）；
 - 会话档位是 `local`（项目会话）。IM、无头 CLI、无人值守（cron / heartbeat）、`external` 档位一律不给。
 
@@ -283,7 +283,7 @@ python3 ~/.local/share/vortocode/computer/resident-desktop.py takeover
 | `desktop_click` | 写 | 点击坐标，可右键、双击 |
 | `desktop_type` | 写 | 在当前焦点处输入文字（最多 2000 字符） |
 | `desktop_key` | 写 | 按键或组合键（`Return`、`ctrl+l`、`alt+F4`…） |
-| `desktop_open` | 写 | 启动 `VORTOCODE_DESKTOP_APPS` 名单里的应用 |
+| `desktop_open` | 写 | 启动 `VORTOONE_DESKTOP_APPS` 名单里的应用 |
 
 写操作每次都过确认门，归为 `interact` 类，**任何授权档位都不免**。确认文案写明目标桌面、当前活动窗口和具体动作；
 完成后返回一张新截屏。
@@ -305,10 +305,10 @@ python3 ~/.local/share/vortocode/computer/resident-desktop.py takeover
 无头 CLI / 常驻服务用环境变量：
 
 ```dotenv
-VORTOCODE_ENABLE_DESKTOP_CONTROL=1
-VORTOCODE_DESKTOP_TARGET=ssh:user@desktop-vm.lan   # 或 local（本机 X11）
-VORTOCODE_DESKTOP_DISPLAY=:0
-VORTOCODE_DESKTOP_APPS=xfce4-terminal,firefox,thunar
+VORTOONE_ENABLE_DESKTOP_CONTROL=1
+VORTOONE_DESKTOP_TARGET=ssh:user@desktop-vm.lan   # 或 local（本机 X11）
+VORTOONE_DESKTOP_DISPLAY=:0
+VORTOONE_DESKTOP_APPS=xfce4-terminal,firefox,thunar
 ```
 
 目标机器需要 X11 会话（Wayland 下 xdotool 控制不了别的窗口），并安装 `xdotool`、`scrot`。经 SSH 时，运行 VortoOne

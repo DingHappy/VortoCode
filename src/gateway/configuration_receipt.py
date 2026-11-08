@@ -11,8 +11,8 @@ _receipt: dict | None = None
 
 def begin_configuration_receipt() -> None:
     global _receipt
-    revision = os.getenv("VORTOCODE_MODEL_CONFIGURATION_REVISION", "")
-    launch_id = os.getenv("VORTOCODE_CONFIGURATION_LAUNCH_ID", "")
+    revision = os.getenv("VORTOONE_MODEL_CONFIGURATION_REVISION", "")
+    launch_id = os.getenv("VORTOONE_CONFIGURATION_LAUNCH_ID", "")
     valid = lambda value: bool(re.fullmatch(r"[a-zA-Z0-9-]{1,96}", value))
     _receipt = ({"schema_version": 1, "revision": revision, "launch_id": launch_id}
                 if valid(revision) and valid(launch_id) else None)

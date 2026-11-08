@@ -29,8 +29,8 @@ async def test_mixed_or_quoted_acknowledgements_are_not_silenced(tmp_path, reply
 
 
 async def test_cron_failure_does_not_skip_heartbeat(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")
+    monkeypatch.setenv("VORTOONE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT", "1")
     monkeypatch.setattr(heartbeat, "heartbeat_every_seconds", lambda: 0)
     stop, calls = asyncio.Event(), []
 
@@ -51,8 +51,8 @@ async def test_cron_failure_does_not_skip_heartbeat(tmp_path, monkeypatch, caplo
 
 
 async def test_heartbeat_failure_is_visible_without_retrying_the_model(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")
+    monkeypatch.setenv("VORTOONE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT", "1")
     monkeypatch.setattr(heartbeat, "heartbeat_every_seconds", lambda: 0)
     stop, calls = asyncio.Event(), []
 
@@ -73,8 +73,8 @@ async def test_heartbeat_failure_is_visible_without_retrying_the_model(tmp_path,
 
 
 async def test_scheduler_cancellation_propagates(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")
+    monkeypatch.setenv("VORTOONE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT", "1")
     calls = []
 
     async def cancelled_cron(*args, **kwargs):

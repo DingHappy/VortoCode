@@ -77,4 +77,4 @@ npm run bundle:app
 1. 一台便宜的云主机或家里一直开着的机器（推荐，效果最好）；
 2. 这台 Mac 自己：用 launchd 常驻，但 Mac 睡眠或合盖时会停。
 
-部署步骤（macOS launchd / Linux systemd、Telegram 配对、开关矩阵、远程访问的鉴权边界）见 [`docs/OPS.md`](OPS.md)。部署好后，在 Desktop 助理模式里点「连接常驻电脑」，填它的地址和 `VORTOCODE_API_TOKEN`。
+部署步骤（macOS launchd / Linux systemd、Telegram 配对、开关矩阵、远程访问的鉴权边界）见 [`docs/OPS.md`](OPS.md)。部署好后，在 Desktop 助理模式里点「连接常驻电脑」，填它的地址和 `VORTOONE_API_TOKEN`。

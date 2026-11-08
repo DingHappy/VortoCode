@@ -149,12 +149,12 @@ def test_configuration_and_health_snapshot_never_include_destination_or_credenti
     monitor = observer.ObserverMonitor()
     monitor.start()
     monkeypatch.setattr(observer, "_MONITOR", monitor)
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_URL", "http://private-target.test")
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_TOKEN", "private-token")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_URL", "http://private-target.test")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_TOKEN", "private-token")
     value = observer.observer_status()
     assert value["configured"] and value["phase"] == "starting"
     assert "private-" not in json.dumps(value)
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_TOKEN", "")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_TOKEN", "")
     disabled = observer.observer_status()
     assert not disabled["configured"] and disabled["phase"] == "disabled"
     assert disabled["run_id"] == "" and disabled["last_acknowledged_at"] is None
@@ -165,8 +165,8 @@ async def test_existing_status_route_exposes_observer_health_without_new_route(m
     monitor = observer.ObserverMonitor()
     monitor.start()
     monkeypatch.setattr(observer, "_MONITOR", monitor)
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_URL", "http://private-target.test")
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_TOKEN", "private-token")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_URL", "http://private-target.test")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_TOKEN", "private-token")
     app = FastAPI()
     app.include_router(ops.router)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

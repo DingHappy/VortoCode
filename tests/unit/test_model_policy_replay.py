@@ -36,7 +36,7 @@ def paired_reports(tmp_path, monkeypatch):
     monkeypatch.setenv('OPENAI_API_BASE', 'https://models.example.test/v1')
     monkeypatch.setenv('OPENAI_API_KEY', 'synthetic-model-key')
     monkeypatch.setenv('DEFAULT_MODEL', 'judge')
-    monkeypatch.setenv('VORTOCODE_MODEL_PRICES', json.dumps({f'default:{model}': {
+    monkeypatch.setenv('VORTOONE_MODEL_PRICES', json.dumps({f'default:{model}': {
         'input_per_million': price, 'output_per_million': price, 'currency': 'CNY'}
         for model, price in [('cheap', 1), ('strong', 10), ('judge', 20)]}))
     # The CI base install deliberately excludes optional eval dependencies. The
@@ -161,8 +161,8 @@ def test_explicit_grading_and_model_configuration_do_not_silently_fallback(monke
     assert evaluation_client('default:worker:tag').config.model == 'worker:tag'
     assert evaluation_client().config.model == 'control'
     with pytest.raises(ValueError): evaluation_client('missing:model')
-    monkeypatch.setenv('VORTOCODE_PROVIDER_OTHER_BASE', 'https://other.example.test/v1')
-    monkeypatch.delenv('VORTOCODE_PROVIDER_OTHER_KEY', raising=False)
+    monkeypatch.setenv('VORTOONE_PROVIDER_OTHER_BASE', 'https://other.example.test/v1')
+    monkeypatch.delenv('VORTOONE_PROVIDER_OTHER_KEY', raising=False)
     with pytest.raises(ValueError): evaluation_client('other:model')
     monkeypatch.setenv('OPENAI_API_BASE', 'http://127.0.0.1:9123/v1')
     assert evaluation_client().config.api_key == 'synthetic-default-key'

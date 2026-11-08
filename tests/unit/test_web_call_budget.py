@@ -7,7 +7,7 @@ from src.agents.tool import Tool
 
 
 def test_batch_prefix_is_bounded_and_does_not_admit_later_writes(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MAX_WEB_TOOL_CALLS", "2")
+    monkeypatch.setenv("VORTOONE_MAX_WEB_TOOL_CALLS", "2")
     agent = MainAgent([])
     calls, used, exhausted = agent._limit_tool_calls([
         ("read_file", {}), ("web_search", {"query": "one"}),
@@ -20,8 +20,8 @@ def test_batch_prefix_is_bounded_and_does_not_admit_later_writes(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("native", [False, True])
 async def test_changed_queries_stop_across_build_segments_and_reset_for_new_turn(monkeypatch, native):
-    monkeypatch.setenv("VORTOCODE_MAX_WEB_TOOL_CALLS", "3")
-    monkeypatch.setenv("VORTOCODE_BUILD_AUTO_CONTINUES", "3")
+    monkeypatch.setenv("VORTOONE_MAX_WEB_TOOL_CALLS", "3")
+    monkeypatch.setenv("VORTOONE_BUILD_AUTO_CONTINUES", "3")
     executed, requests, notices = [], [], []
     async def search(args):
         executed.append(args)
@@ -49,7 +49,7 @@ async def test_changed_queries_stop_across_build_segments_and_reset_for_new_turn
 
 @pytest.mark.asyncio
 async def test_failed_tools_consume_dispatch_budget_without_accepting_results(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MAX_WEB_TOOL_CALLS", "1")
+    monkeypatch.setenv("VORTOONE_MAX_WEB_TOOL_CALLS", "1")
     events, confirms = [], []
     async def failing(args): raise RuntimeError("fixture failure")
     class Looping:
@@ -66,13 +66,13 @@ async def test_failed_tools_consume_dispatch_budget_without_accepting_results(mo
 
 
 def test_non_web_tools_keep_original_execution_budget(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MAX_WEB_TOOL_CALLS", "1")
+    monkeypatch.setenv("VORTOONE_MAX_WEB_TOOL_CALLS", "1")
     a=MainAgent([]); calls=[("read_file",{})]*20
     assert a._limit_tool_calls(calls,"build",0,lambda _:None)==(calls,20,False)
 
 
 def test_recovery_identity_tracks_cap_but_not_consumed_count(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MAX_WEB_TOOL_CALLS", "2")
+    monkeypatch.setenv("VORTOONE_MAX_WEB_TOOL_CALLS", "2")
     a = MainAgent([])
     before = a.behavior_fingerprint()
     a._web_tool_calls = 1
@@ -83,7 +83,7 @@ def test_recovery_identity_tracks_cap_but_not_consumed_count(monkeypatch):
 @pytest.mark.parametrize("native", [False, True])
 @pytest.mark.asyncio
 async def test_batch_history_contains_only_the_admitted_prefix(monkeypatch, native):
-    monkeypatch.setenv("VORTOCODE_MAX_WEB_TOOL_CALLS", "2")
+    monkeypatch.setenv("VORTOONE_MAX_WEB_TOOL_CALLS", "2")
     executions = []
     calls = [{"tool": "web_search", "args": {"query": str(i)}} for i in range(3)]
     async def handler(args): executions.append(args); return "fixture result"
@@ -102,5 +102,5 @@ async def test_batch_history_contains_only_the_admitted_prefix(monkeypatch, nati
 
 def test_config_cannot_disable_or_unbound_the_dispatch_cap(monkeypatch):
     for value, expected in [("0",1),("100000",64),("invalid",12)]:
-        monkeypatch.setenv("VORTOCODE_MAX_WEB_TOOL_CALLS",value)
+        monkeypatch.setenv("VORTOONE_MAX_WEB_TOOL_CALLS",value)
         assert MainAgent([]).max_web_tool_calls == expected

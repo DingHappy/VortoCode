@@ -35,7 +35,7 @@ def _retry_lines(progress):
 
 @pytest.mark.asyncio
 async def test_channel_failure_is_reported_as_such(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "2")
     progress: list[str] = []
     tool, restore = _dev_tool(tmp_path, [TimeoutError("read timeout"), TimeoutError("read timeout")],
                               progress)
@@ -58,7 +58,7 @@ async def test_channel_failure_is_reported_as_such(tmp_path, monkeypatch):
 async def test_capacity_rejection_stops_same_model_retry_only_for_explicit_evidence(
         tmp_path, monkeypatch, message, expected_attempts):
     from src.agents import worktree
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "2")
     calls, progress = [], []
 
     async def fail(*args, **kwargs):
@@ -87,7 +87,7 @@ async def test_capacity_rejection_stops_same_model_retry_only_for_explicit_evide
 
 @pytest.mark.asyncio
 async def test_empty_diff_says_no_changes_not_red(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "2")
     progress: list[str] = []
     tool, restore = _dev_tool(tmp_path, [("", "我没找到要改的地方", None)], progress)
     try:
@@ -101,7 +101,7 @@ async def test_empty_diff_says_no_changes_not_red(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_failing_verification_says_red(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "2")
     progress: list[str] = []
     diff = "diff --git a/todo.py b/todo.py\n+    def remove(self, index):\n"
     tool, restore = _dev_tool(
@@ -122,7 +122,7 @@ async def test_failed_tool_is_recorded_as_failed_not_succeeded(tmp_path, monkeyp
     """
     from src.agents.main_agent import MainAgent
 
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
     progress: list[str] = []
     from src.agents.capabilities import SessionCapabilities
 

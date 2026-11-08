@@ -68,7 +68,7 @@ python -m evals.standard --live --suite memory --split heldout --repeat 2 \
 
 本地预留限制不是服务端硬预算；超时或取消不证明远端停止计费。过滤、失败、缺失用量
 保留原失败证据，不自动重试或换渠道。`650000` 是此处规划示例，不是费用承诺。
-需要费用比较时，沿用 `VORTOCODE_MODEL_PRICES` 显式配置真实渠道的输入/输出单价；
+需要费用比较时，沿用 `VORTOONE_MODEL_PRICES` 显式配置真实渠道的输入/输出单价；
 每次响应记录单价快照。缺价格不当作免费，不换汇，明确零单价才显示零费用。
 
 ## 离线核对

@@ -10,6 +10,6 @@ fn main() {
         .canonicalize()
         .map(|path| format!("{:x}", Sha256::digest(path.as_os_str().as_bytes())))
         .unwrap_or_default();
-    println!("cargo:rustc-env=VORTOCODE_SOURCE_ROOT_SHA256={digest}");
+    println!("cargo:rustc-env=VORTOONE_SOURCE_ROOT_SHA256={digest}");
     tauri_build::build()
 }

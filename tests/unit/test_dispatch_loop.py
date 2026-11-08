@@ -21,7 +21,7 @@ QUESTION = {"id": "question-abc", "round": 1, "status": "open", "question": "超
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
     path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(path))
 
 
 class Remote:
@@ -304,7 +304,7 @@ def test_card_routes_answer_and_open_pr_are_audited(tmp_path, monkeypatch):
 
     from src.gateway.audit import list_audit
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     from src.web.server import app
     seen = []
 

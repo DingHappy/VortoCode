@@ -48,7 +48,7 @@ COMMANDS: Dict[str, List[str]] = {
 def framework_env(name: Optional[str]) -> Dict[str, str]:
     """框架子进程的环境：剥离操作密钥与 GitHub 令牌（同 Codex / Claude Code 执行者）。
 
-    常驻模式（设了 ``VORTOCODE_WORKER_HOME``）下，``name`` 框架的 HOME 与 XDG 目录指到专用目录，登录与配置
+    常驻模式（设了 ``VORTOONE_WORKER_HOME``）下，``name`` 框架的 HOME 与 XDG 目录指到专用目录，登录与配置
     不碰个人账号；本机模式不改。"""
     from src.agents.external_workers import worker_env, worker_home
     env = worker_env()

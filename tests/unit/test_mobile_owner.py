@@ -27,7 +27,7 @@ class Key:
 @pytest.fixture
 def owner(setup, monkeypatch):  # noqa: F811
     client, sessions, now, calls, root, _ = setup
-    monkeypatch.setenv("VORTOCODE_MOBILE_WRITES", "1")
+    monkeypatch.setenv("VORTOONE_MOBILE_WRITES", "1")
     token = client.post("/api/mobile/native/exchange", json=native_handoff(client)).json()["token"]
     headers = {"Authorization": "Bearer " + token}
     device_id = client.get("/api/mobile/native/bootstrap", headers=headers).json()["device"]["id"]
@@ -55,7 +55,7 @@ def bind(client, headers, device=None, approval=None):
 
 def test_writes_are_closed_unless_the_server_opts_in(owner, monkeypatch):
     client, headers, device_id, _ = owner
-    monkeypatch.delenv("VORTOCODE_MOBILE_WRITES")
+    monkeypatch.delenv("VORTOONE_MOBILE_WRITES")
     response, *_ = bind(client, headers)
     assert response.status_code == 403
     assert client.get("/api/mobile/native/bootstrap", headers=headers).json()["capabilities"]["writes"] == []

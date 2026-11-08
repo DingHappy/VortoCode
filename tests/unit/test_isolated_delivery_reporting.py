@@ -17,8 +17,8 @@ def _git(root, *args):
 
 @pytest.mark.parametrize("native", [False, True])
 async def test_actual_verifier_and_commit_reach_the_parent_model(tmp_path, monkeypatch, native):
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "off")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
     _git(tmp_path, "init", "-q", "-b", "main")
     _git(tmp_path, "config", "user.name", "Test")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
@@ -89,7 +89,7 @@ def test_report_redacts_before_truncating_long_secret_values():
 async def test_verification_survives_failed_landing_or_recording(tmp_path, monkeypatch, record_fails):
     from src.agents import worktree
     from src.workflow.review import isolated_deliveries
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
 
     async def implement(*args, **kwargs):
         return ("diff --git a/pricing.py b/pricing.py\n-old\n+new\n", "wrong claimed command",

@@ -56,8 +56,8 @@ async def test_dispatch_rules(tmp_path, ledger):
 def test_writes_go_to_the_assistant_when_the_relay_is_configured(owner, monkeypatch):  # noqa: F811
     client, headers, device_id, root = owner
     _, device, _ = bind(client, headers)
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_URL", "http://127.0.0.1:8081")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_URL", "http://127.0.0.1:8081")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
     sent = []
 
     async def relay(path, body, *, client=None):
@@ -94,9 +94,9 @@ def test_dispatch_needs_the_face_id_key_and_a_trusted_phone(owner, ledger):  # n
 def test_relay_op_route_runs_the_operation_inside_the_assistant(tmp_path, monkeypatch):
     from tests.unit.test_relay_envelope import envelope, phone
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
     device_id, device, _ = phone(tmp_path)
     from src.web.server import app
     local = TestClient(app, client=("127.0.0.1", 50000))

@@ -39,8 +39,8 @@
 - **指标/成本仪表盘**：`index.html` 左下浮动按钮开关的面板，轮询 `/api/monitoring/metrics` 与 `/api/cost/report` 渲染计数器/延迟分位/费用。
 
 ### 基建批
-- **结构化日志落盘(ELK-ready)**：`setup_structured_logging(log_file=)` 用 RotatingFileHandler 写 JSON 行；`main.py` 按 `VORTOCODE_JSON_LOGS`/`VORTOCODE_LOG_FILE`（兼容旧 `AUTODEV_*` 名）启用。
-- **成本预算告警**：`set_budget(agent, amount)` + 总预算 `VORTOCODE_COST_BUDGET`（兼容旧名 `AUTODEV_COST_BUDGET`），超支在 `cost_tracker.alerts` 告警，`/api/cost/report` 暴露。
+- **结构化日志落盘(ELK-ready)**：`setup_structured_logging(log_file=)` 用 RotatingFileHandler 写 JSON 行；`main.py` 按 `VORTOONE_JSON_LOGS`/`VORTOONE_LOG_FILE`（兼容旧 `AUTODEV_*` 名）启用。
+- **成本预算告警**：`set_budget(agent, amount)` + 总预算 `VORTOONE_COST_BUDGET`（兼容旧名 `AUTODEV_COST_BUDGET`），超支在 `cost_tracker.alerts` 告警，`/api/cost/report` 暴露。
 - **向量库 Qdrant 后端**：`QdrantVectorStore` + `make_vector_store()` 工厂（通过 `VectorMemoryConfig` 配置 Qdrant；否则本地存储降级）；`VectorStore.delete` 统一删除接口。
 - **延迟分位**：`get_timer_stats` 增 p50/p95/p99；仪表盘渲染 avg/p95。
 
@@ -82,7 +82,7 @@
   「AI Agent 写代码」主线、零消费者、未接任何路由。按「零引用=负债」移除（git 历史可恢复），
   避免给非核心特性接线造成产品臃肿。
 - **浏览器安全加固**：`/api/browser/*` 原先无闸、navigate 不校验 URL（SSRF/`file://` 风险）。
-  现 **fail-closed**：默认 403，需 `VORTOCODE_ENABLE_BROWSER=1`（兼容旧名 `AUTODEV_ENABLE_BROWSER=1`，仿 shell 闸）；navigate 经
+  现 **fail-closed**：默认 403，需 `VORTOONE_ENABLE_BROWSER=1`（兼容旧名 `AUTODEV_ENABLE_BROWSER=1`，仿 shell 闸）；navigate 经
   `validate_navigation_url` 仅放行 http/https 且拒绝环回/私有/链路本地/保留 IP
   （挡 `file://`、`127.0.0.1`、`169.254.169.254` 云元数据、内网段）。校验在启动浏览器前完成。
 - **工作目录健壮性**：默认 `state.workdir` 从写死的 `~/personal_project`（多数环境不存在，
@@ -113,11 +113,11 @@
 
 ## 四、安全（默认安全）
 
-- **鉴权**：设置 `VORTOCODE_API_TOKEN`（兼容旧名 `AUTODEV_API_TOKEN`）后，所有 `/api/*` 与 `/ws` 强制校验 Bearer/X-API-Token；
+- **鉴权**：设置 `VORTOONE_API_TOKEN`（兼容旧名 `AUTODEV_API_TOKEN`）后，所有 `/api/*` 与 `/ws` 强制校验 Bearer/X-API-Token；
   未设则仅本地放行。鉴权逻辑见 `src/web/auth.py`。
 - **执行端点 fail-closed**：`/api/terminal/execute`、云沙箱执行默认 **403**，
-  需显式 `VORTOCODE_ENABLE_SHELL=1`（兼容旧名 `AUTODEV_ENABLE_SHELL=1`）才开启；命令再经 `SafetyGuard.check_command` 黑名单。
-- **浏览器端点 fail-closed**：`/api/browser/*` 默认 **403**，需 `VORTOCODE_ENABLE_BROWSER=1`（兼容旧名 `AUTODEV_ENABLE_BROWSER=1`）；
+  需显式 `VORTOONE_ENABLE_SHELL=1`（兼容旧名 `AUTODEV_ENABLE_SHELL=1`）才开启；命令再经 `SafetyGuard.check_command` 黑名单。
+- **浏览器端点 fail-closed**：`/api/browser/*` 默认 **403**，需 `VORTOONE_ENABLE_BROWSER=1`（兼容旧名 `AUTODEV_ENABLE_BROWSER=1`）；
   `navigate` 经 `validate_navigation_url` 仅放行 http/https 公网地址，挡 `file://` 与
   SSRF（环回/私有/链路本地/保留 IP，如 `169.254.169.254` 云元数据）。
 - **路径围栏**：文件读取/列举/编辑统一经 `resolve_within()` 限定在工作目录内，

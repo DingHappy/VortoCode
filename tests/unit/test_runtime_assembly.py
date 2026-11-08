@@ -85,7 +85,7 @@ async def test_cli_heartbeat_does_not_claim_backlog_owned_by_service(tmp_path, m
     from src.cli import run_heartbeat_cli
     from src.gateway.process_lease import ProcessLease
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     state = tmp_path / ".vortocode"
     state.mkdir()
     backlog = state / "BACKLOG.md"

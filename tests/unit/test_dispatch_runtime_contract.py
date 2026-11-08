@@ -29,9 +29,9 @@ def world(tmp_path, monkeypatch):
     assistant.mkdir()
     registry = tmp_path / "resident_projects.json"
     registry.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": str(project), "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(registry))
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", TOKEN)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(registry))
+    monkeypatch.setenv("VORTOONE_API_TOKEN", TOKEN)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     monkeypatch.chdir(project)                         # 项目运行时的路由以工作目录为仓库根
 
     async def execute(task, progress):

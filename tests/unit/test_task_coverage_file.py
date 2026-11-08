@@ -148,7 +148,7 @@ def test_cli_offline_scope_checks_without_repo_provider_or_log_setup(tmp_path, m
     path.write_bytes(raw)
     working = tmp_path / "no-ledger"; working.mkdir()
     monkeypatch.chdir(working)
-    monkeypatch.setenv("VORTOCODE_LOG_FILE", str(tmp_path / "must-not-create.log"))
+    monkeypatch.setenv("VORTOONE_LOG_FILE", str(tmp_path / "must-not-create.log"))
     monkeypatch.setattr(cli, "_setup_logging", lambda: (_ for _ in ()).throw(AssertionError("no env/log setup")))
     args = ["vc", "coverage-verify", str(path), "--owner-session", a["owner_session"], "--workspace-id", a["workspace_id"]]
     monkeypatch.setattr(sys, "argv", args)
@@ -170,8 +170,8 @@ async def test_raw_http_auth_precision_stream_budget_and_scope(tmp_path, monkeyp
     from src.web.server import app
     service, source, a, _, raw, _ = file_fixture(tmp_path)
     monkeypatch.setattr("src.web.routers.delegations.get_dispatch_service", lambda: service)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "file-local")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "file-local")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     url = f"/api/delegations/{source.id}/coverage-archives/{a['archive_id']}/verify-file"
     params = {"session": "owner", "round": 1, "archive_digest": a["archive_digest"], "file_digest": hashlib.sha256(raw).hexdigest()}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:
@@ -188,5 +188,5 @@ async def test_raw_http_auth_precision_stream_budget_and_scope(tmp_path, monkeyp
             yield b" " * MAX_ARCHIVE_BYTES
             yield b"extra"
         assert (await client.post(url, params=params, content=chunks())).status_code == 413
-        monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+        monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
         assert (await client.post(url, params=params, content=raw)).status_code == 409

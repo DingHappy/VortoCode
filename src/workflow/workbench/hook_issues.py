@@ -87,7 +87,7 @@ def _repo_key(repo_root: str) -> str:
 
 
 def _store_path(repo_root: str) -> Path:
-    override = os.getenv("VORTOCODE_HOOK_ISSUE_STORE", "").strip()
+    override = os.getenv("VORTOONE_HOOK_ISSUE_STORE", "").strip()
     if override:
         target = Path(override).expanduser()
         return target if target.suffix else target / f"{_repo_key(repo_root)}.json"

@@ -46,10 +46,10 @@
 需在已选择的 Project 目录中显式配置下列组合；沿用已配对账号凭据，不在示例中填写密钥：
 
 ```bash
-VORTOCODE_WORKSPACE_SCOPE=project \
-VORTOCODE_IM_CONVERSATION=isolated \
-VORTOCODE_IM_ROLE=interactive \
-VORTOCODE_IM_POLICY=research_read vc im telegram
+VORTOONE_WORKSPACE_SCOPE=project \
+VORTOONE_IM_CONVERSATION=isolated \
+VORTOONE_IM_ROLE=interactive \
+VORTOONE_IM_POLICY=research_read vc im telegram
 ```
 
 同样策略由 `vc server --im telegram` 的内嵌入口消费；原 runtime/account lease 不变，不能
@@ -139,7 +139,7 @@ assistant_dispatch 当前主要下发开发任务，不能把角色文件存在�
 
 - Telegram 使用 token 中公开账号 ID，钉钉使用 client ID，与主人、渠道、会话模式一起
   计算会话键；密钥不进入会话键。换账号不读旧账号历史，同一账号换密钥仍能恢复。
-- 原主入口默认 primary；显式设置 VORTOCODE_IM_CONVERSATION=isolated 后，拥有自己的
+- 原主入口默认 primary；显式设置 VORTOONE_IM_CONVERSATION=isolated 后，拥有自己的
   历史、活动、模式、人设和横幅记录，不进入主要聊天，也不生成主要聊天的摘要/记忆候选。
 - General 助理工具的任务归属与回合绑定使用该 bot 会话键；Project 原委派工具面保持兼容，
   其专职路由身份仍待后续托管阶段实现。独立入口只处理自己的即时确认，不处理

@@ -77,7 +77,7 @@ async def run(args, chosen):
     source_after = source_metadata()
     source_stable = source_before["source_sha256"] == source_after["source_sha256"]
     return {"suite": "assistant-v1", "execution_mode": "live-agent-bounded-tools", "model": config.model,
-            "protocol": args.protocol or ("prompt" if os.getenv("VORTOCODE_NATIVE_TOOLS") == "0" else "native"),
+            "protocol": args.protocol or ("prompt" if os.getenv("VORTOONE_NATIVE_TOOLS") == "0" else "native"),
             "timestamp": datetime.now(timezone.utc).isoformat(), "metadata": source_after, "source_before": source_before, "source_stable": source_stable,
             "evaluation_contract": contract,
             "environment": "temporary synthetic personal data; no outbound tools; no background scheduler",
@@ -103,7 +103,7 @@ def main(args) -> int:
     if args.model:
         os.environ["DEFAULT_MODEL"] = args.model
     if args.protocol:
-        os.environ["VORTOCODE_NATIVE_TOOLS"] = "1" if args.protocol == "native" else "0"
+        os.environ["VORTOONE_NATIVE_TOOLS"] = "1" if args.protocol == "native" else "0"
     chosen = bank if args.scenario == "all" else [case for case in bank if case["name"] == args.scenario]
     if args.candidate and args.live:
         raise ValueError("--candidate 是离线报告复查，不能同时 --live")

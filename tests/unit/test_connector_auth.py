@@ -86,7 +86,7 @@ def test_routes_never_return_the_token(root, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(root)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     connectors._save_token("github", "ghu_secretvalue", 3600)
     from src.web.server import app
 

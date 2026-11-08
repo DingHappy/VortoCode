@@ -208,7 +208,7 @@ def test_main_chat_routes(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     from src.web.server import app
 
     client = TestClient(app)
@@ -346,7 +346,7 @@ def test_corrupt_registration_is_preserved_and_claim_route_reports_conflict(tmp_
     from src.web.server import app
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     path = tmp_path / ".vortocode" / "main_chat.json"
     path.parent.mkdir()
     path.write_text("{broken", encoding="utf-8")
@@ -579,7 +579,7 @@ async def test_im_turn_records_tools_alone_and_when_joining_main_chat(tmp_path):
 
 async def test_web_host_keeps_external_tools_and_taints_phone_memories(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.gateway.turn_digest import turn_tools
     from src.web.routers import realtime
 

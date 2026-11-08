@@ -1,3 +1,4 @@
+import "./env-names.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -31,10 +32,10 @@ const appPath = join(
 const installedAppPath = join("/Applications", `${tauriConfig.productName}.app`);
 const evidencePath = join(tauriRoot, "target", "release", "dev-signing-evidence.json");
 const sidecarEntitlementsPath = join(tauriRoot, "SidecarEntitlements.plist");
-const allowIdentityChange = process.env.VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE === "1";
+const allowIdentityChange = process.env.VORTOONE_ALLOW_SIGNING_IDENTITY_CHANGE === "1";
 const defaultDevelopmentIdentity = "VortoOne Development";
 // 设置后在签名完成后提交 Apple 公证并装订票据（xcrun notarytool store-credentials 存的 profile 名）。
-const notaryProfile = (process.env.VORTOCODE_NOTARY_PROFILE || "").trim();
+const notaryProfile = (process.env.VORTOONE_NOTARY_PROFILE || "").trim();
 
 // 内置 runtime 是 onedir 目录，随 resources 放在 Contents/Resources/runtime/。
 function runtimeDirIn(app) {
@@ -108,7 +109,7 @@ function identityNamed(name) {
 function selectIdentity() {
   const identities = codeSigningIdentities();
   const requested = (
-    process.env.VORTOCODE_CODESIGN_IDENTITY
+    process.env.VORTOONE_CODESIGN_IDENTITY
     || process.env.APPLE_SIGNING_IDENTITY
     || ""
   ).trim();
@@ -137,23 +138,23 @@ function selectIdentity() {
     throw new Error([
       "No valid macOS code-signing identity was found.",
       "Create a persistent Code Signing certificate in Keychain Access, then run:",
-      "  VORTOCODE_CODESIGN_IDENTITY=\"VortoOne Development\" npm run signing:doctor",
+      "  VORTOONE_CODESIGN_IDENTITY=\"VortoOne Development\" npm run signing:doctor",
     ].join("\n"));
   }
   throw new Error([
     "Multiple valid code-signing identities were found.",
-    "Select one explicitly with VORTOCODE_CODESIGN_IDENTITY before building.",
+    "Select one explicitly with VORTOONE_CODESIGN_IDENTITY before building.",
     ...identities.map((identity) => `  ${identity.hash}  ${identity.name}`),
   ].join("\n"));
 }
 
 function setupIdentity() {
   const identityName = (
-    process.env.VORTOCODE_CODESIGN_IDENTITY
+    process.env.VORTOONE_CODESIGN_IDENTITY
     || defaultDevelopmentIdentity
   ).trim();
   if (!identityName || identityName.length > 128 || /[\r\n]/.test(identityName)) {
-    throw new Error("VORTOCODE_CODESIGN_IDENTITY is not a valid certificate name");
+    throw new Error("VORTOONE_CODESIGN_IDENTITY is not a valid certificate name");
   }
   const existing = identityNamed(identityName);
   if (existing) {
@@ -347,7 +348,7 @@ function assertStableRequirement(previous, current, label) {
     `${label} uses a different designated requirement; refusing to replace its Keychain identity.`,
     `Previous: ${previous.designatedRequirement}`,
     `Current:  ${current.designatedRequirement}`,
-    "Set VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE=1 only for an intentional certificate migration.",
+    "Set VORTOONE_ALLOW_SIGNING_IDENTITY_CHANGE=1 only for an intentional certificate migration.",
   ].join("\n"));
 }
 
@@ -443,7 +444,7 @@ function installBuiltSigned() {
   required("npm", ["run", "sidecar:smoke"], {
     env: {
       ...process.env,
-      VORTOCODE_RUNTIME_BIN: runtimeExecutableIn(installedAppPath),
+      VORTOONE_RUNTIME_BIN: runtimeExecutableIn(installedAppPath),
     },
     stdio: "inherit",
   });

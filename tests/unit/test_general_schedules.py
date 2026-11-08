@@ -9,7 +9,7 @@ from src.memory.assistant_profile import save_profile
 
 @pytest.fixture
 def general(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
 
 
 def _capture(monkeypatch):
@@ -45,8 +45,8 @@ async def test_general_unattended_session_tools_and_context(tmp_path, monkeypatc
 def test_scheduling_scope_gate(monkeypatch, scope, heartbeat, refused):
     from src.gateway.runtime import scheduling_scope_error
 
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", scope)
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT", heartbeat)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", scope)
+    monkeypatch.setenv("VORTOONE_HEARTBEAT", heartbeat)
     assert bool(scheduling_scope_error()) is refused
 
 
@@ -87,7 +87,7 @@ async def test_status_tools_read_local_ledgers(tmp_path, monkeypatch):
 def test_assistant_prompt_explains_what_schedules_can_reach(tmp_path, monkeypatch):
     from src.gateway.agent_session import build_session
 
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_CRON", "1")
     system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan")
     assert "【定时事项】" in system and "不能**读文件、跑命令、查 Git" in system
 
@@ -95,7 +95,7 @@ def test_assistant_prompt_explains_what_schedules_can_reach(tmp_path, monkeypatc
 @pytest.mark.parametrize("scheduler", ["0", "1"])
 def test_interactive_general_has_readonly_continuity_even_without_scheduler(tmp_path, monkeypatch, scheduler):
     from src.gateway.agent_session import build_session
-    monkeypatch.setenv("VORTOCODE_CRON", scheduler)
+    monkeypatch.setenv("VORTOONE_CRON", scheduler)
     agent = build_session(str(tmp_path), kind="web", workspace_scope="general")
     assert {"today_activity", "schedule_list", "schedule_history"} <= set(agent.tools)
     assert all(agent.tools[name].read_only for name in ("today_activity", "schedule_list", "schedule_history"))
@@ -108,7 +108,7 @@ async def test_schedule_tools_report_disabled_scheduler_and_exact_failure(tmp_pa
     from src.scheduling.cron import record_outcome
     (tmp_path / ".vortocode").mkdir()
     (tmp_path / ".vortocode" / "cron.yaml").write_text('jobs:\n  - name: brief\n    schedule: "at 09:00"\n    prompt: "简报"\n')
-    monkeypatch.setenv("VORTOCODE_CRON", "0")
+    monkeypatch.setenv("VORTOONE_CRON", "0")
     tools = {tool.name: tool for tool in build_status_tools(str(tmp_path))}
     assert "不会自动执行" in await tools["schedule_list"].handler({})
     assert "不能据此判断从未执行" in await tools["schedule_history"].handler({"name": "brief"})
@@ -121,7 +121,7 @@ async def test_schedule_tools_report_disabled_scheduler_and_exact_failure(tmp_pa
 def test_continuity_results_mark_external_contents_untrusted(tmp_path, monkeypatch):
     from src.scheduling.assistant_watch import build_status_tools
     from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(tmp_path / "registry.json"))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(tmp_path / "registry.json"))
     (tmp_path / "registry.json").write_text('{"projects":[{"name":"demo","repo_root":"/tmp/demo","port":65534}]}')
     tools = {tool.name: tool for tool in build_status_tools(str(tmp_path)) + build_dispatch_tools(str(tmp_path))}
     assert all(tools[name].untrusted_source for name in ("today_activity", "schedule_list", "schedule_history", "list_dispatches"))

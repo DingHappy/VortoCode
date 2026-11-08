@@ -6,6 +6,6 @@ After=network-online.target
 Type=oneshot
 # 只有公钥在这台电脑上；私钥在主人手里（scripts/assistant-backup.py keygen）
 EnvironmentFile=%h/.config/vortocode-backup/environment
-ExecStart=%h/personal_project/VortoCode/.venv/bin/python %h/personal_project/VortoCode/scripts/assistant-backup.py backup --public-key %h/.config/vortocode-backup/backup.pub --staging %h/.local/share/vortocode/backups --keep 30 --target ${VORTOCODE_BACKUP_TARGET}
+ExecStart=%h/personal_project/VortoCode/.venv/bin/python %h/personal_project/VortoCode/scripts/assistant-backup.py backup --public-key %h/.config/vortocode-backup/backup.pub --staging %h/.local/share/vortocode/backups --keep 30 --target ${VORTOONE_BACKUP_TARGET}
 UMask=0077
 Nice=10

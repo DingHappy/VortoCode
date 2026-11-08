@@ -147,11 +147,11 @@ def test_reports_are_validated(tmp_path):
 
 @pytest.mark.asyncio
 async def test_observer_posts_compact_reports_to_the_resident(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_CODEX_REPORT_URL", raising=False)
+    monkeypatch.delenv("VORTOONE_CODEX_REPORT_URL", raising=False)
     assert not observer.observer_enabled()
     assert await observer.post_report([]) is False
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_URL", "http://resident:8081/")
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_TOKEN", "t0ken")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_URL", "http://resident:8081/")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_TOKEN", "t0ken")
     sent = []
 
     async def http(url, payload, token):
@@ -315,8 +315,8 @@ def test_reviewer_is_told_file_counts_miss_shell_writes():
 
 @pytest.mark.asyncio
 async def test_observer_report_carries_idle_seconds_when_known(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_URL", "http://resident:8081/")
-    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_TOKEN", "t0ken")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_URL", "http://resident:8081/")
+    monkeypatch.setenv("VORTOONE_CODEX_REPORT_TOKEN", "t0ken")
     sent = []
 
     async def http(url, payload, token):

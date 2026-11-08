@@ -80,7 +80,7 @@ def test_channel_cooling_is_anomaly_with_reason(tmp_path):
         ],
     }})
     routes["/api/log/stat"] = (200, {"data": {"quota": 120}})
-    env = {"VORTOCODE_RELAY_ADMIN_TOKEN": "admin-token"}
+    env = {"VORTOONE_RELAY_ADMIN_TOKEN": "admin-token"}
     code, report = run_duty(str(tmp_path), fetch=_fake_fetch(routes), env=env, now=1700003600)
     assert code == 1
     assert "✗ 渠道池" in report and "backup: upstream 429" in report
@@ -91,8 +91,8 @@ def test_daily_quota_over_limit_is_anomaly(tmp_path):
     routes = dict(_healthy_routes())
     routes["/api/channel_pool"] = (200, {"data": {"cooling_count": 0, "channels": [{"id": 1, "status": 1}]}})
     routes["/api/log/stat"] = (200, {"data": {"quota": 999999}})
-    env = {"VORTOCODE_RELAY_ADMIN_TOKEN": "admin-token",
-           "VORTOCODE_RELAY_DAILY_QUOTA_LIMIT": "500000"}
+    env = {"VORTOONE_RELAY_ADMIN_TOKEN": "admin-token",
+           "VORTOONE_RELAY_DAILY_QUOTA_LIMIT": "500000"}
     code, report = run_duty(str(tmp_path), fetch=_fake_fetch(routes), env=env, now=1700003600)
     assert code == 1
     assert "超过日阈值" in report
@@ -105,8 +105,8 @@ def test_credentials_go_to_right_headers_and_never_into_report(tmp_path):
     routes["/dashboard/billing/usage"] = (200, {"object": "list", "total_usage": 4200})
     routes["/api/channel_pool"] = (200, {"data": {"cooling_count": 0, "channels": [{"id": 1, "status": 1}]}})
     routes["/api/log/stat"] = (200, {"data": {"quota": 7}})
-    env = {"VORTOCODE_RELAY_SK": "sk-secret-user-key",
-           "VORTOCODE_RELAY_ADMIN_TOKEN": "secret-admin-token"}
+    env = {"VORTOONE_RELAY_SK": "sk-secret-user-key",
+           "VORTOONE_RELAY_ADMIN_TOKEN": "secret-admin-token"}
     code, report = run_duty(str(tmp_path), fetch=_fake_fetch(routes, calls), env=env, now=1700003600)
     assert code == 0
     billing = next(h for u, h in calls if "/dashboard/billing/usage" in u)
@@ -118,7 +118,7 @@ def test_credentials_go_to_right_headers_and_never_into_report(tmp_path):
 
 def test_custom_relay_url_from_env(tmp_path):
     calls = []
-    env = {"VORTOCODE_RELAY_URL": "http://127.0.0.1:3001/"}
+    env = {"VORTOONE_RELAY_URL": "http://127.0.0.1:3001/"}
     routes = {
         "/api/status": (200, {"success": True, "data": {"version": "dev", "start_time": 1}}),
         "/api/pricing": (200, {"data": [{"model": "m"}]}),
@@ -152,7 +152,7 @@ def test_deploy_source_is_configurable_and_failed_deploys_do_not_count(tmp_path)
 
     from src.scheduling.ops_heartbeats import record
 
-    root, env = str(tmp_path), {"VORTOCODE_RELAY_DEPLOY_SOURCE": "relay-release"}
+    root, env = str(tmp_path), {"VORTOONE_RELAY_DEPLOY_SOURCE": "relay-release"}
     run_duty(root, fetch=_fake_fetch(_healthy_routes(1700000000)), env=env, now=1700003600)
     record(root, "relay-release", ok=False, text="发布失败", event=True, now=datetime.fromtimestamp(1700050000, timezone.utc))
     assert run_duty(root, fetch=_fake_fetch(_healthy_routes(1700050100)), env=env, now=1700090000)[0] == 1

@@ -59,7 +59,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(asyncio.run(model_capabilities())))
         return 0
     if args.command == "server":
-        os.environ["VORTOCODE_DESKTOP_SIDECAR"] = "1"
+        os.environ["VORTOONE_DESKTOP_SIDECAR"] = "1"
         from src.web.server import start_server
 
         start_server(args.host, args.port)

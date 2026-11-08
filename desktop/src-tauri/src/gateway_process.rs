@@ -222,27 +222,29 @@ pub(crate) fn configure_gateway_command(
     token: &str,
     scope: &str,
 ) -> Command {
+    // 先把继承来的旧名字 VORTOCODE_* 换成新名字；下面和各个 configure_* 只管新名字（ADR-018 批次 B）。
+    crate::env_names::adopt_legacy_env(&mut command, std::env::vars_os());
     if module {
         command.args(["-m", "src.cli"]);
     }
     command.args(["server", "--host", "127.0.0.1", "--port"]);
     command.arg(port.to_string());
     command.current_dir(repo_root);
-    command.env("VORTOCODE_WORKSPACE_SCOPE", scope);
+    command.env("VORTOONE_WORKSPACE_SCOPE", scope);
     // Channels belong to an explicitly started resident service, not each Desktop tab.
     // Pin values: removing them allows Python's load_dotenv to re-enable them.
-    command.env("VORTOCODE_IM", "");
-    command.env("VORTOCODE_CRON", "0");
-    command.env("VORTOCODE_HEARTBEAT", "0");
+    command.env("VORTOONE_IM", "");
+    command.env("VORTOONE_CRON", "0");
+    command.env("VORTOONE_HEARTBEAT", "0");
     // 监护进程 pid：runtime 据此在我们被强杀/崩溃时自己退出。正常退出走 RunEvent::Exit 的
     // terminate_gateway_child；强杀时那条回调根本不会执行，于是 runtime 会继续占着端口、
     // 持着一个能调模型的 agent，而界面上再无入口（2026-09-17 真机诊断留下两对孤儿进程）。
-    command.env("VORTOCODE_SUPERVISOR_PID", std::process::id().to_string());
+    command.env("VORTOONE_SUPERVISOR_PID", std::process::id().to_string());
     if token.is_empty() {
-        command.env_remove("VORTOCODE_API_TOKEN");
+        command.env_remove("VORTOONE_API_TOKEN");
         command.env_remove("AUTODEV_API_TOKEN");
     } else {
-        command.env("VORTOCODE_API_TOKEN", token);
+        command.env("VORTOONE_API_TOKEN", token);
     }
     command
 }
@@ -295,7 +297,7 @@ pub(crate) fn build_bundled_runtime_command(
 /// 的别处目录一律不算，否则打开一个仿冒仓库就能让 Desktop 跑它的源码。
 pub(crate) fn is_vortocode_development_root(root: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
-    let expected = env!("VORTOCODE_SOURCE_ROOT_SHA256");
+    let expected = env!("VORTOONE_SOURCE_ROOT_SHA256");
     !expected.is_empty()
         && root.canonicalize().is_ok_and(|path| {
             format!("{:x}", Sha256::digest(path.as_os_str().as_bytes())) == expected
@@ -496,10 +498,10 @@ pub(crate) fn start_gateway(
     let mut last_not_found = None;
     for (mut command, label) in candidates {
         command.env(
-            "VORTOCODE_MODEL_CONFIGURATION_REVISION",
+            "VORTOONE_MODEL_CONFIGURATION_REVISION",
             &llm_snapshot.revision,
         );
-        command.env("VORTOCODE_CONFIGURATION_LAUNCH_ID", &launch_id);
+        command.env("VORTOONE_CONFIGURATION_LAUNCH_ID", &launch_id);
         configure_llm_profile(&mut command, llm_profile.as_ref());
         configure_browser_control(&mut command, &preferences);
         configure_experimental_workers(&mut command, &preferences);

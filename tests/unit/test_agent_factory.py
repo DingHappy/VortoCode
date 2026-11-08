@@ -15,29 +15,29 @@ async def _confirm(_m):
 
 
 def test_native_default_reads_env(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_NATIVE_TOOLS", raising=False)
+    monkeypatch.delenv("VORTOONE_NATIVE_TOOLS", raising=False)
     assert native_default() is True                           # 2026-07 起**默认开**（native 对 mimo 更可靠）
     for v in ("1", "true", "yes", "on", "TRUE", ""):          # 空/真值都算开（默认开）
-        monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", v)
+        monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", v)
         assert native_default() is True
     for v in ("0", "false", "no", "off"):                    # 只有显式假值才关（强制提示式）
-        monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", v)
+        monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", v)
         assert native_default() is False
 
 
 def test_headless_and_web_agents_honor_native_env(monkeypatch, tmp_path):
-    """回归：此前 CLI/web 硬写 native=False、忽略 VORTOCODE_NATIVE_TOOLS（只 TUI 读它）。现三端统一。"""
+    """回归：此前 CLI/web 硬写 native=False、忽略 VORTOONE_NATIVE_TOOLS（只 TUI 读它）。现三端统一。"""
     monkeypatch.chdir(tmp_path)
     from src.cli import _build_headless_agent
     from src.web.routers.realtime import _new_agent
 
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "1")
     cli_agent = _build_headless_agent(str(tmp_path), max_steps=None, on_tool=None,
                                       on_plan=None, confirm=_confirm)
     assert cli_agent._native is True                          # CLI 现遵从 env
     assert _new_agent()._native is True                       # web 现遵从 env
 
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "0")
     assert _build_headless_agent(str(tmp_path), max_steps=None, on_tool=None,
                                  on_plan=None, confirm=_confirm)._native is False
     assert _new_agent()._native is False

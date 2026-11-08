@@ -13,7 +13,7 @@ from src.workflow.tasks.tasks import TaskRunner
 def root(tmp_path, monkeypatch):
     registry = tmp_path / "registry.json"
     registry.write_text(json.dumps({"projects": [{"name": "demo", "repo_root": str(tmp_path / "project"), "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(registry))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(registry))
     return str(tmp_path)
 
 
@@ -223,10 +223,10 @@ async def test_changed_registry_never_retargets_an_ambiguous_submission(root):
 
     with pytest.raises(dispatch.DispatchError):
         await dispatch.approve(root, entry["id"], http=lost)
-    registry = json.loads(open(os.environ["VORTOCODE_RESIDENT_PROJECTS"]).read())
+    registry = json.loads(open(os.environ["VORTOONE_RESIDENT_PROJECTS"]).read())
     registry["projects"][0]["port"] = 8083
     from pathlib import Path
-    Path(os.environ["VORTOCODE_RESIDENT_PROJECTS"]).write_text(json.dumps(registry))
+    Path(os.environ["VORTOONE_RESIDENT_PROJECTS"]).write_text(json.dumps(registry))
     calls = []
 
     async def forbidden(*args):

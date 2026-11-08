@@ -39,7 +39,7 @@ def test_check_api_key(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_check_serve_down_is_warn_not_fail(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_SERVE_URL", "http://127.0.0.1:9")   # 必然拒连
+    monkeypatch.setenv("VORTOONE_SERVE_URL", "http://127.0.0.1:9")   # 必然拒连
     c = await doctor._check_serve()
     assert c.level == "warn" and "回退" in c.detail            # serve 不在只算 warn（attach 会回退）
 
@@ -73,21 +73,21 @@ def test_check_permissions_bad_yaml_is_fail(tmp_path):
 
 def test_check_sandbox_reports_isolated_off_and_unavailable(monkeypatch):
     from src.sandbox import policy as sb
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "seatbelt")
     assert doctor._check_sandbox().level == "ok"
 
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "off")
     assert doctor._check_sandbox().level == "warn"
 
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "required")
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     assert doctor._check_sandbox().level == "fail"
 
 
 def test_check_im_unconfigured_is_warn(monkeypatch):
-    for k in ("VORTOCODE_TG_TOKEN", "VORTOCODE_TG_OWNER_ID",
-              "VORTOCODE_DD_CLIENT_ID", "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_DD_OWNER_ID"):
+    for k in ("VORTOONE_TG_TOKEN", "VORTOONE_TG_OWNER_ID",
+              "VORTOONE_DD_CLIENT_ID", "VORTOONE_DD_CLIENT_SECRET", "VORTOONE_DD_OWNER_ID"):
         monkeypatch.delenv(k, raising=False)
     c = doctor._check_im()
     assert c.level == "warn" and "可选" in c.detail
@@ -108,9 +108,9 @@ async def test_run_checks_order_stable_and_isolated(tmp_path, monkeypatch):
     """全项齐、顺序稳定；单项炸不拖全体（gh 检查抛异常 → 记 fail、其余照常）。
 
     新增检查项必须同步这里——这条契约钉的就是"清单与顺序"，加项漏改会红是**设计如此**
-    （2026-07-28 加 im-live/schedule-tz、2026-10-17 加 workers 时都如约红了一次）。
+    （2026-07-28 加 im-live/schedule-tz、2026-10-17 加 workers、2026-11-08 加 env-names 时都如约红了一次）。
     """
-    monkeypatch.setenv("VORTOCODE_SERVE_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("VORTOONE_SERVE_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("OPENAI_API_BASE", "http://127.0.0.1:9/v1")   # 中转站也指向死端口（离线）
 
     def _boom():
@@ -120,7 +120,16 @@ async def test_run_checks_order_stable_and_isolated(tmp_path, monkeypatch):
     checks = await doctor.run_checks(str(tmp_path))
     assert [c.name for c in checks] == ["git", "api-key", "relay", "serve",
                                         "sandbox", "permissions", "gh", "im",
-                                        "im-live", "schedule-tz", "workers"]
+                                        "im-live", "schedule-tz", "workers", "env-names"]
     gh = next(c for c in checks if c.name == "gh")
     assert gh.level == "fail" and "检查本身出错" in gh.detail          # 炸的那项记 fail
-    assert checks[-1].name == "workers"                               # 后续项没被拖死
+    assert checks[-1].name == "env-names"                             # 后续项没被拖死
+
+
+def test_env_names_check_reminds_about_legacy_names(monkeypatch):
+    from src import env_compat
+    monkeypatch.setattr(env_compat, "_legacy_seen", set())
+    assert doctor._check_env_names().level == "ok"
+    monkeypatch.setattr(env_compat, "_legacy_seen", {"VORTOCODE_IM", "VORTOCODE_CRON"})
+    check = doctor._check_env_names()
+    assert check.level == "warn" and "VORTOCODE_CRON" in check.detail and "VORTOONE_" in check.detail

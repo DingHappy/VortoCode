@@ -32,7 +32,7 @@ history rewriting does not make a still-valid credential safe.
 ## Runtime Safety
 
 - `vc server` defaults to loopback.
-- Public exposure requires `VORTOCODE_API_TOKEN`.
+- Public exposure requires `VORTOONE_API_TOKEN`.
 - Shell/browser execution remains opt-in.
 - Tokens are sent through cookies or headers, never query strings.
 
@@ -67,7 +67,7 @@ history rewriting does not make a still-valid credential safe.
   owns Keychain items. Run `npm run signing:doctor` and
   `npm run install:dev-signed`; the selected non-ad-hoc identity, bundle
   identifier and designated requirement must remain stable between builds.
-- Treat `VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE=1` as a one-time certificate
+- Treat `VORTOONE_ALLOW_SIGNING_IDENTITY_CHANGE=1` as a one-time certificate
   migration override, not a normal build setting. Re-check Keychain access and
   the installed signature after every intentional identity rotation.
 - Build the PyInstaller sidecar natively for every target triple; do not reuse a
@@ -87,14 +87,14 @@ history rewriting does not make a still-valid credential safe.
   `Cargo.toml` and `pyproject.toml` to carry the same version.
 - After the app is notarized and stapled, run `npm run release:dmg`. It stages the app
   with an `/Applications` link, creates the DMG and signs it with the app's Developer ID.
-  It then notarizes (profile `VORTOCODE_NOTARY_PROFILE`, default `vortocode-notary`),
+  It then notarizes (profile `VORTOONE_NOTARY_PROFILE`, default `vortocode-notary`),
   staples, runs the Gatekeeper check and prints the SHA-256. `hdiutil create` can leave
   the new image mounted, and the mount's lock makes `notarytool` hang at file open with
   no network activity. The script detaches any such mount and refuses to submit a file
   that is still held open.
 - After the app is notarized and stapled, run `npm run release:updater -- <notes file>`.
   It packs the app into `VortoOne_<version>_aarch64.app.tar.gz`, signs it with the
-  updater key (`VORTOCODE_UPDATER_KEY`, default `~/.vortocode/updater.key`, never in
+  updater key (`VORTOONE_UPDATER_KEY`, default `~/.vortocode/updater.key`, never in
   the repo) and writes `latest.json`. Upload all three next to the DMG; installed apps
   read `releases/latest/download/latest.json` and verify the archive with the public
   key pinned in `tauri.conf.json` before replacing themselves. Losing the private key

@@ -30,7 +30,7 @@ def _object(pairs):
 
 
 def registry_path() -> Path:
-    override = os.getenv("VORTOCODE_RESIDENT_PROJECTS", "").strip()
+    override = os.getenv("VORTOONE_RESIDENT_PROJECTS", "").strip()
     return Path(override) if override else Path.home() / ".vortocode" / "resident_projects.json"
 
 

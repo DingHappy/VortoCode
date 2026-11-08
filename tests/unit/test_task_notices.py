@@ -121,8 +121,8 @@ def test_runtime_dispatch_service_is_wired_to_owner_notices(tmp_path, monkeypatc
 
 async def test_process_without_a_delivery_channel_does_not_push(tmp_path, monkeypatch):
     """Mac 上 Desktop 的本机 sidecar：没有 IM、没有转发地址，推了只会记「未能推到 IM」并进补发队列。"""
-    monkeypatch.delenv("VORTOCODE_IM", raising=False)
-    monkeypatch.delenv("VORTOCODE_OWNER_NOTIFY_URL", raising=False)
+    monkeypatch.delenv("VORTOONE_IM", raising=False)
+    monkeypatch.delenv("VORTOONE_OWNER_NOTIFY_URL", raising=False)
     assert task_notices.notify_transition(str(tmp_path), _task("done", round=1)) is False
     await _settle()
     assert not (tmp_path / ".vortocode" / "logs").exists()
@@ -137,7 +137,7 @@ async def test_process_with_owner_relay_pushes_through_the_assistant_channel(tmp
             sent.append((source, text))
             return True
         return deliver
-    monkeypatch.setenv("VORTOCODE_OWNER_NOTIFY_URL", "http://127.0.0.1:8081")
+    monkeypatch.setenv("VORTOONE_OWNER_NOTIFY_URL", "http://127.0.0.1:8081")
     monkeypatch.setattr(notices, "make_notifier", make_notifier)
     assert task_notices.notify_transition(str(tmp_path), _task("done", round=1)) is True
     await _settle()

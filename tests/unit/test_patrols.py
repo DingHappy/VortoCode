@@ -191,7 +191,7 @@ def test_schedule_page_shows_patrols_that_have_work_on_this_machine(tmp_path, mo
     from src.scheduling import codex_watch, ops_heartbeats
 
     root = str(tmp_path)
-    monkeypatch.setenv("VORTOCODE_IM", "telegram")
+    monkeypatch.setenv("VORTOONE_IM", "telegram")
     titles = [item["title"] for item in watch.schedule_overview(root)]
     assert "模型用量报警" in titles and "运维心跳" not in titles and "监管 Codex" not in titles
     assert "日程与新邮件提醒" not in titles and "个人目标提醒" not in titles

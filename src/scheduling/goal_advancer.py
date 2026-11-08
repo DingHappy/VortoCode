@@ -11,7 +11,7 @@
 节奏与成本：每个目标最多每 ``INTERVAL`` 判断一次，每轮最多 ``MAX_PER_PASS`` 个，安静时段不跑；
 已经有挂在这个目标上、还没结束的任务单时不再拟新的。判断材料（目标卡、任务单状态、项目名、到期档位）
 和上次判断时一样时不再判断，最多隔 ``REJUDGE_MAX`` 重判一次，免得同一个问题每个周期推一遍。目标里有外部来源的文字时，拟出的任务单带
-``tainted``（手机上不能下发，要到电脑上核对）。``VORTOCODE_GOAL_ADVANCE=0`` 关闭。
+``tainted``（手机上不能下发，要到电脑上核对）。``VORTOONE_GOAL_ADVANCE=0`` 关闭。
 
 判断用的材料只有目标卡本身、挂在它上面的任务单状态和登记的项目名：都按数据给，不当指令。
 """
@@ -45,7 +45,7 @@ _SYSTEM = """你是主人的个人助理，正在后台主动推进主人的一�
 
 
 def enabled() -> bool:
-    return os.getenv("VORTOCODE_GOAL_ADVANCE", "1").strip() != "0"
+    return os.getenv("VORTOONE_GOAL_ADVANCE", "1").strip() != "0"
 
 
 def _material(goal: Dict[str, Any], dispatches: List[Dict[str, Any]], projects: List[str]) -> str:

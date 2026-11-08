@@ -55,7 +55,7 @@ def setup(case: dict, root: Path) -> dict:
         if fixture == "failed_run":
             record_outcome(str(root), "brief", ok=False, summary="生成简报失败", error="连接超时")
     if fixture in {"done_task", "offline_task"}:
-        with patch.dict(os.environ, {"VORTOCODE_RESIDENT_PROJECTS": str(registry)}):
+        with patch.dict(os.environ, {"VORTOONE_RESIDENT_PROJECTS": str(registry)}):
             task = assistant_dispatch.propose(str(root), project="demo", title="修复登录", goal="修复超时", criteria=["超时测试通过"])
         assistant_dispatch._update(str(root), task["id"], lambda item: item.update(
             status="done", remote_task_id="task-fixture", result="执行结束", branch="vorto/login",
@@ -128,8 +128,8 @@ async def run_case(case: dict, root: Path, *, llm=None, timeout: float = 90, max
     error, reply = "", ""
     started = time.monotonic()
     # These overrides isolate the registry and instruction source; model credentials are never changed or exported.
-    with patch.dict(os.environ, {"VORTOCODE_RESIDENT_PROJECTS": initial["registry"],
-                               "VORTOCODE_CRON": "1" if initial["cron"] else "0"}), \
+    with patch.dict(os.environ, {"VORTOONE_RESIDENT_PROJECTS": initial["registry"],
+                               "VORTOONE_CRON": "1" if initial["cron"] else "0"}), \
             patch("src.agents.project.load_user_instructions", return_value=""), \
             patch("src.agents.tools.browser.browser_control_enabled", return_value=False):
         agent = build_session(str(root), kind="web", workspace_scope="general", llm=llm,

@@ -1,3 +1,4 @@
+import "./env-names.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -60,8 +61,8 @@ function inspectPython(python) {
 }
 
 function resolveBootstrapPython(targetTriple) {
-  if (process.env.VORTOCODE_SIDECAR_BOOTSTRAP_PYTHON) {
-    const python = process.env.VORTOCODE_SIDECAR_BOOTSTRAP_PYTHON;
+  if (process.env.VORTOONE_SIDECAR_BOOTSTRAP_PYTHON) {
+    const python = process.env.VORTOONE_SIDECAR_BOOTSTRAP_PYTHON;
     return {
       details: inspectPython(python),
       provenance: { provider: "external", targetTriple, verifiedArchive: false },
@@ -90,8 +91,8 @@ export function ensureSidecarEnvironment(targetTriple) {
   const lock = readFileSync(lockPath);
   const lockSha256 = createHash("sha256").update(lock).digest("hex");
 
-  if (process.env.VORTOCODE_SIDECAR_PYTHON) {
-    const python = process.env.VORTOCODE_SIDECAR_PYTHON;
+  if (process.env.VORTOONE_SIDECAR_PYTHON) {
+    const python = process.env.VORTOONE_SIDECAR_PYTHON;
     const verified = verifyEnvironment(python, lock);
     return {
       lockSha256,

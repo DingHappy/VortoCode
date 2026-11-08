@@ -7,9 +7,9 @@
 #   3. sudo systemctl daemon-reload && sudo systemctl enable --now vortocode-server
 #
 # /etc/vortocode/env 至少要有（600 权限，别进 git）：
-#   VORTOCODE_API_TOKEN=<强随机串>    # 非 127.0.0.1 监听的硬前提；全部 /api/* 与 /ws 强制鉴权
+#   VORTOONE_API_TOKEN=<强随机串>    # 非 127.0.0.1 监听的硬前提；全部 /api/* 与 /ws 强制鉴权
 #   OPENAI_API_KEY=<中转站 key>
-#   VORTOCODE_CRON=1                  # 可选：开定时作业（默认关，开关矩阵见 OPS 第二节）
+#   VORTOONE_CRON=1                  # 可选：开定时作业（默认关，开关矩阵见 OPS 第二节）
 #
 # 与 launchd 版同样的两个坑：
 #   - systemd 不继承 shell 环境：代理出网的机器把 HTTP(S)_PROXY 也写进 env 文件；

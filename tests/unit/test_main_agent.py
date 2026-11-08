@@ -278,7 +278,7 @@ async def test_max_steps_cap_degrades_gracefully():
 
 @pytest.mark.asyncio
 async def test_build_safety_cap_mentions_auto_continue_limit(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_BUILD_AUTO_CONTINUES", "0")
+    monkeypatch.setenv("VORTOONE_BUILD_AUTO_CONTINUES", "0")
 
     async def handler(args):
         return "again"
@@ -297,7 +297,7 @@ async def test_build_safety_cap_mentions_auto_continue_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_auto_continues_past_single_step_budget(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_BUILD_AUTO_CONTINUES", "2")
+    monkeypatch.setenv("VORTOONE_BUILD_AUTO_CONTINUES", "2")
     ran = []
 
     async def handler(args):
@@ -321,21 +321,21 @@ async def test_build_auto_continues_past_single_step_budget(monkeypatch):
 
 
 def test_env_overrides_max_steps(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MAX_STEPS", "15")
+    monkeypatch.setenv("VORTOONE_MAX_STEPS", "15")
     assert MainAgent([], max_steps=6).max_steps == 15           # 环境变量全局调高预算
-    monkeypatch.delenv("VORTOCODE_MAX_STEPS")
+    monkeypatch.delenv("VORTOONE_MAX_STEPS")
     assert MainAgent([], max_steps=6).max_steps == 6            # 不设则用默认
 
 
 def test_plan_has_no_dedicated_low_budget(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_PLAN_MAX_STEPS", raising=False)
-    monkeypatch.delenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", raising=False)
+    monkeypatch.delenv("VORTOONE_PLAN_MAX_STEPS", raising=False)
+    monkeypatch.delenv("VORTOONE_PLAN_MAX_TOOL_CALLS", raising=False)
     a = MainAgent([], max_steps=6)
     assert a.plan_max_steps == 6
     assert a.plan_max_tool_calls == 0
 
-    monkeypatch.setenv("VORTOCODE_PLAN_MAX_STEPS", "8")
-    monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "9")
+    monkeypatch.setenv("VORTOONE_PLAN_MAX_STEPS", "8")
+    monkeypatch.setenv("VORTOONE_PLAN_MAX_TOOL_CALLS", "9")
     b = MainAgent([], max_steps=6)
     assert b.plan_max_steps == 6
     assert b.plan_max_tool_calls == 0
@@ -349,8 +349,8 @@ def test_plan_tool_off_by_default():
 
 def test_model_context_window_lookup(monkeypatch):
     from src.llm.client import model_context_window
-    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
-    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOWS", raising=False)
+    monkeypatch.delenv("VORTOONE_MODEL_CONTEXT_WINDOW", raising=False)
+    monkeypatch.delenv("VORTOONE_MODEL_CONTEXT_WINDOWS", raising=False)
     assert model_context_window("gpt-4o-2024-08-06") == 128_000   # 前缀匹配带日期后缀
     assert model_context_window("claude-3.5-sonnet") == 200_000
     assert model_context_window("deepseek-chat") == 65_536
@@ -358,40 +358,40 @@ def test_model_context_window_lookup(monkeypatch):
     assert model_context_window("XiaomiMiMo/MiMo-V2.5-Base") == 256_000
     assert model_context_window("") is None
     # env 全局覆盖（自有中转按上游真实窗口配）
-    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "131072")
+    monkeypatch.setenv("VORTOONE_MODEL_CONTEXT_WINDOW", "131072")
     assert model_context_window("mimo-v2.5") == 131_072
 
 
 def test_model_context_window_per_model_env_map(monkeypatch):
     from src.llm.client import model_context_window
-    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
-    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOWS",
+    monkeypatch.delenv("VORTOONE_MODEL_CONTEXT_WINDOW", raising=False)
+    monkeypatch.setenv("VORTOONE_MODEL_CONTEXT_WINDOWS",
                        "mimo-v2.5=131072, mimo-v2.5-pro=65536, bad=oops, =7")
     assert model_context_window("mimo-v2.5") == 131_072           # 按模型表命中
     assert model_context_window("mimo-v2.5-pro") == 65_536        # 最长匹配优先，不被短前缀截胡
     assert model_context_window("gpt-4o") == 128_000              # 未命中表 → 回退内置表
     # 按模型表优先于全局值；未命中的模型仍吃全局值
-    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "32000")
+    monkeypatch.setenv("VORTOONE_MODEL_CONTEXT_WINDOW", "32000")
     assert model_context_window("mimo-v2.5") == 131_072
     assert model_context_window("unknown-model") == 32_000
 
 
 def test_context_budget_adapts_to_model_window(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_MAX_CONTEXT_TOKENS", raising=False)
-    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
+    monkeypatch.delenv("VORTOONE_MAX_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("VORTOONE_MODEL_CONTEXT_WINDOW", raising=False)
     # 未知模型 → 维持保守默认 8000
     a = MainAgent([], max_context_tokens=8000)
     assert a._base_context_budget() == 8000
 
     # 配了大窗口（等价于自有中转的真实窗口）→ 取窗口一半、封顶 200k
-    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "128000")
+    monkeypatch.setenv("VORTOONE_MODEL_CONTEXT_WINDOW", "128000")
     b = MainAgent([], max_context_tokens=8000)
     assert b._base_context_budget() == 64000                      # 128k * 0.5
     # balanced 策略下 _context_limit 就是基数 ×1.0
     assert b._context_limit("plan") == 64000
 
     # 小窗口（< 16k 门槛）→ 不放大，维持默认，避免历史预算反超窗口溢出
-    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "8192")
+    monkeypatch.setenv("VORTOONE_MODEL_CONTEXT_WINDOW", "8192")
     c = MainAgent([], max_context_tokens=8000)
     assert c._base_context_budget() == 8000
 
@@ -411,16 +411,16 @@ def test_env_num_safe_parse(monkeypatch):
 
 
 def test_bad_context_env_does_not_crash_agent(monkeypatch):
-    # 用户把 VORTOCODE_MAX_CONTEXT_TOKENS 填成坏值 → 构造 agent 不该抛，回退默认 + 自适应
-    monkeypatch.setenv("VORTOCODE_MAX_CONTEXT_TOKENS", "lots")
+    # 用户把 VORTOONE_MAX_CONTEXT_TOKENS 填成坏值 → 构造 agent 不该抛，回退默认 + 自适应
+    monkeypatch.setenv("VORTOONE_MAX_CONTEXT_TOKENS", "lots")
     a = MainAgent([], max_context_tokens=8000)
     assert a.max_context_tokens == 8000 and a._context_budget_auto is True
 
 
 def test_context_budget_env_pin_disables_autoscale(monkeypatch):
     # 用户 env 精确钉死 → 不再自适应，哪怕模型窗口很大
-    monkeypatch.setenv("VORTOCODE_MAX_CONTEXT_TOKENS", "5000")
-    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "200000")
+    monkeypatch.setenv("VORTOONE_MAX_CONTEXT_TOKENS", "5000")
+    monkeypatch.setenv("VORTOONE_MODEL_CONTEXT_WINDOW", "200000")
     a = MainAgent([], max_context_tokens=8000)
     assert a._context_budget_auto is False
     assert a._base_context_budget() == 5000
@@ -1307,7 +1307,7 @@ def test_context_policy_compact_uses_smaller_budget():
 
 
 def test_context_policy_env_overrides_constructor(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_CONTEXT_POLICY", "preserve")
+    monkeypatch.setenv("VORTOONE_CONTEXT_POLICY", "preserve")
 
     agent = MainAgent([], max_context_tokens=200, context_policy="compact")
 
@@ -1479,11 +1479,11 @@ def test_truthy_helper_handles_bool_and_string():
 
 
 def test_compact_env_disable(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_COMPACT", "0")
+    monkeypatch.setenv("VORTOONE_COMPACT", "0")
     assert MainAgent([]).compact is False                     # env 关闭
-    monkeypatch.setenv("VORTOCODE_COMPACT", "1")
+    monkeypatch.setenv("VORTOONE_COMPACT", "1")
     assert MainAgent([]).compact is True
-    monkeypatch.delenv("VORTOCODE_COMPACT")
+    monkeypatch.delenv("VORTOONE_COMPACT")
     assert MainAgent([]).compact is True                      # 默认开
 
 
@@ -1526,21 +1526,21 @@ async def test_run_tool_long_result_preserves_tail():
 
 def test_dev_parallelism_env_override(monkeypatch):
     from src.agents.main_agent import _dev_parallelism
-    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "3")
+    monkeypatch.setenv("VORTOONE_DEV_PARALLEL", "3")
     assert _dev_parallelism() == 3
-    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "garbage")
+    monkeypatch.setenv("VORTOONE_DEV_PARALLEL", "garbage")
     assert _dev_parallelism() == 4                              # 坏值 → 默认 4
-    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "0")
+    monkeypatch.setenv("VORTOONE_DEV_PARALLEL", "0")
     assert _dev_parallelism() == 1                              # 下限 1
-    monkeypatch.delenv("VORTOCODE_DEV_PARALLEL")
+    monkeypatch.delenv("VORTOONE_DEV_PARALLEL")
     assert _dev_parallelism() == 4                              # 默认 4
 
 
 @pytest.mark.asyncio
 async def test_dev_parallel_caps_concurrency(monkeypatch, tmp_path):
     """5 个子任务、并发上限 2 → 任意时刻最多 2 个 worktree 子 agent 在跑（其余排队），全都被处理。"""
-    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "2")
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")           # 不重试，计数干净
+    monkeypatch.setenv("VORTOONE_DEV_PARALLEL", "2")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")           # 不重试，计数干净
     import asyncio
     import src.agents.worktree as wt
     from src.agents.main_agent import build_dev_tools
@@ -1832,7 +1832,7 @@ async def test_native_path_runs_all_tool_calls():
 @pytest.mark.asyncio
 async def test_plan_native_batch_is_not_truncated_by_tool_budget(monkeypatch):
     from src.agents.main_agent import MainAgent, Tool
-    monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "2")
+    monkeypatch.setenv("VORTOONE_PLAN_MAX_TOOL_CALLS", "2")
     ran = []
 
     async def h(_a):
@@ -1865,7 +1865,7 @@ async def test_plan_native_batch_is_not_truncated_by_tool_budget(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_plan_prompt_array_is_not_truncated_by_tool_budget(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "1")
+    monkeypatch.setenv("VORTOONE_PLAN_MAX_TOOL_CALLS", "1")
     ran = []
 
     async def h(args):
@@ -2171,16 +2171,16 @@ def test_injection_limits_stay_conservative_and_are_read_lazily(monkeypatch):
     给多了没有任何机制能回收。且 env 必须**用时读**：模块 import 时 .env 还没被入口加载，
     在那时读会让 .env 里配的旋钮静默失效。"""
     from src.agents.main_agent import _max_read_file, _max_tool_result
-    monkeypatch.delenv("VORTOCODE_MAX_TOOL_RESULT", raising=False)
-    monkeypatch.delenv("VORTOCODE_MAX_READ_FILE", raising=False)
+    monkeypatch.delenv("VORTOONE_MAX_TOOL_RESULT", raising=False)
+    monkeypatch.delenv("VORTOONE_MAX_READ_FILE", raising=False)
     assert _max_tool_result() == 4_000                  # 保守默认（能兜住并行工具的那个）
     assert _max_read_file() == 6_000
 
-    monkeypatch.setenv("VORTOCODE_MAX_TOOL_RESULT", "20000")   # import 之后再设也生效（惰性读）
+    monkeypatch.setenv("VORTOONE_MAX_TOOL_RESULT", "20000")   # import 之后再设也生效（惰性读）
     assert _max_tool_result() == 20_000
-    monkeypatch.setenv("VORTOCODE_MAX_TOOL_RESULT", "garbage")
+    monkeypatch.setenv("VORTOONE_MAX_TOOL_RESULT", "garbage")
     assert _max_tool_result() == 4_000                  # 坏值 → 默认
-    monkeypatch.setenv("VORTOCODE_MAX_TOOL_RESULT", "-5")
+    monkeypatch.setenv("VORTOONE_MAX_TOOL_RESULT", "-5")
     assert _max_tool_result() == 4_000                  # 非正 → 默认（绝不 clamp 成 1）
 
 
@@ -2298,7 +2298,7 @@ async def test_explicit_max_steps_still_caps_build():
 
 @pytest.mark.asyncio
 async def test_build_segment_budget_is_env_tunable(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_BUILD_MAX_STEPS", "24")
+    monkeypatch.setenv("VORTOONE_BUILD_MAX_STEPS", "24")
     assert MainAgent([])._step_budget("build") == 24
 
 

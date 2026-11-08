@@ -94,14 +94,14 @@ def read_persona(repo_root: str) -> str:
 
 
 def _heartbeat_interval() -> float:
-    """后台任务"还活着"心跳的间隔（秒）。0/负数 = 关闭。env VORTOCODE_IM_HEARTBEAT_EVERY 调。
+    """后台任务"还活着"心跳的间隔（秒）。0/负数 = 关闭。env VORTOONE_IM_HEARTBEAT_EVERY 调。
 
     真机 2026-07-26：集成验证一跑就是 4 分钟，加上自测和审查，IM 端能安静七八分钟——
     人看着就是死机，会去 kill 掉一个其实正常的任务。默认 150s 兼顾"有活气"与"不刷屏"。
     """
     import os
     try:
-        return float(os.getenv("VORTOCODE_IM_HEARTBEAT_EVERY") or 150.0)
+        return float(os.getenv("VORTOONE_IM_HEARTBEAT_EVERY") or 150.0)
     except ValueError:
         return 150.0
 
@@ -121,7 +121,7 @@ def parse_allow_from(raw: Optional[str]) -> Optional[frozenset]:
     **返回值三态，别把后两种混为一谈**（B6-6 硬化最容易写反的地方）：
 
     - ``None``（配置项**根本没设**）→ 交回调用方走默认（配对制：只放 owner 一人）；
-    - ``frozenset()``（配置项**设了但是空的**，如 ``VORTOCODE_IM_ALLOW_FROM=""`` 或 ``","``）
+    - ``frozenset()``（配置项**设了但是空的**，如 ``VORTOONE_IM_ALLOW_FROM=""`` 或 ``","``）
       → **显式空白名单 = 全拒**，连 owner 也拒。这是 fail-closed 的正确读法：很多 IM 桥把
       "空 = 不限制"当默认，结果任何陌生人都能驱动 agent（OPENCLAW_INTEGRATION 反面教材第 4 条）。
     """
@@ -368,7 +368,7 @@ class IMBridge:
         if not self.allow_from:
             # 空白名单是合法的 fail-closed 配置（"空 ≠ 不限制"），但必须说出来。
             return ("⚠ 入站白名单（allowFrom）为空 → 当前**拒绝一切入站消息**，包括你自己。"
-                    "清掉 VORTOCODE_IM_ALLOW_FROM（回到只放 owner）或把要放行的 id 填进去。")
+                    "清掉 VORTOONE_IM_ALLOW_FROM（回到只放 owner）或把要放行的 id 填进去。")
         if self.channel == "telegram" and self.allow_from - {self.owner_id}:
             return ("⚠ Telegram 当前只支持主人单人会话；额外白名单成员会被拒绝。"
                     "多人使用须先完成逐人会话、工作区和额度隔离。")
@@ -378,7 +378,7 @@ class IMBridge:
             return (f"⚠ 入站白名单（allowFrom）里没有 owner（{self.owner_id}）→ 你自己发的消息和"
                     f"审批（y/n、按钮点击）都会被白名单闸丢掉，表现为「机器人不理人、确认永远超时」。"
                     f"这是显式配置，判定不会为你放宽——把 {self.owner_id} 加进 "
-                    f"VORTOCODE_IM_ALLOW_FROM（或通道专属的 *_ALLOW_FROM）。")
+                    f"VORTOONE_IM_ALLOW_FROM（或通道专属的 *_ALLOW_FROM）。")
         return None
 
     # ------------------------------------------------------------ 开机横幅（去重）
@@ -394,7 +394,7 @@ class IMBridge:
         主人的对话里就插了八条一模一样的"已就绪"，把真正的卡片和结果冲散了。
         横幅本身有用（久宕后恢复、白名单配错），坏在**routine 重启也照说不误**。
 
-        判据：距上次说过不足 ``VORTOCODE_IM_HELLO_QUIET_MIN`` 分钟（默认 30）就闭嘴。
+        判据：距上次说过不足 ``VORTOONE_IM_HELLO_QUIET_MIN`` 分钟（默认 30）就闭嘴。
         连着部署几次只会看见第一条；真宕了几小时再回来照样报平安。
         设成 0 = 每次都说（今天的行为，留给想要它的人）。
 
@@ -402,7 +402,7 @@ class IMBridge:
         那句提醒漏一次就可能让人排查一整晚。
         """
         try:
-            quiet_min = float(os.getenv("VORTOCODE_IM_HELLO_QUIET_MIN", "30") or 30)
+            quiet_min = float(os.getenv("VORTOONE_IM_HELLO_QUIET_MIN", "30") or 30)
         except ValueError:
             quiet_min = 30.0
         if quiet_min <= 0:

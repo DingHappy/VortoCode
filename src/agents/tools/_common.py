@@ -36,18 +36,18 @@ def _env_limit(name: str, default: int) -> int:
 
 
 def _max_tool_result() -> int:
-    return _env_limit("VORTOCODE_MAX_TOOL_RESULT", _MAX_TOOL_RESULT_DEFAULT)
+    return _env_limit("VORTOONE_MAX_TOOL_RESULT", _MAX_TOOL_RESULT_DEFAULT)
 
 
 def _max_read_file() -> int:
-    return _env_limit("VORTOCODE_MAX_READ_FILE", _MAX_READ_FILE_DEFAULT)
+    return _env_limit("VORTOONE_MAX_READ_FILE", _MAX_READ_FILE_DEFAULT)
 
 
 _MAX_IMAGE_BYTES_DEFAULT = 5 * 1024 * 1024      # read_file 读图上限：太大的图 base64 后会撑爆请求体
 
 
 def _max_image_bytes() -> int:
-    return _env_limit("VORTOCODE_MAX_IMAGE_BYTES", _MAX_IMAGE_BYTES_DEFAULT)
+    return _env_limit("VORTOONE_MAX_IMAGE_BYTES", _MAX_IMAGE_BYTES_DEFAULT)
 
 
 def _image_exts() -> frozenset:

@@ -543,7 +543,7 @@ def _new_agent():
     workspace_scope = current_workspace_scope()
     # 只有 Desktop 托管且明确进入 Scratch/Project 的进程才拿本机能力。普通 Web 入口保持
     # external profile；General 即使由 Desktop 启动也绝不获得 host_process/credentials。
-    desktop_trusted = os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1" and workspace_scope != GENERAL
+    desktop_trusted = os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1" and workspace_scope != GENERAL
     agent = build_session(repo_root, kind="web", confirm=bindings.ask,
                           on_progress=bindings.emit_progress,
                           can_ask_human=True, on_diff=bindings.emit_diff, on_tool=_audit_tool,
@@ -560,15 +560,15 @@ def _new_agent():
                           # 就按新档生效，不必重建 agent（重建会把对话历史丢掉）。
                           trust_level=lambda: get_trust_level(repo_root),
                           workspace_scope=workspace_scope,
-                          allow_local_files=os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1",
-                          enable_turn_scope=os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1",
+                          allow_local_files=os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1",
+                          enable_turn_scope=os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1",
                           on_workspace_required=bindings.emit_workspace_required)
     _TURN_BINDINGS[agent] = bindings
     return agent
 
 
 async def _ensure_mcp(agent, say) -> None:
-    """网页会话首回合：**opt-in** 连 MCP（env VORTOCODE_WEB_MCP=1 才连）、把工具接入本会话 agent（只试一次）。
+    """网页会话首回合：**opt-in** 连 MCP（env VORTOONE_WEB_MCP=1 才连）、把工具接入本会话 agent（只试一次）。
 
     默认不连——网页无 /mcp 这类显式入口，若每回合自动连，一个慢/坏的 server 会拖死每回合；
     故与 TUI(/mcp)、CLI(--mcp) 一样走显式 opt-in。开了之后无配置 → connect_mcp 返 (None, [])、
@@ -578,7 +578,7 @@ async def _ensure_mcp(agent, say) -> None:
     if not claim_auto_attach(agent):
         return
     import os
-    if os.getenv("VORTOCODE_WEB_MCP") not in ("1", "true", "yes"):
+    if os.getenv("VORTOONE_WEB_MCP") not in ("1", "true", "yes"):
         return                              # 默认关闭（避免坏配置卡死每回合）
     try:
         from src.agents.mcp_session import connect_agent

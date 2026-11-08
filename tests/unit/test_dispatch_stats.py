@@ -17,7 +17,7 @@ NOW = datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc)          # 周日
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
     path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(path))
 
 
 def _ticket(root, *, status, hours_ago=5, minutes=40, retry_of="", **fields):

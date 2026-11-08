@@ -105,7 +105,7 @@ async def test_development_repair_does_not_repeat_a_recovery_required_attempt(tm
     from src.agents.dev_tools import build_dev_tools
 
     calls, progress = [], []
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "4")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "4")
 
     async def blocked(*_args, **_kwargs):
         calls.append(True)
@@ -167,7 +167,7 @@ async def test_dependent_repair_stops_after_one_recovery_required_result(tmp_pat
     from tests.unit.test_worktree import _init_repo
 
     _init_repo(tmp_path)
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "4")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "4")
     calls = []
 
     async def split(*args, **kwargs):

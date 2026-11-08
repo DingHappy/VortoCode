@@ -372,7 +372,7 @@ def test_cli_explicit_store_and_readonly_verification_before_logging(tmp_path, m
         "_setup_logging",
         lambda: (_ for _ in ()).throw(AssertionError("no provider/log setup")),
     )
-    monkeypatch.setenv("VORTOCODE_LOG_FILE", str(tmp_path / "must-not-create.log"))
+    monkeypatch.setenv("VORTOONE_LOG_FILE", str(tmp_path / "must-not-create.log"))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -424,8 +424,8 @@ async def test_http_raw_strings_identity_no_paths_written_and_stream_budget(tmp_
     receipt = Path(saved["receipt_path"]).read_bytes()
     payload = json.dumps({"artifact_text": raw.decode(), "receipt_text": receipt.decode()}).encode()
     monkeypatch.setattr("src.web.routers.delegations.get_dispatch_service", lambda: service)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "preservation-local")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "preservation-local")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     url = f"/api/delegations/{source.id}/coverage-archives/{archive['archive_id']}/verify-preservation"
     params = {
         "session": "owner",
@@ -487,7 +487,7 @@ async def test_http_raw_strings_identity_no_paths_written_and_stream_budget(tmp_
         assert (
             await client.post(url, params=params, content=payload[:-1] + b',"receipt_text":"x"}')
         ).status_code == 400
-        monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+        monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
         assert (await client.post(url, params=params, content=payload)).status_code == 409
     assert fingerprints(tmp_path) == before
 

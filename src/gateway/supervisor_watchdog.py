@@ -5,7 +5,7 @@ Desktop 正常退出时会 `RunEvent::Exit` → 终止 runtime 进程组，这�
 此时 runtime 还活着，继续占着端口、持着一个能调模型、能跑命令的 agent，而界面上再没有它的入口
 ——2026-09-17 的真机诊断里就遗留了两对这样的孤儿进程，直到手工 kill。
 
-做法：Desktop 启动 runtime 时把自己的 pid 写进 ``VORTOCODE_SUPERVISOR_PID``，runtime 定期看
+做法：Desktop 启动 runtime 时把自己的 pid 写进 ``VORTOONE_SUPERVISOR_PID``，runtime 定期看
 一眼那个进程还在不在，不在就退出。没有这个环境变量（`vc server` 手工起、systemd 托管、CI）
 时看门狗完全不启动——那些场景的生命周期本来就不归 Desktop 管。
 
@@ -23,7 +23,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-ENV_VAR = "VORTOCODE_SUPERVISOR_PID"
+ENV_VAR = "VORTOONE_SUPERVISOR_PID"
 _DEFAULT_INTERVAL = 5.0
 
 

@@ -42,15 +42,15 @@ def test_bubblewrap_argv_shape(tmp_path):
 
 
 def test_policy_defaults_and_legacy_aliases(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     assert sb.sandbox_policy() == "auto"
     for value in ("1", "true", "yes", "on", "required"):
-        monkeypatch.setenv("VORTOCODE_SANDBOX", value)
+        monkeypatch.setenv("VORTOONE_SANDBOX", value)
         assert sb.sandbox_policy() == "required"
     for value in ("0", "false", "no", "off"):
-        monkeypatch.setenv("VORTOCODE_SANDBOX", value)
+        monkeypatch.setenv("VORTOONE_SANDBOX", value)
         assert sb.sandbox_policy() == "off"
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "sometimes")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "sometimes")
     assert sb.sandbox_policy() == "invalid"
 
 
@@ -76,7 +76,7 @@ def test_backend_binary_must_be_runnable(monkeypatch):
 
 
 def test_auto_decision_uses_backend_or_audited_interactive_fallback(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "seatbelt")
     isolated = sb.resolve_sandbox()
     assert isolated.allowed and isolated.isolated and isolated.backend == "seatbelt"
@@ -89,17 +89,17 @@ def test_auto_decision_uses_backend_or_audited_interactive_fallback(monkeypatch)
 
 def test_unattended_auto_and_required_fail_closed_without_backend(monkeypatch):
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     auto = sb.resolve_sandbox(require_isolation=True)
     assert not auto.allowed and "无人值守" in auto.reason
 
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "required")
     required = sb.resolve_sandbox()
     assert not required.allowed and "策略要求隔离" in required.reason
 
 
 def test_explicit_off_is_only_unattended_host_escape_hatch(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "off")
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     decision = sb.resolve_sandbox(require_isolation=True)
     assert decision.allowed and not decision.isolated and not decision.fallback
@@ -107,14 +107,14 @@ def test_explicit_off_is_only_unattended_host_escape_hatch(monkeypatch):
 
 
 def test_invalid_policy_fails_closed(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "maybe")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "maybe")
     decision = sb.resolve_sandbox()
     assert not decision.allowed and decision.policy == "invalid"
     assert "仅支持 auto / required / off" in decision.reason
 
 
 def test_run_command_auto_fallback_is_visible(monkeypatch, tmp_path):
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     from src.agents.shell import run_command
     res = run_command(str(tmp_path), "echo audited-host")
@@ -124,7 +124,7 @@ def test_run_command_auto_fallback_is_visible(monkeypatch, tmp_path):
 
 
 def test_run_command_unattended_refuses_without_backend(monkeypatch, tmp_path):
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     from src.agents.shell import run_command
     res = run_command(str(tmp_path), "echo must-not-run", require_isolation=True)
@@ -135,7 +135,7 @@ def test_run_command_unattended_refuses_without_backend(monkeypatch, tmp_path):
 @pytest.mark.skipif("sys.platform != 'darwin' or shutil.which('sandbox-exec') is None",
                     reason="real write boundary requires macOS sandbox-exec")
 def test_sandbox_blocks_write_outside_repo_allows_inside(monkeypatch, tmp_path):
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "required")
     from src.agents.shell import run_command
     inside = tmp_path / "ok.txt"
     res2 = run_command(str(tmp_path), f"echo y > '{inside}' && echo DONE")

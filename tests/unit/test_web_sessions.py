@@ -56,7 +56,7 @@ def test_sid_sanitized_blocks_traversal(tmp_path):
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)                  # 路由用 os.getcwd() 定位会话库
-    monkeypatch.setenv("VORTOCODE_HOOK_ISSUE_STORE", str(tmp_path / "user-hook-acks.json"))
+    monkeypatch.setenv("VORTOONE_HOOK_ISSUE_STORE", str(tmp_path / "user-hook-acks.json"))
     from src.web.server import app
     from src.web.routers import realtime
     realtime._SESSIONS.clear()

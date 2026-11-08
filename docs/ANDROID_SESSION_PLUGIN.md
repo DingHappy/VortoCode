@@ -16,8 +16,8 @@ IM、CLI、无人值守、General/Scratch、external 档位及 research_read 角
 宿主手动设置以下变量后，新会话/引擎重启生效；模型和项目文件不能选择驱动或目标：
 
 ```text
-VORTOCODE_ENABLE_ANDROID_CONTROL=1
-VORTOCODE_ANDROID_SESSION_FILE=/absolute/host-owned/android-session.json
+VORTOONE_ENABLE_ANDROID_CONTROL=1
+VORTOONE_ANDROID_SESSION_FILE=/absolute/host-owned/android-session.json
 ```
 
 配置必须在工作区外，文件 600、直接父目录 700、本人所有、无符号链接；精确绑定一个规范

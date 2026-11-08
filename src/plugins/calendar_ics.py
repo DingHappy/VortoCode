@@ -422,7 +422,7 @@ async def check() -> str:
     return f"能读到，共 {len(cal.events)} 条日程，未来 7 天 {len(items)} 条"
 
 
-REMIND_ENV = "VORTOCODE_CALENDAR_REMIND_MINUTES"
+REMIND_ENV = "VORTOONE_CALENDAR_REMIND_MINUTES"
 
 
 def remind_minutes() -> int:

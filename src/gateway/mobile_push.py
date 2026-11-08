@@ -8,8 +8,8 @@ Extension）用 Secure Enclave 里的推送钥匙解密后替换显示——苹�
 sharedInfo = 临时公钥）派生 16 字节密钥；Standard 变体的 IV 是 16 个零字节（每条推送的临时钥匙都不同，
 所以同一 (key, IV) 不会重复）。
 
-APNs 配置只从环境变量读（不在仓库、不进日志）：``VORTOCODE_APNS_KEY_FILE``（.p8 私钥路径）、
-``VORTOCODE_APNS_KEY_ID``、``VORTOCODE_APNS_TEAM_ID``、``VORTOCODE_APNS_TOPIC``（App 的 bundle id）。
+APNs 配置只从环境变量读（不在仓库、不进日志）：``VORTOONE_APNS_KEY_FILE``（.p8 私钥路径）、
+``VORTOONE_APNS_KEY_ID``、``VORTOONE_APNS_TEAM_ID``、``VORTOONE_APNS_TOPIC``（App 的 bundle id）。
 没配齐就不推，返回 False，不影响 IM 那一路。
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ def encrypt(push_key_b64: str, text: str) -> str:
 
 def configured() -> bool:
     return all(os.getenv(name, "").strip() for name in
-               ("VORTOCODE_APNS_KEY_FILE", "VORTOCODE_APNS_KEY_ID", "VORTOCODE_APNS_TEAM_ID", "VORTOCODE_APNS_TOPIC"))
+               ("VORTOONE_APNS_KEY_FILE", "VORTOONE_APNS_KEY_ID", "VORTOONE_APNS_TEAM_ID", "VORTOONE_APNS_TOPIC"))
 
 
 def _jwt(now: float) -> str:
@@ -71,7 +71,7 @@ def _jwt(now: float) -> str:
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-    with open(os.environ["VORTOCODE_APNS_KEY_FILE"], "rb") as handle:
+    with open(os.environ["VORTOONE_APNS_KEY_FILE"], "rb") as handle:
         private = serialization.load_pem_private_key(handle.read(), password=None)
     if not isinstance(private, ec.EllipticCurvePrivateKey):
         raise ValueError("APNs 私钥不是 EC 钥匙")
@@ -79,8 +79,8 @@ def _jwt(now: float) -> str:
     def part(data: dict) -> str:
         return base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).rstrip(b"=").decode()
 
-    head = part({"alg": "ES256", "kid": os.environ["VORTOCODE_APNS_KEY_ID"].strip()})
-    body = part({"iss": os.environ["VORTOCODE_APNS_TEAM_ID"].strip(), "iat": int(now)})
+    head = part({"alg": "ES256", "kid": os.environ["VORTOONE_APNS_KEY_ID"].strip()})
+    body = part({"iss": os.environ["VORTOONE_APNS_TEAM_ID"].strip(), "iat": int(now)})
     r, s = decode_dss_signature(private.sign(f"{head}.{body}".encode(), ec.ECDSA(hashes.SHA256())))
     signature = base64.urlsafe_b64encode(r.to_bytes(32, "big") + s.to_bytes(32, "big")).rstrip(b"=").decode()
     token = f"{head}.{body}.{signature}"
@@ -98,7 +98,7 @@ async def send(registration: dict, text: str, *, client: Any = None) -> str:
     import httpx
 
     url = f"{_HOSTS[registration['environment']]}/3/device/{registration['token']}"
-    headers = {"authorization": f"bearer {_jwt(time.time())}", "apns-topic": os.environ["VORTOCODE_APNS_TOPIC"].strip(),
+    headers = {"authorization": f"bearer {_jwt(time.time())}", "apns-topic": os.environ["VORTOONE_APNS_TOPIC"].strip(),
                "apns-push-type": "alert", "apns-priority": "10"}
     own = client is None
     client = client or httpx.AsyncClient(http2=True, timeout=10)

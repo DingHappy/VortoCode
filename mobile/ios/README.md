@@ -39,7 +39,7 @@ App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/
 
 ## 主人终端：等你决定、随手记、撤销、推送（ADR-011）
 
-服务端开启手机写入（`VORTOCODE_MOBILE_WRITES=1`，要先完成 WireGuard 直连）后，App 登录时自动在 Secure Enclave 里生成钥匙并绑定，
+服务端开启手机写入（`VORTOONE_MOBILE_WRITES=1`，要先完成 WireGuard 直连）后，App 登录时自动在 Secure Enclave 里生成钥匙并绑定，
 主要聊天可以发消息，「等你处理」和「动态」里可以批准；服务端没开时 App 保持只读，不显示可执行按钮。
 
 - **三把钥匙**，私钥都不出这台手机：日常钥匙签随手记、撤销、拒绝和推送登记；批准钥匙创建时要求生物识别，

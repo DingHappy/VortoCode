@@ -37,7 +37,7 @@ _TIMEOUT = 20
 _MAX_SCAN = 300                  # 列表/搜索最多看最近这么多封的信头
 _MAX_MESSAGE = 2_000_000
 _MAX_TEXT = 6000
-NOTIFY_ENV = "VORTOCODE_MAIL_NOTIFY"
+NOTIFY_ENV = "VORTOONE_MAIL_NOTIFY"
 _NOTIFY_POLL = timedelta(minutes=5)       # 多久看一次新邮件（每次都要登录一次 IMAP）
 _NOTIFY_FRESH = timedelta(minutes=20)     # 只推这么久以内收到的：刚接上邮箱或停机后不把旧未读推一遍
 _last_poll: Dict[str, datetime] = {}

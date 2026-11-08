@@ -1624,7 +1624,7 @@ provider/硬预算、正式发布均未验收，没有安装或发布。独立�
   静默降级为普通请求。两条入口均验证未调用aiohttp普通聊天发送路径。
 - 原非流式SDK响应省略usage时仍返回正文/工具结果，usage为{}；原记账估算保留，
   不能把{}当provider精确用量或硬预算证明。
-- `build_subagent` 沿用 `native_default()`；自定义角色遵循原VORTOCODE_NATIVE_TOOLS
+- `build_subagent` 沿用 `native_default()`；自定义角色遵循原VORTOONE_NATIVE_TOOLS
   开关，0明确关闭。只读角色工具面仍无run_command/task，不新增权限或执行池。
 
 ### 临时SDK、测试与构建层

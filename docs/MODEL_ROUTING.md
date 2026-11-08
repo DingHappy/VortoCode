@@ -22,13 +22,13 @@
 
 ## 常驻服务与 CLI
 
-沿用原 `VORTOCODE_MODEL_ROLES` 配置。下例全部为虚构标识，需替换为自己的服务和真实模型 ID；不要把凭据写进角色文件、对话或公开仓库。
+沿用原 `VORTOONE_MODEL_ROLES` 配置。下例全部为虚构标识，需替换为自己的服务和真实模型 ID；不要把凭据写进角色文件、对话或公开仓库。
 
 ```dotenv
 DEFAULT_MODEL=planner-model
-VORTOCODE_PROVIDER_WORKER_BASE=https://worker.example.test/v1
-VORTOCODE_PROVIDER_WORKER_KEY=replace-with-private-credential
-VORTOCODE_MODEL_ROLES=research=worker:reader-model,implement=worker:coder-model,review=default:review-model
+VORTOONE_PROVIDER_WORKER_BASE=https://worker.example.test/v1
+VORTOONE_PROVIDER_WORKER_KEY=replace-with-private-credential
+VORTOONE_MODEL_ROLES=research=worker:reader-model,implement=worker:coder-model,review=default:review-model
 ```
 
 每个渠道只使用自身凭据，不拿默认服务的 Key 补另一端点。Desktop 对未登记渠道、缺凭据和包含分隔注入的角色目标拒绝保存。已知的默认服务冒号模型名会规范化为 `default:模型ID`，避免当成另一个渠道。旧配置没有角色字段时保持兼容；Desktop 未配置分工时注入显式空表，避免继承父进程中无关的角色配置。
@@ -60,7 +60,7 @@ CLI 的既有环境变量配置在渠道无效时仍会记录警告并回落默�
 
 ```dotenv
 # 以下全部是虚构模型标识。
-VORTOCODE_MODEL_ROLES=research=default:reader-model,assess=default:judge-model
+VORTOONE_MODEL_ROLES=research=default:reader-model,assess=default:judge-model
 ```
 
 评判器留空关闭额外调用；配置无效时返回不可用，不回落默认付费模型。它是按需工具，
@@ -94,11 +94,11 @@ documentation、translation、extraction，默认 analysis；这是调用方标�
 任务经过时间包含工具执行和确认等待，不是供应商纯推理延迟；等待用户答复之前的已记账
 用量也保留在原轮次，恢复不抹掉前一轮投入。
 
-不采用旧目录中的固定质量评分或猜测价格。运行方可通过 `VORTOCODE_MODEL_PRICES` 设置
+不采用旧目录中的固定质量评分或猜测价格。运行方可通过 `VORTOONE_MODEL_PRICES` 设置
 明确的渠道单价，单位为每百万输入/输出 token。以下数字仅为演示，**不是任何模型报价**：
 
 ```dotenv
-VORTOCODE_MODEL_PRICES={"default:reader-model":{"input_per_million":1,"output_per_million":2,"currency":"CNY"},"default:judge-model":{"input_per_million":3,"output_per_million":4,"currency":"CNY"}}
+VORTOONE_MODEL_PRICES={"default:reader-model":{"input_per_million":1,"output_per_million":2,"currency":"CNY"},"default:judge-model":{"input_per_million":3,"output_per_million":4,"currency":"CNY"}}
 ```
 
 支持 USD/CNY/EUR，不换汇、不混加不同币种；缺价格、缺用量、异常轮次的总费用保持 null。
@@ -156,15 +156,15 @@ VORTOCODE_MODEL_PRICES={"default:reader-model":{"input_per_million":1,"output_pe
 
 ## 外部执行者（Codex / Claude Code CLI）
 
-> **实验功能，默认关闭。** 主线由 VortoOne 自己的子 Agent 完成。只有同时设了 `VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS=1`，下面的角色表才生效；Desktop 在「设置 → 高级模型选项」里有对应开关（打开时弹原生确认，开关后重启当前引擎）。关着时 `cli:*` 选项不提供，已选的标注「不生效」，`vc doctor` / `vc workers status` 也会说明实验功能未开启。
+> **实验功能，默认关闭。** 主线由 VortoOne 自己的子 Agent 完成。只有同时设了 `VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS=1`，下面的角色表才生效；Desktop 在「设置 → 高级模型选项」里有对应开关（打开时弹原生确认，开关后重启当前引擎）。关着时 `cli:*` 选项不提供，已选的标注「不生效」，`vc doctor` / `vc workers status` 也会说明实验功能未开启。
 
 ### 两种模式，别混
 
 | | 本机模式 | 常驻模式 |
 |---|---|---|
 | 场景 | 你自己电脑上的 Desktop / 终端 | 常驻电脑（服务器）上的 VortoOne 服务 |
-| 判定 | 没设 `VORTOCODE_WORKER_HOME` | 服务环境里设了 `VORTOCODE_WORKER_HOME` |
-| CLI 登录与配置 | 你的个人登录；透传个人配置里的模型选择 | 只用 `$VORTOCODE_WORKER_HOME/codex`、`/claude` 两个专用目录（0700），不碰服务账号 home 下任何个人配置 |
+| 判定 | 没设 `VORTOONE_WORKER_HOME` | 服务环境里设了 `VORTOONE_WORKER_HOME` |
+| CLI 登录与配置 | 你的个人登录；透传个人配置里的模型选择 | 只用 `$VORTOONE_WORKER_HOME/codex`、`/claude` 两个专用目录（0700），不碰服务账号 home 下任何个人配置 |
 | 在哪配置 | Desktop「设置 → 高级模型选项」 | 服务的 env 文件 / systemd drop-in |
 | 登录 | 平时怎么登就怎么登 | `vc workers login codex`（设备码）/ `vc workers login claude` |
 | 查看状态 | `vc workers status`、设置页 | 服务器上 `vc workers status`；本机 Desktop 通过 `/api/delegations/capabilities` 的 `external_workers` 只读查看 |
@@ -174,14 +174,14 @@ Desktop 只改本机引擎，不远程改常驻电脑的配置。
 隔离 dev 流水线的「实现」和「审查」两个角色可以交给本机已安装、已登录的 Codex CLI 或 Claude Code CLI。拆解、worktree 隔离、自测重试、逐件和集成验证、确认门、开 PR 仍由 VortoOne 负责，外部执行者只负责在给定目录里写代码或给出审查结论。
 
 ```dotenv
-VORTOCODE_EXTERNAL_WORKERS=implement=codex,review=claude
-VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800      # 单次运行秒数，超时终止整个进程组
-# VORTOCODE_CODEX_BIN=/path/to/codex        # 可选，缺省从 PATH 查找
-# VORTOCODE_CLAUDE_BIN=/path/to/claude
+VORTOONE_EXTERNAL_WORKERS=implement=codex,review=claude
+VORTOONE_EXTERNAL_WORKER_TIMEOUT=1800      # 单次运行秒数，超时终止整个进程组
+# VORTOONE_CODEX_BIN=/path/to/codex        # 可选，缺省从 PATH 查找
+# VORTOONE_CLAUDE_BIN=/path/to/claude
 ```
 
 - 配置只从主进程环境变量读取，不读仓库文件。只认 `implement`、`review` 两个角色和 `codex`、`claude` 两个执行者，其他值会被忽略并记警告。
-- 某个角色配置了外部执行者后，它的 `VORTOCODE_MODEL_ROLES` 分工不再生效。调用方显式注入的审查模型（测试、预算客户端）仍然优先。
+- 某个角色配置了外部执行者后，它的 `VORTOONE_MODEL_ROLES` 分工不再生效。调用方显式注入的审查模型（测试、预算客户端）仍然优先。
 - 实现角色只在流水线创建的一次性 worktree 里写。Codex 使用 `-s workspace-write`；Claude 使用 `--permission-mode dontAsk` 加工具白名单（读、查找、编辑、`pytest`）。审查角色一律只读：Codex 用 `-s read-only`，Claude 不给编辑工具。
 - 不使用任何 `--dangerously-*`、`danger-full-access`、`bypassPermissions` 参数。两者都不接入外部 MCP。
 - **个人配置只透传「用哪个模型、哪家服务」**，hooks、插件、记忆、通知、MCP、权限放宽都不继承：
@@ -192,6 +192,6 @@ VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800      # 单次运行秒数，超时终止�
 - `vc doctor` 的 `workers` 一项会检查配置的执行者：命令有没有找到、有没有登录（`codex login status` / `claude auth status`），以及实际使用的模型和服务。
 - 子进程环境沿用 `sandbox/policy.child_env()` 的密钥剥离，并额外去掉 `GITHUB_TOKEN`、`GH_TOKEN`：push 和开 PR 只由 VortoOne 通过确认门完成。
 - 无人值守档位（cron/heartbeat）拒绝启动外部执行者。事件流里出现联网动作时，本回合会被标为污点。
-- **确认未启动才自动接手**：未找到 CLI 等确认进程尚未启动的不可用情况，才可由已授权的内置 Agent 在同一 worktree 接手，并设置 `VORTOCODE_EXTERNAL_WORKER_COOLDOWN_MIN` 冷却（默认 30，`0` = 不冷却）。备用工厂不能再返回外部 CLI 适配器。进度会说明接手原因。
+- **确认未启动才自动接手**：未找到 CLI 等确认进程尚未启动的不可用情况，才可由已授权的内置 Agent 在同一 worktree 接手，并设置 `VORTOONE_EXTERNAL_WORKER_COOLDOWN_MIN` 冷却（默认 30，`0` = 不冷却）。备用工厂不能再返回外部 CLI 适配器。进度会说明接手原因。
 - 已启动的 CLI 遇限流、登录/鉴权失败、非零退出等，不能只凭错误文本认定没有副作用：标为需人工核对，不自动切换，也停止当前开发/对应审查视角的自动重试。隔离工作区保留供核对，不自动覆盖同一工作区 ID。原执行报告和已确认的问题保留，执行者也不进入自动改用内置 Agent 的冷却路径。详细合同见[执行恢复](EXECUTION_RECOVERY.md)。
 - 开发任务里的实现执行者可以提问：缺少必要事实时，它会在最后一条回复里输出一行 `VORTO_QUESTION {"question": …, "options": […], "context": …}`，VortoOne 识别后调用同一个 `ask_task_question`，问题进入任务台账、推送给你、任务进入等待。回答之后，和内部子 Agent 一样在干净的 worktree 里带着问答上下文重做当前块，不续用外部 CLI 的会话。只有存在提问通道时（有所属会话的开发任务、未超过提问次数），才会把这条约定告诉执行者；没有通道时输出了这一行，按失败处理，不会当成结论。审查执行者不能提问。

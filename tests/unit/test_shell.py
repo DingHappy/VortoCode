@@ -207,14 +207,14 @@ async def test_build_command_tool_surfaces_fallback_before_confirmation(
         asked.append(message)
         return True
 
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     tool = {item.name: item for item in build_command_tool(str(tmp_path), yes)}["run_command"]
     out = (await tool.handler({"command": "echo visible"})).text
     assert asked and "显式降级到宿主机" in asked[0]
     assert "visible" in out and "显式降级到宿主机" in out
 
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "required")
     asked.clear()
     refused = (await tool.handler({"command": "echo blocked"})).text
     assert "拒绝执行" in refused and not asked
@@ -236,7 +236,7 @@ async def test_build_command_tool_rechecks_isolation_after_confirmation(tmp_path
         return {"ok": True, "code": 0, "output": "ok", "warning": "", "sandbox": {}}
 
     monkeypatch.setattr(shell, "run_command", fake_run)
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     tool = {item.name: item for item in build_command_tool(str(tmp_path), yes)}["run_command"]
 
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "seatbelt")

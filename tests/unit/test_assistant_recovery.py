@@ -43,7 +43,7 @@ async def test_explicit_refresh_reads_recovery_without_post_or_replacing_origina
     from src.workflow.tasks import assistant_dispatch as dispatch
     registry = tmp_path / 'registry.json'
     registry.write_text(json.dumps({'projects': [{'name': 'demo', 'repo_root': '/srv/demo', 'port': 8082}]}))
-    monkeypatch.setenv('VORTOCODE_RESIDENT_PROJECTS', str(registry))
+    monkeypatch.setenv('VORTOONE_RESIDENT_PROJECTS', str(registry))
     entry = dispatch.propose(str(tmp_path), project='demo', title='fix', goal='repair')
     dispatch._update(str(tmp_path), entry['id'], lambda item: item.update(status='failed', remote_task_id='task-original'))
     source, child = pair()
@@ -69,7 +69,7 @@ async def test_wrong_recovery_hint_is_rejected_before_reading_other_task(tmp_pat
     from src.workflow.tasks import assistant_dispatch as dispatch
     registry = tmp_path / 'registry.json'
     registry.write_text(json.dumps({'projects': [{'name': 'demo', 'repo_root': '/srv/demo', 'port': 8082}]}))
-    monkeypatch.setenv('VORTOCODE_RESIDENT_PROJECTS', str(registry))
+    monkeypatch.setenv('VORTOONE_RESIDENT_PROJECTS', str(registry))
     entry = dispatch.propose(str(tmp_path), project='demo', title='fix', goal='repair')
     dispatch._update(str(tmp_path), entry['id'], lambda item: item.update(status='failed', remote_task_id='task-original'))
     source, _ = pair()
@@ -90,7 +90,7 @@ async def test_unavailable_recovery_review_keeps_checked_progress_without_pass(t
     from src.workflow.tasks import assistant_dispatch as dispatch
     registry = tmp_path / 'registry.json'
     registry.write_text(json.dumps({'projects': [{'name': 'demo', 'repo_root': '/srv/demo', 'port': 8082}]}))
-    monkeypatch.setenv('VORTOCODE_RESIDENT_PROJECTS', str(registry))
+    monkeypatch.setenv('VORTOONE_RESIDENT_PROJECTS', str(registry))
     entry = dispatch.propose(str(tmp_path), project='demo', title='fix', goal='repair')
     dispatch._update(str(tmp_path), entry['id'], lambda item: item.update(status='failed', remote_task_id='task-original'))
     source, child = pair()
@@ -126,7 +126,7 @@ async def test_routine_poll_checks_recovery_association_without_reading_child(tm
     from src.workflow.tasks import assistant_dispatch as dispatch
     registry = tmp_path / 'registry.json'
     registry.write_text(json.dumps({'projects': [{'name': 'demo', 'repo_root': '/srv/demo', 'port': 8082}]}))
-    monkeypatch.setenv('VORTOCODE_RESIDENT_PROJECTS', str(registry))
+    monkeypatch.setenv('VORTOONE_RESIDENT_PROJECTS', str(registry))
     source, child = pair()
     child['status'] = child_status
     source['branch'] = child['branch'] = ''
@@ -155,7 +155,7 @@ async def test_offline_recovery_keeps_historical_observation_marked_unreachable(
     from src.workflow.tasks import assistant_dispatch as dispatch
     registry = tmp_path / 'registry.json'
     registry.write_text(json.dumps({'projects': [{'name': 'demo', 'repo_root': '/srv/demo', 'port': 8082}]}))
-    monkeypatch.setenv('VORTOCODE_RESIDENT_PROJECTS', str(registry))
+    monkeypatch.setenv('VORTOONE_RESIDENT_PROJECTS', str(registry))
     source, child = pair()
     observed = recovery_observation(source, child, repo_root='/srv/demo')
     entry = dispatch.propose(str(tmp_path), project='demo', title='fix', goal='repair')

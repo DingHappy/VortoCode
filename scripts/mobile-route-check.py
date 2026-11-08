@@ -61,15 +61,18 @@ def native_routes(auth_file: Path) -> list[tuple[str, str]]:
 
 
 def public_origin(environment: Path) -> str:
-    values = []
+    # 新键名优先；改名前写的环境文件里是旧键名 VORTOCODE_MOBILE_PUBLIC_ORIGIN（ADR-018 批次 B），网关同样认它。
+    found: dict[str, list[str]] = {"VORTOONE": [], "VORTOCODE": []}
     for line in environment.read_text(encoding="utf-8").splitlines():
-        if line.startswith("VORTOCODE_MOBILE_PUBLIC_ORIGIN="):
+        prefix = next((p for p in found if line.startswith(f"{p}_MOBILE_PUBLIC_ORIGIN=")), None)
+        if prefix:
             parsed = shlex.split(line.split("=", 1)[1], comments=True)
             if len(parsed) != 1:
                 raise CheckFailed("手机公网入口配置无效")
-            values.append(parsed[0])
+            found[prefix].append(parsed[0])
+    values = found["VORTOONE"] or found["VORTOCODE"]
     if len(values) != 1:
-        raise CheckFailed("环境文件需配置唯一 VORTOCODE_MOBILE_PUBLIC_ORIGIN")
+        raise CheckFailed("环境文件需配置唯一 VORTOONE_MOBILE_PUBLIC_ORIGIN")
     return validate_origin(values[0], public=True)
 
 

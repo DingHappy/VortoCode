@@ -149,7 +149,7 @@ def test_cooldown_stops_retry_storms(tmp_path):
 
 def test_disabled_still_diagnoses_but_does_not_act(tmp_path, monkeypatch):
     """开关关掉 = 不动手，但**照样诊断**——少了动手能力不该连"这是什么"都不说了。"""
-    monkeypatch.setenv("VORTOCODE_SELF_HEAL", "0")
+    monkeypatch.setenv("VORTOONE_SELF_HEAL", "0")
     root = _repo(tmp_path)
     outcome = rem.remediate(root, "Author identity unknown", source="test")
     assert outcome.diagnosed and not outcome.healed

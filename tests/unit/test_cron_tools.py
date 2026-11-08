@@ -2,7 +2,7 @@
 
 真机 2026-07-27：用户问"能不能设置定时任务"，agent 答"我目前没有设置定时任务的能力"，
 接着推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoOne 自己的 cron 子系统
-当时就跑在那台机器上（`VORTOCODE_CRON=1`，relay_duty 每天 02:00）。就工具而言它没说谎
+当时就跑在那台机器上（`VORTOONE_CRON=1`，relay_duty 每天 02:00）。就工具而言它没说谎
 （确实一个 cron 工具都没有），但把主人推去用外部服务是实打实的错。
 
 本文件钉四件事，每件都是"改坏了不会自己喊疼"的那种：
@@ -137,14 +137,14 @@ async def test_scheduler_off_is_said_out_loud_when_adding_or_enabling(tmp_path, 
         asked.append(message)
         return True
 
-    monkeypatch.setenv("VORTOCODE_CRON", "0")
+    monkeypatch.setenv("VORTOONE_CRON", "0")
     tools = _tools(tmp_path, yes_and_record)
     out = await tools["cron_add"].handler({"name": "remind", "schedule": "at 08:00", "prompt": "提醒我喝水"})
     assert "调度**没有打开**" in out and "调度**没有打开**" in asked[-1]       # 问之前、建之后都说
     await tools["cron_toggle"].handler({"name": "remind", "enabled": False})
     assert "没有打开" in await tools["cron_toggle"].handler({"name": "remind", "enabled": True})
 
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_CRON", "1")
     out = await tools["cron_add"].handler({"name": "remind2", "schedule": "at 08:00", "prompt": "提醒我喝水"})
     assert "没有打开" not in out
 
@@ -279,15 +279,15 @@ def test_unknown_job_is_not_found(tmp_path):
 
 def test_command_job_needs_the_host_execution_switch(tmp_path, monkeypatch):
     _seed(tmp_path)
-    monkeypatch.delenv("VORTOCODE_ENABLE_SHELL", raising=False)
+    monkeypatch.delenv("VORTOONE_ENABLE_SHELL", raising=False)
     assert check_trigger(str(tmp_path), "relay_duty")[1] == "shell_disabled"
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_SHELL", "1")
     assert check_trigger(str(tmp_path), "relay_duty")[1] is None
 
 
 def test_same_job_cannot_be_triggered_concurrently(tmp_path, monkeypatch):
     _seed(tmp_path)
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_SHELL", "1")
     from src.scheduling.cron import track_trigger
 
     class _Running:
@@ -307,7 +307,7 @@ def test_same_job_cannot_be_triggered_concurrently(tmp_path, monkeypatch):
 
 async def test_run_declined_does_not_start_anything(tmp_path, monkeypatch):
     _seed(tmp_path)
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_SHELL", "1")
     started = []
     import src.scheduling.cron as cron
     monkeypatch.setattr(cron, "run_job_by_name", lambda *a, **k: started.append(1))
@@ -318,18 +318,18 @@ async def test_run_declined_does_not_start_anything(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- 观察面
 async def test_list_reports_schedule_switch_and_content(tmp_path, monkeypatch):
     _seed(tmp_path)
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_CRON", "1")
     out = await _tools(tmp_path)["cron_list"].handler({})
     assert "relay_duty" in out and "at 02:00" in out and "✅ 开" in out
 
-    monkeypatch.setenv("VORTOCODE_CRON", "0")
+    monkeypatch.setenv("VORTOONE_CRON", "0")
     out = await _tools(tmp_path)["cron_list"].handler({})
     assert "关" in out, "调度器没开却不说，用户会以为作业在跑"
 
 
 async def test_list_on_empty_table_points_at_the_switch(tmp_path):
     out = await _tools(tmp_path)["cron_list"].handler({})
-    assert "还没有任何作业" in out and "VORTOCODE_CRON=1" in out
+    assert "还没有任何作业" in out and "VORTOONE_CRON=1" in out
 
 
 def test_cron_list_is_read_only(tmp_path):
@@ -594,7 +594,7 @@ async def test_manual_trigger_pushes_to_the_owner(tmp_path, monkeypatch):
     monkeypatch.setattr(gw_session, "run_isolated_session", _fake_session)
 
     tool = _tools(tmp_path, _yes())["cron_run"]
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_SHELL", "1")
     await tool.handler({"name": "news"})
     task = cron._TRIGGER_INFLIGHT.get("news")
     if task is not None:

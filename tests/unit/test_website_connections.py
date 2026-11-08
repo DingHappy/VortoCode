@@ -197,9 +197,9 @@ async def test_failed_browser_spawn_closes_all_pipe_fds_and_strips_host_secrets(
         descriptors.extend(pair)
         return pair
     async def spawn(*args, **kwargs):
-        assert "VORTOCODE_PROVIDER_TEST_KEY" not in kwargs["env"]
+        assert "VORTOONE_PROVIDER_TEST_KEY" not in kwargs["env"]
         raise OSError("synthetic launch failure")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_TEST_KEY", "synthetic-not-a-real-key")
+    monkeypatch.setenv("VORTOONE_PROVIDER_TEST_KEY", "synthetic-not-a-real-key")
     monkeypatch.setattr(os, "pipe", pipe)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     browser = CdpBrowser("unused", tmp_path / "profile")

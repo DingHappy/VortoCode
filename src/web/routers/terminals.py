@@ -3,12 +3,12 @@
 **信任模型（刻意如此，别当成疏漏）：single-token 单用户。**
 `TerminalManager` 是进程级单例，终端不归属任何"会话"——凡是过了鉴权的调用方都能驱动
 任意 terminal id。这是因为 Web 层压根没有会话身份可归属：鉴权只有一个共享的
-`VORTOCODE_API_TOKEN`（不设则完全放行 + 只绑 127.0.0.1），拿到它的人本来就能
+`VORTOONE_API_TOKEN`（不设则完全放行 + 只绑 127.0.0.1），拿到它的人本来就能
 `POST /api/terminals` 开自己的 PTY、`POST /api/runs` 跑任意命令。把终端"按会话归属"
 到调用方自报的 id 上只会是摆设——伪造它所需的凭据，正是威胁模型里假定攻击者已经有的那一个。
 
 真正承重的是 fail-closed：**所有**终端端点都过 `require_shell()`，
-`VORTOCODE_ENABLE_SHELL` 未设即全面 403。契约见 tests/integration/test_security.py。
+`VORTOONE_ENABLE_SHELL` 未设即全面 403。契约见 tests/integration/test_security.py。
 要支持多用户，得先有真正的按用户鉴权——那时这里的单例和下面的闸都要一并重做。
 """
 from src.web.deps import *  # noqa: F401,F403

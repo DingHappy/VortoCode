@@ -1,6 +1,6 @@
 """Real Chromium + production review UI/router/store; deterministic products, no LLM or IM.
 
-VORTOCODE_LIVE_BROWSER=1 python -m pytest tests/live/test_pipeline_browser_workflow.py -q
+VORTOONE_LIVE_BROWSER=1 python -m pytest tests/live/test_pipeline_browser_workflow.py -q
 """
 import asyncio
 import json
@@ -16,7 +16,7 @@ from src.browser.verify import run_browser_probe
 from src.workflow.pipeline.pipeline import PipelineDef, PipelineStore, advance
 from src.workflow.pipeline.products import ProductStore
 
-pytestmark = pytest.mark.skipif(os.getenv("VORTOCODE_LIVE_BROWSER") != "1",
+pytestmark = pytest.mark.skipif(os.getenv("VORTOONE_LIVE_BROWSER") != "1",
                               reason="requires opt-in real Chromium and loopback listener")
 
 

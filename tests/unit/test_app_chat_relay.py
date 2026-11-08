@@ -275,9 +275,9 @@ async def test_bad_requests_are_refused(tmp_path):
 @pytest.fixture
 def relay_app(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
     from src.web.routers import app_relay
     turns, _ = _turns(tmp_path)
     monkeypatch.setattr(app_relay, "_turns", turns)
@@ -310,12 +310,12 @@ def test_relay_routes_need_the_relay_token_and_a_loopback_peer(relay_app, shared
 
 def test_relay_target_must_be_loopback(monkeypatch):
     from src.gateway.app_relay_client import RelayUnavailable, _target
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "t")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "t")
     for url in ("https://127.0.0.1:8081", "http://192.168.10.97:8081", "http://evil.test", ""):
-        monkeypatch.setenv("VORTOCODE_APP_RELAY_URL", url)
+        monkeypatch.setenv("VORTOONE_APP_RELAY_URL", url)
         with pytest.raises(RelayUnavailable):
             _target()
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_URL", "http://127.0.0.1:8081")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_URL", "http://127.0.0.1:8081")
     assert _target() == ("http://127.0.0.1:8081", "t")
 
 
@@ -389,7 +389,7 @@ def test_scope_choice_is_in_signed_forwarded_body_and_cannot_be_changed(owner, r
 def test_chat_is_unavailable_until_the_relay_is_configured(owner, monkeypatch):  # noqa: F811
     client, headers, device_id, _root = owner
     _, device, _ = bind(client, headers)
-    monkeypatch.delenv("VORTOCODE_APP_RELAY_URL", raising=False)
+    monkeypatch.delenv("VORTOONE_APP_RELAY_URL", raising=False)
     response = signed(client, headers, device_id, "/api/mobile/native/chat/send",
                       {"request_id": "req-00000009", "text": "hi"}, device)
     assert response.status_code == 503 and "开通" in response.json()["detail"]

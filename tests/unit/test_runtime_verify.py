@@ -169,7 +169,7 @@ def test_runtime_check_simple_cmd_fail(tmp_path):
 
 def test_runtime_check_requires_sandbox_unless_explicitly_off(tmp_path, monkeypatch):
     from src.sandbox import policy as sb
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     r = worktree.run_runtime_check(tmp_path, {"name": "blocked", "cmd": "echo nope"})
     assert r["ok"] is False
@@ -475,17 +475,17 @@ def test_verify_branch_runs_suite_when_code_changed_or_base_unknown(tmp_path):
 
 
 def test_parallel_pytest_and_timeout_are_opt_in(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_TEST_WORKERS", raising=False)
-    monkeypatch.delenv("VORTOCODE_TEST_TIMEOUT", raising=False)
+    monkeypatch.delenv("VORTOONE_TEST_WORKERS", raising=False)
+    monkeypatch.delenv("VORTOONE_TEST_TIMEOUT", raising=False)
     assert worktree._parallel_pytest(["python", "-m", "pytest", "-q"]) == ["python", "-m", "pytest", "-q"]
     assert worktree._test_timeout() == 1200
-    monkeypatch.setenv("VORTOCODE_TEST_WORKERS", "auto")
-    monkeypatch.setenv("VORTOCODE_TEST_TIMEOUT", "1500")
+    monkeypatch.setenv("VORTOONE_TEST_WORKERS", "auto")
+    monkeypatch.setenv("VORTOONE_TEST_TIMEOUT", "1500")
     assert worktree._parallel_pytest(["python", "-m", "pytest", "-q"])[-4:] == ["-n", "auto", "--dist", "loadfile"]
     assert worktree._parallel_pytest(["npm", "test"]) == ["npm", "test"]                 # 只动 pytest
     assert worktree._parallel_pytest(["pytest", "-n", "2"]) == ["pytest", "-n", "2"]     # 已指定就不加
     assert worktree._test_timeout() == 1500
-    monkeypatch.setenv("VORTOCODE_TEST_TIMEOUT", "abc")
+    monkeypatch.setenv("VORTOONE_TEST_TIMEOUT", "abc")
     assert worktree._test_timeout() == 1200
 
 
@@ -502,18 +502,20 @@ def test_sandboxed_tests_get_a_writable_throwaway_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(policy, "sandboxed_exec_argv", lambda worktree, cmd, backend: cmd)
     seen = {}
 
-    monkeypatch.setenv("VORTOCODE_IM_ROLE", "notify")          # 宿主服务的运行配置
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_IM_ROLE", "notify")          # 宿主服务的运行配置
+    monkeypatch.setenv("VORTOONE_CRON", "1")
+    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")            # 改名前的旧名字也不许漏进去
 
     def fake_run(cmd, cwd, env, **_kw):
-        seen["leaked"] = sorted(key for key in env if key.startswith("VORTOCODE_") and key != "VORTOCODE_IN_SANDBOX")
+        seen["leaked"] = sorted(key for key in env if key.startswith(("VORTOONE_", "VORTOCODE_"))
+                                and key != "VORTOONE_IN_SANDBOX")
         seen["cache"] = env.get("XDG_CACHE_HOME")
         seen["exists_during"] = os.path.isdir(seen["cache"] or "")
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
     assert worktree.run_tests(tmp_path, ["pytest", "-q"])["ok"] is True
     assert seen["exists_during"] and not os.path.exists(seen["cache"])      # 跑时存在、跑完删掉
-    assert seen["leaked"] == []                                             # 宿主的 VORTOCODE_* 不进测试
+    assert seen["leaked"] == []                                             # 宿主的 VORTOONE_* 不进测试
 
 
 def test_selftest_failure_note_carries_the_test_tail():

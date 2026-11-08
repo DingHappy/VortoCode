@@ -27,7 +27,7 @@ Telegram Bot token 先放在运行 `vc` 的私密环境中，不要作为命令�
 2. 用管理员自己的 Telegram 账号**私聊**机器人，发送终端给出的 `/bind <配对码>`。群聊和未持有码的人不能绑定。
 3. 成功后，在相同的系统用户下启动 `vc im telegram`，或为尚未启用其他 IM 的 Gateway 启动 `vc server --im telegram`。启动时自动读取 `~/.vortocode/im-pairings/telegram-<bot-id>.json` 中的 owner ID。配对记录须为 `600`，目录须为 `700`。
 
-同一个 Bot 只能有一个 `getUpdates` 消费者；配对时先停用该 Bot 的其他轮询实例。现有 `vc server` 只内嵌一个 IM 通道；已有钉钉服务不要直接切成 Telegram。Telegram 当前是单主人会话，即便额外配置 `VORTOCODE_TG_ALLOW_FROM`，其他用户也会被拒绝，以防消息进入主人的会话或回复被送到主人。管理员邀请其他用户的设计与上线门槛见 [Telegram 接入与邀请](./TELEGRAM_ACCESS.md)。
+同一个 Bot 只能有一个 `getUpdates` 消费者；配对时先停用该 Bot 的其他轮询实例。现有 `vc server` 只内嵌一个 IM 通道；已有钉钉服务不要直接切成 Telegram。Telegram 当前是单主人会话，即便额外配置 `VORTOONE_TG_ALLOW_FROM`，其他用户也会被拒绝，以防消息进入主人的会话或回复被送到主人。管理员邀请其他用户的设计与上线门槛见 [Telegram 接入与邀请](./TELEGRAM_ACCESS.md)。
 
 ### Telegram 接收恢复与诊断
 
@@ -41,7 +41,7 @@ Telegram Bot token 先放在运行 `vc` 的私密环境中，不要作为命令�
 
 手机网关**不跑部署目录的代码**：它的 `PYTHONPATH` 指向固定的发布快照
 `~/.local/share/vortocode-mobile/releases/<发布标识>`（环境文件 `~/.config/vortocode-mobile/environment`
-里的 `PYTHONPATH` 与 `VORTOCODE_MOBILE_RELEASE`）。部署目录 `git merge --ff-only` 再重启，**不会**更新它。
+里的 `PYTHONPATH` 与 `VORTOONE_MOBILE_RELEASE`）。部署目录 `git merge --ff-only` 再重启，**不会**更新它。
 
 部署目录更新后，在常驻电脑上运行：
 
@@ -54,7 +54,7 @@ scripts/mobile-release.sh
 备份并切换环境文件，重启后核对服务在运行、重启计数没涨，并执行 `scripts/mobile-route-check.py`：
 
 - 从目标快照的 `MOBILE_SELF_AUTHENTICATED` 读取全部原生 App 方法/路径，新增接口自动进入检查；不导入 Web 应用或模型。
-- 若存在 `~/.config/vortocode-https/Caddyfile`（可用 `VORTOCODE_MOBILE_CADDYFILE` 指定），切换前检查两个精确 matcher。缺路径、方法不符或使用前缀通配都会阻止发布。其它反向代理可以没有该文件，发布后的公网探测仍必须通过。
+- 若存在 `~/.config/vortocode-https/Caddyfile`（可用 `VORTOONE_MOBILE_CADDYFILE` 指定），切换前检查两个精确 matcher。缺路径、方法不符或使用前缀通配都会阻止发布。其它反向代理可以没有该文件，发布后的公网探测仍必须通过。
 - 每个原生接口发一次本机、一次公网请求：只用固定无效会话和空正文，不使用真实手机或管理员身份。不跟随重定向、不跳过 TLS 验证、不重试；公网必须是环境文件中的 HTTPS origin。本机请求限定 HTTP 回环，并带配置的 Host / HTTPS 转发头。
 - 本机必须由路由本身返回预期拒绝，公网的状态和 JSON 必须一致。Caddy 的 404、管理员中间件的 `Unauthorized`、重定向、网络/TLS 失败和意外成功都不算通过。另核对管理员时间线和内部 relay 在公网仍为 404。
 - 当前 21 个原生接口最多产生 46 个请求（含 4 个应被公网入口关闭的内部路径）；每次最长 8 秒、响应最多 64 KiB，遇错立即停。`--dry-run` 只核对合同/配置，不发网络请求；内容未变的正常发布仍要核对入口，但不重启。
@@ -79,8 +79,8 @@ python3 scripts/mobile-route-check.py --auth-file src/web/auth.py \
 - **只有公钥在常驻电脑上**：在主人自己的电脑上生成密钥对，私钥只留在那里（另存一份到密码管理器）：
   `python3 scripts/assistant-backup.py keygen --private ~/.config/vortocode/backup-key.pem`，把打印出的公钥放到
   常驻电脑 `~/.config/vortocode-backup/backup.pub`。
-- `~/.config/vortocode-backup/environment`（600）：`VORTOCODE_BACKUP_TARGET=<user>@<nas>:<目录>/`、
-  `VORTOCODE_OPS_TOKEN=<运维心跳令牌>`。NAS 那边用一把只能 rsync 的专用密钥（authorized_keys 强制命令）。
+- `~/.config/vortocode-backup/environment`（600）：`VORTOONE_BACKUP_TARGET=<user>@<nas>:<目录>/`、
+  `VORTOONE_OPS_TOKEN=<运维心跳令牌>`。NAS 那边用一把只能 rsync 的专用密钥（authorized_keys 强制命令）。
 - 安装：`deploy/vortocode-backup.user.{service,timer}` 放进 `~/.config/systemd/user/`，`systemctl --user enable --now vortocode-backup.timer`。
 - 成功 / 失败都报到运维心跳（`assistant-backup`），30 小时没报就推送主人。
 - 恢复：`python3 scripts/assistant-backup.py restore --private <私钥> --archive <某份 .vcbak> --into <目录>`，核对后再拷回。
@@ -102,14 +102,14 @@ Every proactive notice (scheduled jobs, heartbeat, assistant follow-ups, pipelin
 
 | Variable | Example | Default | Effect |
 | --- | --- | --- | --- |
-| `VORTOCODE_QUIET_HOURS` | `23:00-08:00` | unset (off) | Local time, may cross midnight. Pushes during the window are held and sent as one digest within a minute after it ends. An invalid value disables the window instead of swallowing notices. |
-| `VORTOCODE_NOTICE_DEDUP_MIN` | `60` | `60` | The same source + same text (whitespace ignored) reaches the phone once per window. `0` turns it off. |
+| `VORTOONE_QUIET_HOURS` | `23:00-08:00` | unset (off) | Local time, may cross midnight. Pushes during the window are held and sent as one digest within a minute after it ends. An invalid value disables the window instead of swallowing notices. |
+| `VORTOONE_NOTICE_DEDUP_MIN` | `60` | `60` | The same source + same text (whitespace ignored) reaches the phone once per window. `0` turns it off. |
 
 Delivery probes (`vc canary`) bypass both. When one service relays notices to another (e.g. project service → resident assistant), set the variables on both.
 
 ### Model usage ledger
 
-Every model call adds its token counts (numbers only, never prompts or replies) to `~/.vortocode/usage/daily.json` under a source label: 对话, 早晚报, Codex 判断, 任务复盘, 对话摘要, 定时任务. Processes on the same machine share the file under a lock; 60 days are kept. `VORTOCODE_USAGE_DIR` moves it.
+Every model call adds its token counts (numbers only, never prompts or replies) to `~/.vortocode/usage/daily.json` under a source label: 对话, 早晚报, Codex 判断, 任务复盘, 对话摘要, 定时任务. Processes on the same machine share the file under a lock; 60 days are kept. `VORTOONE_USAGE_DIR` moves it.
 
 - The morning report ends with one line for yesterday, e.g. `🔢 昨天模型用量：34 次，19.8 万 token（Codex 判断 28 次 · 15.6 万；…）`, and flags a day at 3× or more of the previous 7-day average.
 - The resident assistant pushes one alert per day when today's usage passes 2,000,000 tokens and is at least 3× the 7-day average (or has no history yet), naming the largest source.
@@ -203,7 +203,7 @@ Logs and diagnostic reports must redact authorization headers, cookies, query-st
 
 The public default is local-only. If remote access is required:
 
-- set `VORTOCODE_API_TOKEN`;
+- set `VORTOONE_API_TOKEN`;
 - use an authenticated encrypted tunnel or private network;
 - keep the VortoOne service itself off the public Internet;
 - use a least-privilege service account;

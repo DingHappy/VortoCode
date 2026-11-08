@@ -78,7 +78,7 @@ def test_native_access_requires_native_session_enabled_writes_and_trusted_device
     assert response.status_code == 200 and response.json()["permissions"]["profile"] == "owner_device"
     assert response.headers["cache-control"] == "no-store"
     assert client.put(path, headers=headers, json={"effective_level": "full"}).status_code == 401
-    monkeypatch.setenv("VORTOCODE_MOBILE_WRITES", "0")
+    monkeypatch.setenv("VORTOONE_MOBILE_WRITES", "0")
     assert client.get(path, headers=headers).status_code == 403
 
 
@@ -92,8 +92,8 @@ def test_native_access_uses_resident_projection_when_relay_is_configured(owner, 
         calls.append((path, body))
         return 200, {"schema_version": 1, "history": {"status": "unavailable", "entries": []}}
 
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_URL", "http://127.0.0.1:8081")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-test")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_URL", "http://127.0.0.1:8081")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-test")
     monkeypatch.setattr(relay, "relay", read)
     response = client.get("/api/mobile/native/access", headers=headers)
     assert response.status_code == 200 and response.json()["history"]["status"] == "unavailable"
@@ -102,9 +102,9 @@ def test_native_access_uses_resident_projection_when_relay_is_configured(owner, 
 
 def test_admin_and_loopback_access_do_not_borrow_each_others_tokens(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.web.server import app
     local = TestClient(app, client=("127.0.0.1", 5000))
     remote = TestClient(app)
@@ -115,7 +115,7 @@ def test_admin_and_loopback_access_do_not_borrow_each_others_tokens(tmp_path, mo
     public = "/api/assistant/access"
     assert local.get(public, headers={"Authorization": "Bearer relay-token"}).status_code == 401
     assert local.get(public, headers={"Authorization": "Bearer admin-token"}).status_code == 200
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     assert local.get(public, headers={"Authorization": "Bearer admin-token"}).status_code == 403
 
 
@@ -129,8 +129,8 @@ def test_revocation_during_resident_read_discards_the_result(owner, monkeypatch)
         MobileDevices(root).revoke(device)
         return 200, {"private_history": "must-not-arrive"}
 
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_URL", "http://127.0.0.1:8081")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-test")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_URL", "http://127.0.0.1:8081")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-test")
     monkeypatch.setattr(relay, "relay", read)
     response = client.get("/api/mobile/native/access", headers=headers)
     assert response.status_code == 401 and "must-not-arrive" not in response.text
@@ -138,9 +138,9 @@ def test_revocation_during_resident_read_discards_the_result(owner, monkeypatch)
 
 def test_lost_turn_closes_old_cards_without_claiming_previous_actions_failed(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.web.routers import app_relay
     from src.gateway.app_turns import AppTurns
     monkeypatch.setattr(app_relay, "_turns", AppTurns(str(tmp_path), lambda _confirm: None))

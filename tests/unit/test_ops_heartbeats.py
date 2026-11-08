@@ -47,9 +47,9 @@ def test_bad_reports_are_refused_and_secrets_are_not_stored(tmp_path):
 def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_OPS_TOKEN", "ops-secret")
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "main-secret")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_OPS_TOKEN", "ops-secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "main-secret")
     import src.scheduling.notices as notices
     sent = []
 
@@ -78,14 +78,14 @@ def test_route_uses_its_own_token_and_pushes_failures(client, monkeypatch):
     assert _post(client, body).json() == {"ok": True, "notified": True}
     assert client.sent == ["🔴 nas-backup 失败：NAS 未挂载"]
     assert _post(client, {"source": "nas-backup", "ok": "yes"}).status_code == 400
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     assert _post(client, body).status_code == 404                             # 只在常驻助理上开
 
 
 async def test_assistant_watch_pushes_overdue_heartbeats(tmp_path, monkeypatch):
     from src.scheduling import assistant_watch as watch
     root = str(tmp_path)
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(tmp_path / "none.json"))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(tmp_path / "none.json"))
     hb.record(root, "restore-drill", ok=True, expect_hours=24 * 32, now=T0)
     sent = []
 
@@ -153,7 +153,7 @@ def test_notices_are_capped_per_day_and_scrubbed(monkeypatch):
 
 
 def test_route_accepts_event_reports(client, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_OPS_TOKEN", "ops-token")
+    monkeypatch.setenv("VORTOONE_OPS_TOKEN", "ops-token")
     response = client.post("/api/ops/heartbeat", json={"source": "relay-deploy", "ok": True, "text": "发布", "event": True},
                            headers={"Authorization": "Bearer ops-token"})
     assert response.status_code == 200 and response.json()["notified"] is False

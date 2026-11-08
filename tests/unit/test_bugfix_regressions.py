@@ -96,7 +96,7 @@ async def test_missing_sdk_falls_back_to_prompt_protocol(monkeypatch, capsys):
     from src import cli
     from src.llm.client import NativeToolsUnavailable
 
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "1")
     llm = _NativeFailingLLM(NativeToolsUnavailable("原生工具调用需要 OpenAI SDK"))
     assert await cli.run_agent_headless("你好", llm=llm) == "OK"
     assert llm.native_calls == 1                    # 一次即永久回退，不每步重撞
@@ -108,7 +108,7 @@ async def test_headless_reports_channel_failure_instead_of_silent_exit(monkeypat
     import json
     from src import cli
 
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "1")
     with pytest.raises(SystemExit) as exit_info:
         await cli.run_agent_headless("你好", llm=_NativeFailingLLM(RuntimeError("Request timed out")),
                                      as_json=as_json, quiet=True)

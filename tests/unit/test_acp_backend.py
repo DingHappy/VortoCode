@@ -215,11 +215,11 @@ async def test_missing_binary_says_not_installed(tmp_path):
 def test_framework_env_strips_tokens_and_isolates_home(tmp_path, monkeypatch):
     monkeypatch.setenv("GH_TOKEN", "secret")
     monkeypatch.setenv("GITHUB_TOKEN", "secret")
-    monkeypatch.delenv("VORTOCODE_WORKER_HOME", raising=False)
+    monkeypatch.delenv("VORTOONE_WORKER_HOME", raising=False)
     local = framework_env("opencode")
     assert "GH_TOKEN" not in local and "GITHUB_TOKEN" not in local
     assert local.get("HOME") == os.environ.get("HOME")
-    monkeypatch.setenv("VORTOCODE_WORKER_HOME", str(tmp_path / "workers"))
+    monkeypatch.setenv("VORTOONE_WORKER_HOME", str(tmp_path / "workers"))
     resident = framework_env("opencode")
     assert resident["HOME"] == str(tmp_path / "workers" / "opencode")
     assert resident["XDG_CONFIG_HOME"].startswith(resident["HOME"])

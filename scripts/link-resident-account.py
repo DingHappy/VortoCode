@@ -38,11 +38,13 @@ try:
  for line in (Path.home()/'.config/vortocode-mobile/environment').read_text().splitlines():
   if line and not line.startswith('#'):
    key,value=line.split('=',1);private[key]=value.strip('"')
- assert private['VORTOCODE_MOBILE_PUBLIC_ORIGIN']==payload['public_origin']
- assert private['VORTOCODE_ACCOUNT_URL']==payload['issuer']
+ for key in [k for k in private if k.startswith('VORTOCODE_')]:
+  private.setdefault('VORTOONE_'+key[10:],private[key])
+ assert private['VORTOONE_MOBILE_PUBLIC_ORIGIN']==payload['public_origin']
+ assert private['VORTOONE_ACCOUNT_URL']==payload['issuer']
  client=urllib.request.build_opener(urllib.request.ProxyHandler({}))
  url='http://127.0.0.1:18081/api/mobile/account/registration'
- headers={'Authorization':'Bearer '+private['VORTOCODE_API_TOKEN'],'Content-Type':'application/json'}
+ headers={'Authorization':'Bearer '+private['VORTOONE_API_TOKEN'],'Content-Type':'application/json'}
  with client.open(urllib.request.Request(url,headers=headers),timeout=10) as r:
   current=json.loads(r.read(8192))
  assert current['registration'] is None

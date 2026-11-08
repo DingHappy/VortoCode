@@ -90,7 +90,7 @@ async def test_every_host_exec_gate_follows_the_single_switch(tmp_path, monkeypa
     from src.web.auth import require_shell
 
     # 环境变量刻意设成与探针相反：谁还在自己读 env，结果就会和探针对不上
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "" if allowed else "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_SHELL", "" if allowed else "1")
     monkeypatch.setattr(policy, "shell_enabled", lambda: allowed)
 
     # ① Web 的执行端点闸

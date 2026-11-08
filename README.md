@@ -181,7 +181,7 @@ vc doctor                    # 一屏自检：凭据、模型服务、权限、�
 vc server                    # 默认只监听 127.0.0.1:8080
 ```
 
-> 对外暴露之前**必须**设置 `VORTOCODE_API_TOKEN`，设置后所有 `/api/*` 和 `/ws` 请求都要鉴权。全部配置见 [环境变量](docs/ENVIRONMENT.md) 和 [模型配置](docs/MODEL_CONFIGURATION.md)。
+> 对外暴露之前**必须**设置 `VORTOONE_API_TOKEN`，设置后所有 `/api/*` 和 `/ws` 请求都要鉴权。全部配置见 [环境变量](docs/ENVIRONMENT.md) 和 [模型配置](docs/MODEL_CONFIGURATION.md)。
 
 ## 参与开发
 

@@ -17,11 +17,11 @@ def client(tmp_path, monkeypatch):
 
     registry = tmp_path / "resident_projects.json"
     registry.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(registry))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(registry))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_VOICE_MCP_TOKEN", VOICE)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", MAIN)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_VOICE_MCP_TOKEN", VOICE)
+    monkeypatch.setenv("VORTOONE_API_TOKEN", MAIN)
     import src.scheduling.notices as notices
     sent = []
 
@@ -58,10 +58,10 @@ def test_only_the_voice_token_on_the_resident_assistant_gets_in(client, monkeypa
     assert _rpc(client, "tools/list", token=MAIN).status_code == 404            # 主 API 令牌进不来
     other = client.get("/api/assistant/profile", headers={"Authorization": f"Bearer {VOICE}"})
     assert other.status_code == 401                                             # 语音令牌也进不了别的 API
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     assert _rpc(client, "tools/list").status_code == 404                        # 项目服务上不开
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.delenv("VORTOCODE_VOICE_MCP_TOKEN")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.delenv("VORTOONE_VOICE_MCP_TOKEN")
     assert _rpc(client, "tools/list").status_code == 404                        # 不设令牌 = 不存在
 
 

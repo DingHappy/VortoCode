@@ -14,8 +14,8 @@ from src.web.server import app
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
 
     def no_execution(*args, **kwargs):
@@ -142,14 +142,14 @@ def test_auth_scope_and_list_limit(api, monkeypatch):
     for limit in (0, 21, "true"):
         assert client.get("/api/task-inbox", params={"session": "owner", "limit": limit}).status_code == 422
     assert client.get("/api/task-inbox", params={"session": "../owner"}).status_code == 400
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "inbox-test-token")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "inbox-test-token")
     assert client.get("/api/task-inbox", params={"session": "owner"}).status_code == 401
     assert client.post(endpoint, json=payload(task)).status_code == 401
     headers = {"Authorization": "Bearer inbox-test-token"}
     assert client.get("/api/task-inbox", params={"session": "owner"}, headers=headers).status_code == 200
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     assert client.get("/api/task-inbox", params={"session": "owner"}, headers=headers).status_code == 409
     assert client.post(endpoint, json=payload(task), headers=headers).status_code == 409
     assert not ledger.load(task.id).handoff_receipt and updates == []
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "scratch")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "scratch")
     assert client.post(endpoint, json=payload(task), headers=headers).status_code == 200

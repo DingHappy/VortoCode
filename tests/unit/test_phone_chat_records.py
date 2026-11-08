@@ -69,7 +69,7 @@ def test_phone_chats_route_is_read_only_listing(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     save_session(str(tmp_path), "sid-telegram-42", [{"role": "user", "text": "在吗", "rid": "r1", "at": "x", "secret": 1}],
                  [{"role": "user", "content": "在吗"}], None, title="📱 Telegram")
     save_session(str(tmp_path), "sid-desk", [{"role": "user", "text": "桌面", "rid": "r1"}],
@@ -101,7 +101,7 @@ def test_transcript_route_reads_one_local_session_read_only(tmp_path, monkeypatc
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     save_session(str(tmp_path), "sid-desk-1", [{"role": "user", "text": "帮我记下周三开会", "rid": "r1", "secret": 1},
                                               {"role": "assistant", "text": "记下了"}],
                  [{"role": "user", "content": "帮我记下周三开会"}], None, title="周三开会")

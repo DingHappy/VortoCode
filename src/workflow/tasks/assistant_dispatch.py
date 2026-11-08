@@ -7,7 +7,7 @@
 - 助理的工具只能**提议**（status=proposed）。下发走 Desktop 调的 HTTP 接口，由人点；助理自己的
   联网工具只能 GET 公网地址，够不到这里。污点回合提出的任务单带 ``tainted`` 标记，界面上提示。
 - 目标只能是常驻电脑登记表（resident_projects）里的项目，地址固定 127.0.0.1:<登记端口>，
-  令牌用本进程的 VORTOCODE_API_TOKEN（同机各服务共用）。任务单文本只作为开发任务的 prompt 交出去。
+  令牌用本进程的 VORTOONE_API_TOKEN（同机各服务共用）。任务单文本只作为开发任务的 prompt 交出去。
 """
 from __future__ import annotations
 
@@ -468,7 +468,7 @@ async def _followup_http(entry, project, http):
 
 
 def _headers() -> Dict[str, str]:
-    token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
+    token = os.getenv("VORTOONE_API_TOKEN", "").strip()
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 

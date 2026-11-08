@@ -19,8 +19,8 @@ def setup(monkeypatch):
     monkeypatch.setenv("OPENAI_API_BASE", "https://models.example.test/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-model-key")
     monkeypatch.setenv("DEFAULT_MODEL", "small")
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "research=default:small,assess=default:judge")
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", json.dumps({
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "research=default:small,assess=default:judge")
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", json.dumps({
         "default:small": {"input_per_million": 1, "output_per_million": 2, "currency": "CNY"},
         "default:judge": {"input_per_million": 3, "output_per_million": 4, "currency": "CNY"}}))
     reset_cache()
@@ -136,7 +136,7 @@ async def test_concurrent_claim_and_late_result_keep_cost_without_applying_advic
 @pytest.mark.asyncio
 @pytest.mark.parametrize("roles,allow", [("research=default:small", True), ("assess=missing:judge", True), ("assess=default:judge", False)])
 async def test_unavailable_or_injected_judge_never_falls_back_to_paid_default(tmp_path, monkeypatch, roles, allow):
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", roles)
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", roles)
     async def forbidden(*args, **kwargs): pytest.fail("must not send")
     monkeypatch.setattr(LLMClient, "chat", forbidden)
     service = CollaborationService(str(tmp_path), "owner"); task = submitted(service)
@@ -196,7 +196,7 @@ def test_fast_rules_require_eight_distinct_priced_reviewed_tasks_and_same_type(t
 
 
 def test_missing_usage_and_unknown_provider_price_remain_unknown(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", "{}")
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", "{}")
     service = CollaborationService(str(tmp_path), "owner")
     task = submitted(service, exact=False)
     observation = task.collaboration["model_observations"][0]
@@ -279,7 +279,7 @@ def test_invalid_prices_do_not_become_free_and_price_snapshots_survive_config_ch
     with observation_scope() as bucket:
         _account([], "", {"prompt_tokens": 100, "completion_tokens": 20}, model="small", config=LLMClient(LLMConfig(model="small")).config)
     first = summarize(bucket, 1, "read", complete=True)
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", '{"default:small":{"currency":"USD","input_per_million":true,"output_per_million":0}}')
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", '{"default:small":{"currency":"USD","input_per_million":true,"output_per_million":0}}')
     assert summarize(bucket, 1, "read", complete=True)["cost_estimate"] is None
     assert first["components"][0]["tariff"]["currency"] == "CNY"
 

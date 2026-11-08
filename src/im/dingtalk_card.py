@@ -21,7 +21,7 @@
 在**卡片搭建平台** <https://open-dev.dingtalk.com/fe/card> 建一个互动卡片模板（注意是开发者后台，
 **不在 open.dingtalk.com 的菜单里**），回调类型选 **Stream**，然后把模板 ID 配进 env：
 
-    VORTOCODE_DD_CARD_TEMPLATE_ID=<模板ID>      # 形如 xxxxxxxx-....schema，含 .schema 后缀
+    VORTOONE_DD_CARD_TEMPLATE_ID=<模板ID>      # 形如 xxxxxxxx-....schema，含 .schema 后缀
 
 模板变量约定（卡片正文里引用这几个）：
     ``title`` 标题 · ``body`` 正文（要批准的操作）· ``status`` 结果（点完后回填）
@@ -59,7 +59,7 @@ _DENY_WORDS = frozenset({DENY_KEY, "reject", "refuse", "no", "n"})
 
 def card_template_id() -> str:
     """配了模板 ID 才启用卡片确认；没配返回空串（= 走文本 y/n）。"""
-    return os.getenv("VORTOCODE_DD_CARD_TEMPLATE_ID", "").strip()
+    return os.getenv("VORTOONE_DD_CARD_TEMPLATE_ID", "").strip()
 
 
 def robot_space_id(owner_id: str) -> str:

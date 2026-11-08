@@ -65,13 +65,13 @@ with socket.socket() as sock:
     port = sock.getsockname()[1]
 env = dict(os.environ)
 for key in list(env):
-    if key.startswith("VORTOCODE_PROVIDER_") or key in ("OPENAI_API_KEY", "OPENAI_API_BASE", "DEFAULT_MODEL", "OPENAI_MODEL", "VORTOCODE_MODEL_ROLES"):
+    if key.startswith("VORTOONE_PROVIDER_") or key in ("OPENAI_API_KEY", "OPENAI_API_BASE", "DEFAULT_MODEL", "OPENAI_MODEL", "VORTOONE_MODEL_ROLES"):
         env.pop(key, None)
 env.update(OPENAI_API_BASE=f"http://127.0.0.1:{server.server_port}/v1", OPENAI_API_KEY="fixture-nonsecret",
-    DEFAULT_MODEL="fixture", OPENAI_MODEL="fixture", VORTOCODE_API_TOKEN="", AUTODEV_API_TOKEN="",
-    VORTOCODE_CRON="0", VORTOCODE_HEARTBEAT="0", VORTOCODE_IM="", VORTOCODE_ENABLE_BROWSER="0",
-    VORTOCODE_ENABLE_SHELL="0", VORTOCODE_WORKSPACE_SCOPE="project", VORTOCODE_DESKTOP_SIDECAR="1",
-    VORTOCODE_WEB_MCP="0", VORTOCODE_MAX_STEPS="3", VORTOCODE_NATIVE_TOOLS="1", VORTOCODE_BUILD_AUTO_CONTINUES="0")
+    DEFAULT_MODEL="fixture", OPENAI_MODEL="fixture", VORTOONE_API_TOKEN="", AUTODEV_API_TOKEN="",
+    VORTOONE_CRON="0", VORTOONE_HEARTBEAT="0", VORTOONE_IM="", VORTOONE_ENABLE_BROWSER="0",
+    VORTOONE_ENABLE_SHELL="0", VORTOONE_WORKSPACE_SCOPE="project", VORTOONE_DESKTOP_SIDECAR="1",
+    VORTOONE_WEB_MCP="0", VORTOONE_MAX_STEPS="3", VORTOONE_NATIVE_TOOLS="1", VORTOONE_BUILD_AUTO_CONTINUES="0")
 runtime = str(Path(__file__).resolve().parents[1] / "src-tauri/target/release/bundle/macos/VortoOne.app/Contents/Resources/runtime/vortocode-runtime")
 log = (work / "runtime.log").open("w")
 child = subprocess.Popen([runtime, "server", "--port", str(port)], cwd=workspace, env=env, stdout=log, stderr=log)

@@ -106,8 +106,8 @@ ADMIN = {"Authorization": "Bearer test-admin-pairing"}
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "test-admin-pairing")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "test-admin-pairing")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.web.server import app
 
     client = TestClient(app, base_url="https://gateway.test")
@@ -176,7 +176,7 @@ def test_cross_site_pairing_and_missing_admin_configuration_are_rejected(api, mo
         ).status_code
         == 403
     )
-    monkeypatch.delenv("VORTOCODE_API_TOKEN")
+    monkeypatch.delenv("VORTOONE_API_TOKEN")
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     assert api.post("/api/mobile/pairing/start", json=body).status_code == 403
 

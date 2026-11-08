@@ -16,7 +16,7 @@ from src.im.dingtalk import _ws_heartbeat_kw
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_DD_WS_HEARTBEAT", raising=False)
+    monkeypatch.delenv("VORTOONE_DD_WS_HEARTBEAT", raising=False)
 
 
 def test_unset_passes_nothing():
@@ -26,17 +26,17 @@ def test_unset_passes_nothing():
 
 def test_configured_passes_heartbeat():
     import os
-    os.environ["VORTOCODE_DD_WS_HEARTBEAT"] = "30"
+    os.environ["VORTOONE_DD_WS_HEARTBEAT"] = "30"
     try:
         assert _ws_heartbeat_kw() == {"heartbeat": 30.0}
     finally:
-        os.environ.pop("VORTOCODE_DD_WS_HEARTBEAT", None)
+        os.environ.pop("VORTOONE_DD_WS_HEARTBEAT", None)
 
 
 @pytest.mark.parametrize("bad", ["", "0", "-5", "abc", "   "])
 def test_bad_values_fall_back_to_off(monkeypatch, bad):
     """写错/关闭一律回落到"不传"——**绝不能因为这个配置让桥建不起来**。"""
-    monkeypatch.setenv("VORTOCODE_DD_WS_HEARTBEAT", bad)
+    monkeypatch.setenv("VORTOONE_DD_WS_HEARTBEAT", bad)
     assert _ws_heartbeat_kw() == {}
 
 
@@ -74,9 +74,9 @@ async def _connect_with(monkeypatch, env_value):
     from src.im.dingtalk import DingTalkAdapter
 
     if env_value is None:
-        monkeypatch.delenv("VORTOCODE_DD_WS_HEARTBEAT", raising=False)
+        monkeypatch.delenv("VORTOONE_DD_WS_HEARTBEAT", raising=False)
     else:
-        monkeypatch.setenv("VORTOCODE_DD_WS_HEARTBEAT", env_value)
+        monkeypatch.setenv("VORTOONE_DD_WS_HEARTBEAT", env_value)
     adapter = DingTalkAdapter("cid", "secret", "owner")
     session = _FakeSession()
     adapter._session = session

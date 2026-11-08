@@ -29,7 +29,7 @@ def _repo(tmp_path):
 def test_project_cannot_commit_its_own_hook_trust(tmp_path, monkeypatch):
     root = _repo(tmp_path)
     store = tmp_path / "user-owned" / "trusted.json"
-    monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(store))
+    monkeypatch.setenv("VORTOONE_HOOK_TRUST_STORE", str(store))
     from src.hooks.trust import hook_config_status, is_project_trusted, set_project_trusted
 
     assert not is_project_trusted(str(root))
@@ -51,7 +51,7 @@ def test_project_cannot_commit_its_own_hook_trust(tmp_path, monkeypatch):
 
 def test_agent_session_loads_project_hooks_only_after_trust(tmp_path, monkeypatch):
     root = _repo(tmp_path)
-    monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
+    monkeypatch.setenv("VORTOONE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
     from src.gateway.agent_session import load_project_hook_system
     from src.hooks.trust import set_project_trusted
 
@@ -66,7 +66,7 @@ def test_agent_session_loads_project_hooks_only_after_trust(tmp_path, monkeypatc
 def test_broken_hook_config_disables_hooks_loudly(tmp_path, monkeypatch, caplog):
     """钩子含信任门：加载失败可以降级成"本会话不启用"，但不许静默——否则没人知道安全钩子没生效。"""
     root = _repo(tmp_path)
-    monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
+    monkeypatch.setenv("VORTOONE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
     from src.gateway.agent_session import load_project_hook_system
     from src.hooks.trust import set_project_trusted
 
@@ -83,7 +83,7 @@ def test_broken_hook_config_disables_hooks_loudly(tmp_path, monkeypatch, caplog)
 
 def test_hook_preview_normalizes_single_event_and_invalid_timeout(tmp_path, monkeypatch):
     root = _repo(tmp_path)
-    monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
+    monkeypatch.setenv("VORTOONE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
     (root / ".vortocode" / "hooks.yaml").write_text(
         "hooks:\n  - name: one\n    event_types: post_tool_use\n"
         "    command: true\n    timeout: not-a-number\n",
@@ -100,7 +100,7 @@ def test_hook_preview_normalizes_single_event_and_invalid_timeout(tmp_path, monk
 def test_hook_trust_api_hot_reloads_live_agents(tmp_path, monkeypatch):
     root = _repo(tmp_path)
     monkeypatch.chdir(root)
-    monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
+    monkeypatch.setenv("VORTOONE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
     from src.web.routers import realtime
     from src.web.server import app
 

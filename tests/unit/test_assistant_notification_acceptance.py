@@ -149,7 +149,7 @@ def test_relay_rejects_notification_when_send_and_retry_storage_both_fail(tmp_pa
         return False
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     monkeypatch.setattr(im_runtime, "notify_owner", notify_owner)
     logs = tmp_path / ".vortocode" / "logs"
     logs.parent.mkdir()

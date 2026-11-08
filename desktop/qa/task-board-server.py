@@ -32,7 +32,7 @@ if not runtime.exists():
 data = root / "workspace"
 data.mkdir(exist_ok=True)
 os.chdir(data)
-os.environ["VORTOCODE_WORKSPACE_SCOPE"] = "project"
+os.environ["VORTOONE_WORKSPACE_SCOPE"] = "project"
 sys.path.insert(0, str(runtime))
 
 from src.llm.client import LLMClient  # noqa: E402

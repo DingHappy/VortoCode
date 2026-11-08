@@ -7,7 +7,7 @@
 - ``propose_task``：让 VortoOne 去做一件事。**只记一张提议**，下发仍要主人在手机或 Desktop 确认。
 
 边界（都不是随手定的）：
-- **专用令牌** ``VORTOCODE_VOICE_MCP_TOKEN``，不收主 API 令牌，主 API 令牌也进不来——音箱那台机器
+- **专用令牌** ``VORTOONE_VOICE_MCP_TOKEN``，不收主 API 令牌，主 API 令牌也进不来——音箱那台机器
   拿到的只是这三个工具，不是整套 API（审批、终端、文件都不在里面）。不设令牌 = 端点不存在（404）。
 - 只在常驻助理（通用范围）上开放。
 - 房间里谁都能对音箱说话：语音来的内容一律按不可信输入记账（提议带污点、标明来自语音），
@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, Response
 router = APIRouter()
 
 PATH = "/api/voice/mcp"
-TOKEN_ENV = "VORTOCODE_VOICE_MCP_TOKEN"
+TOKEN_ENV = "VORTOONE_VOICE_MCP_TOKEN"
 PROTOCOL_VERSION = "2025-03-26"
 PROPOSALS_PER_HOUR = 3
 VOICE_SESSION = "voice"

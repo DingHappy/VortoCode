@@ -18,10 +18,10 @@ from src.gateway.mobile_browser import BrowserDenied, MobileBrowserSessions, bro
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "browser-root-test")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_ACCOUNT_URL", "https://account.test")
-    monkeypatch.setenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", "https://gateway.test")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "browser-root-test")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_ACCOUNT_URL", "https://account.test")
+    monkeypatch.setenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", "https://gateway.test")
     owner = AccountIdentity("https://account.test", "12")
     AccountRegistration(str(tmp_path)).register(AccountSession(owner, 1), "助手", 0)
     from src.gateway import mobile_browser
@@ -278,14 +278,14 @@ def test_missing_public_origin_and_wrong_host_do_not_advertise_login(setup, monk
     assert not client.get("/api/mobile/browser/status", headers={"Host": "other.test"}).json()[
         "ready"
     ]
-    monkeypatch.delenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN")
+    monkeypatch.delenv("VORTOONE_MOBILE_PUBLIC_ORIGIN")
     assert not client.get("/api/mobile/browser/status").json()["ready"]
     assert client.post("/api/mobile/account/login", headers=ORIGIN).status_code == 503
 
 
 def test_mobile_account_login_requires_configured_admin_identity(setup, monkeypatch):
     client, *_ = setup
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "")
     monkeypatch.setenv("AUTODEV_API_TOKEN", "")
     assert not client.get("/api/mobile/browser/status").json()["ready"]
 

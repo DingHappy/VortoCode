@@ -99,8 +99,8 @@ def test_desktop_routes_list_decide_and_remove(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from src.web.server import app
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     store = MobileDevices(str(tmp_path))
     mine = keys()
     store.bind_keys(device(store), *mine)

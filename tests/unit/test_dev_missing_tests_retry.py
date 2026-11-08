@@ -79,7 +79,7 @@ def test_wants_new_tests_predicate(desc, wanted):
 @pytest.mark.asyncio
 async def test_green_without_requested_tests_retries_in_the_same_call(tmp_path, monkeypatch):
     """修复前：第一轮就 ✅ 收工，落下只有源码的分支（主 agent 只好自己再调一次）。"""
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "3")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "3")
     progress: list[str] = []
     landed: list[dict] = []
     tool, restore, calls = _dev_tool(
@@ -102,7 +102,7 @@ async def test_green_without_requested_tests_retries_in_the_same_call(tmp_path, 
 @pytest.mark.asyncio
 async def test_keeps_the_green_implementation_when_the_extra_round_fails(tmp_path, monkeypatch):
     """补测试那几轮更差（没产出改动）时，别把第一份已经绿的实现丢了。"""
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "2")
     progress: list[str] = []
     landed: list[dict] = []
     tool, restore, calls = _dev_tool(
@@ -121,7 +121,7 @@ async def test_keeps_the_green_implementation_when_the_extra_round_fails(tmp_pat
 
 @pytest.mark.asyncio
 async def test_no_extra_round_when_the_task_only_wants_tests_green(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "3")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "3")
     progress: list[str] = []
     landed: list[dict] = []
     tool, restore, calls = _dev_tool(tmp_path, [(SRC_DIFF, "改好了", GREEN)], progress, landed)

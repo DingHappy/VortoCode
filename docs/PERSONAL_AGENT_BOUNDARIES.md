@@ -50,14 +50,14 @@ iPhone 原生 App 待适配，真实设备均未验收。Android 当前范围见
 原 `sandbox.policy.child_env` 与 `is_stripped_env` 现在共用三个来源：
 
 1. 固定运行端凭证：已有管理员/中转/IM 密钥，以及 Codex 上报、运维报到、语音入口令牌。
-2. 精确的 `VORTOCODE_PROVIDER_<NAME>_KEY` 命名空间，包括已无 BASE 的残留 Key。
+2. 精确的 `VORTOONE_PROVIDER_<NAME>_KEY` 命名空间，包括已无 BASE 的残留 Key。
 3. 经可信宿主配置校验后登记的自定义 bot 秘密变量名：Telegram 的 `<prefix>_TOKEN`、
    钉钉的 `<prefix>_CLIENT_SECRET`。整个配置的名称先登记，再开始构造任何适配器。
 
 登记只保存变量名，不读取或复制凭证值，不由项目文件触发。保护持续整个进程：启动失败、
 回滚或关闭绑定后，父环境仍可能保有这些值，不能因此重新允许子进程继承。
 
-保留原宿主环境的 `VORTOCODE_ENV_PASSTHROUGH` 精确放行；名称拼错或通配符不生效。
+保留原宿主环境的 `VORTOONE_ENV_PASSTHROUGH` 精确放行；名称拼错或通配符不生效。
 token 预算、模型名称、PATH、代理与普通任务环境不因包含 KEY/TOKEN 字样被整体删除。
 原外部 CLI 的显式个人模型设置仍按其原合同提供；本轮不接管其原生登录或扩展工具权限。
 

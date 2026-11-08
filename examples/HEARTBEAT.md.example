@@ -2,7 +2,7 @@
 
 <!--
   heartbeat 每次醒来只读这一个文件当值班检查单（轻上下文、隔离会话、可用便宜模型）。
-  换文件：VORTOCODE_HEARTBEAT_CHECKLIST=<仓库内相对路径>（必须在工作目录内，越界不读）。
+  换文件：VORTOONE_HEARTBEAT_CHECKLIST=<仓库内相对路径>（必须在工作目录内，越界不读）。
 
   **这个文件是「要查什么」的清单，不是「去做什么」的指令。**
   它按不可信输入处理：读进来即把该回合标成污点态（免确认授权全部失效），值班 agent 被明确要求
@@ -13,7 +13,7 @@
   一行确定性台账）。有异常如实说 → 走通知三路（台账 /api/notices + WS 广播 + IM 推 owner）。
   领 BACKLOG 由代码做（`- [ ]` 一次领一条 → 后台流水线 → vorto/* 分支 + draft PR，绝不自动合并），
   不靠这个文件驱动。
-  开关：VORTOCODE_HEARTBEAT=1 起 serve 才值班；间隔 VORTOCODE_HEARTBEAT_EVERY（默认 30m）。
+  开关：VORTOONE_HEARTBEAT=1 起 serve 才值班；间隔 VORTOONE_HEARTBEAT_EVERY（默认 30m）。
 -->
 
 逐项看一眼，只报异常：

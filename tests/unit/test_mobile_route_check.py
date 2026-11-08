@@ -44,9 +44,9 @@ def test_public_origin_rejects_credentials_plain_http_and_extra_components(value
 
 def test_environment_parser_never_executes_values(tmp_path):
     path = tmp_path / "env"
-    path.write_text('VORTOCODE_MOBILE_PUBLIC_ORIGIN="https://example.test:18443"\nSECRET=not-for-output\n')
+    path.write_text('VORTOONE_MOBILE_PUBLIC_ORIGIN="https://example.test:18443"\nSECRET=not-for-output\n')
     assert check.public_origin(path) == "https://example.test:18443"
-    path.write_text('VORTOCODE_MOBILE_PUBLIC_ORIGIN=$(touch /tmp/not-executed)\n')
+    path.write_text('VORTOONE_MOBILE_PUBLIC_ORIGIN=$(touch /tmp/not-executed)\n')
     with pytest.raises(check.CheckFailed):
         check.public_origin(path)
 
@@ -75,7 +75,7 @@ def test_caddy_checker_rejects_prefix_match_and_wrong_method(tmp_path):
 def test_real_routes_all_reject_the_probe_without_calling_account_services(setup, monkeypatch):  # noqa: F811
     client, _sessions, _now, calls, _root, _owner = setup
     for enabled in ("0", "1"):
-        monkeypatch.setenv("VORTOCODE_MOBILE_WRITES", enabled)
+        monkeypatch.setenv("VORTOONE_MOBILE_WRITES", enabled)
         for method, path in contract():
             response = client.request(method, path,
                 headers={"Authorization": "Bearer " + check.INVALID_SESSION},
@@ -145,3 +145,13 @@ def test_transient_connection_failures_are_retried_a_bounded_number_of_times(mon
     with pytest.raises(check.CheckFailed, match="重试 2 次"):
         check.request("https://example.test", "GET", "/api/mobile/native/timeline")
     assert len(calls) == 3                                   # 最多三次，不会无限重试
+
+
+def test_environment_written_before_the_rename_is_still_read(tmp_path):
+    """改名前写的环境文件用旧键名（ADR-018 批次 B）；两个都有时以新键名为准。"""
+    path = tmp_path / "env"
+    path.write_text("VORTOCODE_MOBILE_PUBLIC_ORIGIN=https://old.example.test:18443\n")
+    assert check.public_origin(path) == "https://old.example.test:18443"
+    path.write_text("VORTOCODE_MOBILE_PUBLIC_ORIGIN=https://old.example.test:18443\n"
+                    "VORTOONE_MOBILE_PUBLIC_ORIGIN=https://new.example.test:18443\n")
+    assert check.public_origin(path) == "https://new.example.test:18443"

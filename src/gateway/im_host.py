@@ -62,13 +62,13 @@ def _positive(value, *, maximum=32):
 
 
 def load_host_config(root: str) -> HostConfig:
-    if os.getenv("VORTOCODE_IM", "").strip():
-        raise IMConfigError("Choose legacy VORTOCODE_IM or VORTOCODE_IM_BINDINGS_FILE, not both")
-    if os.getenv("VORTOCODE_WORKSPACE_SCOPE", "").strip().lower() != "project":
+    if os.getenv("VORTOONE_IM", "").strip():
+        raise IMConfigError("Choose legacy VORTOONE_IM or VORTOONE_IM_BINDINGS_FILE, not both")
+    if os.getenv("VORTOONE_WORKSPACE_SCOPE", "").strip().lower() != "project":
         raise IMConfigError("Multi-binding IM requires explicit Project scope")
-    if os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower() != "interactive":
+    if os.getenv("VORTOONE_IM_ROLE", "interactive").strip().lower() != "interactive":
         raise IMConfigError("Multi-binding IM requires interactive mode; legacy notify is separate")
-    raw = os.getenv("VORTOCODE_IM_BINDINGS_FILE", "")
+    raw = os.getenv("VORTOONE_IM_BINDINGS_FILE", "")
     path = Path(raw)
     if not raw or not path.is_absolute():
         raise IMConfigError("IM host configuration requires an explicit absolute file path")
@@ -144,7 +144,7 @@ def _adapter(spec: BindingSpec):
     suffixes = (("TOKEN", "OWNER_ID", "BOT_USERNAME") if spec.channel == "telegram" else
                 ("CLIENT_ID", "CLIENT_SECRET", "OWNER_ID"))
     namespace = "TG" if spec.channel == "telegram" else "DD"
-    values = {f"VORTOCODE_{namespace}_{key}": os.getenv(f"{spec.env_prefix}_{key}", "") for key in suffixes}
+    values = {f"VORTOONE_{namespace}_{key}": os.getenv(f"{spec.env_prefix}_{key}", "") for key in suffixes}
     return im_service.build_adapter(spec.channel, env=values)
 
 

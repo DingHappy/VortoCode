@@ -130,11 +130,11 @@ def test_task_ledger_persists_goal_and_owner_links(tmp_path):
 
 
 def test_bg_concurrency_env(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_BG_TASKS", raising=False)
+    monkeypatch.delenv("VORTOONE_BG_TASKS", raising=False)
     assert bg_concurrency() == 2
-    monkeypatch.setenv("VORTOCODE_BG_TASKS", "5")
+    monkeypatch.setenv("VORTOONE_BG_TASKS", "5")
     assert bg_concurrency() == 5
-    monkeypatch.setenv("VORTOCODE_BG_TASKS", "junk")
+    monkeypatch.setenv("VORTOONE_BG_TASKS", "junk")
     assert bg_concurrency() == 2
 
 

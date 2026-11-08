@@ -16,14 +16,14 @@ def test_scope_normalization_fails_closed_to_project():
 
 
 def test_current_scope_is_explicit_but_keeps_cli_compatibility(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_WORKSPACE_SCOPE", raising=False)
+    monkeypatch.delenv("VORTOONE_WORKSPACE_SCOPE", raising=False)
     assert current_workspace_scope() == PROJECT
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     assert current_workspace_scope() == GENERAL
 
 
 def test_general_snapshot_does_not_expose_managed_directory(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     snapshot = workspace_scope_snapshot("/private/app-data/general")
     assert snapshot == {
         "scope": GENERAL,

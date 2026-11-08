@@ -16,7 +16,7 @@ TZ = timezone(timedelta(hours=8))
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
     path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(path))
 
 
 class _Inbox:
@@ -75,11 +75,11 @@ async def test_reports_once_per_slot_within_grace(tmp_path):
 
 
 def test_watch_needs_explicit_notify_url(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_OWNER_NOTIFY_URL", raising=False)
+    monkeypatch.delenv("VORTOONE_OWNER_NOTIFY_URL", raising=False)
     assert not watch.watch_enabled()
-    monkeypatch.setenv("VORTOCODE_OWNER_NOTIFY_URL", "http://127.0.0.1:8080/")
+    monkeypatch.setenv("VORTOONE_OWNER_NOTIFY_URL", "http://127.0.0.1:8080/")
     assert watch.watch_enabled() and watch.notify_url() == "http://127.0.0.1:8080"
-    monkeypatch.setenv("VORTOCODE_ASSISTANT_REPORT_TIMES", "08:30, bad ,21:00")
+    monkeypatch.setenv("VORTOONE_ASSISTANT_REPORT_TIMES", "08:30, bad ,21:00")
     assert watch.report_times() == ["08:30", "21:00"]
 
 
@@ -87,7 +87,7 @@ def test_relay_route_records_notice(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     from src.web.server import app
     from src.scheduling.notices import load_notices
 
@@ -99,12 +99,12 @@ def test_relay_route_records_notice(tmp_path, monkeypatch):
 
 
 def test_schedule_overview_lists_reports_heartbeat_and_cron(tmp_path, monkeypatch):
-    monkeypatch.delenv("VORTOCODE_OWNER_NOTIFY_URL", raising=False)
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT", raising=False)
+    monkeypatch.delenv("VORTOONE_OWNER_NOTIFY_URL", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT", raising=False)
     assert watch.schedule_overview(str(tmp_path)) == []
-    monkeypatch.setenv("VORTOCODE_OWNER_NOTIFY_URL", "http://127.0.0.1:8080")
-    monkeypatch.setenv("VORTOCODE_ASSISTANT_REPORT_TIMES", "09:00,21:00")
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")
+    monkeypatch.setenv("VORTOONE_OWNER_NOTIFY_URL", "http://127.0.0.1:8080")
+    monkeypatch.setenv("VORTOONE_ASSISTANT_REPORT_TIMES", "09:00,21:00")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT", "1")
     (tmp_path / ".vortocode").mkdir()
     (tmp_path / ".vortocode" / "cron.yaml").write_text(
         "jobs:\n  - name: 看邮箱\n    schedule: at 08:30\n    prompt: 有新询盘就告诉我\n", encoding="utf-8")
@@ -122,8 +122,8 @@ def test_relay_route_never_relays_again(tmp_path, monkeypatch):
     from src.scheduling.notices import pending_undelivered_count
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.setenv("VORTOCODE_OWNER_NOTIFY_URL", "http://127.0.0.1:9")
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.setenv("VORTOONE_OWNER_NOTIFY_URL", "http://127.0.0.1:9")
     monkeypatch.setattr(im_rt, "_OWNER_NOTIFIER", None)
     relayed = []
 
