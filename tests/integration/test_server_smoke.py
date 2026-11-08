@@ -97,7 +97,7 @@ def test_root_is_a_service_banner_after_console_retirement(client):
     r = client.get("/")
     assert r.status_code == 200
     body = r.json()
-    assert body["message"] == "VortoCode API" and "/review" in body["clients"]
+    assert body["message"] == "VortoOne API" and "/review" in body["clients"]
 
 
 def test_websocket_basic(client):

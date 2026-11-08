@@ -1,5 +1,5 @@
 [Unit]
-Description=VortoCode non-executing mobile gateway
+Description=VortoOne non-executing mobile gateway
 Wants=network-online.target
 After=network-online.target
 

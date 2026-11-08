@@ -191,7 +191,7 @@ def build_inventory(analysis_path: Path) -> tuple[dict[str, Any], list[dict[str,
 
 def render_notices(runtime: dict[str, Any], components: list[dict[str, Any]]) -> str:
     lines = [
-        "VortoCode Desktop Third-Party Notices",
+        "VortoOne Desktop Third-Party Notices",
         "======================================",
         "",
         "This file is generated from the source and metadata paths present in the",

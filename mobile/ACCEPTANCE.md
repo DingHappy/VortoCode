@@ -6,7 +6,7 @@
 
 - 账号服务运行 `account-mobile-24019793188f301e`，网关运行 `mobile-gateway-4ad26da3f8292061`，均为有文件摘要清单的工作区快照，不是新 Git 提交。正式入口为 `https://vortocode.dinghappy.com:18443/mobile`。
 - 用户在原账号服务自行登录并确认一次性关联。97 私有账号桥确认归属 revision=1；临时关联设备已退出，不读取 Desktop 钥匙串、不保存账号令牌。关联信息仍保留在原授权文件，未新增任务数据库。
-- Ego TaskSpace 229 使用正式入口与同一个真实账号完成手机授权、PKCE 回调、bootstrap 与 snapshot。资料、主聊天、目标来源均为 current；显示 VortoCode 与主聊天已登记，目标来源正常且当前没有个人目标。不是合成目标，也不代表读取了完整聊天消息。
+- Ego TaskSpace 229 使用正式入口与同一个真实账号完成手机授权、PKCE 回调、bootstrap 与 snapshot。资料、主聊天、目标来源均为 current；显示 VortoOne 与主聊天已登记，目标来源正常且当前没有个人目标。不是合成目标，也不代表读取了完整聊天消息。
 - 页面刷新恢复已登录会话，“刷新概览”继续成功。390×844 CSS px 下，文档宽度与视口均为 390，无横向溢出；这是 DOM/尺寸证据，不是 iPhone 或视觉截图验收。
 - Cookie 属性验证为 HttpOnly、Secure、SameSite=Lax，路径 `/api/mobile`；页面脚本不可见会话 Cookie，localStorage/sessionStorage 为空。bootstrap 仅列 profile/main_chat/goals 读取能力，writes 为空，无内部资源 token。
 - 已登录手机访问管理员关联、设备管理与配置路由仍为 404；浏览器 Cookie 访问 native/bootstrap 为 401。

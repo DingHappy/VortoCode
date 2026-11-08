@@ -16,12 +16,12 @@ NOW = datetime(2026, 10, 25, 20, 0, tzinfo=timezone.utc)          # 周日
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
-    path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
+    path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
 
 
 def _ticket(root, *, status, hours_ago=5, minutes=40, retry_of="", **fields):
-    entry = dispatch.propose(root, project="VortoCode", title="t", goal="g")
+    entry = dispatch.propose(root, project="VortoOne", title="t", goal="g")
     sent = NOW - timedelta(hours=hours_ago)
     dispatch._update(root, entry["id"], lambda item: item.update(
         status=status, sent_at=sent.isoformat(), finished_at=(sent + timedelta(minutes=minutes)).isoformat(),
@@ -37,7 +37,7 @@ def _seed(root):
     _ticket(root, status="failed")
     _ticket(root, status="running", minutes=0)
     _ticket(root, status="done", hours_ago=24 * 40)                      # 窗口外
-    old = dispatch.propose(root, project="VortoCode", title="没下发", goal="g")
+    old = dispatch.propose(root, project="VortoOne", title="没下发", goal="g")
     dispatch.cancel(root, old["id"])
 
 

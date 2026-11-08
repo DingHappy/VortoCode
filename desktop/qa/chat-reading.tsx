@@ -34,7 +34,7 @@ const records: FeedItem[] = [
   { id: "qa-b", title: "拟发消息：请先核对交付依据，再汇报实际结果", summary: "尚未发出，查看内容后决定", status: "waiting", sourceLabel: "Codex 动作", at: "2026-11-05T09:50:00Z" },
   { id: "qa-error", title: "资料来源需核对", summary: "没有取得最新回执，不表示任务已完成", status: "failed", at: "2026-11-05T09:40:00Z" },
 ];
-const reply = "## 今天需要关注的事\n\n结论：构建已经准备好，实际安装与验收仍需核对。项目名称、长路径和正文应该各自清楚可读。\n\n| 会话 | 项目 | 最近动态 |\n|---|---|---|\n|继续处理对话|VortoCode|构建已准备；实际安装与客户端界面仍待验收。|\n|查看当前改动|qban-ai-agents|已整理变更范围与下一步，保留来源和核对时间。|\n\n补充说明：`deploy/one-wish-agent-tasks` 是示例分支名，路径 `tests/unit/test_safe_id_edge_cases.py` 不应撑破聊天栏。\n\n> 尚未取得回执不等于操作没有发生；请从原记录核对依据。\n\n1. 先检查范围与来源。\n2. 再决定下一步，原有确认流程保持可达。\n\n```python\ndef add(a, b):\n    return a + b\n```";
+const reply = "## 今天需要关注的事\n\n结论：构建已经准备好，实际安装与验收仍需核对。项目名称、长路径和正文应该各自清楚可读。\n\n| 会话 | 项目 | 最近动态 |\n|---|---|---|\n|继续处理对话|VortoOne|构建已准备；实际安装与客户端界面仍待验收。|\n|查看当前改动|qban-ai-agents|已整理变更范围与下一步，保留来源和核对时间。|\n\n补充说明：`deploy/one-wish-agent-tasks` 是示例分支名，路径 `tests/unit/test_safe_id_edge_cases.py` 不应撑破聊天栏。\n\n> 尚未取得回执不等于操作没有发生；请从原记录核对依据。\n\n1. 先检查范围与来源。\n2. 再决定下一步，原有确认流程保持可达。\n\n```python\ndef add(a, b):\n    return a + b\n```";
 
 function Fixture() {
   const query = new URLSearchParams(location.search);

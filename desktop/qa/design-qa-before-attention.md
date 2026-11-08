@@ -1,4 +1,4 @@
-# VortoCode 设置页落地验收 · 2026-10-25
+# VortoOne 设置页落地验收 · 2026-10-25
 
 final result: passed
 

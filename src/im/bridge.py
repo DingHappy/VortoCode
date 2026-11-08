@@ -430,7 +430,7 @@ class IMBridge:
         # 时间戳用 time.time()（墙钟）不用 monotonic：要跨进程重启比较，monotonic 重启即归零。
         warn = None if self.notification_only else self.allow_from_warning()
         if warn or self._should_say_hello():
-            hello = (f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
+            hello = (f"🤖 VortoOne 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
                      f"发任务给我跑隔离流水线；/help 看用法。")
             if self.session_role == "research_read":
                 hello = "🔎 只读项目助手已就绪；可读取和检索所选项目。开发与审批请回 Desktop 或原总助手处理。"

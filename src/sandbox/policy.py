@@ -202,9 +202,9 @@ def sandboxed_argv(repo_root: str, cmd: str, *, backend: str = "") -> list[str]:
 # ── 子进程凭据隔离（信任地基）───────────────────────────────────────────────
 # 起子进程默认继承主进程整套 env，而本沙箱放行出站网络（reads/network 不变，见模块头）——
 # 两半合起来，一条投毒的 package.json script / Makefile target 就能把中转站 key 外带。
-# 剥掉「VortoCode 自己用的操作密钥」即切断这条链：任何被起的子命令都不需要它们。
+# 剥掉「VortoOne 自己用的操作密钥」即切断这条链：任何被起的子命令都不需要它们。
 #
-# 精确名单、VortoCode provider 命名空间与可信宿主登记的名称；不用 *KEY*/*TOKEN* 通配符：
+# 精确名单、VortoOne provider 命名空间与可信宿主登记的名称；不用 *KEY*/*TOKEN* 通配符：
 # VORTOCODE_CRON_TOKEN_BUDGET（数字预算）、VORTOCODE_MAX_CONTEXT_TOKENS、
 # TEXTUAL_DISABLE_KITTY_KEY（UI 开关）。GITHUB_TOKEN 是「任务令牌」（gh 子命令要用），
 # 故不在此列；外部 CLI 的执行者另行剥掉交付令牌。

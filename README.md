@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="desktop/src-tauri/icons/128x128@2x.png" alt="VortoCode" width="96" height="96">
+<img src="desktop/src-tauri/icons/128x128@2x.png" alt="VortoOne" width="96" height="96">
 
-# VortoCode
+# VortoOne
 
 **一个替你盯着事情的个人 AI Agent：它会记住、会跟进，还会带一支团队。**
 
-Desktop 和 iPhone App 的产品名是 **VortoOne**（2026-11-08 起，见 ADR-018）；本仓库、命令行和包名仍叫 VortoCode。
+VortoOne 原名 VortoCode（2026-11-08 改名，见 ADR-018）；命令行、包名和部分内部标识正在逐步改名。
 
 它记得你在忙什么，你离开电脑后它还在跟进。遇到大任务，它会组一个小组，分派给不同的 Agent 去做。
 你只和它一个说话。看它们干活。关键的事，你来拍板。
@@ -21,7 +21,7 @@ Desktop 和 iPhone App 的产品名是 **VortoOne**（2026-11-08 起，见 ADR-0
 <br>
 
 <a href="https://github.com/DingHappy/VortoCode/releases/latest">
-  <img src="https://img.shields.io/github/v/release/DingHappy/VortoCode?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%20%E4%B8%8B%E8%BD%BD%20Mac%20%E7%89%88%EF%BC%88Apple%20%E8%8A%AF%E7%89%87%EF%BC%89&labelColor=070707&color=1084fe" alt="下载 VortoCode Mac 版（Apple 芯片）" height="40">
+  <img src="https://img.shields.io/github/v/release/DingHappy/VortoCode?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%20%E4%B8%8B%E8%BD%BD%20Mac%20%E7%89%88%EF%BC%88Apple%20%E8%8A%AF%E7%89%87%EF%BC%89&labelColor=070707&color=1084fe" alt="下载 VortoOne Mac 版（Apple 芯片）" height="40">
 </a>
 
 <sub>签名并经 Apple 公证的 .dmg · 支持应用内更新 · [全部版本](https://github.com/DingHappy/VortoCode/releases) · [上手指南](docs/GETTING_STARTED_DESKTOP.md)</sub>
@@ -30,11 +30,11 @@ Desktop 和 iPhone App 的产品名是 **VortoOne**（2026-11-08 起，见 ADR-0
 
 ---
 
-> **公开预览。** VortoCode 每天都在迭代，接口和数据格式可能变化。欢迎试用和反馈。对外暴露服务之前，请先读 [SECURITY.md](SECURITY.md)。
+> **公开预览。** VortoOne 每天都在迭代，接口和数据格式可能变化。欢迎试用和反馈。对外暴露服务之前，请先读 [SECURITY.md](SECURITY.md)。
 
-## 为什么做 VortoCode
+## 为什么做 VortoOne
 
-现在的 AI 助手大多只在你打开它的那一刻工作。你关掉窗口，它就把事情忘了。它不知道你这周在推进什么，也不会在结果出来时来找你。VortoCode 想做的是另一种形态：**一个一直在线、记得上下文、能调度别人干活的个人 Agent。**
+现在的 AI 助手大多只在你打开它的那一刻工作。你关掉窗口，它就把事情忘了。它不知道你这周在推进什么，也不会在结果出来时来找你。VortoOne 想做的是另一种形态：**一个一直在线、记得上下文、能调度别人干活的个人 Agent。**
 
 - **一个对话，到处都在。** Desktop、手机和 Telegram 共用同一段对话。在电脑上聊到一半，出门用手机接着聊，它都记得。
 - **它会跟进，不只是回答。** 个人目标、定时任务、早晚报和巡检跑在你自己的常驻主机上。结果出来了，它会推送给你。安静时段内的通知会攒着，结束后一次发出。
@@ -66,7 +66,7 @@ Desktop 和 iPhone App 的产品名是 **VortoOne**（2026-11-08 起，见 ADR-0
 
 ### 🔀 成员用不同的框架和模型
 
-成员可以是内置 Agent，也可以是通过 [ACP](https://agentclientprotocol.com/) 接入的 OpenCode、DeepSeek Harness 等，每个成员单独选模型。外部框架想执行命令或改文件时，权限请求同样由 VortoCode 的确认门判定。
+成员可以是内置 Agent，也可以是通过 [ACP](https://agentclientprotocol.com/) 接入的 OpenCode、DeepSeek Harness 等，每个成员单独选模型。外部框架想执行命令或改文件时，权限请求同样由 VortoOne 的确认门判定。
 
 </td>
 <td width="50%" valign="top">
@@ -115,7 +115,7 @@ Desktop 和 iPhone App 的产品名是 **VortoOne**（2026-11-08 起，见 ADR-0
 
 ## 和常见做法有什么不同
 
-| | 聊天式 AI 助手 | 编码 CLI Agent | **VortoCode** |
+| | 聊天式 AI 助手 | 编码 CLI Agent | **VortoOne** |
 | --- | --- | --- | --- |
 | 你不在时 | 停下 | 停下 | 常驻主机上继续跟进，有结果就推送 |
 | 记忆 | 单次对话 | 当前仓库 | 跨入口的主要对话 + 分级长期记忆 |
@@ -165,7 +165,7 @@ flowchart LR
 
 ### 只用 Desktop
 
-1. [下载](https://github.com/DingHappy/VortoCode/releases/latest) `VortoCode_<版本>_aarch64.dmg`，把 VortoCode 拖进「应用程序」。
+1. [下载](https://github.com/DingHappy/VortoCode/releases/latest) `VortoOne_<版本>_aarch64.dmg`，把 VortoOne 拖进「应用程序」。
 2. 打开后连接一个模型服务：OpenAI、DeepSeek、Kimi 等云端服务，或者 Ollama 这样的本机模型。
 3. 开始聊天。想让它在你离开时也继续工作，再参照 [运维指南](docs/OPS.md) 配一台常驻主机。
 
@@ -174,7 +174,7 @@ flowchart LR
 ### 在常驻主机上运行
 
 ```bash
-git clone https://github.com/DingHappy/VortoCode.git && cd VortoCode
+git clone https://github.com/DingHappy/VortoCode.git && cd VortoOne
 pip install -e '.[llm]'      # 需要 Python 3.10+；全部功能用 '.[all]'
 cp .env.example .env         # 填模型服务地址、Key 和模型名
 vc doctor                    # 一屏自检：凭据、模型服务、权限、沙箱……

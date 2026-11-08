@@ -31,7 +31,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
     """定时作业的观察 + 排班面（`.vortocode/cron.yaml`）。
 
     为什么要有（真机 2026-07-27）：用户问"能不能设置定时任务"，agent 答"我目前没有设置定时
-    任务的能力"，然后推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoCode 自己的
+    任务的能力"，然后推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoOne 自己的
     cron 子系统当时就跑在那台机器上（`VORTOCODE_CRON=1`，relay_duty 每天 02:00）。就工具而言
     它没说谎（确实一个 cron 工具都没有），但把主人推去用外部服务是实打实的错——**产品有的
     能力，agent 却不知道**。#218 当初刻意只开了只读 REST 面（"无人值守修改面先观察后设计"），

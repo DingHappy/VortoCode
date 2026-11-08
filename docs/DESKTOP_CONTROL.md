@@ -142,7 +142,7 @@ Cookie、剪贴板、窗口标题或图像。记录数可能短暂包含刚断�
 
 ## 专用常驻虚拟机的部署底座（2026-10-24）
 
-当整台 Linux 虚拟机专用于 VortoCode 时，在这台机器里部署一套持久桌面即可。
+当整台 Linux 虚拟机专用于 VortoOne 时，在这台机器里部署一套持久桌面即可。
 既有助理服务负责记忆、定时、跟进和通知；新增 `vortocode-computer.service` 只管理
 Xvfb `:0`、Openbox、浏览器、VNC 和 noVNC，不运行模型、不启用自动任务、不改变确认门。
 第一阶段提供远程查看与人工鼠标键盘操作。第二阶段增加 SSH 控制协议与协作控制权，
@@ -311,7 +311,7 @@ VORTOCODE_DESKTOP_DISPLAY=:0
 VORTOCODE_DESKTOP_APPS=xfce4-terminal,firefox,thunar
 ```
 
-目标机器需要 X11 会话（Wayland 下 xdotool 控制不了别的窗口），并安装 `xdotool`、`scrot`。经 SSH 时，运行 VortoCode
+目标机器需要 X11 会话（Wayland 下 xdotool 控制不了别的窗口），并安装 `xdotool`、`scrot`。经 SSH 时，运行 VortoOne
 的机器要能用密钥免交互登录目标机器。推荐给它一台专用的桌面虚拟机（XFCE + X11，自动登录），不要用宿主机自己的桌面会话。
 
 专用虚拟机还要关掉自动锁屏和息屏，否则空闲一阵后屏幕被锁，截屏全黑，点击和输入也落不到桌面上，解锁又要密码。

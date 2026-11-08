@@ -8,7 +8,7 @@ import { installApp } from "./install-app.mjs";
 for (const mode of ["success", "backup-failure", "stage-failure", "published-failure", "identity-change", "first-install"]) {
   test(`verified replacement: ${mode}`, () => {
     const root = mkdtempSync(join(tmpdir(), "vorto-install-contract-"));
-    const source = join(root, "built.app"), target = join(root, "VortoCode.app");
+    const source = join(root, "built.app"), target = join(root, "VortoOne.app");
     const payload = path => readFileSync(join(path, "payload"), "utf8");
     const make = (path, text) => { mkdirSync(path); writeFileSync(join(path, "payload"), text); };
     make(source, "new"); if (mode !== "first-install") make(target, "old");

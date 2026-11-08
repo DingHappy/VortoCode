@@ -292,10 +292,10 @@ def test_strip_markup():
 @pytest.mark.asyncio
 async def test_headless_pure_reply_to_stdout(monkeypatch, capsys):
     # 非 TTY（capsys 下 stdout 非 tty）→ 不流式，一次性 print 回复
-    reply = await cli.run_agent_headless("你好", llm=_ScriptedLLM("我是 VortoCode。"))
-    assert reply == "我是 VortoCode。"
+    reply = await cli.run_agent_headless("你好", llm=_ScriptedLLM("我是 VortoOne。"))
+    assert reply == "我是 VortoOne。"
     cap = capsys.readouterr()
-    assert cap.out.strip() == "我是 VortoCode。"             # 回复进 stdout
+    assert cap.out.strip() == "我是 VortoOne。"             # 回复进 stdout
     assert cap.err == ""                                     # 闲聊不调工具，stderr 干净
 
 

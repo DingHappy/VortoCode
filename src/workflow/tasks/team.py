@@ -29,7 +29,7 @@ ROLES: Dict[str, Dict[str, Any]] = {
     "web-researcher": {"title": "研究员", "tools": "web_read", "web": True, "max_steps": 12, "timeout_seconds": 600},
     # 审查员要读完整份材料：真机 2026-11-04 八千字的材料 300 秒没审完
     "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 600},
-    # 开发成员：在登记项目的一次性 worktree 里读写代码，不执行命令、不联网；验证与落分支由 VortoCode 做。
+    # 开发成员：在登记项目的一次性 worktree 里读写代码，不执行命令、不联网；验证与落分支由 VortoOne 做。
     # 只能由外部框架担任（自有 agent 改代码走隔离开发流水线），小组必须是 private 档位。
     "developer": {"title": "开发", "tools": "code_write", "web": False, "max_steps": 40, "timeout_seconds": 1800,
                   "engines": ("opencode",)},

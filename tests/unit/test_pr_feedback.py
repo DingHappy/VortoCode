@@ -50,7 +50,7 @@ def test_pr_feedback_parses_reviews_checks_and_filters_resolved(monkeypatch):
             {"context": "deploy", "state": "PENDING", "targetUrl": "http://ci/2"},
         ],
     }
-    repo = {"owner": {"login": "me"}, "name": "VortoCode"}
+    repo = {"owner": {"login": "me"}, "name": "VortoOne"}
     graphql = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
         {"isResolved": False, "comments": {"nodes": [
             {"path": "src/x.py", "line": 10, "body": "改这行", "author": {"login": "codex"}}]}},

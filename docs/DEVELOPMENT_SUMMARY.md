@@ -1,4 +1,4 @@
-# VortoCode 开发总结
+# VortoOne 开发总结
 
 > ⚠️ **2026-07 更新（路线 A · 主线聚焦）——本文部分内容已过时**：以下能力已**退役删除**，
 > 别再按本文找它们的 API——五角色批处理编排引擎（`SelfOrchestratingEngine` / 能力匹配 matcher /

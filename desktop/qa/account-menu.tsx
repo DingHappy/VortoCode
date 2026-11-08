@@ -11,7 +11,7 @@ if (new URLSearchParams(location.search).get("theme") === "dark") document.docum
 createRoot(document.getElementById("root")!).render(
   <div style={{ display: "grid", gridTemplateColumns: "256px minmax(0, 1fr)", height: "100vh", background: "var(--vc-bg)" }}>
     <aside className="sidebar vc-sidebar" style={{ display: "flex", flexDirection: "column", background: "var(--vc-sidebar)" }}>
-      <SidebarFooter identity={{ initial: "S", name: "someone@example.com", detail: "中度会员", title: "VortoCode 账号" }}
+      <SidebarFooter identity={{ initial: "S", name: "someone@example.com", detail: "中度会员", title: "VortoOne 账号" }}
         update={null} resident={{ state: "online", name: "常驻电脑", onClick: () => {} }} onOpenSettings={() => {}} menuOpen />
     </aside>
     <div />

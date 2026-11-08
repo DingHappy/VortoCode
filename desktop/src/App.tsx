@@ -539,7 +539,7 @@ function App() {
   const [pluginsRevision, setPluginsRevision] = useState(0);
   /** 启动时自动检查更新（每天最多一次，设置里可关）；有新版才非空。 */
   const [availableUpdate, setAvailableUpdate] = useState<UpdateCheck | null>(null);
-  // 左下角显示 VortoCode 账号本人；账号卡片里登录/退出/换会员后会广播 ACCOUNT_CHANGED_EVENT
+  // 左下角显示 VortoOne 账号本人；账号卡片里登录/退出/换会员后会广播 ACCOUNT_CHANGED_EVENT
   const [vortoAccount, setVortoAccount] = useState<{ status: VortoAccountStatus | null; membership: VortoMembership | null }>({ status: null, membership: null });
   useEffect(() => {
     let alive = true;

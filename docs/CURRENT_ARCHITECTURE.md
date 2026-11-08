@@ -26,7 +26,7 @@
 
 ## 定位与主线
 
-VortoCode 是面向个人研发工作的本地优先、可常驻的 AI 工作助手：记住工作背景，协调执行，持续跟进，核对交付依据，在需要用户决定时找到用户。
+VortoOne 是面向个人研发工作的本地优先、可常驻的 AI 工作助手：记住工作背景，协调执行，持续跟进，核对交付依据，在需要用户决定时找到用户。
 
 近期所有能力围绕四个问题收敛：
 
@@ -158,7 +158,7 @@ General 跨项目往返、持久排队/公平性、容量迁移与微信仍未�
 [官方架构参考](MULTI_BOT_ARCHITECTURE_REFERENCES.md) 记录可借鉴的机制、不能推定的保证和第二轮取舍。
 
 - [今日工作](ASSISTANT_WORKDAY.md)：展示、完成统计、来源与失联合同。
-- [工具运行层](TOOL_RUNTIME.md)：VortoCode 工具的独立执行边界。
+- [工具运行层](TOOL_RUNTIME.md)：VortoOne 工具的独立执行边界。
 - [核心会话控制](AGENT_BACKENDS.md)：已有 Codex 会话的适配与限制。
 - [可扩展执行合同 v1](EXECUTION_CONTRACT.md)：身份、状态、结果、证据与新增核心的兼容规则。
 - [外部执行者](MODEL_ROUTING.md#外部执行者codex--claude-code-cli)：Codex / Claude CLI 的实验接入。

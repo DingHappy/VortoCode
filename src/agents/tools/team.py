@@ -28,7 +28,7 @@ def _card(objective: str, acceptance: List[str], members: List[dict], mode: str,
                                       + (f"，模型 {item['model']}" if item.get("model") else "") + "）" for item in members))
     if project:
         lines.append(f"项目：{project['name']}（常驻电脑上的 {project['repo_root']}）。开发成员每轮在它的一次性副本里改，"
-                     "改完由 VortoCode 在沙箱里跑测试，改动落成本地分支——不推送、不合并，由你审")
+                     "改完由 VortoOne 在沙箱里跑测试，改动落成本地分支——不推送、不合并，由你审")
     lines.append("档位：" + ("open（成员可联网，小组看不到你的记忆、目标和对话）" if mode == "open"
                             else "private（成员不能联网）"))
     lines.append("不设额度：小组做到交付验收或你停止为止；连续 3 次没有进展会停下来问你")

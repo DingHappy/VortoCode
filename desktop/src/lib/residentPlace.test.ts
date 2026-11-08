@@ -22,7 +22,7 @@ describe("residentPlace", () => {
   });
 
   it("常驻电脑登记表里的同名项目", () => {
-    expect(residentEntry(local, [{ name: "VortoCode", repo_root: "/home/me/projects/VortoCode", port: 8082 }])?.port).toBe(8082);
+    expect(residentEntry(local, [{ name: "VortoOne", repo_root: "/home/me/projects/VortoCode", port: 8082 }])?.port).toBe(8082);
     expect(residentEntry(local, [{ name: "Notes", repo_root: "/home/me/projects/Notes", port: 8083 }])).toBeUndefined();
   });
 

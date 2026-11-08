@@ -10,7 +10,7 @@ from tests.unit.test_mobile_owner import Key, bind, owner, signed  # noqa: F401
 
 
 def _item(**extra):
-    return {"id": "dsp-0123456789", "project": "VortoCode", "title": "修登录", "goal": "登录不再 500",
+    return {"id": "dsp-0123456789", "project": "VortoOne", "title": "修登录", "goal": "登录不再 500",
             "status": "proposed", "tainted": False, "criteria": ["登录 200"], **extra}
 
 

@@ -1,6 +1,6 @@
 # Security Policy
 
-VortoCode is a public preview / dogfooding project. Treat it as a local-first
+VortoOne is a public preview / dogfooding project. Treat it as a local-first
 developer tool, not a hardened multi-tenant service.
 
 ## Supported Versions

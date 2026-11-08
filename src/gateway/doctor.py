@@ -103,7 +103,7 @@ async def _check_serve() -> Check:
                 if r.status == 200 and body.get("status") == "healthy":
                     return Check("serve", "ok", f"serve 可达：{url}（--attach 可用）")
                 return Check("serve", "warn",
-                             f"{url} 有服务但不像 VortoCode serve（HTTP {r.status}）——"
+                             f"{url} 有服务但不像 VortoOne serve（HTTP {r.status}）——"
                              f"--attach 前确认端口/URL")
     except Exception:  # noqa: BLE001
         return Check("serve", "warn",

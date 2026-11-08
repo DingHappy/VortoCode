@@ -130,7 +130,7 @@ def _previous_branch(child: Any) -> str:
 async def _run_developer(service: Any, root: Any, work: Any, child: Any, number: int, dispatch: dict, engine: str,
                          tainted: bool, *, run_external: Optional[Callable[..., Any]] = None,
                          run_tests: Optional[Callable[..., Any]] = None) -> Any:
-    """开发成员（ADR-014 S2）：一次性 worktree 里改代码 → VortoCode 验证 → 落分支。见 ``team_delivery``。"""
+    """开发成员（ADR-014 S2）：一次性 worktree 里改代码 → VortoOne 验证 → 落分支。见 ``team_delivery``。"""
     from src.agents import team_delivery, team_engines
     project = root.team.get("project") or {}
     repo_root = str(project.get("repo_root") or "")

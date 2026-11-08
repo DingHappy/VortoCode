@@ -54,7 +54,7 @@ _COOLDOWN = 6 * 3600
 _ENABLED_ENV = "VORTOCODE_SELF_HEAL"
 
 # 自动处置时用的提交身份。**刻意不冒充主人**：自动落的提交要一眼看得出是机器落的。
-_BOT_NAME = "VortoCode Agent"
+_BOT_NAME = "VortoOne Agent"
 _BOT_EMAIL = "vortocode-agent@localhost"
 
 

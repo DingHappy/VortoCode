@@ -27,7 +27,7 @@ def create_app() -> FastAPI:
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,95}", release):
         raise RuntimeError("手机网关发布标识无效")
 
-    app = FastAPI(title="VortoCode Mobile", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="VortoOne Mobile", docs_url=None, redoc_url=None, openapi_url=None)
     app.middleware("http")(auth_middleware)
 
     from src.web.routers.mobile import router as mobile

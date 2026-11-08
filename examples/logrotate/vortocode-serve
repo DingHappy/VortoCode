@@ -1,4 +1,4 @@
-# VortoCode 常驻服务日志轮转（装到 /etc/logrotate.d/vortocode-serve，路径按实际家目录改）。
+# VortoOne 常驻服务日志轮转（装到 /etc/logrotate.d/vortocode-serve，路径按实际家目录改）。
 #
 # 为什么必须有：systemd 单元用 StandardOutput=append: 无限追加，而 LOG_LEVEL=INFO 之后
 # 增速上了台阶（2026-08-02 起 INFO 真的会产出了——此前全仓日志配置缺失，见 src/cli.py

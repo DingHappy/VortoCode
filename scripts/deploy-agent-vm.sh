@@ -17,7 +17,7 @@
 set -uo pipefail
 
 HOST="${VORTOCODE_DEPLOY_HOST:-}"
-REMOTE_DIR="${VORTOCODE_DEPLOY_DIR:-VortoCode}"
+REMOTE_DIR="${VORTOCODE_DEPLOY_DIR:-VortoOne}"
 SERVICE="${VORTOCODE_DEPLOY_SERVICE:-vortocode-serve.service}"
 REF="${1:-main}"
 

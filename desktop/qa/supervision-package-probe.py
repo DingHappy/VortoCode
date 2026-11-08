@@ -72,7 +72,7 @@ env.update(OPENAI_API_BASE=f"http://127.0.0.1:{server.server_port}/v1", OPENAI_A
     VORTOCODE_CRON="0", VORTOCODE_HEARTBEAT="0", VORTOCODE_IM="", VORTOCODE_ENABLE_BROWSER="0",
     VORTOCODE_ENABLE_SHELL="0", VORTOCODE_WORKSPACE_SCOPE="project", VORTOCODE_DESKTOP_SIDECAR="1",
     VORTOCODE_WEB_MCP="0", VORTOCODE_MAX_STEPS="3", VORTOCODE_NATIVE_TOOLS="1", VORTOCODE_BUILD_AUTO_CONTINUES="0")
-runtime = str(Path(__file__).resolve().parents[1] / "src-tauri/target/release/bundle/macos/VortoCode.app/Contents/Resources/runtime/vortocode-runtime")
+runtime = str(Path(__file__).resolve().parents[1] / "src-tauri/target/release/bundle/macos/VortoOne.app/Contents/Resources/runtime/vortocode-runtime")
 log = (work / "runtime.log").open("w")
 child = subprocess.Popen([runtime, "server", "--port", str(port)], cwd=workspace, env=env, stdout=log, stderr=log)
 evidence = {"runtime": runtime, "work": str(work), "synthetic_model": True, "real_provider": False, "passed": False}

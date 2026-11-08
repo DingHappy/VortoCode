@@ -113,7 +113,7 @@ def test_structured_activity_event_shapes():
     assert phase["duration_ms"] == 1200 and phase["rid"] == "r1"
     tool = P.make_event(
         P.AGENT_TOOL, id="tool-1", name="read_file", status="succeeded",
-        summary="读取 README.md", args={"path": "README.md"}, result="VortoCode", duration_ms=8,
+        summary="读取 README.md", args={"path": "README.md"}, result="VortoOne", duration_ms=8,
     )
     assert tool["args"] == {"path": "README.md"}
     hook = P.make_event(

@@ -596,7 +596,9 @@ pub(crate) async fn refresh_llm_providers(
 
 pub(crate) const RELAY_ORIGIN: &str = "https://token.vortotech.com";
 pub(crate) const RELAY_PLAN_URL: &str = "https://token.vortotech.com/panel/plan";
-pub(crate) const DESKTOP_TOKEN_NAME: &str = "VortoCode Desktop";
+/// 桌面端在中转站上自己建的按量 Key 的名字。改名前建的叫「VortoCode Desktop」，找的时候两个都认，新建用新名字（ADR-018）。
+pub(crate) const DESKTOP_TOKEN_NAME: &str = "VortoOne Desktop";
+pub(crate) const LEGACY_DESKTOP_TOKEN_NAME: &str = "VortoCode Desktop";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -637,7 +639,7 @@ pub(crate) fn pick_desktop_token(data: &serde_json::Value) -> Option<String> {
     data.as_array()?
         .iter()
         .find(|item| {
-            item.get("name").and_then(serde_json::Value::as_str) == Some(DESKTOP_TOKEN_NAME)
+            matches!(item.get("name").and_then(serde_json::Value::as_str), Some(DESKTOP_TOKEN_NAME | LEGACY_DESKTOP_TOKEN_NAME))
                 && item.get("status").and_then(serde_json::Value::as_i64) == Some(1)
                 && item.get("billing_type").and_then(serde_json::Value::as_str) != Some("token_plan")
         })
@@ -654,7 +656,7 @@ pub(crate) fn with_sk_prefix(key: &str) -> String {
     }
 }
 
-/// 把中转站的一把 Key 存成默认模型服务（中转站登录与 VortoCode 会员共用）：同一地址时沿用已选模型、
+/// 把中转站的一把 Key 存成默认模型服务（中转站登录与 VortoOne 会员共用）：同一地址时沿用已选模型、
 /// 调度档和模型清单，换地址则回到默认模型；自定义供应商一律保留。
 pub(crate) async fn save_relay_plan_profile(
     app: &AppHandle,
@@ -692,7 +694,7 @@ pub(crate) async fn save_relay_plan_profile(
     store.commit(&llm_profile_path(app)?, &expected, Some(profile))?.profile.ok_or("模型配置保存失败".into())
 }
 
-/// 用 VortoCode 中转站账号登录，取用账号的 Token Plan Key（Desktop 套餐即 Token Plan）。
+/// 用 VortoOne 中转站账号登录，取用账号的 Token Plan Key（Desktop 套餐即 Token Plan）。
 /// 没有套餐时默认不建 Key，交给用户决定；`allow_pay_as_you_go` 为真才建/复用一把按量 Key。
 /// 只连固定的中转站地址；密码和登录会话只在本次调用里用，结束即登出，不落盘。
 #[tauri::command]
@@ -758,7 +760,8 @@ pub(crate) async fn relay_login(
         }
         None => {
             let found = relay_data(
-                get(&format!("/api/token/search?keyword={}", DESKTOP_TOKEN_NAME.replace(' ', "%20")))
+                // 按「Desktop」搜，新旧两个名字都能搜到，再由 pick_desktop_token 精确认名字
+                get("/api/token/search?keyword=Desktop")
                     .send()
                     .await
                     .map_err(unreachable)?

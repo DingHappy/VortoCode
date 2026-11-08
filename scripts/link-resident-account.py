@@ -217,11 +217,11 @@ def make_handler(setup):
                 return self.reply(400)
             parsed = urlsplit(self.path)
             if parsed.path == "/" and not parsed.query and not setup.started:
-                return self.reply(200, '<!doctype html><meta charset="utf-8"><title>关联 97 的 VortoCode 助手</title>'
-                    '<h1>关联 97 的常驻助手</h1><p>请登录你希望与手机共用的 VortoCode 账号。账号关联后，手机可读取原助手资料、主聊天和目标。</p>'
+                return self.reply(200, '<!doctype html><meta charset="utf-8"><title>关联 97 的 VortoOne 助手</title>'
+                    '<h1>关联 97 的常驻助手</h1><p>请登录你希望与手机共用的 VortoOne 账号。账号关联后，手机可读取原助手资料、主聊天和目标。</p>'
                     '<p>不会读取桌面端钥匙串；一次性关联设备会在完成后退出。</p>'
                     '<form method="post" action="/start"><input type="hidden" name="csrf" value="'
-                    + html.escape(setup.csrf, quote=True) + '"><button>前往 VortoCode 账号授权</button></form>')
+                    + html.escape(setup.csrf, quote=True) + '"><button>前往 VortoOne 账号授权</button></form>')
             if parsed.path == "/callback":
                 if time.monotonic() > setup.deadline and not setup.finished:
                     setup.error = "账号授权窗口已过期，请重新启动关联工具。"

@@ -15,7 +15,7 @@ function Fixture() {
       <div className="home-greeting">
         <h1>有什么要交代的？</h1>
         <p>{resident ? "交代完就可以合上电脑：它在常驻电脑上接着做，做完了在右侧「动态」里回报。" : "说一件要办的事，做完了会在右侧「动态」里回报。"}</p>
-        {shown && <AssistantStarterTips tips={starterTips({ resident, projects: ["VortoCode"] })}
+        {shown && <AssistantStarterTips tips={starterTips({ resident, projects: ["VortoOne"] })}
           onDismiss={() => setShown(false)} onPick={(tip) => setPrompt(tip.prompt)} />}
       </div>
     </div>

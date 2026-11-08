@@ -3,7 +3,7 @@
 Desktop 工作台的「在哪做：本机 / 常驻电脑」靠它找到同名项目在服务器上的运行时；之后助理
 派活也从这里查目标项目。登记表由运维（装服务的人）写在 ``~/.vortocode/resident_projects.json``：
 
-    {"projects": [{"name": "VortoCode", "repo_root": "/home/me/projects/VortoCode", "port": 8082}]}
+    {"projects": [{"name": "VortoOne", "repo_root": "/home/me/projects/VortoCode", "port": 8082}]}
 
 只读，不探测端口或读项目内容。旧条目保留格式兼容；带 instance_id 的固定目标要求私有宿主
 文件且无歧义，配置不可信时拒绝，不降级成按名字猜测。见 docs/RESIDENT_EXECUTION_IDENTITY.md。

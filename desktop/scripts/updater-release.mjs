@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 发版时生成一键更新要的三样东西，跟 DMG 一起传到同一个 GitHub Release：
-//   VortoCode_<版本>_aarch64.app.tar.gz   签名公证并 staple 过的 .app 打包
-//   VortoCode_<版本>_aarch64.app.tar.gz.sig
+//   VortoOne_<版本>_aarch64.app.tar.gz   签名公证并 staple 过的 .app 打包
+//   VortoOne_<版本>_aarch64.app.tar.gz.sig
 //   latest.json                            Desktop 按 tauri.conf.json 里的地址来取，验签用内置公钥
 // 签名私钥只在发版的这台机器上：VORTOCODE_UPDATER_KEY（默认 ~/.vortocode/updater.key），从不进仓库。
 // 用法：node scripts/updater-release.mjs [更新说明文件]
@@ -15,7 +15,7 @@ export const REPO = "DingHappy/VortoCode";
 export const PLATFORM = "darwin-aarch64";
 
 export function updaterAssetName(version) {
-  return `VortoCode_${version}_aarch64.app.tar.gz`;
+  return `VortoOne_${version}_aarch64.app.tar.gz`;
 }
 
 /** latest.json：只有一个平台；下载地址固定指向本仓库这一版的 Release 附件。 */
@@ -40,7 +40,7 @@ function main() {
   const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
   const version = JSON.parse(readFileSync(join(desktop, "src-tauri", "tauri.conf.json"), "utf8")).version;
   const bundle = join(desktop, "src-tauri", "target", "release", "bundle");
-  const app = join(bundle, "macos", "VortoCode.app");
+  const app = join(bundle, "macos", "VortoOne.app");
   const key = process.env.VORTOCODE_UPDATER_KEY || join(homedir(), ".vortocode", "updater.key");
   if (!existsSync(app)) throw new Error(`没有找到构建好的 App：${app}`);
   if (!existsSync(key)) throw new Error(`没有找到更新签名私钥：${key}`);
@@ -55,7 +55,7 @@ function main() {
   const archive = join(out, updaterAssetName(version));
   rmSync(archive, { force: true });
   rmSync(`${archive}.sig`, { force: true });
-  execFileSync("tar", ["-czf", archive, "-C", join(bundle, "macos"), "VortoCode.app"],
+  execFileSync("tar", ["-czf", archive, "-C", join(bundle, "macos"), "VortoOne.app"],
     { env: { ...process.env, COPYFILE_DISABLE: "1" } });     // 不带 macOS 的 ._ 附属文件
   execFileSync("npx", ["tauri", "signer", "sign", "--private-key-path", key, "--password", "", archive],
     { cwd: desktop, stdio: ["ignore", "ignore", "inherit"] });

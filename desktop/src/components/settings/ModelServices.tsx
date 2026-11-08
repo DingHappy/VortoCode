@@ -1,4 +1,4 @@
-// 设置 → 模型服务：所有服务（本机模型、VortoCode 会员、线上服务、自定义）同样是一张卡片，其中一个是「默认」。
+// 设置 → 模型服务：所有服务（本机模型、VortoOne 会员、线上服务、自定义）同样是一张卡片，其中一个是「默认」。
 // - 默认服务：新对话、自动调度和后台任务用它；输入框的模型菜单里所有服务的模型都能直接选。
 // - 「设为默认」：原来的默认服务挪进列表，不丢。会员模型由账号管理：不能手改地址和 Key。
 // Key 只经原生命令写入本机配置文件，网页层拿不回来（列表里只有 hasKey）；保存自定义服务走原生确认。
@@ -41,7 +41,7 @@ type Props = {
   onEditDefault: (open: boolean) => void;
   /** 还没有默认服务时，选了预设就去填默认服务的表单 */
   onSetupDefault: (preset: ProviderPreset | null) => void;
-  /** 去「常规」登录 VortoCode 账号 */
+  /** 去「常规」登录 VortoOne 账号 */
   onOpenAccount: () => void;
   onDraftStateChange?: (state: { dirty: boolean; busy: boolean; conflict?: boolean }) => void;
 };

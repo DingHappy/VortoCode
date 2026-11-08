@@ -25,9 +25,9 @@ function renderPhone() {
   base(phase === "read" ? "助手概览" : phase === "pair" ? "核对这次连接" : "连接你的常驻助手", "手机只读入口");
   if (message) notice(message);
   if (phase === "account") {
-    app.append(card("使用同一个 VortoCode 账号", "登录与这台常驻助手相同的账号，即可读取它的概览，日常使用无需手动核对码。"));
+    app.append(card("使用同一个 VortoOne 账号", "登录与这台常驻助手相同的账号，即可读取它的概览，日常使用无需手动核对码。"));
     if (accountStatus?.ready) {
-      app.append(button("登录 VortoCode 账号", () => runPhone(async signal => {
+      app.append(button("登录 VortoOne 账号", () => runPhone(async signal => {
         // Recheck status to obtain a fresh context after a failed or cancelled navigation.
         accountStatus = await account.status(signal);
         const url = await account.login(signal); if (!signal.aborted) location.assign(url);

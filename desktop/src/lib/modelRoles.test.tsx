@@ -67,10 +67,10 @@ const residentSummary = { mode: "resident" as const, home: "/home/vc/.vortocode/
 
 it("shows the resident instance read-only and separately from the local engine", () => {
   const html = renderToStaticMarkup(<ModelRoles experimental profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
-    engine={{ place: "resident", name: "VortoCode", summary: residentSummary }} />);
+    engine={{ place: "resident", name: "VortoOne", summary: residentSummary }} />);
   expect(html).toContain("本机引擎：");
   expect(html).toContain("当前连着常驻电脑；切回本机项目后显示本机 CLI 的状态");   // 不拿常驻电脑的状态冒充本机
-  expect(html).toContain("常驻电脑「VortoCode」的外部执行者");
+  expect(html).toContain("常驻电脑「VortoOne」的外部执行者");
   expect(html).toContain("常驻模式，专用登录在 /home/vc/.vortocode/workers");
   expect(html).toContain("实现：codex — 已就绪 · Logged in using ChatGPT · 模型 gpt-x");
   expect(html).toContain("未登录：在常驻电脑上运行 vc workers login claude");

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal entry point for the VortoCode Desktop bundled runtime.
+"""Minimal entry point for the VortoOne Desktop bundled runtime.
 
 The sidecar intentionally exposes only the local Gateway server command. The
 full ``vc`` CLI remains the user-facing entry point for TUI, headless and
@@ -26,7 +26,7 @@ def local_port(value: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vortocode-runtime",
-        description="VortoCode Desktop bundled local Gateway runtime",
+        description="VortoOne Desktop bundled local Gateway runtime",
     )
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     subcommands = parser.add_subparsers(dest="command", required=True)

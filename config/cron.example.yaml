@@ -1,4 +1,4 @@
-# VortoCode cron 作业表**样例**。
+# VortoOne cron 作业表**样例**。
 #
 # 用法：复制到目标仓库的 `.vortocode/cron.yaml`（该目录是 gitignored，所以样例放这里）：
 #     cp config/cron.example.yaml .vortocode/cron.yaml

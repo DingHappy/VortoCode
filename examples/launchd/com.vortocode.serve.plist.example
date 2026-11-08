@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  VortoCode 常驻 serve（macOS launchd 用户级守护）——dogfood「常驻开发同事」形态的底座。
+  VortoOne 常驻 serve（macOS launchd 用户级守护）——dogfood「常驻开发同事」形态的底座。
 
   安装（三步，路径按机器实际改）：
     1. 把本文件按注释改好路径/开关，另存为
@@ -33,7 +33,7 @@
         <!-- 要内嵌 IM：再追加两个 string 参数（"im 开关"与通道名，写法见 docs/OPS.md；需凭证 env） -->
     </array>
 
-    <!-- 改成 VortoCode 仓库根目录（serve 的状态所有权就落在这个仓库的 .vortocode/） -->
+    <!-- 改成 VortoOne 仓库根目录（serve 的状态所有权就落在这个仓库的 .vortocode/） -->
     <key>WorkingDirectory</key>
     <string>/Users/YOU/personal_project/VortoCode</string>
 

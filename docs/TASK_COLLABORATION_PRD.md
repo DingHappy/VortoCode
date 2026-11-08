@@ -1,4 +1,4 @@
-# VortoCode 任务协作与架构收敛 PRD
+# VortoOne 任务协作与架构收敛 PRD
 
 版本：0.1 · 日期：2026-10-03 · 状态：规划基线，尚未整体交付
 
@@ -1272,7 +1272,7 @@ Qwen3.6-35B-A3B-4bit调用web_search，工具succeeded回传实际搜索结果�
 
 新.app已替换/Applications/VortoCode.app；旧包先复制并校验后保留在
 /private/tmp/vorto-desktop-backup-ITeK6o/VortoCode.app。暂存新包、校验签名/二进制/
-runtime SHA后替换，失败可回滚；只处理VortoCode.app，不停模型服务或其它项目。
+runtime SHA后替换，失败可回滚；只处理VortoOne.app，不停模型服务或其它项目。
 已安装包签名与构建证据一致，安装后的SDK+Gateway smoke通过。当前未启动原生窗口。
 
 ### 下一优先项

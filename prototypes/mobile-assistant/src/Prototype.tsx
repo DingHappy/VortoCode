@@ -39,7 +39,7 @@ export default function Prototype() {
   }, [messages, sending]);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [notifications, setNotifications] = useState(true), [schedule, setSchedule] = useState(true);
-  const [name, setName] = useState("VortoCode"), [nameDraft, setNameDraft] = useState("VortoCode");
+  const [name, setName] = useState("VortoOne"), [nameDraft, setNameDraft] = useState("VortoOne");
   const [checking, setChecking] = useState(false), [overview, setOverview] = useState(false);
   const keyboard = useKeyboard(), insets = useKeyboardInsets(), { device } = useMobileDevice(), { screenRef } = useScreenPortal();
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);

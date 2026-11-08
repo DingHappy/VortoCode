@@ -1,4 +1,4 @@
-"""Durable ownership for live VortoCode worktrees."""
+"""Durable ownership for live VortoOne worktrees."""
 import asyncio
 
 import pytest

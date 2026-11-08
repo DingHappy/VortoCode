@@ -1,6 +1,6 @@
 # 只用 Desktop 上手
 
-给想直接用 VortoCode Desktop、不打算先搭服务的人。读完能做到：装好 App、连上模型、知道单机能做什么，以及什么时候才需要一台常驻电脑。
+给想直接用 VortoOne Desktop、不打算先搭服务的人。读完能做到：装好 App、连上模型、知道单机能做什么，以及什么时候才需要一台常驻电脑。
 
 ## 两种用法
 
@@ -14,7 +14,7 @@
 
 ## 1. 获取 App
 
-到 [GitHub Releases](https://github.com/DingHappy/VortoCode/releases/latest) 下载 `VortoCode_<版本>_aarch64.dmg`，打开后把 VortoCode 拖进「应用程序」。安装包经过 Apple 签名与公证，双击即可打开。
+到 [GitHub Releases](https://github.com/DingHappy/VortoCode/releases/latest) 下载 `VortoOne_<版本>_aarch64.dmg`，打开后把 VortoOne 拖进「应用程序」。安装包经过 Apple 签名与公证，双击即可打开。
 
 - 目前**只支持 Apple 芯片（M 系列）的 Mac**，macOS 11 及以上。
 - 升级：下载新版 DMG 拖进去替换，⌘Q 退出后重新打开。App 每天最多检查一次新版本，有新版时左下角会提示。
@@ -25,7 +25,7 @@
 
 ```bash
 git clone https://github.com/DingHappy/VortoCode.git
-cd VortoCode/desktop
+cd VortoOne/desktop
 npm ci
 npm run bundle:app
 ```
@@ -37,10 +37,10 @@ npm run bundle:app
 
 首页会提示「还没有配置模型服务」，有两种方式：
 
-**A. 用 VortoCode 账号（收到邀请时）**
+**A. 用 VortoOne 账号（收到邀请时）**
 
 1. 打开 [account.vortotech.com/register](https://account.vortotech.com/register)，用邀请码注册，点验证邮件里的链接（找不到就看看垃圾箱，或在登录页点「没收到验证邮件」）。
-2. 回到 Desktop：设置 → 常规 →「VortoCode 账号」→「登录」。会打开浏览器，在网页上登录并点「允许」；密码只在网页上输入，Desktop 不经手，登录凭证存在 macOS 钥匙串里。
+2. 回到 Desktop：设置 → 常规 →「VortoOne 账号」→「登录」。会打开浏览器，在网页上登录并点「允许」；密码只在网页上输入，Desktop 不经手，登录凭证存在 macOS 钥匙串里。
 3. 如果邀请附带了会员，登录后会直接问「用会员模型开始吗？」，点确认就能开始，不用填服务地址和 Key。会员档位、到期日和本期剩余额度在账号卡片和左下角都能看到。
 
 **B. 用你自己的模型服务**

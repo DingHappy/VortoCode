@@ -11,7 +11,7 @@ const team = (over: Partial<TeamDetail> = {}): TeamDetail => ({
   children: [{ id: "task-c", member: "开发", status: "done", round: 2, tainted: false, review: "accepted",
     result: "<b>加了一条测试</b>", request: "补测试",
     delivery: { branch: "vorto/team-task-c-r2", verified: true, files: ["tests/unit/test_paths.py"], preexisting_failures: 37 } }],
-  tainted: false, acceptance: ["新增测试并通过"], project: { name: "VortoCode", repo_root: "/home/me/projects/VortoCode", port: 8082 },
+  tainted: false, acceptance: ["新增测试并通过"], project: { name: "VortoOne", repo_root: "/home/me/projects/VortoCode", port: 8082 },
   events: [{ kind: "assigned", text: "开发：补测试", seq: 2 }],
   submission: { summary: "测试已加", evidence: [{ criterion: 0, evidence: "分支 vorto/team-task-c-r2，验证通过" }], tainted: false },
   ...over,

@@ -93,7 +93,7 @@ history rewriting does not make a still-valid credential safe.
   no network activity. The script detaches any such mount and refuses to submit a file
   that is still held open.
 - After the app is notarized and stapled, run `npm run release:updater -- <notes file>`.
-  It packs the app into `VortoCode_<version>_aarch64.app.tar.gz`, signs it with the
+  It packs the app into `VortoOne_<version>_aarch64.app.tar.gz`, signs it with the
   updater key (`VORTOCODE_UPDATER_KEY`, default `~/.vortocode/updater.key`, never in
   the repo) and writes `latest.json`. Upload all three next to the DMG; installed apps
   read `releases/latest/download/latest.json` and verify the archive with the public

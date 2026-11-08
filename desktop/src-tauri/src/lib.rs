@@ -1657,7 +1657,7 @@ pub fn run() {
             open_workspace_file
         ])
         .build(tauri::generate_context!())
-        .expect("error while building VortoCode Desktop");
+        .expect("error while building VortoOne Desktop");
 
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Ready) {
@@ -2264,12 +2264,18 @@ mod tests {
         assert_eq!(pick_plan_key(&plan).as_deref(), Some("plan-key"));
         assert_eq!(pick_plan_key(&serde_json::json!([])), None);
         let tokens = serde_json::json!([
-            {"name": "VortoCode Desktop", "key": "plan", "status": 1, "billing_type": "token_plan"},
-            {"name": "VortoCode Desktop", "key": "off", "status": 2, "billing_type": "pay_as_you_go"},
-            {"name": "VortoCode Desktop 2", "key": "other", "status": 1, "billing_type": "pay_as_you_go"},
-            {"name": "VortoCode Desktop", "key": "mine", "status": 1, "billing_type": "pay_as_you_go"}
+            {"name": "VortoOne Desktop", "key": "plan", "status": 1, "billing_type": "token_plan"},
+            {"name": "VortoOne Desktop", "key": "off", "status": 2, "billing_type": "pay_as_you_go"},
+            {"name": "VortoOne Desktop 2", "key": "other", "status": 1, "billing_type": "pay_as_you_go"},
+            {"name": "VortoOne Desktop", "key": "mine", "status": 1, "billing_type": "pay_as_you_go"}
         ]);
         assert_eq!(pick_desktop_token(&tokens).as_deref(), Some("mine"));
+        // 改名前建的「VortoCode Desktop」也认，不会再建一把新的（ADR-018）
+        let legacy = serde_json::json!([
+            {"name": "VortoCode Desktop", "key": "old", "status": 1, "billing_type": "pay_as_you_go"},
+            {"name": "Other Desktop", "key": "x", "status": 1, "billing_type": "pay_as_you_go"}
+        ]);
+        assert_eq!(pick_desktop_token(&legacy).as_deref(), Some("old"));
         assert_eq!(with_sk_prefix("abc"), "sk-abc");
         assert_eq!(with_sk_prefix("sk-abc"), "sk-abc");
         assert_eq!(

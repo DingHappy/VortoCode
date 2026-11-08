@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "VortoCode",
+  "productName": "VortoOne",
   "version": "0.2.52",
   "identifier": "com.vorto.vortocode",
   "build": {
@@ -34,7 +34,7 @@
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "Local-first agent development workspace",
-    "longDescription": "VortoCode Desktop brings goals, sessions, reviewed edits, Git delivery, runtime evidence and project memory into one local-first agent workspace.",
+    "longDescription": "VortoOne Desktop brings goals, sessions, reviewed edits, Git delivery, runtime evidence and project memory into one local-first agent workspace.",
     "resources": {
       "resources/THIRD_PARTY_NOTICES.txt": "resources/THIRD_PARTY_NOTICES.txt",
       "binaries/runtime/": "runtime/"

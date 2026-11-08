@@ -11,7 +11,7 @@ from src.workflow.workbench.personal_goals import PersonalGoals
 NOW = datetime(2026, 11, 3, 10, 0, tzinfo=timezone(timedelta(hours=8)))
 
 
-def contract(text="把 VortoCode 的登录报错修好", **extra):
+def contract(text="把 VortoOne 的登录报错修好", **extra):
     return {"request_id": f"req-{abs(hash(text)) % 10**8:08d}", "objective": text,
             "acceptance_criteria": ["登录接口返回 200"], "next_action": "查一下报错", **extra}
 
@@ -48,17 +48,17 @@ def world(tmp_path, monkeypatch):
 async def test_dispatch_verdict_becomes_a_task_order_linked_to_the_goal(world):
     root, proposed, sent, notify = world
     goal = PersonalGoals(root).create(contract(), origin="owner")
-    llm = ScriptedLLM({"action": "dispatch", "reason": "需要改代码", "project": "VortoCode", "title": "修登录 500",
+    llm = ScriptedLLM({"action": "dispatch", "reason": "需要改代码", "project": "VortoOne", "title": "修登录 500",
                        "goal": "定位并修复 /login 的 500", "criteria": ["登录返回 200"],
                        "criterion_id": goal["acceptance_criteria"][0]["id"]})
-    done = await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=["VortoCode"])
+    done = await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=["VortoOne"])
     assert [d["action"] for d in done] == ["dispatch"]
     [order] = proposed
-    assert order["goal_id"] == goal["id"] and order["project"] == "VortoCode" and order["tainted"] is False
+    assert order["goal_id"] == goal["id"] and order["project"] == "VortoOne" and order["tainted"] is False
     assert order["criterion_id"] == goal["acceptance_criteria"][0]["id"]
     assert "等你决定" in sent[0]
     material = llm.calls[0][1]["content"]
-    assert "数据" in llm.calls[0][0]["content"] and "把 VortoCode 的登录报错修好" in material
+    assert "数据" in llm.calls[0][0]["content"] and "把 VortoOne 的登录报错修好" in material
 
 
 async def test_cadence_and_cap(world):
@@ -84,21 +84,21 @@ async def test_goal_with_work_in_flight_is_left_alone(world, monkeypatch):
     monkeypatch.setattr(assistant_dispatch, "list_dispatches",
                         lambda r: [{"id": "dsp-1", "status": "running", "goal_link": {"id": goal["id"]}}])
     llm = ScriptedLLM()
-    assert await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=["VortoCode"]) == []
+    assert await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=["VortoOne"]) == []
     assert llm.calls == [] and sent == []                       # 不花一次判断，也不打扰
 
 
 async def test_external_text_makes_the_order_tainted(world):
     root, proposed, _sent, notify = world
     PersonalGoals(root).create(contract("整理网页里说的需求"), origin="external")
-    llm = ScriptedLLM({"action": "dispatch", "reason": "r", "project": "VortoCode", "title": "整理",
+    llm = ScriptedLLM({"action": "dispatch", "reason": "r", "project": "VortoOne", "title": "整理",
                        "goal": "整理需求文档", "criteria": []})
-    await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=["VortoCode"])
+    await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=["VortoOne"])
     assert proposed[0]["tainted"] is True                       # 手机上不能下发，要到电脑上核对
 
 
 def test_parser_rejects_invented_projects_and_malformed_output():
-    projects = ["VortoCode"]
+    projects = ["VortoOne"]
     assert goal_advancer.parse('{"action":"dispatch","project":"Evil","title":"x","goal":"y"}', projects) is None
     assert goal_advancer.parse("我觉得应该派个任务", projects) is None
     assert goal_advancer.parse('{"action":"ask","question":""}', projects) is None
@@ -133,7 +133,7 @@ async def test_no_model_configured_means_no_attempt(world, monkeypatch):
     PersonalGoals(root).create(contract(), origin="owner")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_BASE", "https://relay.example.com/v1")
-    assert await goal_advancer.advance_once(root, NOW, state={}, notify=notify, projects=["VortoCode"]) == []
+    assert await goal_advancer.advance_once(root, NOW, state={}, notify=notify, projects=["VortoOne"]) == []
     assert sent == []
 
 

@@ -16,7 +16,7 @@ NOW = datetime(2026, 10, 20, 9, 0)
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
-    path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
+    path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
 
 
@@ -31,7 +31,7 @@ class FakeLLM:
 
 
 def _ended(root, status, **fields):
-    entry = dispatch.propose(root, project="VortoCode", title="改登录超时", goal="把登录超时改成 30 秒",
+    entry = dispatch.propose(root, project="VortoOne", title="改登录超时", goal="把登录超时改成 30 秒",
                              criteria=["超时是 30 秒", "补了单测"])
     dispatch._update(root, entry["id"], lambda item: item.update(status=status, remote_task_id="t1", **fields))
     return dispatch.list_dispatches(root)[0]
@@ -53,7 +53,7 @@ async def _run_watch(root, review_fn):
 
 async def test_done_notice_checks_each_criterion(tmp_path):
     root = str(tmp_path)
-    entry = dispatch.propose(root, project="VortoCode", title="改登录超时", goal="把登录超时改成 30 秒",
+    entry = dispatch.propose(root, project="VortoOne", title="改登录超时", goal="把登录超时改成 30 秒",
                              criteria=["超时是 30 秒", "补了单测"])
     llm = FakeLLM(json.dumps({"criteria": [
         {"text": "超时是 30 秒", "verdict": "met", "evidence": "login.py 里 TIMEOUT=30"},
@@ -334,7 +334,7 @@ async def test_changed_review_source_cannot_create_a_retry(tmp_path, change, val
 
 async def test_notification_retry_does_not_repeat_a_failed_review(tmp_path):
     root = str(tmp_path)
-    item = dispatch.propose(root, project="VortoCode", title="修复", goal="目标")
+    item = dispatch.propose(root, project="VortoOne", title="修复", goal="目标")
     calls, notices = 0, []
 
     async def reviewer(_item):

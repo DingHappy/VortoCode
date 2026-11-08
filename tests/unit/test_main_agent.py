@@ -78,9 +78,9 @@ def _capture():
 @pytest.mark.asyncio
 async def test_pure_chat_no_tool():
     out, say, emit = _capture()
-    agent = MainAgent([], llm=ScriptedLLM("你好！我是 VortoCode。"))
+    agent = MainAgent([], llm=ScriptedLLM("你好！我是 VortoOne。"))
     await agent.run_turn("你好", mode="plan", say=say, emit=emit)
-    assert out["emit"] == ["你好！我是 VortoCode。"]
+    assert out["emit"] == ["你好！我是 VortoOne。"]
     assert out["say"] == []                       # 闲聊不调用任何工具
 
 

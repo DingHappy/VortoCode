@@ -105,7 +105,7 @@ pub(crate) fn restart_after_update(app: AppHandle) {
     relaunch(app);
 }
 
-/// 连不上常驻电脑、原因是 macOS「本地网络」拦截时，提示条上的「重新打开 VortoCode」。
+/// 连不上常驻电脑、原因是 macOS「本地网络」拦截时，提示条上的「重新打开 VortoOne」。
 #[tauri::command]
 pub(crate) fn relaunch_app(app: AppHandle) {
     relaunch(app);

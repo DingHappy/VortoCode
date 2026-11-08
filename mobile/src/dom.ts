@@ -14,7 +14,7 @@ export function base(title: string, subtitle: string, manage = false) {
   const focus = document.activeElement?.getAttribute("data-action");
   app.replaceChildren(); app.className = manage ? "manage" : "";
   const header = el("header"), img = el("img"), identity = el("div"); img.src = "/static/mobile/vorto.png"; img.alt = "";
-  identity.append(el("strong", "VortoCode"), el("small", subtitle)); header.append(img, identity);
+  identity.append(el("strong", "VortoOne"), el("small", subtitle)); header.append(img, identity);
   app.append(header, el("h1", title));
   if (focus) requestAnimationFrame(() => app.querySelector<HTMLElement>(`[data-action="${focus}"]`)?.focus());
 }

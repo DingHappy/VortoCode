@@ -1,11 +1,11 @@
 """外部执行者：把隔离 dev 流水线的「实现 / 审查」角色交给本机 Codex CLI 或 Claude Code CLI。
 
-VortoCode 仍是中介：拆解、worktree 隔离、自测重试、逐件与集成验证、确认门、开 PR 全走原流水线，
+VortoOne 仍是中介：拆解、worktree 隔离、自测重试、逐件与集成验证、确认门、开 PR 全走原流水线，
 这里只把「谁来写 / 谁来审」换成外部 CLI。`ExternalWorkerAgent` 与 `MainAgent` 同样暴露
 `run_turn(message, mode, emit)`，所以 `dev_tools` 只在两个工厂点换实现即可。
 
 **实验功能，默认关闭**：必须同时设 `VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS=1`，否则角色表一律不生效，
-实现与审查照旧走 VortoCode 自己的子 Agent。主线以自研框架为准，这条路只供试用。
+实现与审查照旧走 VortoOne 自己的子 Agent。主线以自研框架为准，这条路只供试用。
 
 配置（只认主进程环境变量，不读仓库文件——能改仓库的不该能换执行者）::
 
@@ -25,7 +25,7 @@ VortoCode 仍是中介：拆解、worktree 隔离、自测重试、逐件与集�
 安全边界（改之前先读 docs/MODEL_ROUTING.md「外部执行者」）：
 - 可写只在流水线给的一次性 worktree 里；审查一律只读。
 - 永不拼 `--dangerously-*` / `danger-full-access` / `bypassPermissions`；显式参数覆盖用户级放宽。
-- 子进程环境走 `sandbox.policy.child_env()`，再剥 GitHub 令牌：交付由 VortoCode 做，执行者不 push。
+- 子进程环境走 `sandbox.policy.child_env()`，再剥 GitHub 令牌：交付由 VortoOne 做，执行者不 push。
 - unattended 档位 fail-closed；事件里出现联网动作就把本回合标污点。
 - 不继承个人配置里的 hooks / 插件 / 记忆 / 通知 / MCP / 权限放宽，只透传「用哪个模型、哪家服务」：
   Codex 用 `--ignore-user-config` 再按白名单回填 model / model_provider；Claude 只加载 local 级
@@ -59,7 +59,7 @@ ROLES = ("implement", "review")
 ROLE_ENV = "VORTOCODE_EXTERNAL_WORKERS"
 TIMEOUT_ENV = "VORTOCODE_EXTERNAL_WORKER_TIMEOUT"
 DEFAULT_TIMEOUT = 1800
-# 交付（push / 开 PR）只由 VortoCode 做；外部执行者拿不到仓库写令牌。
+# 交付（push / 开 PR）只由 VortoOne 做；外部执行者拿不到仓库写令牌。
 _EXTRA_STRIPPED = frozenset({"GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN"})
 _CLAUDE_READ_TOOLS = ("Read", "Glob", "Grep", "Bash(python -m pytest *)", "Bash(pytest *)")
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write", "MultiEdit")

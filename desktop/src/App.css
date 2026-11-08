@@ -8552,8 +8552,8 @@ input::placeholder {
 
 /* 一条标题栏就够。
  *
- * 真机冒烟（2026-09-18）：系统原生标题栏写着「VortoCode Desktop」，紧挨着下面 app 自己
- * 又画了一条「VortoCode ● 通用会话 · 无目录」——两条标题栏叠在一起，白占 33px，还把同一件事
+ * 真机冒烟（2026-09-18）：系统原生标题栏写着「VortoOne Desktop」，紧挨着下面 app 自己
+ * 又画了一条「VortoOne ● 通用会话 · 无目录」——两条标题栏叠在一起，白占 33px，还把同一件事
  * 说了两遍。
  *
  * tauri.conf.json 里改用 titleBarStyle=Overlay + hiddenTitle，让红黄绿三颗灯浮在网页内容上，

@@ -23,15 +23,15 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("starterTips", () => {
   it("本机通用会话不列定时汇报、派活——那里没有调度也没有项目", () => {
-    const ids = starterTips({ resident: false, projects: ["VortoCode"] }).map((tip) => tip.id);
+    const ids = starterTips({ resident: false, projects: ["VortoOne"] }).map((tip) => tip.id);
     expect(ids).not.toContain("brief");
     expect(ids).not.toContain("dispatch");
     expect(ids).toContain("remember");
   });
 
   it("常驻电脑上：派活示例用真实登记的项目名；没有项目就不列派活", () => {
-    const withProject = starterTips({ resident: true, projects: ["", "VortoCode"] });
-    expect(withProject.find((tip) => tip.id === "dispatch")?.prompt).toContain("VortoCode 项目");
+    const withProject = starterTips({ resident: true, projects: ["", "VortoOne"] });
+    expect(withProject.find((tip) => tip.id === "dispatch")?.prompt).toContain("VortoOne 项目");
     expect(withProject[0].id).toBe("brief");
     expect(starterTips({ resident: true, projects: [] }).map((tip) => tip.id)).not.toContain("dispatch");
   });

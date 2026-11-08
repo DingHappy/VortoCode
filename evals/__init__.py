@@ -1,4 +1,4 @@
-"""VortoCode 评测 harness（B1）——把手工 dogfood 固化成可重复的真机评测。
+"""VortoOne 评测 harness（B1）——把手工 dogfood 固化成可重复的真机评测。
 
 不是 pytest 套件（不进 CI 收集），而是**真模型跑分工具**：对每个源自真实 dogfood 史的场景，
 在一次性 scratch git 仓库里直接驱动隔离 dev 流水线（dev_isolated/dev_parallel/dev_auto 的

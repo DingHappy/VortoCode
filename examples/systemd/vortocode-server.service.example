@@ -1,4 +1,4 @@
-# VortoCode 常驻服务 —— Linux systemd 版（macOS 用 launchd，见 docs/OPS.md 第一节）。
+# VortoOne 常驻服务 —— Linux systemd 版（macOS 用 launchd，见 docs/OPS.md 第一节）。
 #
 # 安装三步（假设代码在 /opt/vortocode/VortoCode、venv 在 /opt/vortocode/venv）：
 #   1. sudo cp examples/systemd/vortocode-server.service.example /etc/systemd/system/vortocode-server.service
@@ -16,7 +16,7 @@
 #   - ExecStart 用解释器**绝对路径**（极简 PATH 下裸 `python` 必 127，真机逮到过）。
 
 [Unit]
-Description=VortoCode server（Web 控制台 + agent runtime）
+Description=VortoOne server（Web 控制台 + agent runtime）
 After=network-online.target
 Wants=network-online.target
 

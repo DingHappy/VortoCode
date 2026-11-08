@@ -1,4 +1,4 @@
-// 设置 → 常规 →「VortoCode 账号」：登录 / 退出 / 当前账号与本机设备名，以及会员模型。
+// 设置 → 常规 →「VortoOne 账号」：登录 / 退出 / 当前账号与本机设备名，以及会员模型。
 // 和中转站的「账号」页是两回事；会员 Key 只在 Rust 和配置文件里，界面只看到套餐名和额度。
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";

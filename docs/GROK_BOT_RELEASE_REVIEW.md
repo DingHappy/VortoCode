@@ -63,4 +63,4 @@ local-exec-daemon。原图为 partial，有 706 application unknowns、21122 sem
    账号开放情况、服务器权限、真实模型费用与 native helper 仍不能从静态代码推导。
 
 本轮未登录、发送任务、调用 Grok/模型服务、读取个人数据/凭证、安装软件或执行发布包。
-本项目代码测试也不代表 Grok 或已安装 VortoCode 的运行验收。
+本项目代码测试也不代表 Grok 或已安装 VortoOne 的运行验收。

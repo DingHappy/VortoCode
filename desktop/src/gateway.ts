@@ -807,7 +807,7 @@ export class GatewayClient {
     return value.codex_observer;
   }
 
-  /** 人批准 / 拒绝一条 Codex 动作；批准后由 Mac 上的 VortoCode 交给 Codex。 */
+  /** 人批准 / 拒绝一条 Codex 动作；批准后由 Mac 上的 VortoOne 交给 Codex。 */
   async decideCodexAction(id: string, decision: "approve" | "cancel"): Promise<CodexAction> {
     return this.request(`/api/codex/actions/${encodeURIComponent(id)}/${decision}`, { method: "POST" });
   }

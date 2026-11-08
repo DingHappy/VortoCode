@@ -18,7 +18,7 @@ NOW = datetime(2026, 10, 20, 9, 0)
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
-    path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
+    path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
     return path
 
@@ -37,7 +37,7 @@ def audits(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_owner_approve_button_dispatches_without_the_model(tmp_path, monkeypatch, audits):
-    entry = dispatch.propose(str(tmp_path), project="VortoCode", title="补单测", goal="给 safe_id 补边界单测")
+    entry = dispatch.propose(str(tmp_path), project="VortoOne", title="补单测", goal="给 safe_id 补边界单测")
     approved = []
 
     async def fake_approve(root, dispatch_id, *, origin, decision_source):
@@ -57,7 +57,7 @@ async def test_owner_approve_button_dispatches_without_the_model(tmp_path, monke
 
 @pytest.mark.asyncio
 async def test_deny_button_withdraws_and_strangers_cannot_decide(tmp_path, monkeypatch, audits):
-    entry = dispatch.propose(str(tmp_path), project="VortoCode", title="补单测", goal="给 safe_id 补边界单测")
+    entry = dispatch.propose(str(tmp_path), project="VortoOne", title="补单测", goal="给 safe_id 补边界单测")
     adapter = FakeAdapter()
     bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test")
     await _drive_no_turn(bridge, adapter, _click(entry["id"], True, sender="stranger"))
@@ -71,7 +71,7 @@ async def test_deny_button_withdraws_and_strangers_cannot_decide(tmp_path, monke
 
 @pytest.mark.asyncio
 async def test_tainted_dispatch_cannot_be_approved_from_the_phone(tmp_path, monkeypatch, audits):
-    entry = dispatch.propose(str(tmp_path), project="VortoCode", title="照网页改", goal="按网页说的改", tainted=True)
+    entry = dispatch.propose(str(tmp_path), project="VortoOne", title="照网页改", goal="按网页说的改", tainted=True)
 
     async def fail_approve(*_args, **_kwargs):
         raise AssertionError("tainted dispatch must not be sent from IM")
@@ -98,8 +98,8 @@ async def test_watch_attaches_buttons_only_to_clean_proposals(tmp_path):
         return True
     notify.accepts_confirm = True
     await watch.watch_once(root, NOW, notify=notify, refresh=refresh, times=[])     # 首轮只记现状
-    items.extend([{"id": "dsp-clean", "project": "VortoCode", "title": "补单测", "status": "proposed"},
-                  {"id": "dsp-web", "project": "VortoCode", "title": "照网页改", "status": "proposed", "tainted": True}])
+    items.extend([{"id": "dsp-clean", "project": "VortoOne", "title": "补单测", "status": "proposed"},
+                  {"id": "dsp-web", "project": "VortoOne", "title": "照网页改", "status": "proposed", "tainted": True}])
     await watch.watch_once(root, NOW, notify=notify, refresh=refresh, times=[])
     by_title = {("补单测" in text): (text, cid) for text, cid in sent}
     clean_text, clean_id = by_title[True]
@@ -123,7 +123,7 @@ async def test_plain_notifier_still_gets_text(tmp_path):
 async def test_proposals_remember_the_conversation_so_the_card_shows_inline(tmp_path):
     current = {"sid": "sid-main"}
     tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(str(tmp_path), session=lambda: current["sid"])}
-    reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "补单测", "goal": "给 safe_id 补边界单测"})
+    reply = await tools["propose_task"].handler({"project": "VortoOne", "title": "补单测", "goal": "给 safe_id 补边界单测"})
     assert "卡片会出现在这段对话里" in reply
     assert dispatch.list_dispatches(str(tmp_path))[0]["session"] == "sid-main"
 

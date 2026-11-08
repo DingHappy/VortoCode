@@ -33,7 +33,7 @@ TOOLS = ("Xvfb", "xauth", "xdpyinfo", "openbox", "x11vnc", "websockify", "xdotoo
 
 VIEWER_HTML = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VortoCode 远程桌面</title><link rel="stylesheet" href="viewer.css">
+<title>VortoOne 远程桌面</title><link rel="stylesheet" href="viewer.css">
 <script type="module" src="viewer.js"></script>
 <body><header><strong>远程桌面</strong><nav aria-label="桌面模式">
 <button id="observe" aria-pressed="true">仅观察</button>
@@ -664,7 +664,7 @@ def systemd_quote(value: Path) -> str:
 def observer_unit_text(python: Path, script: Path, home: Path, state: Path) -> str:
     argv = [systemd_quote(python), systemd_quote(script), "observe", "--home", systemd_quote(home),
             "--state", systemd_quote(state)]
-    return ("[Unit]\nDescription=VortoCode view-only desktop observation (SSH access only)\n"
+    return ("[Unit]\nDescription=VortoOne view-only desktop observation (SSH access only)\n"
             f"BindsTo={UNIT}\nAfter={UNIT}\nPartOf={UNIT}\n"
             "StartLimitIntervalSec=120\nStartLimitBurst=3\n\n[Service]\nType=simple\nUMask=0077\n"
             "ExecStart=" + " ".join(argv) + "\nRestart=on-failure\nRestartSec=5\nKillMode=control-group\n"
@@ -773,7 +773,7 @@ def unit_text(python: Path, script: Path, browser: Path, home: Path, state: Path
 
     argv = [quote(python), quote(script), "run", "--browser", quote(browser),
             "--home", quote(home), "--state", quote(state)]
-    return ("[Unit]\nDescription=VortoCode dedicated resident desktop (SSH access only)\n"
+    return ("[Unit]\nDescription=VortoOne dedicated resident desktop (SSH access only)\n"
             "After=network.target\nStartLimitIntervalSec=120\nStartLimitBurst=3\n\n"
             "[Service]\nType=simple\nUMask=0077\nExecStart=" + " ".join(argv) + "\n"
             "Restart=on-failure\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=15\n"

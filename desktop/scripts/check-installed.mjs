@@ -6,12 +6,14 @@
 // 用法：npm run check:installed [-- 期望版本]（默认取 tauri.conf.json 的版本）
 import { spawnSync } from "node:child_process";
 import { connect } from "node:net";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const APP = "/Applications/VortoCode.app";
+// 新装的是 VortoOne.app；从 0.2.52 及更早版本原地更新上来的仍在 VortoCode.app（更新器沿用原路径，ADR-018）
+export const APP = existsSync("/Applications/VortoOne.app") || !existsSync("/Applications/VortoCode.app")
+  ? "/Applications/VortoOne.app" : "/Applications/VortoCode.app";
 export const APP_BINARY = `${APP}/Contents/MacOS/vortocode-desktop`;
 export const RUNTIME_BINARY = `${APP}/Contents/Resources/runtime/vortocode-runtime`;
 export const LATEST_URL = "https://github.com/DingHappy/VortoCode/releases/latest/download/latest.json";
@@ -159,8 +161,8 @@ async function main() {
   const blocked = parseLocalNetworkBlocks(run("/usr/bin/log", ["show", "--last", "30m", "--style", "compact", "--info",
     "--predicate", 'subsystem == "com.apple.networkextension" AND eventMessage CONTAINS "local network blocked"']).out);
   add("本地网络权限", blocked.count === 0, blocked.count
-    ? `最近 30 分钟系统拦了 ${blocked.count} 次本地网络连接（pid ${blocked.pids.join(", ")}，可能是 VortoCode）：`
-      + "系统设置 → 隐私与安全性 → 本地网络 → VortoCode 打开（或关掉再打开），然后重开 App"
+    ? `最近 30 分钟系统拦了 ${blocked.count} 次本地网络连接（pid ${blocked.pids.join(", ")}，可能是 VortoOne）：`
+      + "系统设置 → 隐私与安全性 → 本地网络 → VortoOne 打开（或关掉再打开），然后重开 App"
     : "最近 30 分钟没有被拦的记录", blocked.count > 0);
 
   try {

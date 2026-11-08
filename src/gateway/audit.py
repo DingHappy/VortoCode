@@ -1,4 +1,4 @@
-"""Shared, redacted audit ledger for every VortoCode client.
+"""Shared, redacted audit ledger for every VortoOne client.
 
 The ledger intentionally stores metadata, not tool payloads or results.  Desktop,
 Web, TUI, and later remote clients may render the same JSONL stream without

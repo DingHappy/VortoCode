@@ -1,7 +1,7 @@
 """User-owned provenance ledger for Git review hunks.
 
 The ledger deliberately lives outside the repository: checked-in or generated
-project files must not be able to claim that an edit came from VortoCode's
+project files must not be able to claim that an edit came from VortoOne's
 Agent.  Only hashes of changed lines are retained; source code and prompts are
 never copied into the ledger.
 """

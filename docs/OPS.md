@@ -1,17 +1,17 @@
-# VortoCode Operations Guide
+# VortoOne Operations Guide
 
-This public guide covers the supported local-first operating path and the security rules that apply when VortoCode is kept running. Environment-specific deployment records, private infrastructure details, credentials, and incident notes are intentionally not stored in the public repository.
+This public guide covers the supported local-first operating path and the security rules that apply when VortoOne is kept running. Environment-specific deployment records, private infrastructure details, credentials, and incident notes are intentionally not stored in the public repository.
 
 ## 一、常驻（macOS launchd）
 
 The recommended macOS template is `examples/launchd/com.vortocode.serve.plist.example`.
 
-1. Install VortoCode in a dedicated Python environment.
+1. Install VortoOne in a dedicated Python environment.
 2. Copy the template into the user LaunchAgents directory and replace its documented placeholders.
 3. Keep credentials outside the repository in a user-readable environment file or operating-system credential store.
 4. Load the service and verify it with `vc doctor` before enabling optional background work.
 
-VortoCode listens on the loopback interface by default. Keep that default unless a separately secured remote-access design has been reviewed.
+VortoOne listens on the loopback interface by default. Keep that default unless a separately secured remote-access design has been reviewed.
 
 ### Linux systemd
 
@@ -205,7 +205,7 @@ The public default is local-only. If remote access is required:
 
 - set `VORTOCODE_API_TOKEN`;
 - use an authenticated encrypted tunnel or private network;
-- keep the VortoCode service itself off the public Internet;
+- keep the VortoOne service itself off the public Internet;
 - use a least-privilege service account;
 - rotate credentials after accidental disclosure;
 - verify that logs do not contain tokens or request headers.

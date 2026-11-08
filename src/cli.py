@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""VortoCode CLI 实现（既是 console_scripts 入口 vortocode/vc，也被根 main.py 复用）。"""
+"""VortoOne CLI 实现（既是 console_scripts 入口 vortocode/vc，也被根 main.py 复用）。"""
 
 import argparse
 import asyncio
@@ -60,7 +60,7 @@ def _setup_logging() -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="VortoCode · 多 Agent 协作开发框架",
+        description="VortoOne · 多 Agent 协作开发框架",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             常用示例:
@@ -389,7 +389,7 @@ def main():
 async def run_doctor() -> int:
     """一键自检：逐项查管道（git/凭证/中转站/serve/权限/gh/IM），返回退出码（硬伤=1）。"""
     from src.gateway.doctor import run_checks, summarize
-    print("VortoCode doctor · 自检中…\n", file=sys.stderr)
+    print("VortoOne doctor · 自检中…\n", file=sys.stderr)
     checks = await run_checks(str(Path.cwd()))
     text, code = summarize(checks)
     print(text)
@@ -399,7 +399,7 @@ async def run_doctor() -> int:
 async def run_canary_cli() -> int:
     """端到端交付验收：逐条报告哪条交付链路通、哪条断。有断的返回 1（部署脚本据此拦住上线）。"""
     from src.gateway.canary import run_canary, summarize
-    print("VortoCode canary · 端到端交付验收（假通道 + 脚本模型，不触网）…\n", file=sys.stderr)
+    print("VortoOne canary · 端到端交付验收（假通道 + 脚本模型，不触网）…\n", file=sys.stderr)
     lanes = await run_canary()
     for ln in lanes:
         print(f"{ln.glyph} {ln.name:<12} {ln.detail}")
@@ -1196,7 +1196,7 @@ def run_demo():
     """运行演示"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║                 VortoCode 演示模式                        ║
+║                 VortoOne 演示模式                        ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  1. 启动 Web 服务器:                                         ║

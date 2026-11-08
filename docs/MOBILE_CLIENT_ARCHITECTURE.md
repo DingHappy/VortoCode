@@ -2,7 +2,7 @@
 
 日期：2026-10-25。决定：当前保留同仓库，按独立模块、协议和 CI 检查组织；暂不新建远端仓库。
 
-当前产品决定：**同一 VortoCode 账号登录后关联自己的助手**。以下手动核对码链路保留为高级自托管/开发方式，不再是默认入口。同账号 Web 登录和当前运行端归属已接入；Desktop 已有需原生确认的关联设置卡片，云端助手列表尚待实现，实际边界见 [MOBILE_ACCOUNT_ACCESS.md](MOBILE_ACCOUNT_ACCESS.md)。
+当前产品决定：**同一 VortoOne 账号登录后关联自己的助手**。以下手动核对码链路保留为高级自托管/开发方式，不再是默认入口。同账号 Web 登录和当前运行端归属已接入；Desktop 已有需原生确认的关联设置卡片，云端助手列表尚待实现，实际边界见 [MOBILE_ACCOUNT_ACCESS.md](MOBILE_ACCOUNT_ACCESS.md)。
 
 运行端新进展：本地账号核验、归属登记、短期只读授权及撤销已接到原设备授权存储；接口仅供可信原生/服务端桥使用。手机 Web OAuth 已接入本地源码，云端助手目录未接入，参见 [ACCOUNT_RUNTIME_BRIDGE.md](ACCOUNT_RUNTIME_BRIDGE.md)。
 

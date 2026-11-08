@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily VortoCode assistant data backup
+Description=Daily VortoOne assistant data backup
 
 [Timer]
 OnCalendar=*-*-* 03:40:00

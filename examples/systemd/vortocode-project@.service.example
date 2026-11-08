@@ -1,4 +1,4 @@
-# VortoCode 常驻电脑上的项目运行时 —— 每个项目一个实例（systemd 用户模板单元）。
+# VortoOne 常驻电脑上的项目运行时 —— 每个项目一个实例（systemd 用户模板单元）。
 #
 # Desktop 工作台「在哪做：本机 / 常驻电脑」切到常驻电脑时，连的就是这里。
 #
@@ -11,10 +11,10 @@
 #        {"projects": [{"name": "<名字>", "repo_root": "/home/<用户>/projects/<名字>", "port": 8082}]}
 #
 # ExecStart 用 vc 入口而不是 `python -m src.cli`：-m 会把工作目录放进 sys.path，项目恰好是
-# VortoCode 本身时，就会加载 agent 刚改过的代码来跑服务。vc 走 editable 安装，只认部署目录。
+# VortoOne 本身时，就会加载 agent 刚改过的代码来跑服务。vc 走 editable 安装，只认部署目录。
 
 [Unit]
-Description=VortoCode project runtime (%i) for Desktop "run on resident computer"
+Description=VortoOne project runtime (%i) for Desktop "run on resident computer"
 After=network-online.target
 Wants=network-online.target
 

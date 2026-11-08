@@ -103,7 +103,7 @@
 
 | 框架 | 接入方式 | 权限怎么管 | 现有基础 |
 | --- | --- | --- | --- |
-| VortoCode 自有 agent | 进程内 `MainAgent` | 确认门、污点、能力档案全程生效 | 已有 |
+| VortoOne 自有 agent | 进程内 `MainAgent` | 确认门、污点、能力档案全程生效 | 已有 |
 | ACP 通用适配器：DeepSeek Harness（`dsh --profile acp`）、OpenCode（`opencode acp`），以及 Gemini CLI、Qwen Code、Kimi 等 | stdio 上的 Agent Client Protocol | 框架每次要执行命令、改文件都发 `session/request_permission`，由我们的确认门按成员角色卡判定 | 无；参考 OpenMausBot `server/drivers/acp/` |
 | Pi（`pi --mode rpc`） | Pi 自己的 stdio JSON-RPC | 自带工具的确认经 RPC 交给我们判定；不支持的按只读处理 | 无；参考 OpenMausBot `server/drivers/pi.ts` |
 | Codex | `codex exec` / App Server | 只能从外面限制：`-s workspace-write` 只在一次性 worktree、审查 `-s read-only`、不给危险参数、剥离推送令牌 | `agents/external_workers.py`、`agents/backends/codex.py` |
@@ -111,8 +111,8 @@
 
 共同规则：
 
-- 外部框架只在登记项目的一次性 worktree 里写；交付是分支和 PR，由 VortoCode 开，合并要主人。
-- 子进程环境走 `sandbox.policy.child_env()`，并剥离 GitHub 令牌和 VortoCode 自己的密钥。
+- 外部框架只在登记项目的一次性 worktree 里写；交付是分支和 PR，由 VortoOne 开，合并要主人。
+- 子进程环境走 `sandbox.policy.child_env()`，并剥离 GitHub 令牌和 VortoOne 自己的密钥。
 - 看得到工具调用的框架（ACP、Pi、自有 agent）：出现联网动作就把这次子任务标为污点。看不到的（Codex、Claude Code
   的内部动作）：结果一律按外部内容处理。
 - 框架的登录用常驻电脑上的专用目录（沿用 `VORTOCODE_WORKER_HOME` 的做法），不碰个人配置；安装和登录属于部署
@@ -190,7 +190,7 @@
 
 1. **S1 只读小组（General 范围）**：任务卡提议与批准；`kind="team"` 根与协调记录；协调人工具；研究员和审查员
    两种角色卡；唤醒、预算、无进展判定；`work_status` 与 G2 推送接上。不装外部 CLI。
-2. **S2 外部框架成员**（§5.1；2026-11-04 进度：ACP 客户端 #742；OpenCode、DeepSeek Harness 接成研究员 / 审查员 #747；开发成员（只 OpenCode，private 档位，只在 Desktop 开，改动在一次性 worktree、由 VortoCode 沙箱验证并落本地分支）；Pi 未做）：先做 ACP 通用适配器（一次覆盖 DeepSeek Harness、OpenCode 等），再把 Codex /
+2. **S2 外部框架成员**（§5.1；2026-11-04 进度：ACP 客户端 #742；OpenCode、DeepSeek Harness 接成研究员 / 审查员 #747；开发成员（只 OpenCode，private 档位，只在 Desktop 开，改动在一次性 worktree、由 VortoOne 沙箱验证并落本地分支）；Pi 未做）：先做 ACP 通用适配器（一次覆盖 DeepSeek Harness、OpenCode 等），再把 Codex /
    Claude Code 的 `external_workers` 接成成员，最后是 Pi。只在登记项目的一次性 worktree 中写，交付是分支和 PR。
    前提：常驻电脑装好对应 CLI 并登录专用账号（部署配置变更，每种单独征求主人同意）。S2 上线后，开发流水线与
    项目运行时按 ADR-015 退役。
@@ -270,4 +270,4 @@
 停止计数与恢复后的再次核对。`chunk-r6h1bcpx.js` 的新 REA parent Evidence 为
 `ev_8e2decba868ab530c61cf72863bfea828bfdf1ce3afdaa90c688ac8f166155a0`；该选中源语法解析完成，
 全应用语义图仍为 partial。静态结果没有证明 Claude 全局都按 runId 防旧写入，不能把可选
-finalizingPass 字段当作有效保护。本切片以 VortoCode 的确定性竞态、取消和故障注入测试验证自己的合同。
+finalizingPass 字段当作有效保护。本切片以 VortoOne 的确定性竞态、取消和故障注入测试验证自己的合同。

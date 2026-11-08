@@ -1,4 +1,4 @@
-/* VortoCode app-owned surfaces. Device, keyboard and platform chrome stay template-owned. */
+/* VortoOne app-owned surfaces. Device, keyboard and platform chrome stay template-owned. */
 .device-screen:has(.vorto-shell) { --v-bg:#09090b;--v-surface:#1d1d20;--v-surface2:#262629;--v-fg:#f2f2f3;--v-muted:#a3a3ad;--v-line:#303034;--v-blue:#8bb6ff;--v-primary:#2c6fd0;--v-tint:#151e2e;--v-amber:#e8bb75;--v-green:#51d88a; }
 .device-screen:has(.vorto-shell[data-theme="light"]) { --v-bg:#fafaf8;--v-surface:#fff;--v-surface2:#efefeb;--v-fg:#363633;--v-muted:#696965;--v-line:#deded8;--v-blue:#315faa;--v-primary:#4168c9;--v-tint:#edf1fa;--v-amber:#926016;--v-green:#15854b; }
 .device-screen:has(.vorto-shell[data-theme="dark"]) .status-bar{color:#f2f2f3}

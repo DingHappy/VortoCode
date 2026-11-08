@@ -1,6 +1,6 @@
 # Runtime hosting and ownership
 
-VortoCode uses one agent factory and one TaskRunner/TaskLedger protocol. Hosting
+VortoOne uses one agent factory and one TaskRunner/TaskLedger protocol. Hosting
 selects the lifetime and authority of that Runtime, rather than selecting a
 second agent implementation.
 
