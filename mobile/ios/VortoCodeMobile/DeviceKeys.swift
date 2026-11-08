@@ -33,6 +33,17 @@ enum DeviceKeys {
         return group
     }
 
+    /// 用不用 Secure Enclave。模拟器一律不用：较新的模拟器会报 `SecureEnclave.isAvailable == true`，
+    /// 但要 Face ID 的批准钥匙在那里建不出来（LocalAuthentication -1020），绑定就整个失败了。
+    /// 模拟器的 Debug 构建退回软件钥匙，只供联调（见 README）。
+    static var usesSecureEnclave: Bool {
+        #if targetEnvironment(simulator)
+        false
+        #else
+        SecureEnclave.isAvailable
+        #endif
+    }
+
     // MARK: 签名钥匙（CryptoKit；Secure Enclave 的密钥句柄存在钥匙串里）
 
     private static func query(_ account: String) -> [String: Any] {
@@ -59,6 +70,11 @@ enum DeviceKeys {
         guard status == errSecSuccess || status == errSecDuplicateItem else { throw KeyError.storage }
     }
 
+    private static func deleteBlob(_ account: String) throws {
+        let status = SecItemDelete(query(account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw KeyError.storage }
+    }
+
     private static func accessControl(biometric: Bool) throws -> SecAccessControl {
         var flags: SecAccessControlCreateFlags = .privateKeyUsage
         if biometric { flags.insert(.biometryCurrentSet) }
@@ -70,7 +86,7 @@ enum DeviceKeys {
     /// 返回这把钥匙的公钥（65 字节未压缩点的 base64）；不存在就先在 Secure Enclave 里生成。
     static func publicKey(_ key: SigningKey) throws -> String {
         let account = key == .approval ? "approval" : "device"
-        if SecureEnclave.isAvailable {
+        if usesSecureEnclave {
             if let blob = try loadBlob(account) {
                 // 只取公钥不触发生物识别：句柄可以不带认证上下文还原
                 return try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob)
@@ -83,7 +99,11 @@ enum DeviceKeys {
         }
         #if DEBUG
         if let blob = try loadBlob(account) {
-            return try P256.Signing.PrivateKey(rawRepresentation: blob).publicKey.x963Representation.base64EncodedString()
+            if let existing = try? P256.Signing.PrivateKey(rawRepresentation: blob) {
+                return existing.publicKey.x963Representation.base64EncodedString()
+            }
+            // 早先在模拟器上走过 Secure Enclave 留下的句柄，软件钥匙读不了：丢掉重建（还没绑定成功，服务端不认它）
+            try deleteBlob(account)
         }
         let created = P256.Signing.PrivateKey()
         try saveBlob(account, created.rawRepresentation)
@@ -96,7 +116,7 @@ enum DeviceKeys {
     static func sign(_ message: Data, with key: SigningKey) throws -> Data {
         let account = key == .approval ? "approval" : "device"
         guard let blob = try loadBlob(account) else { throw KeyError.storage }
-        if SecureEnclave.isAvailable {
+        if usesSecureEnclave {
             let context = LAContext()
             context.localizedReason = "批准这条动作"
             let privateKey = try SecureEnclave.P256.Signing.PrivateKey(
@@ -133,7 +153,7 @@ enum DeviceKeys {
             var privateAttributes: [String: Any] = [kSecAttrIsPermanent as String: true,
                                                     kSecAttrApplicationTag as String: pushTag]
             if let group = sharedGroup { privateAttributes[kSecAttrAccessGroup as String] = group }
-            if SecureEnclave.isAvailable {
+            if usesSecureEnclave {
                 guard let control = SecAccessControlCreateWithFlags(
                     nil, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, .privateKeyUsage, nil) else { throw KeyError.storage }
                 attributes[kSecAttrTokenID as String] = kSecAttrTokenIDSecureEnclave

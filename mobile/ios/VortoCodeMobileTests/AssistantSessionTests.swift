@@ -265,3 +265,37 @@ private func makeSnapshot(_ instance: String) throws -> MobileSnapshot {
         "goals":source(["items":[],"truncated":false])]]
     return try MobileAPI.decoder.decode(MobileSnapshot.self, from: JSONSerialization.data(withJSONObject: raw))
 }
+
+#if targetEnvironment(simulator)
+import CryptoKit
+import Security
+
+/// 模拟器的 Debug 构建用软件钥匙联调（README）。较新的模拟器报 Secure Enclave 可用，
+/// 但要 Face ID 的批准钥匙建不出来，绑定整个失败、手机写入在模拟器上没法测。
+final class DeviceKeysSimulatorTests: XCTestCase {
+    private func verify(_ key: SigningKey) throws {
+        let message = Data("vortocode-key-check".utf8)
+        let publicKey = try P256.Signing.PublicKey(x963Representation: XCTUnwrap(Data(base64Encoded: DeviceKeys.publicKey(key))))
+        let signature = try P256.Signing.ECDSASignature(derRepresentation: DeviceKeys.sign(message, with: key))
+        XCTAssertTrue(publicKey.isValidSignature(signature, for: message))
+    }
+
+    func testSimulatorBindsBothSigningKeysWithoutSecureEnclave() throws {
+        XCTAssertFalse(DeviceKeys.usesSecureEnclave)
+        try verify(.device)
+        try verify(.approval)
+        XCTAssertFalse(try DeviceKeys.pushPublicKey().isEmpty)
+    }
+
+    func testUnreadableLeftoverKeyIsReplaced() throws {
+        // 早先在模拟器上走 Secure Enclave 留下的句柄，软件钥匙读不了，要重建而不是一直报错
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: DeviceKeys.service, kSecAttrAccount as String: "device"]
+        SecItemDelete(query as CFDictionary)
+        var add = query
+        add[kSecValueData as String] = Data(repeating: 7, count: 11)
+        XCTAssertEqual(SecItemAdd(add as CFDictionary, nil), errSecSuccess)
+        try verify(.device)
+    }
+}
+#endif
