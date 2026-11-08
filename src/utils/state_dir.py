@@ -12,6 +12,8 @@
   改名会让那些文件在 git 里显示成删除。
 - 搬过之后在仓库自己的 `info/exclude` 里藏起留下的链接；旧目录原本被 git 忽略的，新目录也一并忽略，
   主人看到的 git status 跟搬之前一样。
+- `VORTOONE_STATE_DIR_MIGRATION=off`：只认位置不搬（新目录在用新的，没搬就用旧的）。测试套件默认这样，
+  免得用例和它们起的子进程搬了开发机上真实的目录；新旧版本要并排跑一阵时也可以先关掉。
 
 `~/Library/Application Support/VortoCode` → `VortoOne` 用同一套规则（:func:`app_support_dir`）。
 判断「这是 VortoOne 自己的状态目录」的地方（敏感路径、遍历时跳过）两个名字都要认：:data:`STATE_DIRNAMES`。
@@ -71,8 +73,14 @@ def xdg_dir(env_name: str, default: Path) -> Path:
     return _migrated(base, "vortocode", "vortoone", git_aware=False)
 
 
+def _migration_off() -> bool:
+    return os.getenv("VORTOONE_STATE_DIR_MIGRATION", "").strip().lower() in ("0", "off", "false", "no")
+
+
 def _migrated(base: Path, old_name: str, new_name: str, *, git_aware: bool) -> Path:
     new, old = base / new_name, base / old_name
+    if _migration_off():
+        return new if new.exists() or not (old.is_dir() and not old.is_symlink()) else old
     try:
         if old.is_symlink() or not old.is_dir():
             return new                                 # 已经搬过，或者本来就没有旧目录

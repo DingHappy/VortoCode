@@ -65,7 +65,8 @@ def load_project_instructions(repo_root: str) -> str:
 
 # 用户级全局指令：作用于所有会话（包括不绑定目录的通用会话），位置与用户级 skills 同处。
 # Desktop「设置 → 个性化」编辑的就是它；也可以直接手改，新会话生效。
-USER_INSTRUCTIONS_PATH = home_state_dir() / "AGENTS.md"
+# 导入时不定位：state_dir 会顺手把旧的 ~/.vortocode 搬过来，导入模块不该有这种副作用。测试可改成固定路径。
+USER_INSTRUCTIONS_PATH: Optional[Path] = None
 
 
 def load_user_instructions(path: Optional[Path] = None) -> str:
@@ -73,7 +74,7 @@ def load_user_instructions(path: Optional[Path] = None) -> str:
 
     与项目指令同样在装配时读一次（系统提示在会话内保持字节稳定），超长截断并标注。
     """
-    p = path or USER_INSTRUCTIONS_PATH
+    p = path or USER_INSTRUCTIONS_PATH or home_state_dir() / "AGENTS.md"
     try:
         text = p.read_text(encoding="utf-8", errors="ignore").strip() if p.is_file() else ""
     except OSError:

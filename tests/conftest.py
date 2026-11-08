@@ -18,6 +18,17 @@ def _default_prompt_protocol(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _state_dir_migration_off(monkeypatch):
+    """不搬状态目录（`.vortocode` → `.vortoone`，ADR-018）：只认位置。
+
+    有些用例走 `vc` 入口、`home_state_dir()`，或者起子进程跑 `src`，用的是**真实家目录**与当前目录。
+    2026-11-08 跑批次 C 门禁时，套件就把开发机上真实的 `~/.vortocode`、Application Support 和主工作区的
+    `.vortocode` 提前搬了。用环境变量关掉，子进程也跟着关；测搬家的用例自己 delenv。
+    """
+    monkeypatch.setenv("VORTOONE_STATE_DIR_MIGRATION", "off")
+
+
+@pytest.fixture(autouse=True)
 def _usage_ledger_in_tmp(monkeypatch, tmp_path_factory):
     """模型用量台账写到临时目录：测试里的假模型调用不能记进真实的 ~/.vortoone/usage。"""
     monkeypatch.setenv("VORTOONE_USAGE_DIR", str(tmp_path_factory.mktemp("usage")))
