@@ -113,7 +113,7 @@ def test_wrong_layer_redirect_or_success_is_not_a_pass(response):
         check.check_response("GET", "/api/mobile/native/timeline", response)
 
 
-def test_network_failure_is_not_retried_or_reported_as_empty(monkeypatch):
+def test_certificate_failure_is_not_retried_or_reported_as_empty(monkeypatch):
     calls = []
     def curl(args, **kwargs):
         calls.append(args)
@@ -122,3 +122,26 @@ def test_network_failure_is_not_retried_or_reported_as_empty(monkeypatch):
     with pytest.raises(check.CheckFailed):
         check.request("https://example.test", "GET", "/api/mobile/native/timeline")
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("code", [7, 28, 52, 56])
+def test_transient_connection_failures_are_retried_a_bounded_number_of_times(monkeypatch, code):
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) < 3:
+            return SimpleNamespace(returncode=code, stdout="000")
+        Path(args[args.index("--output") + 1]).write_text('{"detail":"登录或设备授权已失效，请重新登录"}')
+        return SimpleNamespace(returncode=0, stdout="401")
+
+    monkeypatch.setattr(check.subprocess, "run", flaky)
+    monkeypatch.setattr(check.time, "sleep", lambda _seconds: None)
+    assert check.request("https://example.test", "GET", "/api/mobile/native/timeline")[0] == 401
+    assert len(calls) == 3                                   # 失败两次，第三次成功
+
+    calls.clear()
+    monkeypatch.setattr(check.subprocess, "run", lambda args, **kwargs: calls.append(args) or SimpleNamespace(returncode=code, stdout="000"))
+    with pytest.raises(check.CheckFailed, match="重试 2 次"):
+        check.request("https://example.test", "GET", "/api/mobile/native/timeline")
+    assert len(calls) == 3                                   # 最多三次，不会无限重试
