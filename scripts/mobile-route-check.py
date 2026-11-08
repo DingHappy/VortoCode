@@ -15,6 +15,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 PREFIX = "/api/mobile/native/"
@@ -108,8 +109,30 @@ def check_caddy(path: Path, routes: list[tuple[str, str]]) -> None:
             raise CheckFailed("HTTPS 白名单缺少：" + ", ".join(f"{method} {p}" for p in missing))
 
 
+# 只有这几种是一时的网络问题，重试最多 2 次：连不上（7）、连接超时（28）、空响应（52）、读到一半断开（56）。
+# 证书 / TLS 错误、HTTP 状态不对、响应过大都是真问题，照旧一次就失败。常驻电脑从内网访问自己的公网入口要绕路由器，
+# 偶尔会超时（2026-11-08 实测 20 次里 4 次连接超时），一次超时不该让整次发布回滚。
+_TRANSIENT_CURL_EXITS = {7, 28, 52, 56}
+_ATTEMPTS = 3
+
+
 def request(origin: str, method: str, path: str, *, host_origin: str | None = None) -> tuple[int, object]:
     """curl 只用合成无效身份；错误正文/URI/真实配置不会被打印。"""
+    for attempt in range(_ATTEMPTS):
+        try:
+            return _request_once(origin, method, path, host_origin=host_origin)
+        except _Transient:
+            if attempt == _ATTEMPTS - 1:
+                raise CheckFailed(f"{method} {path}：连接/TLS/响应大小检查失败（重试 {_ATTEMPTS - 1} 次仍连不上）") from None
+            time.sleep(1)
+    raise AssertionError("unreachable")
+
+
+class _Transient(Exception):
+    """一时的网络问题（见 _TRANSIENT_CURL_EXITS）。"""
+
+
+def _request_once(origin: str, method: str, path: str, *, host_origin: str | None = None) -> tuple[int, object]:
     with tempfile.TemporaryDirectory(prefix="vc-route-probe-") as directory:
         body = Path(directory) / "body"
         command = ["curl", "--disable", "--silent", "--show-error", "--connect-timeout", "3", "--max-time", "8",
@@ -125,6 +148,8 @@ def request(origin: str, method: str, path: str, *, host_origin: str | None = No
             result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise CheckFailed(f"{method} {path}：连接失败") from error
+        if result.returncode in _TRANSIENT_CURL_EXITS:
+            raise _Transient()
         if result.returncode != 0 or not re.fullmatch(r"[0-9]{3}", result.stdout):
             raise CheckFailed(f"{method} {path}：连接/TLS/响应大小检查失败")
         raw = body.read_bytes() if body.exists() else b""
