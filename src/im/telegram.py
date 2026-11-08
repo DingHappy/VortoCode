@@ -16,6 +16,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 from .channel import ChannelAdapter, ChannelEvent, chunk_text
 from .telegram_errors import TelegramError, request_error
 from src.utils.http import outbound_session
+from src.utils.state_dir import home_state_dir
 
 # 注入式 HTTP：async (method, payload) -> Telegram 返回的 result（ok=False 时应抛异常）
 RequestFn = Callable[[str, dict], Awaitable[object]]
@@ -55,8 +56,8 @@ class TelegramAdapter(ChannelAdapter):
         self._request_fn = request_fn or self._default_request
         self._download_fn = download_fn or self._default_download
         # 收件落盘目录：**不进仓库工作区**，免得用户发来的文件被当成代码改动收进 diff。
-        # 与钉钉同一处（~/.vortocode/im_inbox），两个通道的收件箱不分家。
-        self._inbox_dir = str(Path(inbox_dir or Path.home() / ".vortocode" / "im_inbox"))
+        # 与钉钉同一处（~/.vortoone/im_inbox），两个通道的收件箱不分家。
+        self._inbox_dir = str(Path(inbox_dir or home_state_dir() / "im_inbox"))
         # 群提及门要判"@ 的是不是**我**"，就得知道自己叫什么。可显式配置（省一次 API 调用），
         # 否则**遇到第一条群消息时**才惰性 getMe——私聊-only 的部署因此一次额外请求都不发。
         self._bot_username = (bot_username or "").strip().lstrip("@").lower() or None

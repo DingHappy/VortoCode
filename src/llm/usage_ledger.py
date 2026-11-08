@@ -3,7 +3,7 @@
 只记数字，不记提示词或回复。早报据此附一行「昨天用了多少」，巡检据此在某天用量暴涨时提醒一次，
 免得哪个后台任务失控、悄悄把额度烧光。
 
-文件在 `~/.vortocode/usage/daily.json`（`VORTOONE_USAGE_DIR` 可改），同机多个进程共用，写时加文件锁；
+文件在 `~/.vortoone/usage/daily.json`（`VORTOONE_USAGE_DIR` 可改），同机多个进程共用，写时加文件锁；
 只留最近 60 天。记账失败不影响模型调用。
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterator, Optional
+from src.utils.state_dir import home_state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def usage_source(label: str) -> Iterator[None]:
 
 
 def _path() -> Path:
-    return Path(os.getenv("VORTOONE_USAGE_DIR") or Path.home() / ".vortocode" / "usage") / "daily.json"
+    return Path(os.getenv("VORTOONE_USAGE_DIR") or home_state_dir() / "usage") / "daily.json"
 
 
 def _read(path: Path) -> Dict[str, Dict[str, Dict[str, int]]]:

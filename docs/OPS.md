@@ -25,7 +25,7 @@ Telegram Bot token 先放在运行 `vc` 的私密环境中，不要作为命令�
 
 1. 在部署机交互式终端运行 `vc im-pair telegram`，终端显示一次性配对码，有效期 10 分钟。
 2. 用管理员自己的 Telegram 账号**私聊**机器人，发送终端给出的 `/bind <配对码>`。群聊和未持有码的人不能绑定。
-3. 成功后，在相同的系统用户下启动 `vc im telegram`，或为尚未启用其他 IM 的 Gateway 启动 `vc server --im telegram`。启动时自动读取 `~/.vortocode/im-pairings/telegram-<bot-id>.json` 中的 owner ID。配对记录须为 `600`，目录须为 `700`。
+3. 成功后，在相同的系统用户下启动 `vc im telegram`，或为尚未启用其他 IM 的 Gateway 启动 `vc server --im telegram`。启动时自动读取 `~/.vortoone/im-pairings/telegram-<bot-id>.json` 中的 owner ID。配对记录须为 `600`，目录须为 `700`。
 
 同一个 Bot 只能有一个 `getUpdates` 消费者；配对时先停用该 Bot 的其他轮询实例。现有 `vc server` 只内嵌一个 IM 通道；已有钉钉服务不要直接切成 Telegram。Telegram 当前是单主人会话，即便额外配置 `VORTOONE_TG_ALLOW_FROM`，其他用户也会被拒绝，以防消息进入主人的会话或回复被送到主人。管理员邀请其他用户的设计与上线门槛见 [Telegram 接入与邀请](./TELEGRAM_ACCESS.md)。
 
@@ -73,7 +73,7 @@ python3 scripts/mobile-route-check.py --auth-file src/web/auth.py \
 
 ### 常驻助理数据备份（加密，2026-11-02）
 
-`~/assistant/.vortocode`（目标、长期记忆、主要聊天、手机钥匙登记、撤销记录、Codex 状态）、`~/.vortocode`、
+`~/assistant/.vortoone`（目标、长期记忆、主要聊天、手机钥匙登记、撤销记录、Codex 状态）、`~/.vortoone`、
 手机网关与 HTTPS 入口的配置，每天 03:40 加密打包、推到 NAS，本地与远端都只留最近 30 份。
 
 - **只有公钥在常驻电脑上**：在主人自己的电脑上生成密钥对，私钥只留在那里（另存一份到密码管理器）：
@@ -109,7 +109,7 @@ Delivery probes (`vc canary`) bypass both. When one service relays notices to an
 
 ### Model usage ledger
 
-Every model call adds its token counts (numbers only, never prompts or replies) to `~/.vortocode/usage/daily.json` under a source label: 对话, 早晚报, Codex 判断, 任务复盘, 对话摘要, 定时任务. Processes on the same machine share the file under a lock; 60 days are kept. `VORTOONE_USAGE_DIR` moves it.
+Every model call adds its token counts (numbers only, never prompts or replies) to `~/.vortoone/usage/daily.json` under a source label: 对话, 早晚报, Codex 判断, 任务复盘, 对话摘要, 定时任务. Processes on the same machine share the file under a lock; 60 days are kept. `VORTOONE_USAGE_DIR` moves it.
 
 - The morning report ends with one line for yesterday, e.g. `🔢 昨天模型用量：34 次，19.8 万 token（Codex 判断 28 次 · 15.6 万；…）`, and flags a day at 3× or more of the previous 7-day average.
 - The resident assistant pushes one alert per day when today's usage passes 2,000,000 tokens and is at least 3× the 7-day average (or has no history yet), naming the largest source.
@@ -131,8 +131,8 @@ configuration; credentials are never command arguments or report contents.
 ```bash
 vc runtime-acceptance --assistant-url "$ASSISTANT_URL" --code-url "$CODE_URL" \
   --require-im --duration 86400 --interval 60 \
-  --output .vortocode/acceptance/run.jsonl
-vc runtime-acceptance --report .vortocode/acceptance/run.jsonl
+  --output .vortoone/acceptance/run.jsonl
+vc runtime-acceptance --report .vortoone/acceptance/run.jsonl
 ```
 
 Use an OS supervisor for long runs. Omit `--require-im` for installations without

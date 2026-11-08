@@ -90,7 +90,7 @@ Project Control Center 第二阶段的 Runtime Supervisor 已落地：Tauri 原�
 - [x] Agent Dashboard 上下文增强：Gateway 权威提供 cwd、branch、HEAD、主/关联 worktree、会话归属后台任务与上下文窗口占用；失败/中断任务提升为待处理状态
 - [x] 后台任务稳定关联：有界生成态账本连接 task、owner session、DevPlan 与实时 worktree；Desktop 会话状态、计划和 worktree 均可直达对应交接卡
 - [x] 任务分支审查：任务交接直达持久 `vorto/*` diff；运行中 worktree 只读，成功任务支持稳定 hunk 接受/撤销，撤销后必须隔离重验才可开 Draft PR
-- [x] 可选团队审查策略：`.vortocode/review-policy.yaml` 可要求全部当前文本 hunk 完成精确接受；Desktop 显示覆盖率，PR 服务端实时重算并对坏配置 fail closed
+- [x] 可选团队审查策略：`.vortoone/review-policy.yaml` 可要求全部当前文本 hunk 完成精确接受；Desktop 显示覆盖率，PR 服务端实时重算并对坏配置 fail closed
 - [x] Session actor 第一阶段：回合不再归属于单条 WebSocket，刷新/关窗继续运行，同 sid 多客户端附着并补收 hydrate 竞态窗口事件
 - [x] 持久事件回放：协议 v8 单调 `seq`、分段 append-only JSONL、按 sid 保存 Desktop cursor、`after_seq` 有界补收与日志轮转
 - [x] 后台任务会话交接：任务台账持久化 `owner_session`，终态通过 `task_handoff` 唤醒所属会话并支持断线回放

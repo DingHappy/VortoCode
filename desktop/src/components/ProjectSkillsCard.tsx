@@ -1,5 +1,5 @@
 // 插件页「项目技能」：在 Desktop 里新建、查看、编辑、删除项目的 SKILL.md。
-// shared 写 skills/（随仓库，出现在 git 改动里），local 写 .vortocode/skills/（只在本机）。
+// shared 写 skills/（随仓库，出现在 git 改动里），local 写 .vortoone/skills/（只在本机）。
 // 编辑只改名称、描述和正文，frontmatter 其它字段由引擎原样保留；版本对不上会被拒绝并要求刷新。
 import { useEffect, useState } from "react";
 
@@ -50,7 +50,7 @@ export function ProjectSkillsCard({ client, connection }: { client: GatewayClien
   }
 
   const items = snapshot?.items ?? [];
-  const where = (scope: ProjectSkillScope) => snapshot?.locations[scope] ?? (scope === "shared" ? "skills" : ".vortocode/skills");
+  const where = (scope: ProjectSkillScope) => snapshot?.locations[scope] ?? (scope === "shared" ? "skills" : ".vortoone/skills");
   return <section className="extensions-inspect-card" aria-label="项目技能">
     <div className="extensions-inspect-heading">
       <strong>项目技能</strong>

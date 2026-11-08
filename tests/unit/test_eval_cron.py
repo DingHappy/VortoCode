@@ -174,8 +174,8 @@ async def test_prompt_job_still_uses_isolated_llm_session(tmp_path):
 
 
 def test_load_jobs_accepts_command_and_prompt_jobs(tmp_path):
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "cron.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "cron.yaml").write_text(
         "jobs:\n"
         "  - name: nightly_evals\n"
         "    schedule: 'at 02:30'\n"
@@ -198,12 +198,12 @@ def test_load_jobs_accepts_command_and_prompt_jobs(tmp_path):
 
 
 def test_shipped_cron_example_is_valid_and_disabled_by_default(tmp_path):
-    """config/cron.example.yaml 必须能直接用（.vortocode/ 是 gitignored，样例只能放这儿）。"""
+    """config/cron.example.yaml 必须能直接用（.vortoone/ 是 gitignored，样例只能放这儿）。"""
     import shutil
     from pathlib import Path
 
-    (tmp_path / ".vortocode").mkdir()
-    shutil.copy(Path("config/cron.example.yaml"), tmp_path / ".vortocode" / "cron.yaml")
+    (tmp_path / ".vortoone").mkdir()
+    shutil.copy(Path("config/cron.example.yaml"), tmp_path / ".vortoone" / "cron.yaml")
 
     jobs = {j.name: j for j in load_jobs(str(tmp_path))}
     assert "nightly_evals" in jobs

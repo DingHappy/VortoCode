@@ -19,7 +19,7 @@ def home(tmp_path, monkeypatch):
 
 
 def put(home, name, content, mode=0o600):
-    folder = home / ".vortocode" / "connectors"
+    folder = home / ".vortoone" / "connectors"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{name}.token"
     path.write_text(content + "\n")
@@ -38,7 +38,7 @@ def test_status_lists_every_plugin_with_local_credential_state(home, client):
     put(home, "notion", "ntn_x", mode=0o644)
     rows = {row["name"]: row for row in client.get("/api/assistant/plugins").json()["plugins"]}
     assert rows["calendar"]["status"] == "available" and rows["notion"]["status"] == "invalid"
-    assert rows["calendar"]["credential_file"] == "~/.vortocode/connectors/calendar.token"
+    assert rows["calendar"]["credential_file"] == "~/.vortoone/connectors/calendar.token"
     assert "private-abc123" not in str(rows) and str(home) not in str(rows)
 
 
@@ -89,7 +89,7 @@ def test_desktop_can_save_a_credential_which_lands_600_and_is_never_echoed(home,
     response = client.put("/api/assistant/plugins/calendar", json={"credential": "  " + SECRET + "\n"})
     assert response.status_code == 200 and "private-abc123" not in response.text
     assert response.json()["saved"] and response.json()["check"]["ok"]
-    path = home / ".vortocode" / "connectors" / "calendar.token"
+    path = home / ".vortoone" / "connectors" / "calendar.token"
     assert path.read_text() == SECRET + "\n"
     assert path.stat().st_mode & 0o777 == 0o600 and path.parent.stat().st_mode & 0o777 == 0o700
     rows = {row["name"]: row["status"] for row in client.get("/api/assistant/plugins").json()["plugins"]}
@@ -106,7 +106,7 @@ def test_bad_credentials_are_refused_without_echo_or_file(home, client, name, va
     response = client.put(f"/api/assistant/plugins/{name}", json={"credential": value})
     assert response.status_code == 400 and message in response.json()["detail"]
     assert "private-abc123" not in response.text
-    assert not (home / ".vortocode" / "connectors" / f"{name}.token").exists()
+    assert not (home / ".vortoone" / "connectors" / f"{name}.token").exists()
 
 
 def test_save_rejects_unknown_plugins_and_missing_fields(home, client):

@@ -44,7 +44,7 @@ async def test_parallel_in_worktree_no_git_race(tmp_path):
         assert all(f"f{j}.py" not in diff for j in range(6) if j != i)
     # 主工作区未被碰、所有 worktree 都清理干净
     assert not any((tmp_path / f"f{i}.py").exists() for i in range(6))
-    wdir = tmp_path / ".vortocode" / "worktrees"
+    wdir = tmp_path / ".vortoone" / "worktrees"
     assert not wdir.exists() or not any(wdir.iterdir())
     # 主仓库 git 状态干净（无残留登记/锁）
     st = subprocess.run(["git", "-C", str(tmp_path), "status", "--porcelain"],
@@ -69,7 +69,7 @@ async def test_in_worktree_isolates_and_collects_diff(tmp_path):
     assert (tmp_path / "a.txt").read_text() == "hello\n"
     assert not (tmp_path / "new.py").exists()
     # worktree 已清理
-    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-test").exists()
+    assert not (tmp_path / ".vortoone" / "worktrees" / "wt-test").exists()
 
 
 @pytest.mark.asyncio
@@ -111,7 +111,7 @@ async def test_in_worktree_cleans_up_on_error(tmp_path):
 
     with pytest.raises(RuntimeError):
         await worktree.in_worktree(str(tmp_path), "wt-err", boom)
-    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-err").exists()   # 出错也清理
+    assert not (tmp_path / ".vortoone" / "worktrees" / "wt-err").exists()   # 出错也清理
 
 
 @pytest.mark.asyncio
@@ -237,7 +237,7 @@ async def test_apply_diff_to_branch_creates_branch_without_touching_main(tmp_pat
     assert "feat.py" in git("ls-tree", "-r", "--name-only", "vorto/feat-x").stdout   # 分支里有新文件
     assert not (tmp_path / "feat.py").exists()                                        # 主工作区没被碰
     assert git("branch", "--show-current").stdout.strip() == cur                      # 当前分支没切走
-    wt_dir = tmp_path / ".vortocode" / "worktrees"
+    wt_dir = tmp_path / ".vortoone" / "worktrees"
     assert not wt_dir.exists() or not any(wt_dir.iterdir())                           # 临时 worktree 已清
 
 
@@ -602,7 +602,7 @@ async def test_run_dependent_on_branch_green_commits_and_advances_tip(tmp_path):
     assert "dep.py" in git("ls-tree", "-r", "--name-only", "vorto/dep").stdout
     assert "dep commit" in git("log", "--oneline", "vorto/dep").stdout
     assert not (tmp_path / "dep.py").exists()                        # 主工作区没碰
-    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-dep").exists()   # worktree 清理
+    assert not (tmp_path / ".vortoone" / "worktrees" / "wt-dep").exists()   # worktree 清理
 
 
 @pytest.mark.asyncio
@@ -650,7 +650,7 @@ async def test_verify_branch_runs_tests_and_cleans_up(tmp_path):
     test_cmd = [sys.executable, "-m", "pytest", "-q", "test_ok.py"]
     res = worktree.verify_branch(str(tmp_path), "vorto/ver", test_cmd, "wt-ver")
     assert res["ok"] is True
-    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-ver").exists()
+    assert not (tmp_path / ".vortoone" / "worktrees" / "wt-ver").exists()
 
 
 @pytest.mark.asyncio
@@ -1078,7 +1078,7 @@ def test_preexisting_failure_does_not_fail_the_change(tmp_path):
     assert res["ok"] is True
     assert res["baseline"]["preexisting"] == ["test_old.py::test_old"] and res["baseline"]["new"] == []
     assert "test_old.py::test_old" in worktree.baseline_note(res)
-    assert not list((tmp_path / ".vortocode" / "worktrees").glob("*"))      # 基线 worktree 也清干净
+    assert not list((tmp_path / ".vortoone" / "worktrees").glob("*"))      # 基线 worktree 也清干净
 
 
 def test_new_failure_still_fails_alongside_preexisting(tmp_path):
@@ -1138,8 +1138,8 @@ def test_ignored_local_config_reaches_tests_only_when_declared(tmp_path):
 def test_only_ignored_files_outside_state_dirs_are_selected(tmp_path):
     _config_repo(tmp_path)
     (tmp_path / "notes.txt").write_text("untracked but not ignored\n")           # 会混进 diff：不带
-    (tmp_path / ".vortocode" / "worktrees" / "other").mkdir(parents=True)
-    (tmp_path / ".vortocode" / "worktrees" / "other" / "x.py").write_text("x\n")   # 别的 worktree：不带
+    (tmp_path / ".vortoone" / "worktrees" / "other").mkdir(parents=True)
+    (tmp_path / ".vortoone" / "worktrees" / "other" / "x.py").write_text("x\n")   # 别的 worktree：不带
     (tmp_path / "build").mkdir()
     (tmp_path / "build" / "out.bin").write_text("artifact\n")
     (tmp_path / ".worktreeinclude").write_text("*\n")

@@ -16,7 +16,7 @@ SPEC.loader.exec_module(backup_mod)
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setattr(backup_mod, "HOME", tmp_path)
-    data = tmp_path / "assistant" / ".vortocode"
+    data = tmp_path / "assistant" / ".vortoone"
     (data / "goals").mkdir(parents=True)
     (data / "goals" / "personal-1.json").write_text('{"objective": "交周报"}')
     (data / "cache").mkdir()
@@ -40,7 +40,7 @@ def test_round_trip_restores_data_and_a_consistent_database(home):
     assert blob.startswith(backup_mod.MAGIC) and b"\xe4\xba\xa4\xe5\x91\xa8\xe6\x8a\xa5" not in blob   # 「交周报」不以明文出现
     assert oct(out.stat().st_mode & 0o777) == "0o600"
     assert backup_mod.main(["restore", "--private", str(private), "--archive", str(out), "--into", str(root / "back")]) == 0
-    restored = root / "back" / "assistant" / ".vortocode"
+    restored = root / "back" / "assistant" / ".vortoone"
     assert (restored / "goals" / "personal-1.json").read_text() == '{"objective": "交周报"}'
     with sqlite3.connect(restored / "sessions.db") as db:
         assert db.execute("select content from memories").fetchall() == [("喜欢简短的回复",)]
@@ -88,3 +88,14 @@ def test_keygen_never_overwrites(home):
     _root, _data, private = home
     with pytest.raises(SystemExit):
         backup_mod.keygen(private)
+
+
+def test_backs_up_the_real_state_directory_before_and_after_the_rename(tmp_path):
+    """状态目录改名后 .vortocode 是指向 .vortoone 的链接（ADR-018 批次 C）：备份要的是真实目录；没搬的旧目录照样备份。"""
+    old = tmp_path / "before" / ".vortocode"
+    old.mkdir(parents=True)
+    assert backup_mod._state_dir(tmp_path / "before") == old
+    moved = tmp_path / "after"
+    (moved / ".vortoone").mkdir(parents=True)
+    (moved / ".vortocode").symlink_to(".vortoone")
+    assert backup_mod._state_dir(moved) == moved / ".vortoone"

@@ -52,7 +52,7 @@ async def test_check_relay_no_key_skips(monkeypatch):
 
 def test_check_permissions(tmp_path):
     assert doctor._check_permissions(str(tmp_path)).level == "ok"     # 没文件 = 默认面
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir()
     (d / "permissions.yaml").write_text("deny: [run_command]", encoding="utf-8")
     assert doctor._check_permissions(str(tmp_path)).level == "ok"
@@ -61,7 +61,7 @@ def test_check_permissions(tmp_path):
 def test_check_permissions_bad_yaml_is_fail(tmp_path):
     """坏 YAML 必须报 fail（评审 #142：load_permissions 为运行时安全吞错、静默降级成空权限——
     doctor 借它检查等于永远绿；自检要 strict parse，把静默降级暴露出来）。"""
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir()
     (d / "permissions.yaml").write_text("deny: [unclosed", encoding="utf-8")   # 评审的复现输入
     c = doctor._check_permissions(str(tmp_path))

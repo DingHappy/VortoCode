@@ -19,13 +19,13 @@ def test_round_trip(tmp_path):
 
 def test_state_file_is_gitignored(tmp_path):
     set_trust_level(str(tmp_path), READS)
-    ignore = (tmp_path / ".vortocode" / ".gitignore").read_text(encoding="utf-8")
+    ignore = (tmp_path / ".vortoone" / ".gitignore").read_text(encoding="utf-8")
     assert "trust.json" in ignore
 
 
 @pytest.mark.parametrize("payload", ["not json", '"a string"', '{"level": "banana"}', "{}"])
 def test_broken_or_unknown_content_falls_back_to_ask(tmp_path, payload):
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir(parents=True, exist_ok=True)
     (state / "trust.json").write_text(payload, encoding="utf-8")
     assert get_trust_level(str(tmp_path)) == ASK
@@ -33,7 +33,7 @@ def test_broken_or_unknown_content_falls_back_to_ask(tmp_path, payload):
 
 def test_unknown_level_is_stored_as_ask(tmp_path):
     assert set_trust_level(str(tmp_path), "root-me") == ASK
-    stored = json.loads((tmp_path / ".vortocode" / "trust.json").read_text(encoding="utf-8"))
+    stored = json.loads((tmp_path / ".vortoone" / "trust.json").read_text(encoding="utf-8"))
     assert stored == {"level": ASK}
 
 
@@ -84,7 +84,7 @@ def test_desktop_project_supervision_clamps_historical_full(tmp_path, monkeypatc
 
 def test_change_is_audited(client, tmp_path):
     client.put("/api/trust", json={"level": READS})
-    audit = (tmp_path / ".vortocode" / "audit.log").read_text(encoding="utf-8")
+    audit = (tmp_path / ".vortoone" / "audit.log").read_text(encoding="utf-8")
     assert "trust_level_changed" in audit
 
 

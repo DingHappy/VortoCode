@@ -24,6 +24,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -228,8 +229,7 @@ PAUSE = timedelta(hours=24)
 
 
 def _paused_path(root: str):
-    from pathlib import Path
-    return Path(root) / ".vortocode" / "dispatches" / "goal_advance_paused.json"
+    return state_dir(root) / "dispatches" / "goal_advance_paused.json"
 
 
 def load_paused(root: str) -> Dict[str, str]:

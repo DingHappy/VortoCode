@@ -10,15 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from pathlib import Path
 
 from src.agents.tool import Tool
+from src.utils.state_dir import state_dir
 
 
 def _longterm_store(repo_root: str):
     """跨会话长期记忆用的 SessionStore（与 TUI 同一 db、同一固定 __longterm__ session_id）。"""
     from src.memory.conversation_db import SessionStore
-    return SessionStore(str(Path(repo_root) / ".vortocode" / "sessions.db"))
+    return SessionStore(str(state_dir(repo_root) / "sessions.db"))
 
 
 def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
@@ -80,7 +80,7 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
         return f"{result.message}（id={result.record_id}）"
 
     async def _remember_repo(args: dict) -> str:
-        """把一条**关于本仓库**的事实写进 .vortocode/memory/repo.md（下个会话自动进系统提示）。
+        """把一条**关于本仓库**的事实写进 .vortoone/memory/repo.md（下个会话自动进系统提示）。
 
         写入门槛**高于** save_memory：repo.md 每轮都被注入系统提示 = "系统事实"，故只收
         policy 判定为 durable 的内容；污点回合的指令性文本（proposal）与疑似凭据（quarantine）
@@ -110,7 +110,7 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
             return "写入仓库记忆失败: 当前入口没有可用的用户确认门。"
         try:
             approved = bool(await confirm(
-                "把这条事实写进**仓库记忆** .vortocode/memory/repo.md？\n"
+                "把这条事实写进**仓库记忆** .vortoone/memory/repo.md？\n"
                 "（今后本仓库的每个会话都会自动带上它，子 agent 也会看到）\n"
                 f"  {decision.content[:240]}"))
         except Exception as e:  # noqa: BLE001
@@ -154,7 +154,7 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
         query = str(args.get('query', '')).strip()
         if not query:
             return 'search_conversations 需要 query（要找的历史对话关键词）。'
-        path = Path(repo_root) / '.vortocode' / 'sessions.db'
+        path = state_dir(repo_root) / 'sessions.db'
         after, before = args.get('after'), args.get('before')
         try:
             archive = await asyncio.to_thread(search_archives, repo_root, query, limit=8, after=after, before=before)
@@ -206,7 +206,7 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
             if source_kind == 'json_archive':
                 excerpt = await asyncio.to_thread(read_archive_excerpt, repo_root, args.get('id'), revision, offset=offset)
             elif source_kind == 'sqlite_message':
-                excerpt = await asyncio.to_thread(read_stored_excerpt, Path(repo_root) / '.vortocode/sessions.db',
+                excerpt = await asyncio.to_thread(read_stored_excerpt, state_dir(repo_root) / 'sessions.db',
                                                  args.get('id'), revision, offset=offset)
             else:
                 return '读取对话证据失败：source_kind 需要使用检索结果中的来源类型。'

@@ -46,7 +46,7 @@ async def test_desktop_assistant_creates_a_goal_without_asking_and_can_undo_it(t
 
     assert undo_log.undo(root, op["id"]).ok
     assert PersonalGoals(root).list() == []
-    assert (tmp_path / ".vortocode" / "goals" / ".withdrawn" / f"{goal['id']}.json").exists()   # 撤回不删除
+    assert (tmp_path / ".vortoone" / "goals" / ".withdrawn" / f"{goal['id']}.json").exists()   # 撤回不删除
 
 
 async def test_update_is_recorded_and_undo_restores_the_previous_progress(tmp_path):
@@ -196,7 +196,7 @@ async def test_goals_saved_before_origins_existed_count_as_the_owners(tmp_path):
     root = str(tmp_path)
     PersonalGoals(root).create({"request_id": "legacy", "objective": "体检", "acceptance_criteria": ["拿到报告"],
                                 "next_action": "预约"})
-    path = tmp_path / ".vortocode" / "goals" / "personal-legacy.json"
+    path = tmp_path / ".vortoone" / "goals" / "personal-legacy.json"
     data = _json.loads(path.read_text(encoding="utf-8"))
     data.pop("origins")
     path.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -209,7 +209,7 @@ async def test_unreadable_origins_are_treated_as_external(tmp_path):
     root = str(tmp_path)
     PersonalGoals(root).create({"request_id": "bad", "objective": "体检", "acceptance_criteria": ["拿到报告"],
                                 "next_action": "预约"})
-    path = tmp_path / ".vortocode" / "goals" / "personal-bad.json"
+    path = tmp_path / ".vortoone" / "goals" / "personal-bad.json"
     data = _json.loads(path.read_text(encoding="utf-8"))
     data["origins"] = ["not", "a", "dict"]
     path.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")

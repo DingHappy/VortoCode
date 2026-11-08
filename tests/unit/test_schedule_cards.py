@@ -10,7 +10,7 @@ from src.web.server import app
 
 def setup(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    path = tmp_path / '.vortocode' / 'cron.yaml'
+    path = tmp_path / '.vortoone' / 'cron.yaml'
     path.parent.mkdir()
     path.write_text('jobs:\n  - name: brief\n    schedule: "every 1h"\n    prompt: "original"\n    enabled: true\n  - name: other\n    schedule: "every 2h"\n    prompt: "other"\n')
     return TestClient(app), path

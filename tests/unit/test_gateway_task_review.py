@@ -97,12 +97,12 @@ def test_task_branch_snapshot_accept_and_reject_hunks(tmp_path):
     assert branch_text[0] == "first accepted"
     assert branch_text[20] == original[20]
     assert main_text == original
-    assert not list((tmp_path / ".vortocode" / "worktrees").glob("review-*"))
+    assert not list((tmp_path / ".vortoone" / "worktrees").glob("review-*"))
 
 
 def test_strict_policy_requires_every_current_hunk_and_rechecks_live_head(tmp_path):
     task, _ = _task_branch(tmp_path)
-    policy = tmp_path / ".vortocode" / "review-policy.yaml"
+    policy = tmp_path / ".vortoone" / "review-policy.yaml"
     policy.parent.mkdir(exist_ok=True)
     policy.write_text(
         "task_branch:\n  require_all_hunks_decided: true\n", encoding="utf-8",
@@ -142,7 +142,7 @@ def test_strict_policy_requires_every_current_hunk_and_rechecks_live_head(tmp_pa
 
 def test_invalid_strict_policy_fails_closed_at_delivery(tmp_path):
     task, _ = _task_branch(tmp_path)
-    policy = tmp_path / ".vortocode" / "review-policy.yaml"
+    policy = tmp_path / ".vortoone" / "review-policy.yaml"
     policy.parent.mkdir(exist_ok=True)
     policy.write_text(
         "task_branch:\n  require_all_hunks_decided: yes\n", encoding="utf-8",
@@ -155,7 +155,7 @@ def test_invalid_strict_policy_fails_closed_at_delivery(tmp_path):
 
 def test_task_rest_delivery_uses_strict_policy_not_desktop_state(tmp_path, monkeypatch):
     task, _ = _task_branch(tmp_path)
-    policy = tmp_path / ".vortocode" / "review-policy.yaml"
+    policy = tmp_path / ".vortoone" / "review-policy.yaml"
     policy.parent.mkdir(exist_ok=True)
     policy.write_text(
         "task_branch:\n  require_all_hunks_decided: true\n", encoding="utf-8",

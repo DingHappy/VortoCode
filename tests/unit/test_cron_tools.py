@@ -44,14 +44,14 @@ class _StopAfterSpy(Exception):
 
 
 def _seed(tmp_path):
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir(parents=True, exist_ok=True)
     (d / "cron.yaml").write_text(SEED, encoding="utf-8")
     return tmp_path
 
 
 def _text(tmp_path):
-    return (tmp_path / ".vortocode" / "cron.yaml").read_text(encoding="utf-8")
+    return (tmp_path / ".vortoone" / "cron.yaml").read_text(encoding="utf-8")
 
 
 def _tools(tmp_path, confirm=None):
@@ -637,8 +637,8 @@ async def test_notifier_writes_the_ledger_even_when_im_is_down(tmp_path, monkeyp
 async def test_cron_list_without_schedule_timestamp_does_not_claim_never_ran(tmp_path, monkeypatch):
     from src.scheduling.cron import record_outcome
     from src.agents.tools.cron import build_cron_tools
-    (tmp_path / ".vortocode").mkdir(exist_ok=True)
-    (tmp_path / ".vortocode" / "cron.yaml").write_text('jobs:\n  - name: brief\n    schedule: "at 09:00"\n    prompt: "简报"\n')
+    (tmp_path / ".vortoone").mkdir(exist_ok=True)
+    (tmp_path / ".vortoone" / "cron.yaml").write_text('jobs:\n  - name: brief\n    schedule: "at 09:00"\n    prompt: "简报"\n')
     record_outcome(str(tmp_path), "brief", ok=False, summary="手动运行失败", error="连接超时")
     tools = {tool.name: tool for tool in build_cron_tools(str(tmp_path))}
     result = await tools["cron_list"].handler({})

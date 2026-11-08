@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class SessionStore:
     """会话存储"""
     
-    def __init__(self, db_path: str = ".vortocode/sessions.db"):
+    def __init__(self, db_path: str = ".vortoone/sessions.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -490,7 +490,7 @@ class SessionStore:
 class SessionManager:
     """会话管理器"""
     
-    def __init__(self, db_path: str = ".vortocode/sessions.db"):
+    def __init__(self, db_path: str = ".vortoone/sessions.db"):
         self.store = SessionStore(db_path)
         self.current_session_id: Optional[str] = None
     

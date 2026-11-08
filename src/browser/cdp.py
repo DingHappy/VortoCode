@@ -20,6 +20,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
+from src.utils.state_dir import home_state_dir
 
 _CANDIDATES = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -29,7 +30,7 @@ _CANDIDATES = (
 )
 _LINUX_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge")
 
-PROFILE_DIR = Path.home() / ".vortocode" / "browser-profile"
+PROFILE_DIR = home_state_dir() / "browser-profile"
 _COMMAND_TIMEOUT = 30.0
 
 

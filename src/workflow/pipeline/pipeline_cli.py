@@ -102,7 +102,7 @@ async def run_pipeline_cli(
     if action == "start":
         definition = load_definition(repo, name)
         if definition is None:
-            print(f"读不到流水线定义 .vortocode/pipelines/{name}.yaml", file=sys.stderr)
+            print(f"读不到流水线定义 .vortoone/pipelines/{name}.yaml", file=sys.stderr)
             return 1
         if if_idle:
             # 定时开新一轮必须挡住堆积：昨天那轮还等你批，今天又开一轮，两轮抢同一个人的注意力，

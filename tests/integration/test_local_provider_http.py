@@ -175,7 +175,7 @@ async def test_role_file_routes_original_agent_through_read_tool_and_result(loca
     requests, mode = local_endpoint
     mode["agent_roundtrip"] = True
     monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "1")
-    role_dir = tmp_path / ".vortocode" / "agents"
+    role_dir = tmp_path / ".vortoone" / "agents"
     role_dir.mkdir(parents=True)
     (role_dir / "local-reader.md").write_text("---\nname: local-reader\ntools: read\nmodel: local:fixture:7b\nmax_steps: 3\n---\nRead README.md and report findings.")
     original = "local-read-proof-42"

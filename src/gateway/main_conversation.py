@@ -1,6 +1,6 @@
 """常驻助理的「主要聊天」：一段对话，多个入口（Desktop、Telegram，以后的手机 App）。
 
-- **哪一段是主要聊天**由助理所在的那台电脑记录（``.vortocode/main_chat.json``）。Desktop 第一次
+- **哪一段是主要聊天**由助理所在的那台电脑记录（``.vortoone/main_chat.json``）。Desktop 第一次
   连上时把自己已有的主要聊天登记进来（不搬数据）；之后所有入口都认这一段。
 - **只共享对话历史**：每个入口保留自己的 agent——工具面、污点（IM 入站每回合打污点）、确认方式
   （Desktop 弹窗 / 手机按钮）都按消息从哪个入口来决定，不因为合并而互相放宽。
@@ -17,6 +17,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Awaitable, Callable, List, Optional, Protocol, Tuple
+from src.utils.state_dir import state_dir
 
 _SID = re.compile(r"sid-[A-Za-z0-9_-]{1,80}")
 
@@ -42,7 +43,7 @@ def set_main_conversation_host(host: Optional[MainConversationHost]) -> None:
 
 
 def _path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "main_chat.json"
+    return state_dir(root) / "main_chat.json"
 
 
 def main_chat_key(root: str) -> Optional[str]:

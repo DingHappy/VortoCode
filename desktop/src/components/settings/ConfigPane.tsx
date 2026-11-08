@@ -57,7 +57,7 @@ export function ConfigPane({ llmProfilePath }: { llmProfilePath?: string }) {
         ))}
         {status && <p className="settings-card-note">{status}</p>}
       </section>
-      <p className="settings-intro">项目级指令放在仓库根目录的 AGENTS.md（或本地私有的 .vortocode/AGENTS.md），只在该项目里生效。</p>
+      <p className="settings-intro">项目级指令放在仓库根目录的 AGENTS.md（或本地私有的 .vortoone/AGENTS.md），只在该项目里生效。</p>
     </div>
   );
 }

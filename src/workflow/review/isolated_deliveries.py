@@ -9,6 +9,7 @@ from pathlib import Path
 from src.gateway.audit import sanitize_audit_value
 from src.workflow.review.git_review import normalize_git_path
 from src.utils.state_dir import ensure_state_gitignore
+from src.utils.state_dir import state_dir
 
 _MAX_FILES = 2000
 _MAX_DIFF = 2_000_000
@@ -26,7 +27,7 @@ def _root(repo_root: str) -> str:
 
 
 def _store(root: str) -> Path:
-    return Path(root) / ".vortocode" / "isolated_deliveries"
+    return state_dir(root) / "isolated_deliveries"
 
 
 def _redact_lines(value: object, limit: int) -> str:

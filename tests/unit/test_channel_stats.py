@@ -87,7 +87,7 @@ def test_a_non_http_url_is_refused(tmp_path, bad):
 
 def test_registry_lands_outside_git(tmp_path):
     register_url(str(tmp_path), BV)
-    assert (tmp_path / ".vortocode" / "published_urls.json").is_file()
+    assert (tmp_path / ".vortoone" / "published_urls.json").is_file()
 
 
 # ------------------------------------------------------------------ 整轮

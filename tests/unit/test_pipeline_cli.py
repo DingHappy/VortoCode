@@ -22,11 +22,11 @@ DEF = {
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    d = tmp_path / ".vortocode" / "pipelines"
+    d = tmp_path / ".vortoone" / "pipelines"
     d.mkdir(parents=True)
     (d / "content-ops.yaml").write_text(yaml.safe_dump(DEF, allow_unicode=True), encoding="utf-8")
     # 对外工序要真有出口才谈得上"要不要放行"（第一道闸见 test_outbound_is_real.py）。
-    agents = tmp_path / ".vortocode" / "agents"
+    agents = tmp_path / ".vortoone" / "agents"
     agents.mkdir(parents=True)
     (agents / "courier.md").write_text(
         "---\nname: courier\ndescription: 交付\ntools: deliver\n---\n你是交付者。\n",

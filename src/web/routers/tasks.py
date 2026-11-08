@@ -1,7 +1,7 @@
 """后台任务路由（D1 v1）——把长 dev 流水线搬到后台，提交即返回、可查询/取消、崩溃可恢复。
 
 取代此前从未接线的 src/core/task_queue 骨架（已退役）。运行时是 src/workflow/tasks/tasks.TaskRunner，
-台账 write-ahead 落 .vortocode/tasks/<id>.json。dev 型任务直接调 dev_auto 工具（确定性，
+台账 write-ahead 落 .vortoone/tasks/<id>.json。dev 型任务直接调 dev_auto 工具（确定性，
 不指望模型自己路由），产出 vorto/* 分支 + C1 计划；后台无人值守 → 外向操作（push）默认不做，
 落分支后由人点 /api/tasks/{id}/open_pr 开 **draft** PR（"人在合并口"）。
 """

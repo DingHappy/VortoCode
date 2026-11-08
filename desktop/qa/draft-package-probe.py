@@ -95,7 +95,7 @@ try:
                 await ws.recv()
                 await ws.send(json.dumps({"type":"ping"}))
         assert api("/api/agent/sessions")["sessions"] == []
-        assert not list((workspace / ".vortocode/web_sessions").glob("draft-*.json"))
+        assert not list((workspace / ".vortoone/web_sessions").glob("draft-*.json"))
     asyncio.run(open_drafts())
     assert api("/api/trust")["local_file_reads"]
     cases = []
@@ -130,7 +130,7 @@ try:
     assert ids == {"file-deny","file-once","file-preapproved"}, ids
     evidence["drafts"] = {"opened":55,"recent_before_send":0,"empty_files":0,"started_sessions":sorted(ids)}
     assert not any(r["reasoning_effort_sent"] for r in requests)
-    audit = (workspace / ".vortocode/audit.log").read_text()
+    audit = (workspace / ".vortoone/audit.log").read_text()
     assert "读取本机文件" in audit
     evidence.update(cases=cases, trust=status, requests=requests, audit=True, passed=True)
 finally:

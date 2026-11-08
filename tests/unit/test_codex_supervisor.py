@@ -637,7 +637,7 @@ async def test_mac_going_quiet_is_reported_once(tmp_path):
 async def test_no_codex_reports_means_nothing_happens(tmp_path):
     notes = Notes()
     await sup.supervise_once(str(tmp_path), datetime(2026, 10, 20, 9, 0), notify=notes)
-    assert not notes.sent and not (tmp_path / ".vortocode").exists()
+    assert not notes.sent and not (tmp_path / ".vortoone").exists()
 
 
 @pytest.mark.asyncio

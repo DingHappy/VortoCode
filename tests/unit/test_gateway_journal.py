@@ -110,7 +110,7 @@ def test_manual_note_is_redacted_and_becomes_timeline_event(tmp_path):
     assert len(journal["notes"]) == 1
     assert "sk-super-secret" not in journal["notes"][0]["text"]
     assert any(item["kind"] == "note" for item in journal["timeline"])
-    raw = (tmp_path / ".vortocode" / "journal" / f"{today()}.json").read_text(encoding="utf-8")
+    raw = (tmp_path / ".vortoone" / "journal" / f"{today()}.json").read_text(encoding="utf-8")
     assert "sk-super-secret" not in raw
     assert json.loads(raw)["summary"]["notes"] == 1
 

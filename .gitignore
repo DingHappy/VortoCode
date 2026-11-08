@@ -14,9 +14,11 @@ credentials.*
 
 # ─────────────────────────────────────────────────────────────
 # 运行时状态 / 产物（可再生，不应入库）
-# .vortocode/ 内含 sessions.db / memory / projects / logs 等
+# .vortoone/ 内含 sessions.db / memory / projects / logs 等
 # ─────────────────────────────────────────────────────────────
-.vortocode/
+.vortoone/
+# 改名前的旧目录名：搬过去后这里是指向 .vortoone 的链接（ADR-018），不带斜杠才能连链接一起忽略
+.vortocode
 web/mobile/
 *.db
 *.sqlite

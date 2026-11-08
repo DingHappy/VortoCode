@@ -10,7 +10,7 @@
 - 管理 token（`VORTOONE_RELAY_ADMIN_TOKEN`）：`GET /api/channel_pool`（上游渠道冷却/禁用）、
   `GET /api/log/stat`（当日消耗，可配阈值 `VORTOONE_RELAY_DAILY_QUOTA_LIMIT`）。
 
-重启检测：`/api/status` 的 `start_time` 与上次巡检快照（`.vortocode/duty/relay-state.json`）
+重启检测：`/api/status` 的 `start_time` 与上次巡检快照（`.vortoone/duty/relay-state.json`）
 比对——变了就报异常（可能是 OOM/崩溃）。中转站的 version 是写死的，分不出发布；所以发布脚本
 可以向常驻助理报一次事件型运维报到（source 默认 ``relay-deploy``，``VORTOONE_RELAY_DEPLOY_SOURCE`` 可改）：
 上次巡检之后有发布报到，重启就算正常发布、不报红；没有就照旧报异常（宁保守）。
@@ -28,11 +28,12 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 from urllib import error as _urlerror
 from urllib import request as _urlrequest
+from src.utils.state_dir import STATE_DIRNAME, state_dir
 
 # 项目维护的默认 relay；部署者可用 VORTOONE_RELAY_URL 指向自己的兼容服务。
 DEFAULT_RELAY_URL = "https://token.vortotech.com"
 _TIMEOUT = 10.0
-_STATE_REL = Path(".vortocode") / "duty" / "relay-state.json"
+_STATE_REL = Path(".vortoone") / "duty" / "relay-state.json"
 
 # (url, headers) -> (HTTP 状态码, 响应体文本)；连接失败/超时按约定抛异常，由检查项兜住计为异常
 Fetch = Callable[[str, dict], Tuple[int, str]]
@@ -79,7 +80,7 @@ def _get_json(fetch: Fetch, url: str, headers: dict) -> Tuple[Optional[int], Opt
 
 def _load_state(repo_root: str) -> dict:
     try:
-        return json.loads((Path(repo_root) / _STATE_REL).read_text(encoding="utf-8"))
+        return json.loads((state_dir(repo_root) / _STATE_REL.relative_to(STATE_DIRNAME)).read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 —— 没有/损坏都当首跑
         return {}
 
@@ -89,7 +90,7 @@ def _save_state(repo_root: str, state: dict) -> None:
         from src.utils.state_dir import ensure_state_gitignore
 
         ensure_state_gitignore(repo_root)
-        path = Path(repo_root) / _STATE_REL
+        path = state_dir(repo_root) / _STATE_REL.relative_to(STATE_DIRNAME)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:  # noqa: BLE001 —— 快照是旁路，写不进去不该把巡检本身标红

@@ -133,7 +133,7 @@ async def test_owner_receipt_requires_send_or_persisted_retry(tmp_path, monkeypa
     monkeypatch.setattr(im_runtime, "notify_owner", notify_owner)
     # A readable file in place of logs/ causes a real filesystem write failure.
     if outcome == "lost":
-        logs = tmp_path / ".vortocode" / "logs"
+        logs = tmp_path / ".vortoone" / "logs"
         logs.parent.mkdir()
         logs.write_text("blocked")
     assert await watch.owner_reporter(str(tmp_path))("synthetic notice") is (outcome != "lost")
@@ -151,7 +151,7 @@ def test_relay_rejects_notification_when_send_and_retry_storage_both_fail(tmp_pa
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     monkeypatch.setattr(im_runtime, "notify_owner", notify_owner)
-    logs = tmp_path / ".vortocode" / "logs"
+    logs = tmp_path / ".vortoone" / "logs"
     logs.parent.mkdir()
     logs.write_text("blocked")
     response = TestClient(app).post("/api/im/notify", json={"text": "synthetic notice"})
@@ -216,5 +216,5 @@ async def test_failed_report_composition_does_not_block_other_slots(tmp_path):
 def test_report_cache_is_private_and_generated_state_is_ignored(tmp_path):
     watch._save_state(str(tmp_path), {"report_drafts": {"slot": "synthetic private draft"}})
     assert stat.S_IMODE(watch._state_path(str(tmp_path)).stat().st_mode) == 0o600
-    assert "dispatches/" in (tmp_path / ".vortocode" / ".gitignore").read_text()
+    assert "dispatches/" in (tmp_path / ".vortoone" / ".gitignore").read_text()
     assert list(watch._state_path(str(tmp_path)).parent.glob("*.tmp")) == []

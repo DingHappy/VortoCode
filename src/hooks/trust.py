@@ -2,7 +2,7 @@
 
 Repository hook files can execute commands or call HTTP endpoints.  Trust must
 therefore live outside the repository: a malicious checkout must not be able to
-commit its own approval next to ``.vortocode/hooks.yaml``.
+commit its own approval next to ``.vortoone/hooks.yaml``.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
+from src.utils.state_dir import app_support_dir, state_dir, xdg_dir
 
 _VERSION = 1
 
@@ -24,8 +25,8 @@ def trust_store_path() -> Path:
     if override:
         return Path(override).expanduser()
     if os.name == "posix" and Path.home().joinpath("Library").is_dir():
-        return Path.home() / "Library" / "Application Support" / "VortoCode" / "trusted-folders.json"
-    return Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")) / "vortocode" / "trusted-folders.json"
+        return app_support_dir() / "trusted-folders.json"
+    return xdg_dir("XDG_CONFIG_HOME", Path.home() / ".config") / "trusted-folders.json"
 
 
 def _canonical(repo_root: str) -> str:
@@ -85,7 +86,7 @@ def hook_config_status(repo_root: str) -> Dict[str, Any]:
     import yaml
 
     root = _canonical(repo_root)
-    config = Path(root) / ".vortocode" / "hooks.yaml" if root else Path()
+    config = state_dir(root) / "hooks.yaml" if root else Path()
     configured = bool(root and config.is_file())
     trusted = bool(configured and is_project_trusted(root))
     hooks = []
@@ -146,7 +147,7 @@ def hook_config_status(repo_root: str) -> Dict[str, Any]:
         "configured": configured,
         "trusted": trusted,
         "active": bool(configured and trusted and not error),
-        "config_path": ".vortocode/hooks.yaml" if configured else "",
+        "config_path": ".vortoone/hooks.yaml" if configured else "",
         "config_sha256": digest,
         "hooks": hooks,
         "error": error,

@@ -1,7 +1,7 @@
 """助理插件：把日历、邮件这类外部数据接进私人助理（General 的 Desktop/IM 会话）。
 
 一个插件 = 一个名字 + 一份凭据 + 一组工具 + 可选的早报段落。
-- **放了凭据就启用**：凭据只认 `~/.vortocode/connectors/<名字>.token`（本人所有、权限 600），
+- **放了凭据就启用**：凭据只认 `~/.vortoone/connectors/<名字>.token`（本人所有、权限 600），
   与 GitHub 连接器同一套读取和本机撤销规则；删掉文件或撤销即停用。
 - 工具在会话装配时按「此刻已启用」挂上，所以系统提示在会话内保持不变；新放的凭据从下一个会话起生效。
   每次调用仍重新读凭据，撤销立刻生效。
@@ -79,7 +79,7 @@ def credential_status(name: str) -> str:
 def plugin_status() -> List[dict]:
     """Desktop 插件页：每个插件的凭据状态。不含凭据原文，也不含凭据路径以外的本机信息。"""
     return [{"name": plugin.name, "title": plugin.title, "status": credential_status(plugin.name),
-             "credential_file": f"~/.vortocode/connectors/{plugin.name}.token",
+             "credential_file": f"~/.vortoone/connectors/{plugin.name}.token",
              "checkable": plugin.check is not None}
             for plugin in available_plugins()]
 

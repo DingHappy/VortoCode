@@ -61,7 +61,7 @@
 
 ## 独立手机网关与首次关联
 
-`src.web.mobile_server:create_app` 可以独立运行，只加载手机读取、账号桥和静态资源路由，不加载 Agent、模型、调度器或消息桥。`deploy/vortocode-mobile.user.service` 使用常驻助手原工作目录读取领域记录，仅允许写入 `.vortocode/mobile-devices` 安全授权目录。要求独立管理员令牌、精确公开 origin、绝对状态根路径及发布标识；仅监听 `127.0.0.1:18081`，单进程运行。
+`src.web.mobile_server:create_app` 可以独立运行，只加载手机读取、账号桥和静态资源路由，不加载 Agent、模型、调度器或消息桥。`deploy/vortocode-mobile.user.service` 使用常驻助手原工作目录读取领域记录，仅允许写入 `.vortoone/mobile-devices` 安全授权目录。要求独立管理员令牌、精确公开 origin、绝对状态根路径及发布标识；仅监听 `127.0.0.1:18081`，单进程运行。
 
 `deploy/Caddyfile.mobile-proxy` 只代理手机浏览器/原生登录与读取接口、明确静态资源；管理员关联、手动配对管理和执行接口不公开。运行时日志过滤请求 URI 和请求/响应头，避免错误日志记录 OAuth 回调和 Cookie。`/healthz` 仅为传输检查；是否关联账号须检查 `/api/mobile/browser/status`。
 

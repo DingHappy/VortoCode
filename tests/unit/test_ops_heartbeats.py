@@ -164,14 +164,14 @@ def test_status_rows_report_failed_and_overdue_without_changing_state(tmp_path):
     hb.record(root, "nas-backup", ok=True, text="同步完成", now=T0)
     hb.record(root, "restore-drill", ok=False, text="恢复出来的库少了一张表", now=T0)
     hb.record(root, "relay-release", ok=True, text="发布", now=T0, event=True)
-    before = (tmp_path / ".vortocode" / "ops_heartbeats.json").read_text(encoding="utf-8")
+    before = (tmp_path / ".vortoone" / "ops_heartbeats.json").read_text(encoding="utf-8")
     rows = {row["source"]: row for row in hb.status_rows(root, now=T0 + timedelta(hours=30))}
     assert rows["nas-backup"]["status"] == "overdue"            # 约定 26 小时，30 小时没报到成功
     assert rows["restore-drill"]["status"] == "failed" and "少了一张表" in rows["restore-drill"]["text"]
     assert "relay-release" not in rows                          # 事件型报到不约定间隔
     assert {row["source"]: row["status"] for row in hb.status_rows(root, now=T0 + timedelta(hours=1))}["nas-backup"] == "ok"
     # 只读：不记「已提醒」，也就不会吞掉巡检那次该报没报的推送
-    assert (tmp_path / ".vortocode" / "ops_heartbeats.json").read_text(encoding="utf-8") == before
+    assert (tmp_path / ".vortoone" / "ops_heartbeats.json").read_text(encoding="utf-8") == before
     assert hb.overdue(root, now=T0 + timedelta(hours=30))
 
 

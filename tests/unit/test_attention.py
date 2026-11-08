@@ -62,14 +62,14 @@ def test_attention_merges_dispatches_with_the_decision_queue_most_urgent_first(t
 def test_a_broken_ledger_does_not_hide_the_others(tmp_path):
     root = str(tmp_path)
     dispatch.propose(root, project="VortoOne", title="修登录", goal="g")
-    runs_dir = tmp_path / ".vortocode" / "runs"
+    runs_dir = tmp_path / ".vortoone" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     (runs_dir / "run-broken.json").write_text("{not json")
     assert [item["kind"] for item in attention_items(root)] == ["dispatch"]
 
 
 def _codex_actions(tmp_path, items):
-    path = tmp_path / ".vortocode" / "codex" / "actions.json"
+    path = tmp_path / ".vortoone" / "codex" / "actions.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(items, ensure_ascii=False))
 

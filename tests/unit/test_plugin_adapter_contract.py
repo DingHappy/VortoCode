@@ -12,7 +12,7 @@ from src.tools.mcp_client import MCPToolResult, MCPToolCall, StdioMCPClient, HTT
 
 
 def write_skill(root, *, disabled=False, body="Read references/guide.md."):
-    path = root / ".vortocode/skills/helper/SKILL.md"
+    path = root / ".vortoone/skills/helper/SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\nname: helper\ndescription: fixture\ndisable-model-invocation: {str(disabled).lower()}\n---\n{body}\n")
     return path

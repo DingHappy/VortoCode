@@ -4,8 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterable
+from src.utils.state_dir import state_dir
 
 _MAX_DISMISSED = 500
 
@@ -24,7 +24,7 @@ class DecisionStore:
 
     def __init__(self, repo_root: str):
         self.repo_root = str(repo_root)
-        self.path = Path(repo_root) / ".vortocode" / "decisions.json"
+        self.path = state_dir(repo_root) / "decisions.json"
 
     def _load(self) -> dict[str, str]:
         if not self.path.is_file():

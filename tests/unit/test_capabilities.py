@@ -33,8 +33,8 @@ def test_profile_normalization_fails_closed():
         (".env.example", False),
         ("config/private.pem", True),
         ("ops/secrets/token.txt", True),
-        (".vortocode/cli_session.json", True),
-        (".vortocode/sessions.db-wal", True),
+        (".vortoone/cli_session.json", True),
+        (".vortoone/sessions.db-wal", True),
         ("src/key.py", False),
         ("docs/credentials.md", False),
     ],
@@ -154,7 +154,7 @@ async def test_external_session_denies_sensitive_explicit_write(tmp_path):
 
 @pytest.mark.asyncio
 async def test_external_session_cannot_read_local_cli_history_or_symlink_alias(tmp_path):
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir()
     raw = "local history secret marker"
     history = state / "cli_session.json"
@@ -165,7 +165,7 @@ async def test_external_session_cannot_read_local_cli_history_or_symlink_alias(t
         build_read_tools(str(tmp_path)),
         capabilities=SessionCapabilities.for_profile(EXTERNAL_PROFILE, str(tmp_path)),
     )
-    for path in (".vortocode/cli_session.json", "public-history.json"):
+    for path in (".vortoone/cli_session.json", "public-history.json"):
         result = await agent._run_tool("read_file", {"path": path}, "plan", lambda _m: None)
         assert "能力拦截" in result and raw not in result
     tools = {tool.name: tool for tool in build_read_tools(str(tmp_path))}

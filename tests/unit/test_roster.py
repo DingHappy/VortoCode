@@ -31,8 +31,8 @@ def _env(path: Path, *, client_id="cid", secret="sec", owner="owner1", allow=Non
 
 
 def _roster(tmp_path: Path, body: str) -> R.Roster:
-    (tmp_path / ".vortocode").mkdir(exist_ok=True)
-    (tmp_path / ".vortocode" / "assistants.yaml").write_text(body, encoding="utf-8")
+    (tmp_path / ".vortoone").mkdir(exist_ok=True)
+    (tmp_path / ".vortoone" / "assistants.yaml").write_text(body, encoding="utf-8")
     return R.load_roster(str(tmp_path))
 
 

@@ -9,7 +9,7 @@
   给 Codex 发话 / 叫停、对外发送、花钱、删除不在其中，永远交给主人；
 - 派活每天最多 ``daily_dispatch_cap()`` 张（``VORTOONE_AUTO_DISPATCH_PER_DAY``，默认 3），用完就交给主人。
 
-每次审核写一行记录（``.vortocode/dispatches/auto_review.jsonl``）：类别、提议摘要、结论、理由、时间，
+每次审核写一行记录（``.vortoone/dispatches/auto_review.jsonl``）：类别、提议摘要、结论、理由、时间，
 方便事后核对和调整。``VORTOONE_AUTO_REVIEW=0`` 关闭（全部交给主人，等于原来的行为）。
 """
 from __future__ import annotations
@@ -22,6 +22,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+from src.utils.state_dir import state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def daily_dispatch_cap() -> int:
 
 
 def _log_path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "dispatches" / "auto_review.jsonl"
+    return state_dir(root) / "dispatches" / "auto_review.jsonl"
 
 
 def record(root: str, entry: Dict[str, Any]) -> None:

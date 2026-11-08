@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 from yaml.nodes import MappingNode, Node, ScalarNode
+from src.utils.state_dir import state_dir
 
 _MAX_CONFIG_BYTES = 64 * 1024
 
@@ -27,7 +28,7 @@ def _mapping_value(node: Node | None, key: str) -> Node | None:
 
 def load_task_review_policy(repo_root: str) -> dict[str, Any]:
     root = Path(repo_root).resolve()
-    path = root / ".vortocode" / "review-policy.yaml"
+    path = state_dir(root) / "review-policy.yaml"
     default = {
         "configured": False,
         "active": False,
@@ -71,7 +72,7 @@ def load_task_review_policy(repo_root: str) -> dict[str, Any]:
         return {
             "configured": True,
             "active": value,
-            "config_path": ".vortocode/review-policy.yaml",
+            "config_path": ".vortoone/review-policy.yaml",
             "config_sha256": hashlib.sha256(raw).hexdigest()[:16],
             "require_all_hunks_decided": value,
             "error": "",
@@ -80,6 +81,6 @@ def load_task_review_policy(repo_root: str) -> dict[str, Any]:
         return {
             **default,
             "configured": True,
-            "config_path": ".vortocode/review-policy.yaml",
+            "config_path": ".vortoone/review-policy.yaml",
             "error": str(exc)[:300],
         }

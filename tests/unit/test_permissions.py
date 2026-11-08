@@ -1,4 +1,4 @@
-"""细粒度工具权限（.vortocode/permissions.yaml allow/deny 规则）—— src/agents/permissions.py
+"""细粒度工具权限（.vortoone/permissions.yaml allow/deny 规则）—— src/agents/permissions.py
 + MainAgent._run_tool 硬拦。"""
 
 import pytest
@@ -53,8 +53,8 @@ def test_load_missing_file_is_empty(tmp_path):
 
 
 def test_load_parses_yaml_forms(tmp_path):
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "permissions.yaml").write_text(
         'allow:\n'
         '  - "run_command: pytest *"\n'
         '  - write_file: "docs/*.md"\n'
@@ -76,8 +76,8 @@ def test_load_parses_yaml_forms(tmp_path):
 
 
 def test_load_profile_merges_selected_rules(tmp_path):
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "permissions.yaml").write_text(
         'profile: dev\n'
         'allow:\n'
         '  - "run_command: pytest *"\n'
@@ -102,8 +102,8 @@ def test_load_profile_merges_selected_rules(tmp_path):
 
 
 def test_load_missing_profile_keeps_root_rules_only(tmp_path):
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "permissions.yaml").write_text(
         'profile: missing\n'
         'allow:\n'
         '  - "run_command: pytest *"\n'
@@ -120,8 +120,8 @@ def test_load_missing_profile_keeps_root_rules_only(tmp_path):
 
 
 def test_load_broken_yaml_safe(tmp_path):
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "permissions.yaml").write_text("deny: [unclosed\n", encoding="utf-8")
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "permissions.yaml").write_text("deny: [unclosed\n", encoding="utf-8")
     perm = load_permissions(str(tmp_path))      # 坏配置 → 空、不抛
     assert perm.rules == []
 

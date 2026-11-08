@@ -19,7 +19,7 @@ from src.scheduling import heartbeat
 
 
 def _write_checklist(root, text, name="HEARTBEAT.md"):
-    d = root / ".vortocode"
+    d = root / ".vortoone"
     d.mkdir(exist_ok=True)
     (d / name).write_text(text, encoding="utf-8")
     return d / name
@@ -57,7 +57,7 @@ def test_checklist_is_injected_into_duty_prompt(tmp_path):
     _write_checklist(tmp_path, "# 中转站值班\n- 看 CI 是否红\n- 看磁盘水位\n")
     prompt = heartbeat.heartbeat_prompt(str(tmp_path))
     assert "看 CI 是否红" in prompt and "看磁盘水位" in prompt
-    assert ".vortocode/HEARTBEAT.md" in prompt              # 说清来源文件
+    assert ".vortoone/HEARTBEAT.md" in prompt              # 说清来源文件
     # 正文被数据边界完整包住，且只有一对标记（模型看得见"这段是数据"）
     assert prompt.count("<vortocode_untrusted_memory>") == 1
     assert prompt.count("</vortocode_untrusted_memory>") == 1
@@ -70,7 +70,7 @@ def test_load_checklist_counts_items_and_reports_relative_path(tmp_path):
     _write_checklist(tmp_path, "标题行\n- 项一\n* 项二\n1. 项三\n\n随便一句话\n")
     doc = heartbeat.load_checklist(str(tmp_path))
     assert doc.present is True
-    assert doc.path == ".vortocode/HEARTBEAT.md"
+    assert doc.path == ".vortoone/HEARTBEAT.md"
     assert doc.items == 3                                    # 只数列表条目，散文不算
 
 
@@ -81,12 +81,12 @@ def test_checklist_path_can_be_overridden_by_arg_and_env(tmp_path, monkeypatch):
     monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     assert "默认清单" in heartbeat.heartbeat_prompt(str(tmp_path))
 
-    monkeypatch.setenv("VORTOONE_HEARTBEAT_CHECKLIST", ".vortocode/NIGHT.md")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT_CHECKLIST", ".vortoone/NIGHT.md")
     assert "夜班清单" in heartbeat.heartbeat_prompt(str(tmp_path))
 
     # 显式参数压过 env
     assert "默认清单" in heartbeat.heartbeat_prompt(
-        str(tmp_path), ".vortocode/HEARTBEAT.md")
+        str(tmp_path), ".vortoone/HEARTBEAT.md")
 
 
 def test_checklist_outside_repo_is_refused(tmp_path, monkeypatch):
@@ -204,7 +204,7 @@ async def test_anomaly_is_surfaced_and_recorded(tmp_path, monkeypatch):
     assert len(timeline) == 1                                  # Journal 也记了一行
     entry = json.loads(timeline[0]["detail"])
     assert entry["outcome"] == "surfaced" and entry["notified"] is True
-    assert entry["checklist"] == ".vortocode/HEARTBEAT.md" and entry["checklist_items"] == 2
+    assert entry["checklist"] == ".vortoone/HEARTBEAT.md" and entry["checklist_items"] == 2
     # 台账只记确定性元数据，不搬模型正文（正文由可能被污染的检查单驱动）
     assert "CI 红了" not in json.dumps(timeline[0], ensure_ascii=False)
 
@@ -229,7 +229,7 @@ async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path,
         plan=None,
     )
     before = session_store.load_session(str(tmp_path), "sid-main")
-    before_sessions = sorted(p.name for p in (tmp_path / ".vortocode" / "web_sessions").iterdir())
+    before_sessions = sorted(p.name for p in (tmp_path / ".vortoone" / "web_sessions").iterdir())
 
     seen = []
 
@@ -255,7 +255,7 @@ async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path,
     assert after["history"] == before["history"]
     assert len(after["transcript"]) == len(before["transcript"]) == 2
     assert sorted(
-        p.name for p in (tmp_path / ".vortocode" / "web_sessions").iterdir()
+        p.name for p in (tmp_path / ".vortoone" / "web_sessions").iterdir()
     ) == before_sessions
 
     # (c) Journal 有且仅有一行台账，内容是确定性元数据
@@ -266,7 +266,7 @@ async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path,
     entry = json.loads(line["detail"])
     assert entry == {
         "outcome": "ok",
-        "checklist": ".vortocode/HEARTBEAT.md",
+        "checklist": ".vortoone/HEARTBEAT.md",
         "checklist_items": 2,
         "notified": False,
     }

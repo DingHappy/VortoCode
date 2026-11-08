@@ -1,7 +1,7 @@
 """常驻电脑上的项目登记表：这台服务器上有哪些项目、各自的运行时听在哪个端口。
 
 Desktop 工作台的「在哪做：本机 / 常驻电脑」靠它找到同名项目在服务器上的运行时；之后助理
-派活也从这里查目标项目。登记表由运维（装服务的人）写在 ``~/.vortocode/resident_projects.json``：
+派活也从这里查目标项目。登记表由运维（装服务的人）写在 ``~/.vortoone/resident_projects.json``：
 
     {"projects": [{"name": "VortoOne", "repo_root": "/home/me/projects/VortoCode", "port": 8082}]}
 
@@ -16,6 +16,7 @@ import re
 import stat
 from pathlib import Path
 from typing import Any, Dict, List
+from src.utils.state_dir import home_state_dir
 
 _MAX_PROJECTS = 50
 
@@ -31,7 +32,7 @@ def _object(pairs):
 
 def registry_path() -> Path:
     override = os.getenv("VORTOONE_RESIDENT_PROJECTS", "").strip()
-    return Path(override) if override else Path.home() / ".vortocode" / "resident_projects.json"
+    return Path(override) if override else home_state_dir() / "resident_projects.json"
 
 
 def _entry(raw: Any) -> Dict[str, Any] | None:

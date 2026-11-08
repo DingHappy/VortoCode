@@ -136,7 +136,7 @@ def test_read_prompt_arg_variants(monkeypatch):
 
 
 def test_maybe_expand_command(tmp_path):
-    cmds = tmp_path / ".vortocode" / "commands"
+    cmds = tmp_path / ".vortoone" / "commands"
     cmds.mkdir(parents=True)
     (cmds / "review.md").write_text("审查代码找 bug：$ARGUMENTS", encoding="utf-8")
     (cmds / "ping.md").write_text("说一句你好。", encoding="utf-8")
@@ -151,7 +151,7 @@ def test_maybe_expand_command(tmp_path):
 def test_cli_history_save_load_roundtrip(tmp_path):
     hist = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
     cli._save_cli_history(str(tmp_path), hist)
-    assert (tmp_path / ".vortocode" / "cli_session.json").is_file()
+    assert (tmp_path / ".vortoone" / "cli_session.json").is_file()
     assert cli._load_cli_history(str(tmp_path)) == hist
     assert cli._load_cli_capability_profile(str(tmp_path)) == "local"
     assert cli._load_cli_history(str(tmp_path / "nope")) == []      # 缺文件 → []
@@ -163,7 +163,7 @@ def test_cli_history_strips_multimodal_blocks(tmp_path):
         {"type": "text", "text": "看图"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 9999}}]}]
     cli._save_cli_history(str(tmp_path), hist)
-    raw = (tmp_path / ".vortocode" / "cli_session.json").read_text()
+    raw = (tmp_path / ".vortoone" / "cli_session.json").read_text()
     assert "AAAA" not in raw and "data:image" not in raw            # 没有 base64
     loaded = cli._load_cli_history(str(tmp_path))
     assert loaded[0]["content"] == "看图[图片]"
@@ -172,7 +172,7 @@ def test_cli_history_strips_multimodal_blocks(tmp_path):
 def test_cli_corrupt_capability_profile_fails_closed(tmp_path):
     import json
 
-    state = tmp_path / ".vortocode" / "cli_session.json"
+    state = tmp_path / ".vortoone" / "cli_session.json"
     state.parent.mkdir(parents=True)
     state.write_text(
         json.dumps({"history": [{"role": "user", "content": "x"}],
@@ -196,7 +196,7 @@ async def test_headless_continue_carries_history(tmp_path, monkeypatch):
             return {"content": self.reply}
 
     await cli.run_agent_headless("我叫小明", llm=_SeenLLM("你好小明"), quiet=True)
-    assert (tmp_path / ".vortocode" / "cli_session.json").is_file()  # 第一轮落盘
+    assert (tmp_path / ".vortoone" / "cli_session.json").is_file()  # 第一轮落盘
     llm2 = _SeenLLM("你叫小明")
     await cli.run_agent_headless("我叫什么", llm=llm2, quiet=True, continue_session=True)
     # 续聊：第二轮发给 LLM 的消息里带上了第一轮的历史
@@ -252,7 +252,7 @@ async def test_headless_continue_does_not_cross_capability_profiles(tmp_path, mo
 
 
 def test_agent_dispatch_expands_custom_command(monkeypatch, tmp_path):
-    cmds = tmp_path / ".vortocode" / "commands"
+    cmds = tmp_path / ".vortoone" / "commands"
     cmds.mkdir(parents=True)
     (cmds / "review.md").write_text("审查：$ARGUMENTS", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
@@ -468,7 +468,7 @@ async def test_speak_reply_handles_failure(tmp_path, capsys):
 
 
 def test_headless_agent_loads_project_instructions(tmp_path):
-    # .vortocode 下放 AGENTS.md → headless 主 agent 的系统提示带上项目约定
+    # .vortoone 下放 AGENTS.md → headless 主 agent 的系统提示带上项目约定
     (tmp_path / "AGENTS.md").write_text("# 约定\n本仓库一律用中文注释。", encoding="utf-8")
 
     async def _confirm(_m):
@@ -555,7 +555,7 @@ async def test_run_cron_list_empty_and_populated(tmp_path, monkeypatch, capsys):
     await cli.run_cron("list")
     assert "无 cron 作业" in capsys.readouterr().out
 
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir()
     (d / "cron.yaml").write_text(
         'jobs:\n  - name: nightly\n    schedule: "at 02:00"\n    prompt: 跑夜跑\n', encoding="utf-8")
@@ -577,7 +577,7 @@ async def test_heartbeat_cli_drains_claimed_task(tmp_path, monkeypatch):
     """vc heartbeat run 领了 backlog 活后**等它真跑完**（否则 asyncio.run 退出会取消，标了 [~] 却没干，#129 评审）。"""
     import asyncio
     monkeypatch.chdir(tmp_path)
-    d = tmp_path / ".vortocode"; d.mkdir()
+    d = tmp_path / ".vortoone"; d.mkdir()
     (d / "BACKLOG.md").write_text("- [ ] 补个测试\n", encoding="utf-8")
 
     ran = []

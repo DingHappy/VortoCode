@@ -25,6 +25,7 @@ mod workspace_files;
 mod llm_profile;
 mod llm_services;
 mod updater;
+mod data_dirs;
 mod diagnostics;
 mod env_names;
 use llm_profile::*;
@@ -1234,7 +1235,7 @@ fn session_title(payload: &serde_json::Value) -> Option<String> {
 
 /// 一个项目最近的几个会话（只读磁盘上的会话档，不碰 runtime）。空会话不会落盘，所以都有内容。
 fn recent_project_sessions(project: &DesktopProjectProfile) -> Vec<ProjectSessionSummary> {
-    let directory = Path::new(&project.repo_root).join(".vortocode").join("web_sessions");
+    let directory = data_dirs::state_dir(Path::new(&project.repo_root)).join("web_sessions");
     let Ok(entries) = std::fs::read_dir(&directory) else {
         return Vec::new();
     };
@@ -1704,7 +1705,7 @@ struct UserInstructions {
 fn user_instructions_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .home_dir()
-        .map(|home| home.join(".vortocode").join("AGENTS.md"))
+        .map(|home| data_dirs::state_dir(&home).join("AGENTS.md"))
         .map_err(|error| format!("无法定位用户目录：{error}"))
 }
 
@@ -2454,7 +2455,7 @@ mod tests {
         assert_eq!(session_title(&serde_json::json!({"transcript": []})), None);
 
         let root = std::env::temp_dir().join(format!("vc-sessions-{}", std::process::id()));
-        let sessions = root.join(".vortocode").join("web_sessions");
+        let sessions = root.join(".vortoone").join("web_sessions");
         create_dir_all(&sessions).unwrap();
         std::fs::write(sessions.join("abc-1.json"), r#"{"transcript":[{"role":"user","text":"你好"}]}"#).unwrap();
         std::fs::write(sessions.join("../escape.json"), "{}").unwrap();

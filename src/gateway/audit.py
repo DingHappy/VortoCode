@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
+from src.utils.state_dir import state_dir
 
 _MAX_READ_BYTES = 2 * 1024 * 1024
 _MAX_ENTRIES = 500
@@ -77,7 +78,7 @@ def append_audit(repo_root: str, record: Dict[str, Any], *, durable: bool = Fals
     payload = dict(record or {})
     payload.setdefault("id", "audit-" + uuid.uuid4().hex[:12])
     payload.setdefault("ts", _now())
-    path = Path(repo_root) / ".vortocode" / "audit.log"
+    path = state_dir(repo_root) / "audit.log"
     try:
         from src.utils.state_dir import ensure_state_gitignore
 
@@ -229,7 +230,7 @@ def _normalize(record: Dict[str, Any], line_number: int) -> Dict[str, Any]:
 
 def audit_snapshot(repo_root: str, limit: int = 100) -> dict:
     """Bounded read with explicit source health; unreadable history is never empty success."""
-    path = Path(repo_root) / ".vortocode" / "audit.log"
+    path = state_dir(repo_root) / "audit.log"
     bounded = max(1, min(int(limit), _MAX_ENTRIES))
     output: list[Dict[str, Any]] = []
     try:

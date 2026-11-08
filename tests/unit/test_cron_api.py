@@ -32,7 +32,7 @@ jobs:
 
 
 def _write_cron_yaml(tmp_path, text=_CRON_YAML):
-    root = tmp_path / ".vortocode"
+    root = tmp_path / ".vortoone"
     root.mkdir(parents=True, exist_ok=True)
     (root / "cron.yaml").write_text(text, encoding="utf-8")
 
@@ -189,5 +189,5 @@ async def test_run_named_job_notices_when_job_vanished(tmp_path):
     """触发与编辑 cron.yaml 赛跑、作业消失 → 通知面留痕而非无声蒸发（对抗审查 F5）。"""
     _write_cron_yaml(tmp_path)
     await _run_named_job(str(tmp_path), "ghost")
-    notices = (tmp_path / ".vortocode" / "logs" / "notices.jsonl").read_text(encoding="utf-8")
+    notices = (tmp_path / ".vortoone" / "logs" / "notices.jsonl").read_text(encoding="utf-8")
     assert "手动触发 [ghost] 未执行" in notices

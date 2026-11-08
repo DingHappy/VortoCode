@@ -35,7 +35,7 @@ def test_sid_sanitized_no_traversal(tmp_path):
     # 清洗后仍落在 web_sessions 目录内，不越界
     assert save_session(str(tmp_path), "sid-../../evil", [], [{"role": "user", "content": "x"}], None) is True
     assert not (tmp_path.parent / "evil.json").exists()
-    assert (tmp_path / ".vortocode" / "web_sessions").is_dir()
+    assert (tmp_path / ".vortoone" / "web_sessions").is_dir()
 
 
 def test_history_and_transcript_capped(tmp_path):
@@ -88,7 +88,7 @@ def test_draft_save_is_clean_noop_without_new_disk_file(tmp_path):
     from src.gateway.session_store import save_session, load_session
     assert save_session(str(tmp_path),"sid-draft",[],[],None,context_usage={"pct":1},tool_names=["web_search"])
     assert load_session(str(tmp_path),"sid-draft") is None
-    assert not (tmp_path / ".vortocode/web_sessions/draft.json").exists()
+    assert not (tmp_path / ".vortoone/web_sessions/draft.json").exists()
     assert save_session(str(tmp_path),"sid-draft",[{"role":"user","text":"hi"}],[],None)
     assert load_session(str(tmp_path),"sid-draft")["transcript"]
 

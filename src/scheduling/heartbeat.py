@@ -2,19 +2,19 @@
 
 照抄 OpenClaw 的成本控制：隔离会话跑（不污染主上下文）、只带轻上下文（HEARTBEAT.md）、可指定便宜
 模型、activeHours 限时段、应答仅为 `HEARTBEAT_OK` 才静默不打扰用户。自我迭代闭环的落地形态：
-心跳醒来 → 从 `.vortocode/BACKLOG.md` 领一条活 → 提交后台流水线（产出 draft PR）→ IM 通知。
+心跳醒来 → 从 `.vortoone/BACKLOG.md` 领一条活 → 提交后台流水线（产出 draft PR）→ IM 通知。
 
 领活铁律：一次最多领一条、领了在条目上标在跑、产出只到 draft PR 为止、**永不自动合并**。
 
 值班惯例（公开合同见 `docs/OPS.md` 的“开关矩阵”）：
-- **检查单文件注入**：一个检查单文件（默认 `.vortocode/HEARTBEAT.md`，可用 `checklist=` 参数或
+- **检查单文件注入**：一个检查单文件（默认 `.vortoone/HEARTBEAT.md`，可用 `checklist=` 参数或
   env `VORTOONE_HEARTBEAT_CHECKLIST` 换）就是值班职责本身，作为本回合的任务清单注入。
 - **检查单按不可信输入处理**：它是本地文件，但无人值守下本地文件同样可能被污染（这正是
   `UNATTENDED_PROFILE` 不给出网工具的理由）。正文进 `<vortocode_untrusted_memory>` 数据边界，
   `MainAgent.run_turn` 见到该标记即 `mark_tainted()`——本回合**一切免确认授权失效**，
   污点规则对"本地检查单"没有豁免。
 - **无事静默**：检查单全过（应答仅为 `HEARTBEAT_OK`）→ 不通知、不写会话历史（隔离会话本就不写），
-  只往 Journal 落**一行确定性台账**（`.vortocode/audit.log` 的 event 行，不含任何模型正文）。
+  只往 Journal 落**一行确定性台账**（`.vortoone/audit.log` 的 event 行，不含任何模型正文）。
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, List, Optional
+from src.utils.state_dir import state_dir
 
 _OK_TOKEN = "HEARTBEAT_OK"
 _HEARTBEAT_MD = "HEARTBEAT.md"
@@ -78,8 +79,8 @@ def is_ok_response(text: str) -> bool:
 
 # --------------------------------------------------------------------- backlog 领活
 def load_backlog_items(repo_root: str) -> List[str]:
-    """`.vortocode/BACKLOG.md` 里所有未开始（`- [ ]`）的条目文本。"""
-    p = Path(repo_root) / ".vortocode" / _BACKLOG_MD
+    """`.vortoone/BACKLOG.md` 里所有未开始（`- [ ]`）的条目文本。"""
+    p = state_dir(repo_root) / _BACKLOG_MD
     if not p.is_file():
         return []
     items = []
@@ -95,7 +96,7 @@ def claim_backlog_item(repo_root: str) -> Optional[str]:
 
     一次只领一条（铁律）；标记落盘后即便崩溃也不会被重复领。原子写。
     """
-    p = Path(repo_root) / ".vortocode" / _BACKLOG_MD
+    p = state_dir(repo_root) / _BACKLOG_MD
     if not p.is_file():
         return None
     lines = p.read_text(encoding="utf-8").splitlines()
@@ -129,13 +130,13 @@ class Checklist:
 
 
 def resolve_checklist_path(repo_root: str, checklist: Optional[str] = None) -> Optional[Path]:
-    """检查单文件路径：显式参数 > env `VORTOONE_HEARTBEAT_CHECKLIST` > 默认 `.vortocode/HEARTBEAT.md`。
+    """检查单文件路径：显式参数 > env `VORTOONE_HEARTBEAT_CHECKLIST` > 默认 `.vortoone/HEARTBEAT.md`。
 
     自定义路径经 `resolve_within()` 限定在工作目录内（绝对路径 / `..` 越界 → None，不读）。
     """
     raw = str(checklist if checklist is not None else os.getenv(_CHECKLIST_ENV) or "").strip()
     if not raw:
-        return Path(repo_root) / ".vortocode" / _HEARTBEAT_MD
+        return state_dir(repo_root) / _HEARTBEAT_MD
     from src.utils.paths import resolve_within
 
     return resolve_within(repo_root, raw)
@@ -231,7 +232,7 @@ async def run_heartbeat(
       - action=ok：值班无事（HEARTBEAT_OK）→ **无事静默**：不通知、不写会话历史，只落一行台账
       - action=surfaced：值班有事，已 notify 用户（台账同样记一行）
     submit/notify/run_session 可注入（测试/接线）；model 缺省用 env VORTOONE_HEARTBEAT_MODEL；
-    checklist 缺省用 env VORTOONE_HEARTBEAT_CHECKLIST，再缺省 `.vortocode/HEARTBEAT.md`。
+    checklist 缺省用 env VORTOONE_HEARTBEAT_CHECKLIST，再缺省 `.vortoone/HEARTBEAT.md`。
     """
     window = parse_active_hours(active_hours or os.getenv("VORTOONE_HEARTBEAT_HOURS"))
     if hour is None:

@@ -13,6 +13,7 @@ import os
 import threading
 from pathlib import Path
 from typing import Any, Iterable
+from src.utils.state_dir import app_support_dir, xdg_dir
 
 _ATTENTION = frozenset({"failed", "timed_out", "blocked"})
 _MAX_ITEMS = 50
@@ -92,9 +93,9 @@ def _store_path(repo_root: str) -> Path:
         target = Path(override).expanduser()
         return target if target.suffix else target / f"{_repo_key(repo_root)}.json"
     if os.name == "posix" and Path.home().joinpath("Library").is_dir():
-        base = Path.home() / "Library" / "Application Support" / "VortoCode" / "hook-issues"
+        base = app_support_dir() / "hook-issues"
     else:
-        base = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "vortocode" / "hook-issues"
+        base = xdg_dir("XDG_STATE_HOME", Path.home() / ".local" / "state") / "hook-issues"
     return base / f"{_repo_key(repo_root)}.json"
 
 

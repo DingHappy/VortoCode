@@ -111,7 +111,7 @@ def test_stable_notice_ids_and_malformed_rows_do_not_hide_valid_entries(tmp_path
     record_notice(root, "旧通知", source="assistant")
     before = timeline.build(root)["items"][0]
     record_notice(root, "新通知", source="assistant")
-    path = tmp_path / ".vortocode/logs/notices.jsonl"
+    path = tmp_path / ".vortoone/logs/notices.jsonl"
     with path.open("a") as handle:
         handle.write('null\n{"ts":1e100,"text":"bad timestamp"}\n')
     after = timeline.build(root)
@@ -238,7 +238,7 @@ def test_codex_progress_ages_out_and_a_finished_turn_is_not_task_acceptance(tmp_
 
 
 def test_corrupted_codex_files_are_marked_unavailable(tmp_path):
-    directory = tmp_path / ".vortocode/codex"
+    directory = tmp_path / ".vortoone/codex"
     directory.mkdir(parents=True)
     (directory / "actions.json").write_text("broken")
     (directory / "state.json").write_text("[]")

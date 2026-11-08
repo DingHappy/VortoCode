@@ -27,7 +27,7 @@ CONTENT_OPS = {
 
 @pytest.fixture
 def repo(tmp_path):
-    d = tmp_path / ".vortocode" / "pipelines"
+    d = tmp_path / ".vortoone" / "pipelines"
     d.mkdir(parents=True)
     (d / "content-ops.yaml").write_text(yaml.safe_dump(CONTENT_OPS, allow_unicode=True),
                                         encoding="utf-8")
@@ -182,7 +182,7 @@ async def test_stage_missing_from_definition_stops_instead_of_guessing(started, 
     """定义被改过、少了一道工序：如实停下，别猜也别跳过。"""
     store, run = started
     shrunk = dict(CONTENT_OPS, stages=CONTENT_OPS["stages"][1:])
-    (repo / ".vortocode" / "pipelines" / "content-ops.yaml").write_text(
+    (repo / ".vortoone" / "pipelines" / "content-ops.yaml").write_text(
         yaml.safe_dump(shrunk, allow_unicode=True), encoding="utf-8")
     execute, _ = _exec()
     result = await advance(store.repo_root, run.run_id, execute=execute)
@@ -296,7 +296,7 @@ async def test_run_id_cannot_escape_the_store(started):
 
 def test_runs_dir_is_gitignored_but_definitions_are_not(started, repo):
     """运行状态是运行时产物；流水线定义是用户配置，要能 git add。"""
-    ignore = (repo / ".vortocode" / ".gitignore").read_text(encoding="utf-8")
+    ignore = (repo / ".vortoone" / ".gitignore").read_text(encoding="utf-8")
     assert "pipeline_runs/" in ignore
     assert "pipelines/" not in ignore.replace("pipeline_runs/", "")
 

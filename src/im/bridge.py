@@ -20,6 +20,7 @@ from typing import Iterable, Optional
 from .channel import ChannelAdapter
 from src.gateway.turn_bindings import TurnBindings
 from src.utils.exc_utils import _exc_text
+from src.utils.state_dir import state_dir
 
 _MARKUP = re.compile(r"\[/?[a-zA-Z][^\]]*\]")     # 去 Rich 标记（say 里的 [b]…[/b] 等）
 _CONFIRM_TIMEOUT = 600                             # 按钮确认等待上限（秒）；超时=拒绝（安全不放行）
@@ -50,8 +51,7 @@ _PIPE_VERDICTS = {"/ok": "approve", "/批": "approve",
 
 
 def _persona_path_for(repo_root: str):
-    from pathlib import Path
-    return Path(repo_root) / ".vortocode" / "persona.md"
+    return state_dir(repo_root) / "persona.md"
 
 
 _MAX_TRANSCRIPT = 400
@@ -246,7 +246,7 @@ class IMBridge:
     # ------------------------------------------------------------ 人设（本人自述，不由管理员代填）
     def _persona_path(self):
         if self.conversation == "isolated":
-            return Path(self.repo_root) / ".vortocode" / "im-bots" / self._sid / "persona.md"
+            return state_dir(self.repo_root) / "im-bots" / self._sid / "persona.md"
         return _persona_path_for(self.repo_root)
 
     def _load_persona(self) -> str:
@@ -384,8 +384,8 @@ class IMBridge:
     # ------------------------------------------------------------ 开机横幅（去重）
     def _hello_stamp_path(self) -> Path:
         if self.conversation == "isolated":
-            return Path(self.repo_root) / ".vortocode" / "im-bots" / self._sid / "hello.json"
-        return Path(self.repo_root) / ".vortocode" / "logs" / "im_hello.json"
+            return state_dir(self.repo_root) / "im-bots" / self._sid / "hello.json"
+        return state_dir(self.repo_root) / "logs" / "im_hello.json"
 
     def _should_say_hello(self) -> bool:
         """这次重启值不值得跟主人说一声。

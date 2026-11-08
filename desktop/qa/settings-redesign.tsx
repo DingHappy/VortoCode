@@ -31,7 +31,7 @@ let profile: DesktopLlmProfileStatus = {
   revision: "qa-revision-1",
   configured: !guest, provider: "local", requiresKey: false,
   baseUrl: guest ? "" : "http://127.0.0.1:8000/v1", model: guest ? "" : "qwen3.5-35b-a3b",
-  models: ["qwen3.5-35b-a3b", "qwen3.5-9b"], providers: [], roleModels: {}, configPath: "~/.vortocode/llm-profile.json"
+  models: ["qwen3.5-35b-a3b", "qwen3.5-9b"], providers: [], roleModels: {}, configPath: "~/.vortoone/llm-profile.json"
 };
 if (params.get("save") === "unchanged") profile.roleModels = { research: "default:research-model" };
 if (params.get("providers") === "1") profile.providers = [
@@ -159,11 +159,11 @@ mockIPC(async (cmd, raw) => {
     case "get_experimental_workers": return experimental;
     case "set_experimental_workers": experimental = Boolean(args.enabled); return experimental;
     case "get_update_check_enabled": return true;
-    case "get_user_instructions": return settingRead("instructions", { path: "~/.vortocode/AGENTS.md", content: instructions, exists: true });
+    case "get_user_instructions": return settingRead("instructions", { path: "~/.vortoone/AGENTS.md", content: instructions, exists: true });
     case "set_user_instructions": {
       const content = String(args.content);
       settingRequests.push({ command: cmd });
-      return settingWrite("instructions", () => { instructions = content; return { path: "~/.vortocode/AGENTS.md", content: instructions, exists: true }; });
+      return settingWrite("instructions", () => { instructions = content; return { path: "~/.vortoone/AGENTS.md", content: instructions, exists: true }; });
     }
     case "get_browser_control": return settingRead("browser", browser);
     case "set_browser_control": {

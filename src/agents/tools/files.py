@@ -211,7 +211,7 @@ def build_read_tools(repo_root: str) -> list[Tool]:
 
     # 全仓库文本文件（grep/list_files 用）：跳过噪音目录、只收文本类扩展名——
     # 之前只扫 src/tests 的 .py，搜不到 web/html、examples、docs、配置等，是多语言仓库的大盲区。
-    _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".vortocode", ".venv", "venv",
+    _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".vortoone", ".vortocode", ".venv", "venv",
                   "dist", "build", ".pytest_cache", ".mypy_cache", ".ruff_cache",
                   ".idea", ".vscode", "htmlcov", ".eggs", "site-packages"}
     _TEXT_EXT = {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".md", ".rst",

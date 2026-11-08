@@ -1,5 +1,5 @@
 // 本机诊断日志：连接、切换、重连、远程请求失败、界面报错这些关键事件，按行追加到
-// ~/Library/Logs/VortoCode/desktop.log，超过 1MB 轮转成 desktop.log.1（只留一份）。
+// ~/Library/Logs/VortoOne/desktop.log，超过 1MB 轮转成 desktop.log.1（只留一份）。
 // 2026-10-27：App 被 macOS 静默拦了网络，界面上的报错又被回落提示盖掉，排查只能翻系统日志——
 // 这份日志就是为了下次直接看。
 // 不记 token、不记对话内容：写入前统一脱敏、截断；前端只传事件名和简短说明。
@@ -15,7 +15,7 @@ const MAX_EVENT_CHARS: usize = 60;
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) fn diagnostics_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Logs/VortoCode"))
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Logs/VortoOne"))
 }
 
 pub(crate) fn diagnostics_log_path() -> Option<PathBuf> {

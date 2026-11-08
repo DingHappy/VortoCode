@@ -4,7 +4,7 @@
 Desktop 决策中心里一键「开始」就作为新的后台开发任务启动，或者「忽略」。
 它们是建议、不挡任何事，所以不进早晚报和语音的「等你处理」。
 
-台账：``.vortocode/followups.json``。同名（规整后）的未处理建议只留一条；每个来源最多 3 条；
+台账：``.vortoone/followups.json``。同名（规整后）的未处理建议只留一条；每个来源最多 3 条；
 未处理的总数有上限，满了拒绝新增而不是挤掉旧的。
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
+from src.utils.state_dir import state_dir
 
 MAX_OPEN = 30
 MAX_PER_SOURCE = 3
@@ -35,7 +36,7 @@ def _now() -> str:
 
 
 def _path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "followups.json"
+    return state_dir(root) / "followups.json"
 
 
 @contextmanager

@@ -29,7 +29,7 @@
   远端六个服务PID仍为453703、458730、453716、437790、438209、438293，全部active、
   NRestarts=0；本轮没有部署或重启远端服务。
 
-证据在`.vortocode/acceptance/20261024-desktop-refresh/`，含真实中断归属核对、未自动重连
+证据在`.vortoone/acceptance/20261024-desktop-refresh/`，含真实中断归属核对、未自动重连
 结果、原生掉线/最终截图、门禁、真实SSH验收及安装日志。源码仍未提交/推送，GitHub
 更新通道仍为0.2.15。未测试新的真实模型回合，也未接通无人值守桌面任务或自动签到。
 
@@ -62,7 +62,7 @@
   仅原子热更脚本与网页资源，全部六个服务PID、NRestarts=0保持，未重启桌面、密钥环或
   原有助理/项目服务。发布前后控制状态未变；验收接管/切回后仍由人工持有，不自动放权。
 
-最终证据在`.vortocode/acceptance/20261024-native-desktop/`，包含原生设置截图、完整门禁、
+最终证据在`.vortoone/acceptance/20261024-native-desktop/`，包含原生设置截图、完整门禁、
 安装/公证/只读真机检查及远端备份状态。源码改动仍在工作区，未提交/推送或发布GitHub版本；
 更新通道仍为0.2.15。真实模型调用、无人值守执行、定时签到、重启后自动解锁均不在此次
 通过范围。运行端旧HTTP服务尚未提供computer字段，客户端保留“不支持”提示，手动SSH入口
@@ -93,7 +93,7 @@
   全部active/NRestarts=0。用户原控制epoch、模式与连接数未变，密码库unlocked，
   生产入口HTTP200并包含新控件。
 
-证据在`.vortocode/acceptance/20261024-viewer-tools/`，已清理临时页、显示器、数据、视口
+证据在`.vortoone/acceptance/20261024-viewer-tools/`，已清理临时页、显示器、数据、视口
 仿真及16090隧道，原用户页面及16088/16089入口保留。没有读取用户密码、调用模型、
 更新Mac安装包、扩大Agent能力或启用自动签到。运行中的观察进程本体未重启，新功能
 属于热更新的网页资源；下次服务重启时也会从新版脚本生成相同资源。
@@ -132,7 +132,7 @@
 快照均HTTP 200，快照实测年龄约0.8秒，最后为1个接管连接、0个观察连接。已关闭测试页、
 临时显示器、临时数据和16090隧道，原用户页面和16088/16089入口保留。
 
-证据位于 `.vortocode/acceptance/20261024-viewer-feedback/`。此次已更新独立网页/观察服务，
+证据位于 `.vortoone/acceptance/20261024-viewer-feedback/`。此次已更新独立网页/观察服务，
 没有更新 Mac 安装包或原助理源码服务，没有调用模型或完成真实网站自动任务验收。
 
 ## 2026-10-24 只读观察与接管操作：同页切换
@@ -167,7 +167,7 @@
 
 状态合同与原生卡片源码已区分观察人数和接管连接数，但尚未更新进原助理 HTTP 服务或
 Mac 安装包；独立模式网页及观察服务已部署。自动签到、无人值守执行器、整机重启及
-连续24小时任务成功仍未验证/启用。证据在 `.vortocode/acceptance/20261024-observer/`。
+连续24小时任务成功仍未验证/启用。证据在 `.vortoone/acceptance/20261024-observer/`。
 
 ## 2026-10-24 常驻运行端元数据与控制端分工
 
@@ -235,7 +235,7 @@ Cookie 条目均为 0，没有读取账号、密码、Cookie 值或其它站点�
 最后桌面 PID `453703`、密钥环 PID `453716`，均 active、NRestarts=0，位于不同控制组。
 原三个服务仍为 `437790`、`438209`、`438293`。浏览器交给人工，用户完成设置后查看器数为 2；没有
 保存用户解锁密码、调用模型、启用无人值守签到或更新 Mac 安装包。证据在被 Git 忽略的
-`.vortocode/acceptance/20261024-password-store/`。整机重启后仍需用户解锁一次，不承诺免除
+`.vortoone/acceptance/20261024-password-store/`。整机重启后仍需用户解锁一次，不承诺免除
 网站的重新认证、验证码或 MFA。
 
 ## 2026-10-24 常驻桌面第二阶段：控制权与旧动作撤销
@@ -262,7 +262,7 @@ Cookie 条目均为 0，没有读取账号、密码、Cookie 值或其它站点�
   回归包含同锁下正在执行的动作与查看器接入顺序、旧图/旧代次/过期/错误许可、重复请求、
   路径权限和未知指令拒绝；其中桌面执行用假 X11 后端，不冒充真实网站验收。
 
-本轮证据在被 Git 忽略的 `.vortocode/acceptance/20261024-computer-authority/`。
+本轮证据在被 Git 忽略的 `.vortoone/acceptance/20261024-computer-authority/`。
 Mac 上既有 0.2.15 安装包及 `.97` 旧助理服务没有编入新的工具接线；尚未启用 General、
 cron 或无人值守桌面能力。同用户 shell/直接 X11 仍可绕过协作控制权，这不是 OS 沙箱。
 
@@ -297,7 +297,7 @@ cron 或无人值守桌面能力。同用户 shell/直接 X11 仍可绕过协作
 本轮未调用真实模型、未登录网站、未创建签到任务、未扩大既有 Agent 的桌面权限。
 Mac 应用未重打或安装。人工查看入口已可用；Desktop 内嵌入口、Agent/人工控制权互斥、
 通用范围任务下派与站点级定时授权仍属于后续阶段。原有 Agent 桌面操作确认门保持原样。
-本机截图与结构化证据存于 Git 忽略的 `.vortocode/acceptance/20261024-computer/`。
+本机截图与结构化证据存于 Git 忽略的 `.vortoone/acceptance/20261024-computer/`。
 
 ## 2026-10-24 安装与真实模型验收
 
@@ -308,7 +308,7 @@ Mac 应用未重打或安装。人工查看入口已可用；Desktop 内嵌入�
 - 用户明确选择临时使用已配置会员云端模型后，仅将实现角色改为 `vortocode_member:mimo-v2.6-pro` 并重启当前临时项目引擎。同一任务在约 58 秒后成功交付 `vorto/pricing-py-discounted-total--bf1f3a82`，提交 `adf699050ed0b7e69146debfaff8c52ff7d3fbd6`。独立检查 main 仍为初始提交 `804165186c271b09c1e54c638fb91cfa2407a4d1`，跟踪文件无差异，交付分支只改 `pricing.py` 一行（+1/-1），未改测试或配置。
 - 原生 Desktop 的「变更」面板可直接展开该交付，显示固定基线、提交、单文件 diff、实际验证命令和输出；重启后交付记录仍可读取。流水线实际保存的命令是 `python3 -m pytest -q test_pricing.py`（解释器为已配置的 Miniforge Python），两项通过。主聊天却声称运行了请求中的 unittest，存在报告不一致；另从交付提交导出到独立临时目录，用系统 Python 运行 `python3 -m unittest -q`，独立确认两项通过。该补跑不能证明流水线执行了原指定命令，后续应约束最终回复引用实际验证记录。
 - 验收后已清除实现角色的临时覆盖并保存，恢复原先留空、跟随本机默认模型的配置，当前引擎重新连接。没有新增供应商、凭据或调整模型内存上限，也没有 push、PR 或向他人发送消息。模型费用未知。本次证明一次云端隔离修复及 GUI 交付审查可用；本地模型容量问题仍在，单独弹出执行确认卡的路径仍未完成验收。
-- 后续源码补齐动态来源失败、过期及不完整数量提示，并使用合成数据验证；这些新增提示尚未编入上述已安装构建。验收截图与本机证据保存在被 Git 忽略的 `.vortocode/acceptance/20261024-p0/`，安装证据在 `.vortocode/install-evidence/20261024-latest/`。
+- 后续源码补齐动态来源失败、过期及不完整数量提示，并使用合成数据验证；这些新增提示尚未编入上述已安装构建。验收截图与本机证据保存在被 Git 忽略的 `.vortoone/acceptance/20261024-p0/`，安装证据在 `.vortoone/install-evidence/20261024-latest/`。
 - 来源可信度合成界面验收覆盖失败保留旧记录、过期、断线、成功恢复和未知数量；没有执行真实批准动作。最终本地门禁：Python 4994 项通过、10 项跳过，E2E 25 项通过，前端 957 项通过，Rust 108 项通过、1 项忽略；类型检查、应用及 QA 构建通过。它们与上述真实模型、原生界面证据分别记录。
 
 ### 实测问题的后续修复：验证回传与容量阻塞
@@ -383,7 +383,7 @@ Rust 108 项通过、1 项忽略，Ruff、mypy、TypeScript 与 cargo check 通�
 
 ## 2026-09-27 隔离交付审查补充
 
-`dev_isolated` 成功落分支后，现在会在项目的 `.vortocode/isolated_deliveries/` 保存分支、固定基线、交付提交、验证命令和经过凭据脱敏的输出。Desktop“变更”面板可列出这些交付，按文件打开当前分支相对固定基线的 diff；分支 HEAD 变化后，面板会标明原验证证据已经过时。记录失败会在工具结果里明示，分支本身仍保留。
+`dev_isolated` 成功落分支后，现在会在项目的 `.vortoone/isolated_deliveries/` 保存分支、固定基线、交付提交、验证命令和经过凭据脱敏的输出。Desktop“变更”面板可列出这些交付，按文件打开当前分支相对固定基线的 diff；分支 HEAD 变化后，面板会标明原验证证据已经过时。记录失败会在工具结果里明示，分支本身仍保留。
 
 实现和本地自动检查已完成；arm64 `.app` 已构建，sidecar 与 GUI bundle smoke 通过。还需用新构建的 Desktop 包重复上述真实模型任务，确认交付卡在成功后自动出现、文件 diff 可读、测试输出准确；此前那次交付发生在此记录机制加入之前，不应把它算作新界面的通过证据。本次原生 UI 自动化管道未启动，不能据 bundle smoke 宣称交付卡已经过人工点击验收。
 
@@ -1252,7 +1252,7 @@ HTTP/GatewayClient/原任务卡只核对原文与凭据的原始字符串，不�
 原台账不变、没有当前来源或保存位置时上传仍只验证一致性、写入/文件同步/无覆盖
 发布/目录同步/回读各阶段失败与重试、只有原文的中断组占容量、坏文件/凭据和原文
 缺失不修复、相同字节 inode 替换/改名/目录/锁替换、两文件读取期间凭据变化、固定
-摘要/轮次布尔类型/覆盖/路径/重复字段/超长、目录符号链接/非目录/不存在/.git/.vortocode/
+摘要/轮次布尔类型/覆盖/路径/重复字段/超长、目录符号链接/非目录/不存在/.git/.vortoone/
 锁符号链接/FIFO/争用、512 项观察预算、CLI 先于日志初始化、HTTP 鉴权/General/严格
 查询与外层字符串/媒体类型/声明及无长度流预算。初次 39 passed/1 failed 是测试夹具
 先把 storage 改成字符串后再写其字段，修正测试而未削弱断言；初次日志保留。
@@ -2705,7 +2705,7 @@ Ego Space 203 使用实际生产组件的隔离夹具，合成聊天/记录/任�
 启动计划增加 Xvfb -s 0。helper 与本地 SHA256 一致：
 `979364d3825e8b305ee419b4ae81bc50319d4df0c5235da13816c7ac5ac58902`。
 部署前做了 helper/静态文件备份，并验证服务 PID/NRestarts 未变化；无服务重启。
-详见 `.vortocode/acceptance/20261024-assistant-workspace/remote-final-deploy.json` 和 `display-awake.txt`。
+详见 `.vortoone/acceptance/20261024-assistant-workspace/remote-final-deploy.json` 和 `display-awake.txt`。
 连接状态先于首帧出现时的空画面截图 `06-before-first-frame-rejected.png` 不算成功证据；
 `05-computer-workspace.png` 为实际宽屏帧，`09-narrow-computer.png` 为精简后实际窄屏帧。
 
@@ -2747,7 +2747,7 @@ Ego Space204使用真实组件与合成归档验证：参数/错误、刷新失�
 未完成记录无需关闭即可更新、390px标题按钮、Escape关闭；本轮Runtime/Log无JS异常。
 `waitForSelector`对包含参数的pre使用整段精确文本造成一次脚本超时，读取DOM确认实际已更新后纠正选择器，未当作产品故障。
 首张过程截图已赶上自动刷新，名为 `03-first-poll-rendered.png`，不声称它是刷新前截图。
-证据 `.vortocode/acceptance/20261024-activity-refresh/`，截图已查看；合成批准次数0，未打开远程桌面。
+证据 `.vortoone/acceptance/20261024-activity-refresh/`，截图已查看；合成批准次数0，未打开远程桌面。
 Space204已结束并关闭本轮临时页；之前交给用户的Space203保持不动。
 
 这是源码与组件回归，本轮没有重新签名、公证、安装、重启或更新97；已安装0.2.18的上一节证明不覆盖这些新改动。
@@ -2773,7 +2773,7 @@ Space204已结束并关闭本轮临时页；之前交给用户的Space203保持�
 Ego Space205使用真实ChatHistory、详情弹层、定位hook和产品样式，80条合成消息；没有真实会话/模型/桌面输入。
 已验：详情→第13轮user焦点、同rid两条标记、新回复后scrollTop保持2419、回到最新距底部0、
 切环境撤销旧定位、缺失提示、补回后不自动跳转、手动重试成功、390px无横向溢出及深色主题。
-本轮Runtime/Log无JS异常。截图已查看，证据 `.vortocode/acceptance/20261024-turn-location/`。
+本轮Runtime/Log无JS异常。截图已查看，证据 `.vortoone/acceptance/20261024-turn-location/`。
 Space205结束并关闭临时页，原用户页面不动。
 
 本轮未提交、推送、签名、公证、安装或部署97；本地已装0.2.18不包含第69–70节新源码。
@@ -2805,7 +2805,7 @@ Ego Space206：真实组件和产品样式，80条合成消息，后半段以实
 侧栏打开在底部；Escape分别返回“打开手机动态详情”及“打开手机最近聊天”。
 单按钮Tab/Shift+Tab四次均留在dialog且页面保有焦点，多按钮动态详情循环7次均留在dialog。
 390×844下dialog为370×812、documentWidth390；浅/深色和空快照截图已查看。本轮Runtime/Log无JS异常。
-证据 `.vortocode/acceptance/20261024-phone-location/`。Space206已结束关闭，用户原页面未操作。
+证据 `.vortoone/acceptance/20261024-phone-location/`。Space206已结束关闭，用户原页面未操作。
 
 本轮没有连接真实Telegram/钉钉账号、手机进程或远程桌面，没有推理或发送消息。
 没有提交/推送/发版/安装/部署97；已安装0.2.18不包含第69–71节新源码。
@@ -2832,7 +2832,7 @@ Ego Space207实际组件+合成归档：未知待核对、历史running零spinne
 Hook受阻上下文、原对话只计1项成功写入记录且3项需关注；390px无横向溢出及深色通过。
 元数据按浏览器本地时区显示，底层time datetime保留正确UTC时刻；不是读取时刻。
 窄屏一个文本节点被nav裁切造成自动化命中失败，检查滚动区后滚动并点击完整按钮通过；不是状态写入失败。
-截图已查看，证据 `.vortocode/acceptance/20261024-record-status/`。Runtime/Log本轮无JS异常。
+截图已查看，证据 `.vortoone/acceptance/20261024-record-status/`。Runtime/Log本轮无JS异常。
 Space207已结束关闭，不操作原用户页面；验收没有真实工具执行/发送/模型/桌面接管。
 
 本轮将第69–72节源码统一打包为0.2.19；签名/公证/安装证据在本节后续补记。
@@ -2854,7 +2854,7 @@ Space207已结束关闭，不操作原用户页面；验收没有真实工具执
 已事务安装 `/Applications/VortoCode.app`，安装后独立runtime smoke553ms通过，无推理。
 上一版可恢复备份：`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-qodJtm/VortoCode.app`。
 首轮失败日志 `/private/tmp/vortocode-0219-install-20261024.log` 保留；成功日志 `...-install-retry-20261024.log`。
-安装检查 `/private/tmp/vortocode-0219-installed-20261024.log`，结构化证据 `.vortocode/acceptance/20261024-record-status/release-status.json`。
+安装检查 `/private/tmp/vortocode-0219-installed-20261024.log`，结构化证据 `.vortoone/acceptance/20261024-record-status/release-status.json`。
 
 首次安装后App61759/runtime61763仍为旧进程，不能据安装文件版本声称窗口已加载0.2.19。
 原生控制接口getApp报timeoutReached，未建立窗口绑定，无法代替用户退出重开；已请用户重开后再核对。

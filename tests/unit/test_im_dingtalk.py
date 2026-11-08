@@ -286,7 +286,7 @@ async def test_dingtalk_text_confirm_through_bridge(tmp_path):
             await run_task
         except asyncio.CancelledError:
             pass
-    assert (tmp_path / ".vortocode" / "skills" / "greet" / "SKILL.md").exists()   # 批准 → 真写了
+    assert (tmp_path / ".vortoone" / "skills" / "greet" / "SKILL.md").exists()   # 批准 → 真写了
 
 
 @pytest.mark.asyncio
@@ -315,7 +315,7 @@ async def test_group_confirm_survives_a_reply_without_mention(tmp_path):
         '{"tool":"save_skill","args":{"name":"greet","description":"打招呼","instructions":"说你好"}}',
         "技能已保存。")
     bridge = IMBridge(str(tmp_path), adapter, "owner-1", channel="dingtalk", mode="build", llm=llm)
-    skill = tmp_path / ".vortocode" / "skills" / "greet" / "SKILL.md"
+    skill = tmp_path / ".vortoone" / "skills" / "greet" / "SKILL.md"
 
     run_task = asyncio.create_task(bridge.run())
     try:

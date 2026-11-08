@@ -5,9 +5,9 @@ import type { AssistantPlugin } from "../types";
 import { CustomizePage } from "./CustomizePage";
 
 const plugins: AssistantPlugin[] = [
-  { name: "calendar", title: "日历（只读）", status: "available", credential_file: "~/.vortocode/connectors/calendar.token", checkable: true },
-  { name: "notion", title: "Notion（只读）", status: "missing", credential_file: "~/.vortocode/connectors/notion.token", checkable: true },
-  { name: "mail", title: "邮件（读信、存草稿）", status: "invalid", credential_file: "~/.vortocode/connectors/mail.token", checkable: true },
+  { name: "calendar", title: "日历（只读）", status: "available", credential_file: "~/.vortoone/connectors/calendar.token", checkable: true },
+  { name: "notion", title: "Notion（只读）", status: "missing", credential_file: "~/.vortoone/connectors/notion.token", checkable: true },
+  { name: "mail", title: "邮件（读信、存草稿）", status: "invalid", credential_file: "~/.vortoone/connectors/mail.token", checkable: true },
 ];
 
 const page = (patch: Partial<Parameters<typeof CustomizePage>[0]> = {}) => renderToStaticMarkup(
@@ -40,7 +40,7 @@ it("接上的插件：详情里能检查、更换、移除，检查结果照实�
 it("没接的插件：给「填写凭据」主按钮，说凭据放哪；不给移除和检查", () => {
   const html = page({ initialSelected: "plugin:notion" });
   expect(html).toContain('vc-btn--primary">填写凭据</button>');
-  expect(html).toContain("<code>~/.vortocode/connectors/notion.token</code>");
+  expect(html).toContain("<code>~/.vortoone/connectors/notion.token</code>");
   expect(html).not.toContain(">移除凭据</button>");
   expect(html).not.toContain(">检查连接</button>");
 });

@@ -36,6 +36,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 _TIMEOUT = 12
 _RETRIES = 3
@@ -150,7 +151,7 @@ def fetch_one(url: str, fetch: Callable[[str], bytes]) -> ChannelStat:
 
 # ---------------------------------------------------------------- 已发布链接台账
 def _registry_path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "published_urls.json"
+    return state_dir(repo_root) / "published_urls.json"
 
 
 def load_urls(repo_root: str) -> List[Dict[str, Any]]:

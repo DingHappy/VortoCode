@@ -10,6 +10,7 @@ from typing import Callable, Optional
 
 from src.agents.tool import Tool
 from src.agents.tools.files import _resolve_within
+from src.utils.state_dir import state_dir
 
 _OWNER_MEDIA_SENDER = None
 
@@ -67,7 +68,7 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         存在的理由：手上只有 send_file 的角色（`tools: deliver`）**没有写文件的能力**，
         而它要交付的东西（成文、脚本）是上游产出物里的文本，不是磁盘上已有的文件——
         那条链是断的。给它通用 write_file 又太宽：交付者不该能改仓库里任何一个文件。
-        所以这里只开一个针对性的口子：**只能写进 `.vortocode/artifacts/`**（已 gitignore），
+        所以这里只开一个针对性的口子：**只能写进 `.vortoone/artifacts/`**（已 gitignore），
         文件名经 basename 清洗，发送仍然过同一道确认门。
         """
         import re as _re
@@ -82,7 +83,7 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         stem = _re.sub(r"[^\w\u4e00-\u9fff.\- ]+", "_", title.replace("/", "_"))[:60].strip() or "doc"
         if not stem.lower().endswith((".md", ".txt")):
             stem += ".md"
-        out = base / ".vortocode" / "artifacts"
+        out = state_dir(base) / "artifacts"
         try:
             out.mkdir(parents=True, exist_ok=True)
             target = out / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{stem}"
@@ -104,7 +105,7 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
              lambda a: _send(a, "file")),
         Tool("send_document", "把一段内容写成文件并发到主人的 IM。适合交付成文/脚本/报告——"
                               "内容在你手上、磁盘上还没有对应文件时用这个。"
-                              "只能写进 .vortocode/artifacts/。",
+                              "只能写进 .vortoone/artifacts/。",
              {"title": "文件名（会自动加时间戳前缀，缺后缀按 .md）",
               "content": "文件正文", "caption": "可选：随文件附一句说明"},
              _send_document),

@@ -35,7 +35,7 @@ def test_event_maps_to_state(tmp_path, event_type, state):
 
 def test_writes_state_file(tmp_path):
     _run({"event_type": "agent_start", "data": {}}, tmp_path)
-    f = tmp_path / ".vortocode" / "pet_state.json"
+    f = tmp_path / ".vortoone" / "pet_state.json"
     assert f.is_file()
     data = json.loads(f.read_text(encoding="utf-8"))
     assert data["state"] == "working" and data["emoji"]

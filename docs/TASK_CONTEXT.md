@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | 子任务生命周期 | `workflow/tasks/collaboration.py`、`tasks.py` | 成员的每次派活就是一条协作子任务，不新建记录 |
 | 根额度的规则 | `workflow/tasks/task_chain_budget.py` | 沿用其规则，额度另记在根任务的 `team` 字段 |
-| 角色卡 | `.vortocode/agents/*.md`（`agents/subagents.py`） | 成员的职责、工具面、模型；工具面是封闭枚举 |
+| 角色卡 | `.vortoone/agents/*.md`（`agents/subagents.py`） | 成员的职责、工具面、模型；工具面是封闭枚举 |
 | 结果推送 | `scheduling/task_notices.py`（G2） | 完成、失败、等回答推给主人 |
 | 在办汇总 | `scheduling/work_status.py`（G3） | 增加「任务上下文」一段 |
 | 历史污点 | `agents/taint.py`（ADR-012） | 主对话与任务上下文分开记录，污点不互相串 |
@@ -50,7 +50,7 @@
 | 任务上下文 | 一个大任务的根：目标、验收标准、成员表、预算、开放档位、状态 | `TaskLedger` 中一条 `kind="team"` 的根任务 |
 | 协调记录 | 主 agent 在这个任务里的对话历史：派了什么、成员回了什么、为什么返工 | 会话存储，键 `team-<根 id>`，与主对话分开 |
 | 成员 | 按角色卡装配的执行者；一次派活是一条挂在根下的协作子任务 | 协作子任务（`collaboration`） |
-| 角色卡 | 职责、工具面（封闭枚举）、模型、单次步数 | `.vortocode/agents/<名>.md` |
+| 角色卡 | 职责、工具面（封闭枚举）、模型、单次步数 | `.vortoone/agents/<名>.md` |
 
 ## 4. 生命周期
 

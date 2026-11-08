@@ -40,6 +40,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 _TIMEOUT = 15
 _RETRIES = 3                      # 传输层抖动的重试次数（不含 HTTP 错误码）
@@ -249,7 +250,7 @@ SOURCES: Dict[str, Callable[[Callable[[str], bytes]], List[Signal]]] = {
 
 # ---------------------------------------------------------------- 快照（算 delta + 去重）
 def _state_path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "signals_state.json"
+    return state_dir(repo_root) / "signals_state.json"
 
 
 def _load_state(repo_root: str) -> Dict[str, Any]:

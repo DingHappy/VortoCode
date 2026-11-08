@@ -2,7 +2,7 @@
 
 之前网页会话只在内存 `_SESSIONS` 里（按客户端 sid），服务器一重启就丢——这是 web↔TUI
 对等的最后一项缺口。这里把每个 sid 会话的展示 transcript + agent 历史 + 当前计划存到
-`.vortocode/web_sessions/<sid>.json`，重启后按 sid 复原。
+`.vortoone/web_sessions/<sid>.json`，重启后按 sid 复原。
 
 只持久化 sid 会话（`sid-` 前缀）；ws-id 的临时连接不落盘。任何 IO 出错都安全吞掉，
 绝不让持久化影响旧对话本身。托管 IM 显式使用 strict 读取和 durable 保存，并在失败时停止受理。
@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 _DIRNAME = "web_sessions"
 _MAX_HISTORY = 40         # agent 历史只存尾部 N 条（与 TUI 持久化一致）
@@ -35,7 +36,7 @@ def _sid_of(key: str) -> Optional[str]:
 
 
 def _path(repo_root: str, sid: str) -> Path:
-    return Path(repo_root) / ".vortocode" / _DIRNAME / f"{sid}.json"
+    return state_dir(repo_root) / _DIRNAME / f"{sid}.json"
 
 
 def _clean_sid(sid: str) -> Optional[str]:
@@ -124,7 +125,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         return True  # Clean draft: nothing needs saving; never remove historical files.
     try:
         from src.utils.state_dir import ensure_state_gitignore
-        ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortocode 生成态写入点（自忽略，防足迹）
+        ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortoone 生成态写入点（自忽略，防足迹）
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
         if durable:
@@ -198,7 +199,7 @@ def load_session(repo_root: str, key: str, *, strict: bool = False, max_bytes: i
 
 def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
     """列出所有已落盘会话（供多会话管理 UI）：{sid, title, messages, updated}，按最近更新排序。"""
-    d = Path(repo_root) / ".vortocode" / _DIRNAME
+    d = state_dir(repo_root) / _DIRNAME
     if not d.is_dir():
         return []
     from src.workflow.workbench.hook_issues import (

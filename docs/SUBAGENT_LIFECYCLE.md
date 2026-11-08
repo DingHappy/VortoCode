@@ -19,7 +19,7 @@ TaskLedger 上，跨主机的派活单另有记录是因为它跨进程、跨宿
 
 | 环节 | 现有实现 | 判断 |
 | --- | --- | --- |
-| 子 agent 从哪来 | `task` / `research_parallel` 工具（`agents/delegation.py`）；角色来自 `.vortocode/agents/*.md`（`agents/subagents.py`），未指定角色时是只读研究员 | 已有。角色文件只能由人手写 |
+| 子 agent 从哪来 | `task` / `research_parallel` 工具（`agents/delegation.py`）；角色来自 `.vortoone/agents/*.md`（`agents/subagents.py`），未指定角色时是只读研究员 | 已有。角色文件只能由人手写 |
 | 子 agent 能做什么 | 角色声明 `tools: read / deliver / dev` 三选一；子 agent 没有 `task`（不递归）、没有裸写和 shell；dev 型每次委派都过确认门 | 已有，且工具面是封闭枚举 |
 | 污点 | 子回合污点经 `merge_nested_taint` 回传父回合；任务记录带 `tainted` | 已有 |
 | 生命周期记录 | `workflow/tasks/collaboration.py` 的 `CollaborationService`，建在 `TaskLedger`（write-ahead，每任务一份 JSON）上：create → start → finish，轮次校验拒绝迟到结果，最多 3 轮，执行完成与验收分开（`task_review`），子任务可提问（blocked） | 已有，相当于 OpenMausBot 的 Assignment |
@@ -35,7 +35,7 @@ TaskLedger 上，跨主机的派活单另有记录是因为它跨进程、跨宿
 
 现在主 agent 只能从已有角色里选。遇到没有合适角色的工作，只能退回只读研究员，或者自己做。
 
-拟增加 `role_propose` 工具，产出一张角色提议卡，主人批准后才写入 `.vortocode/agents/<名>.md`：
+拟增加 `role_propose` 工具，产出一张角色提议卡，主人批准后才写入 `.vortoone/agents/<名>.md`：
 
 - 字段：`name`、`description`、`tools`（只能是 read / deliver / dev）、`model`（可选）、`max_steps`（有上限）、
   职责正文。工具面是封闭枚举，模型编不出新权限。

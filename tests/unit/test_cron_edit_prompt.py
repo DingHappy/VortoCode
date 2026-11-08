@@ -1,6 +1,6 @@
 """改已有 prompt 作业的内容（cron_set_prompt）——真机 2026-07-30 逼出来的能力。
 
-主人在钉钉说"给新闻作业加上来源网页地址"，agent 回"我无法直接编辑 .vortocode/cron.yaml"，
+主人在钉钉说"给新闻作业加上来源网页地址"，agent 回"我无法直接编辑 .vortoone/cron.yaml"，
 然后给出两个难看的方案：建一个 `daily-tech-news-v2` 再停掉旧的、或者你自己去手改 yaml。
 
 那是**我自己的设计**：`cron_set_web` 只改开关，注释里写着"要换内容请另建一个作业"。
@@ -39,8 +39,8 @@ jobs:
 
 
 def _repo(tmp_path, text=YAML):
-    (tmp_path / ".vortocode").mkdir(exist_ok=True)
-    (tmp_path / ".vortocode" / "cron.yaml").write_text(text, encoding="utf-8")
+    (tmp_path / ".vortoone").mkdir(exist_ok=True)
+    (tmp_path / ".vortoone" / "cron.yaml").write_text(text, encoding="utf-8")
     return str(tmp_path)
 
 
@@ -88,7 +88,7 @@ def test_neighbours_and_comments_survive(tmp_path):
     root = _repo(tmp_path)
     set_job_prompt(root, "daily-tech-news", "全新内容\n第二行")
 
-    text = (tmp_path / ".vortocode" / "cron.yaml").read_text(encoding="utf-8")
+    text = (tmp_path / ".vortoone" / "cron.yaml").read_text(encoding="utf-8")
     assert "# 主人手写的注释——改完必须还在" in text
     assert "# 受信任的 command 作业" in text          # 行内注释也要在
 
@@ -137,7 +137,7 @@ def test_multiline_uses_literal_block_for_humans(tmp_path):
     """多行落成字面块（`prompt: |`）而不是引号折行——这个文件主人是要手改的。"""
     root = _repo(tmp_path)
     set_job_prompt(root, "daily-tech-news", "第一行\n第二行\n第三行")
-    text = (tmp_path / ".vortocode" / "cron.yaml").read_text(encoding="utf-8")
+    text = (tmp_path / ".vortoone" / "cron.yaml").read_text(encoding="utf-8")
     assert "prompt: |" in text
     assert "第一行\n" in text and "第二行\n" in text
 

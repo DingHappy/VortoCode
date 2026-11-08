@@ -8,6 +8,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+from src.utils.state_dir import state_dir
 
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 _MAX_TIMELINE = 200
@@ -90,7 +91,7 @@ def _event(
 class JournalStore:
     def __init__(self, repo_root: str):
         self.repo_root = str(repo_root)
-        self.directory = Path(repo_root) / ".vortocode" / "journal"
+        self.directory = state_dir(repo_root) / "journal"
 
     def _path(self, day: str) -> Path:
         return self.directory / f"{normalize_day(day)}.json"

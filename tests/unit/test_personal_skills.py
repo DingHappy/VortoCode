@@ -28,7 +28,7 @@ def test_save_preview_and_version_approval_are_durable_and_private(tmp_path):
     assert "instructions" not in skills.list()["items"][0]
     preview = skills.get("compare", preview=True)
     assert preview["instructions"] == draft()["instructions"]
-    assert "personal-skills/" in (tmp_path / ".vortocode/.gitignore").read_text()
+    assert "personal-skills/" in (tmp_path / ".vortoone/.gitignore").read_text()
     for name in ("SKILL.md", "approval.json"):
         assert (skills.base / "compare" / name).stat().st_mode & 0o777 == 0o600
     skills.set_enabled("compare", enabled=True, revision=preview["revision"])

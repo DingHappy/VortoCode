@@ -107,13 +107,13 @@ async def test_direct_reads_reject_sensitive_files_and_parent_or_symlink_escape(
     (tmp_path / "unrelated.txt").write_text("OUTSIDE_VALUE")
     (root / "alias.txt").symlink_to(tmp_path / "unrelated.txt")
     (root / ".env").write_text("PRIVATE_VALUE")
-    state = root / ".vortocode"
+    state = root / ".vortoone"
     state.mkdir()
     (state / "private.txt").write_text("PRIVATE_VALUE")
     (root / "alias-state.txt").symlink_to(state / "private.txt")
     agent = reader(root)
     for path in ("../unrelated.txt", str(tmp_path / "unrelated.txt"), "alias.txt", ".env",
-                 ".vortocode/private.txt", "alias-state.txt"):
+                 ".vortoone/private.txt", "alias-state.txt"):
         result = await agent._run_tool("read_file", {"path": path}, "build", lambda _m: None)
         assert "OUTSIDE_VALUE" not in result and "PRIVATE_VALUE" not in result
 
@@ -154,7 +154,7 @@ def test_role_ignores_expansive_ambient_defaults_and_does_not_load_other_context
 @pytest.mark.parametrize("rules", ["[", "[]", "false", "0", "[read_file]", "deny: read_file",
                                    "profile: missing", "deny: [42]", "profiles: []"])
 def test_invalid_project_permissions_cannot_silently_remove_restrictions(tmp_path, rules):
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir()
     (state / "permissions.yaml").write_text(rules)
     with pytest.raises(ValueError, match="权限"):
@@ -165,7 +165,7 @@ def test_invalid_project_permissions_cannot_silently_remove_restrictions(tmp_pat
 async def test_new_denies_or_damaged_rules_block_the_next_read(tmp_path, rules):
     (tmp_path / "private.py").write_text("SHOULD_NOT_BE_READ")
     agent = reader(tmp_path)
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir()
     (state / "permissions.yaml").write_text(rules)
     result = await agent._run_tool("read_file", {"path": "private.py"}, "build", lambda _m: None)

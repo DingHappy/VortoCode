@@ -1,4 +1,4 @@
-# VortoOne cron 作业表示例——放到目标仓库的 `.vortocode/cron.yaml` 才生效。
+# VortoOne cron 作业表示例——放到目标仓库的 `.vortoone/cron.yaml` 才生效。
 #
 # 调度循环默认**关**：仅当以 opt-in 方式起服务才跑（不擅自跑自主 LLM 作业）——
 #   VORTOONE_CRON=1 vortocode server      # 起 cron
@@ -89,4 +89,4 @@ jobs:
                                # 空转一天十几次只是白跑；真要更勤快改成 every 2h 也行。
     command: "vc pipeline tick"
     announce: silent           # 通报由 tick 自己按状态变化发，别再叠一层"作业跑完了"
-    enabled: false             # 默认关，配好 .vortocode/pipelines/*.yaml 再改 true
+    enabled: false             # 默认关，配好 .vortoone/pipelines/*.yaml 再改 true

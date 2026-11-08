@@ -14,6 +14,7 @@ import stat
 from typing import Optional
 
 from src.agents.tool import Tool
+from src.utils.state_dir import state_dir
 
 
 @dataclass
@@ -95,7 +96,7 @@ class SkillRegistry:
 def _skill_registry_for(repo_root: str):
     from pathlib import Path as _P
     return SkillRegistry([str(_P(repo_root) / "skills"),
-                          str(_P(repo_root) / ".vortocode" / "skills")], allowed_root=repo_root).load()
+                          str(state_dir(repo_root) / "skills")], allowed_root=repo_root).load()
 
 
 def skill_catalog(repo_root: str) -> str:
@@ -137,9 +138,9 @@ def build_skill_tools(repo_root: str, confirm, *, registry: SkillRegistry | None
         if not name or not instr:
             return "save_skill 需要 name 和 instructions（技能正文）。"
         if confirm is not None and not await confirm(
-                f"把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）"):
+                f"把技能「{name}」写到 .vortoone/skills/{name}/SKILL.md？（用户技能目录，不碰 main）"):
             return f"用户取消了保存技能 {name}。"
-        p = Path(repo_root) / ".vortocode" / "skills" / name / "SKILL.md"
+        p = state_dir(repo_root) / "skills" / name / "SKILL.md"
         try:
             p.resolve().relative_to(Path(repo_root).resolve())
         except (OSError, RuntimeError, ValueError):
@@ -149,7 +150,7 @@ def build_skill_tools(repo_root: str, confirm, *, registry: SkillRegistry | None
         header = yaml.safe_dump({"name": name, "description": desc}, allow_unicode=True, sort_keys=False)
         p.write_text(f"---\n{header}---\n\n{instr}\n", encoding="utf-8")
         registry.load()                              # 原地重扫：当前 agent 立刻能 use_skill 到它
-        return f"已保存技能 {name} 到 .vortocode/skills/{name}/SKILL.md。"
+        return f"已保存技能 {name} 到 .vortoone/skills/{name}/SKILL.md。"
 
     return [Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
                  {"name": "技能名"}, _use_skill, read_only=True, untrusted_source=True, required_args=('name',), argument_schema={'name': {'type': 'string'}}),

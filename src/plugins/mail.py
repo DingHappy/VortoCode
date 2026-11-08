@@ -2,7 +2,7 @@
 
 凭据是一条 `imaps://邮箱:授权码@服务器[:端口]`，也可以只填 `邮箱:授权码`（常见邮箱自动补服务器）。
 授权码是邮箱设置里生成的「客户端专用密码」，不是登录密码。凭据放在
-`~/.vortocode/connectors/mail.token`，不进配置、系统提示、日志或工具结果。
+`~/.vortoone/connectors/mail.token`，不进配置、系统提示、日志或工具结果。
 
 - 只用 EXAMINE（只读打开收件箱）和 BODY.PEEK：不改已读状态，不移动、不删除，也不能发信。
 - 唯一的写入是 `mail_draft`：主人逐次确认后往草稿箱放一封草稿（APPEND），不发送；发不发由主人在邮箱里决定。
@@ -104,7 +104,7 @@ def _account() -> Account:
     try:
         secret = load_connector_secret(NAME)
     except FileNotFoundError:
-        raise MailError("还没接邮箱：在 Desktop 插件页填「邮箱:授权码」，或放进 ~/.vortocode/connectors/mail.token") from None
+        raise MailError("还没接邮箱：在 Desktop 插件页填「邮箱:授权码」，或放进 ~/.vortoone/connectors/mail.token") from None
     except (OSError, ValueError) as error:
         raise MailError(f"邮箱凭据文件不可用：{error}") from None
     if connector_locally_revoked(NAME):

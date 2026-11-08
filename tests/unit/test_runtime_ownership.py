@@ -91,7 +91,7 @@ async def test_startup_failure_releases_workspace_before_retry(tmp_path, monkeyp
         async with runtime_lifespan(tmp_path, **kwargs):
             pytest.fail("Recovery failure must stop startup")
     assert calls == ["recover", "shutdown"]
-    with ProcessLease(tmp_path / ".vortocode" / "runtime.lock"):
+    with ProcessLease(tmp_path / ".vortoone" / "runtime.lock"):
         with pytest.raises(RuntimeError, match="Another Runtime"):
             async with runtime_lifespan(tmp_path, **kwargs):
                 pytest.fail("Second owner must not start")
@@ -156,7 +156,7 @@ async def test_failed_im_startup_cleans_managers_and_workspace(tmp_path, monkeyp
                 register_im_worker=lambda worker: None):
             pytest.fail("Invalid explicit IM configuration must prevent startup")
     assert calls == ["runner stopped", "runs stopped", "terminals stopped"]
-    with ProcessLease(tmp_path / ".vortocode" / "runtime.lock"):
+    with ProcessLease(tmp_path / ".vortoone" / "runtime.lock"):
         pass
 
 
@@ -217,7 +217,7 @@ async def test_cleanup_failure_still_closes_other_managers_and_releases_lock(tmp
                 register_im_worker=lambda worker: None):
             pass
     assert calls == ["runner stopped", "terminals stopped"]
-    with ProcessLease(tmp_path / ".vortocode" / "runtime.lock"):
+    with ProcessLease(tmp_path / ".vortoone" / "runtime.lock"):
         pass
 
 

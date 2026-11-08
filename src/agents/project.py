@@ -8,10 +8,12 @@ UI 无关，TUI/网页/CLI 三端共用：各自在搭主 agent 时取一次拼�
 
 from pathlib import Path
 from typing import Optional
+from src.utils.state_dir import home_state_dir
+from src.utils.state_dir import state_dir
 
 # 按优先级找；取第一个存在且非空的（AGENTS.md = opencode 标准，CLAUDE.md = CC，VORTO.md = 本项目原生）。
-# `.vortocode/AGENTS.md` 是本地（gitignored）私有指令，可放不想提交的约定。
-_CANDIDATES = ["AGENTS.md", "CLAUDE.md", "VORTO.md", ".vortocode/AGENTS.md"]
+# `.vortoone/AGENTS.md` 是本地（gitignored）私有指令，可放不想提交的约定。
+_CANDIDATES = ["AGENTS.md", "CLAUDE.md", "VORTO.md", ".vortoone/AGENTS.md"]
 
 _MAX_CHARS = 8000   # 截断防把上下文挤爆（项目指令该精炼，不是塞整本手册）
 
@@ -23,7 +25,8 @@ def _read_project_instructions(repo_root: str) -> Optional[tuple[Path, str]]:
     except (OSError, RuntimeError):
         return None
     for name in _CANDIDATES:
-        p = base / name
+        # 本地私有的那份在状态目录里：走 state_dir，还没搬的旧 .vortocode 也能读到
+        p = state_dir(base) / "AGENTS.md" if name == ".vortoone/AGENTS.md" else base / name
         try:
             target = p.resolve(strict=True)
             target.relative_to(base)
@@ -62,7 +65,7 @@ def load_project_instructions(repo_root: str) -> str:
 
 # 用户级全局指令：作用于所有会话（包括不绑定目录的通用会话），位置与用户级 skills 同处。
 # Desktop「设置 → 个性化」编辑的就是它；也可以直接手改，新会话生效。
-USER_INSTRUCTIONS_PATH = Path.home() / ".vortocode" / "AGENTS.md"
+USER_INSTRUCTIONS_PATH = home_state_dir() / "AGENTS.md"
 
 
 def load_user_instructions(path: Optional[Path] = None) -> str:
@@ -81,4 +84,4 @@ def load_user_instructions(path: Optional[Path] = None) -> str:
     if len(text) > _MAX_CHARS:
         text = text[:_MAX_CHARS]
         truncated = "\n…(全局指令过长已截断)"
-    return f"【全局指令】(来自用户的 ~/.vortocode/AGENTS.md，对所有对话和任务生效)\n{text}{truncated}"
+    return f"【全局指令】(来自用户的 ~/.vortoone/AGENTS.md，对所有对话和任务生效)\n{text}{truncated}"

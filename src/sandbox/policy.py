@@ -252,7 +252,7 @@ def _operating_secret(name: str, names: frozenset[str]) -> bool:
 def _env_passthrough_allowlist() -> frozenset[str]:
     """主人显式放行、准许穿透到子进程的变量名（逗号分隔）。
 
-    走环境变量 VORTOONE_ENV_PASSTHROUGH 而非 .vortocode/ 文件：能设主进程 env 的才是
+    走环境变量 VORTOONE_ENV_PASSTHROUGH 而非 .vortoone/ 文件：能设主进程 env 的才是
     主人；若放仓库里，凡能写仓库的（含被投毒的生成代码）就能把密钥重新放行，等于多开
     一个投毒面。典型用途：目标项目自身用 OPENAI_API_KEY、其测试子进程需要它。
     变量名大小写敏感（Unix env 语义）：须与真实变量名一字不差，写错则 fail-closed（仍剥）。

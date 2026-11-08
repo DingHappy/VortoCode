@@ -37,7 +37,7 @@ async def run():
 asyncio.run(run())
 '''
     subprocess.run([sys.executable, "-c", code, str(tmp_path)], cwd=Path(__file__).resolve().parents[2], check=True, timeout=15)
-    raw = (tmp_path / ".vortocode/audit.log").read_text()
+    raw = (tmp_path / ".vortoone/audit.log").read_text()
     assert "private" not in raw and "req-crash-001" not in raw and "digest" not in raw
     [row] = waits(tmp_path, set())
     assert row["approval_outcome"] == "interrupted" and row["decision"] == "unknown"
@@ -105,8 +105,8 @@ async def test_closed_card_does_not_come_back_as_an_interrupted_wait(tmp_path, s
     turns.decide(turn.rid, card["id"], False, card["digest"], "device")
     await _settle(turn, ("done",))
     assert not waits(tmp_path, set())
-    before = (tmp_path / ".vortocode/audit.log").read_bytes()
-    assert not waits(tmp_path, set()) and (tmp_path / ".vortocode/audit.log").read_bytes() == before
+    before = (tmp_path / ".vortoone/audit.log").read_bytes()
+    assert not waits(tmp_path, set()) and (tmp_path / ".vortoone/audit.log").read_bytes() == before
 
 
 async def test_opening_persistence_failure_never_exposes_a_card(tmp_path, monkeypatch, shared_chat):
@@ -160,7 +160,7 @@ def test_malformed_opening_is_a_warning_and_never_a_restorable_card(tmp_path):
 def test_resident_read_identifies_lost_wait_without_constructing_an_agent(tmp_path, monkeypatch):
     root = str(tmp_path)
     assert open_card(root, rid="r", cid="c", request_id="req-api-001", kind="own_data", tainted=False)
-    before = (tmp_path / ".vortocode/audit.log").read_bytes()
+    before = (tmp_path / ".vortoone/audit.log").read_bytes()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
     monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
@@ -170,7 +170,7 @@ def test_resident_read_identifies_lost_wait_without_constructing_an_agent(tmp_pa
     data = TestClient(app).get("/api/assistant/access", headers={"Authorization": "Bearer admin-token"}).json()
     [row] = [r for r in data["history"]["entries"] if r["record_type"] == "card_wait"]
     assert row["approval_outcome"] == "interrupted" and app_relay._turns is None
-    assert (tmp_path / ".vortocode/audit.log").read_bytes() == before
+    assert (tmp_path / ".vortoone/audit.log").read_bytes() == before
 
 
 def test_known_request_replay_returns_a_review_code_without_starting_a_turn(tmp_path, monkeypatch):

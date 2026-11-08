@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-_SKIP_DIRS = {".git", "node_modules", ".vortocode", "dist", "build", ".next",
+_SKIP_DIRS = {".git", "node_modules", ".vortoone", ".vortocode", "dist", "build", ".next",
               "__pycache__", ".venv", "venv", "coverage", ".mypy_cache"}
 _MAX_FILES = 60            # 为载入项目而 didOpen 的文件上限（防超大仓拖慢/吃内存）
 _MAX_REFS = 40

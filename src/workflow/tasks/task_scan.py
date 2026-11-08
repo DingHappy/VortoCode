@@ -790,7 +790,7 @@ def verify_preservation_bytes(artifact_bytes, receipt_bytes, *, expected=None, r
         if (set(storage) != {"directory", "artifact_name", "directory_device", "directory_inode", "artifact_inode", "method"}
                 or not isinstance(directory, str) or len(directory) > 4096 or "\0" in directory
                 or not Path(directory).is_absolute() or str(Path(directory)) != directory
-                or any(part in Path(directory).parts for part in ("..", ".git", ".vortocode"))
+                or any(part in Path(directory).parts for part in ("..", ".git", ".vortoone", ".vortocode"))
                 or storage["artifact_name"] != _preservation_names(view)[0]
                 or storage["method"] != "local_file_fsync_directory_fsync_read_back"
                 or any(not isinstance(storage[key], str) or not storage[key].isdigit() or len(storage[key]) > 32
@@ -810,8 +810,8 @@ def _preservation_directory(directory):
     if path.is_symlink():
         raise ValueError("保存目标不能是符号链接")
     path = path.resolve(strict=True)
-    if any(part in path.parts for part in (".git", ".vortocode")):
-        raise ValueError("保存目标须在 .git/.vortocode 之外的既有专用目录")
+    if any(part in path.parts for part in (".git", ".vortoone", ".vortocode")):
+        raise ValueError("保存目标须在 .git/.vortoone 之外的既有专用目录")
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     before = os.fstat(descriptor)
     return path, descriptor, before

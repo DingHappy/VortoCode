@@ -102,8 +102,8 @@ bot、绑定 ID 和启动代次无关。因此同账号换绑或移动到另一�
 同身份的正文摘要冲突会暂停新输入，不能猜哪条是真的。
 
 记录沿用原 SessionStore 格式和原子保存路径，不建立另一个任务库。账号记录位于原
-`VORTOONE_IM_LOCK_DIR`（默认 `~/.vortocode/channel-locks`）下的 `inputs/<账号摘要>`，
-内部仍是 `.vortocode/web_sessions/im-inputs.json`。该状态目录必须位于 Project 之外，
+`VORTOONE_IM_LOCK_DIR`（默认 `~/.vortoone/channel-locks`）下的 `inputs/<账号摘要>`，
+内部仍是 `.vortoone/web_sessions/im-inputs.json`。该状态目录必须位于 Project 之外，
 由同一宿主长期保留；先取得原账号 polling lease 才打开记录，收尾结束后才释放 lease。
 部署时应把此目录作为宿主持久状态备份，不能随临时工作区清理。
 

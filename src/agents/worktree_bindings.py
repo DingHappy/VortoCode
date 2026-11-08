@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
+from src.utils.state_dir import state_dir
 
 _STORE = "worktree_bindings.json"
 _MAX_BINDINGS = 256
@@ -39,7 +40,7 @@ def _worktree_id(value: Any) -> str:
 
 
 def _path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / _STORE
+    return state_dir(repo_root) / _STORE
 
 
 def _read_unlocked(repo_root: str) -> dict[str, dict[str, str]]:

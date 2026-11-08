@@ -20,7 +20,7 @@ class AuditLogHook(Hook):
     def __init__(
         self, 
         log_file: str = "audit.log",
-        log_dir: str = ".vortocode/logs"
+        log_dir: str = ".vortoone/logs"
     ):
         super().__init__(
             name="audit-log",

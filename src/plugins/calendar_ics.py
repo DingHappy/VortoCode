@@ -2,7 +2,7 @@
 
 iCloud、Google、Outlook、飞书都能导出这种只读订阅链接；`webcal://` 按 https 取。
 链接本身就是密钥（拿到的人能看全部日程），所以和其他连接器一样只放在
-`~/.vortocode/connectors/calendar.token`（本人所有、权限 600）：不进配置、系统提示、日志或工具结果。
+`~/.vortoone/connectors/calendar.token`（本人所有、权限 600）：不进配置、系统提示、日志或工具结果。
 
 日程文字可能是别人发来的邀请，按外部不可信内容处理（摄入即污点）。
 重复日程支持常见规则（每天/每周几/每月同日/每年，带间隔、次数、截止、例外和单次改期）；
@@ -313,7 +313,7 @@ def _secret() -> str:
     try:
         secret = load_connector_secret(NAME)
     except FileNotFoundError:
-        raise CalendarError("还没接日历：把日历的只读订阅链接放进 ~/.vortocode/connectors/calendar.token") from None
+        raise CalendarError("还没接日历：把日历的只读订阅链接放进 ~/.vortoone/connectors/calendar.token") from None
     except (OSError, ValueError) as error:
         raise CalendarError(f"日历凭据文件不可用：{error}") from None
     if connector_locally_revoked(NAME):

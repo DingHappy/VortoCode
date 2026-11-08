@@ -3,7 +3,7 @@
 A background task finishing only proves that an execution attempt returned.  A
 goal is stricter: every acceptance criterion must have explicit passing evidence
 before the goal can become ``achieved``.  Goal state is persisted under
-``.vortocode/goals`` and links to the existing task/dev-plan runtime rather than
+``.vortoone/goals`` and links to the existing task/dev-plan runtime rather than
 introducing a second autonomous executor.
 """
 from __future__ import annotations
@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 _DIRNAME = "goals"
 _GOAL_STATUSES = {"draft", "active", "blocked", "achieved", "failed"}
@@ -327,7 +328,7 @@ class GoalLedger:
         self.kind = kind
 
     def _dir(self) -> Path:
-        return Path(self.repo_root) / ".vortocode" / _DIRNAME
+        return state_dir(self.repo_root) / _DIRNAME
 
     def _path(self, goal_id: str) -> Path:
         return self._dir() / f"{goal_id}.json"

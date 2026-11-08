@@ -30,9 +30,20 @@ from pathlib import Path
 
 MAGIC = b"VCBAK1\n"
 HOME = Path.home()
+
+
+def _state_dir(base: Path) -> Path:
+    """状态目录改名为 .vortoone 后旧名 .vortocode 留的是链接（ADR-018 批次 C）：备份真实目录，不备链接。"""
+    for name in (".vortoone", ".vortocode"):
+        candidate = base / name
+        if candidate.is_dir() and not candidate.is_symlink():
+            return candidate
+    return base / ".vortoone"
+
+
 DEFAULT_SOURCES = [
-    HOME / "assistant" / ".vortocode",
-    HOME / ".vortocode",
+    _state_dir(HOME / "assistant"),
+    _state_dir(HOME),
     HOME / ".config" / "vortocode-mobile",
     HOME / ".config" / "vortocode-https",
 ]

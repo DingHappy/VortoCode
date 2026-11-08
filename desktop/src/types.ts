@@ -1762,7 +1762,7 @@ export interface LlmUsageSummary {
   message: string;
 }
 
-/** 用户级全局指令（~/.vortocode/AGENTS.md）。 */
+/** 用户级全局指令（~/.vortoone/AGENTS.md）。 */
 export interface UserInstructions {
   path: string;
   content: string;
@@ -1928,7 +1928,7 @@ export interface ExtensionsCatalog {
   skills: CatalogSkillItem[];
 }
 
-/** 插件页的项目技能：shared = skills/（随仓库），local = .vortocode/skills/（只在本机）。 */
+/** 插件页的项目技能：shared = skills/（随仓库），local = .vortoone/skills/（只在本机）。 */
 export type ProjectSkillScope = "shared" | "local";
 
 export interface ProjectSkill {

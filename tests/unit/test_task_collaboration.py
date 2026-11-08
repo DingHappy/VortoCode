@@ -199,7 +199,7 @@ async def test_persisted_taint_and_secrets_are_not_lost_on_handoff(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_dev_followup_keeps_confirmation_and_role_boundary(tmp_path):
-    roles = tmp_path / ".vortocode" / "agents"
+    roles = tmp_path / ".vortoone" / "agents"
     roles.mkdir(parents=True)
     (roles / "coder.md").write_text("---\ntools: dev\n---\n你是实现工程师。", encoding="utf-8")
     decisions = iter([True, False])

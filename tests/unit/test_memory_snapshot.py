@@ -11,7 +11,7 @@ from src.memory.memory_snapshot import read_memory_snapshot
 
 def _database(root, rows):
     from src.memory.conversation_db import SessionStore
-    path = root / ".vortocode" / "sessions.db"
+    path = root / ".vortoone" / "sessions.db"
     store = SessionStore(str(path))
     ids = [store.add_memory(scope, "fact", content, metadata=metadata) for scope, content, metadata in rows]
     return path, store, ids
@@ -22,7 +22,7 @@ def test_empty_snapshot_does_not_create_state(tmp_path):
     assert snapshot["items"] == [] and snapshot["total"] == snapshot["count"] == 0
     assert not snapshot["coverage_limited"]
     assert snapshot["instance_id"] == "未知"
-    assert not (tmp_path / ".vortocode").exists()
+    assert not (tmp_path / ".vortoone").exists()
 
 
 def test_snapshot_is_readonly_with_explicit_legacy_provenance(tmp_path):
@@ -106,10 +106,10 @@ def test_linked_stores_are_rejected(tmp_path, kind):
     root = tmp_path / "linked"
     root.mkdir()
     if kind == "directory":
-        (root / ".vortocode").symlink_to(real / ".vortocode", target_is_directory=True)
+        (root / ".vortoone").symlink_to(real / ".vortoone", target_is_directory=True)
     else:
-        (root / ".vortocode").mkdir()
-        (root / ".vortocode" / "sessions.db").symlink_to(real / ".vortocode" / "sessions.db")
+        (root / ".vortoone").mkdir()
+        (root / ".vortoone" / "sessions.db").symlink_to(real / ".vortoone" / "sessions.db")
     with pytest.raises(ValueError):
         read_memory_snapshot(str(root))
 
@@ -119,7 +119,7 @@ def test_malformed_metadata_remains_unknown_and_schema_is_not_repaired(tmp_path)
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE memories SET metadata=? WHERE id=?", ("{broken", ids[0]))
     assert read_memory_snapshot(str(tmp_path))["items"][0]["source"] == "未知"
-    broken = tmp_path / "empty" / ".vortocode" / "sessions.db"
+    broken = tmp_path / "empty" / ".vortoone" / "sessions.db"
     broken.parent.mkdir(parents=True)
     with sqlite3.connect(broken) as conn:
         conn.execute("CREATE TABLE unrelated (id TEXT)")
@@ -143,7 +143,7 @@ def test_http_export_scope_auth_and_unavailable_store(tmp_path, monkeypatch):
     monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     assert client.get("/api/assistant/memory-snapshot", headers=headers).status_code == 403
     monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir()
     (state / "sessions.db").write_bytes(b"not a database")
     response = client.get("/api/assistant/memory-snapshot", headers=headers)

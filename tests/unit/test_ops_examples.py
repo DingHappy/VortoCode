@@ -14,7 +14,7 @@ _EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 def test_cron_example_parses_with_real_loader(tmp_path):
     from src.scheduling import cron as _cron
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir()
     shutil.copy(_EXAMPLES / "cron.yaml.example", d / "cron.yaml")
     jobs = _cron.load_jobs(str(tmp_path))

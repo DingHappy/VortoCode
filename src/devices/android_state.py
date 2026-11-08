@@ -7,11 +7,12 @@ import uuid
 
 from src.devices.android import AndroidError, private_path, unique_object
 from src.gateway.process_lease import ProcessLease
+from src.utils.state_dir import home_state_dir
 
 
 class AndroidState:
     def __init__(self, workspace, binding, *, root=None):
-        self.root = root or Path.home() / ".vortocode" / "android-control"
+        self.root = root or home_state_dir() / "android-control"
         canonical, project = self.root.resolve(), Path(workspace).resolve()
         if canonical == project or project in canonical.parents:
             raise AndroidError("Android 控制状态必须位于工作区外")

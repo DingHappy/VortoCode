@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 
 from src.scheduling import codex_goal, codex_watch
 from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
+from src.utils.state_dir import state_dir
 
 logger = logging.getLogger("vortocode.codex")
 
@@ -65,7 +66,7 @@ def owner_at_mac(state: Dict[str, Any], now: datetime) -> bool:
 
 
 def _path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "codex" / "supervisor.json"
+    return state_dir(root) / "codex" / "supervisor.json"
 
 
 def _valid_record(data: Any) -> bool:

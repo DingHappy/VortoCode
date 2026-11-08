@@ -37,7 +37,7 @@ def test_ordered_reports_replace_in_sequence_and_persist_through_receiver_reload
     assert first.cursor == payload()["report_order"]["cursor"] and not first.duplicate
     next_payload = payload(sequence=2, parent=cursor(first.cursor), status="idle")
     second = watch.receive_report(root, next_payload, now=NOW + timedelta(minutes=1))
-    loaded = json.loads((tmp_path / ".vortocode/codex/state.json").read_text())
+    loaded = json.loads((tmp_path / ".vortoone/codex/state.json").read_text())
     assert second.cursor == loaded["report_cursor"]
     assert len(loaded["events"]) == 1 and loaded["daily"]
     following = payload(sequence=3, parent=cursor(loaded["report_cursor"]), turn_id="t2")
@@ -49,7 +49,7 @@ def test_exact_duplicate_never_refreshes_time_events_marks_or_notifications(tmp_
     root = str(tmp_path)
     original = payload()
     first = watch.receive_report(root, original, now=NOW)
-    path = tmp_path / ".vortocode/codex/state.json"
+    path = tmp_path / ".vortoone/codex/state.json"
     before = path.read_bytes()
     duplicate = watch.receive_report(root, deepcopy(original), now=NOW + timedelta(hours=2))
     assert duplicate.duplicate and duplicate.cursor == first.cursor and duplicate.notices == []
@@ -74,7 +74,7 @@ def test_stale_conflicting_or_downgraded_reports_never_overwrite_current_state(t
         stale = payload("g2", sequence=3, parent=cursor(second.cursor))
     else:
         del stale["report_order"]
-    path = tmp_path / ".vortocode/codex/state.json"
+    path = tmp_path / ".vortoone/codex/state.json"
     before = path.read_bytes()
     with pytest.raises(ObservationConflict):
         watch.receive_report(root, stale, now=NOW + timedelta(minutes=1))
@@ -127,7 +127,7 @@ def test_competing_first_reports_cannot_both_commit(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file-lock subprocess probe")
 def test_another_process_holding_the_commit_lock_returns_busy_without_writing(tmp_path):
-    directory = tmp_path / ".vortocode/codex"
+    directory = tmp_path / ".vortoone/codex"
     directory.mkdir(parents=True)
     code = "import fcntl,sys; f=open(sys.argv[1],'a+b'); fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); sys.stdin.readline()"
     with subprocess.Popen([sys.executable, "-c", code, str(directory / ".report.lock")],
@@ -152,7 +152,7 @@ def test_malformed_order_never_silently_falls_back_to_legacy(tmp_path, invalid):
     body = {"threads": [], "report_order": invalid}
     with pytest.raises(ValueError):
         watch.receive_report(str(tmp_path), body, now=NOW)
-    assert not (tmp_path / ".vortocode/codex/state.json").exists()
+    assert not (tmp_path / ".vortoone/codex/state.json").exists()
 
 
 class LocalTransport:

@@ -9,7 +9,7 @@
 
 ## 三条设计约束
 
-1. **纯投影，零新状态**：数据源只有 `.vortocode/dev_plans/<id>.json`（write-ahead，
+1. **纯投影，零新状态**：数据源只有 `.vortoone/dev_plans/<id>.json`（write-ahead，
    已是权威）。这里绝不落新文件——第二份真相源迟早分叉（Inbox 快照同款纪律）。
 2. **拓扑分层在服务端算**：Desktop 和未来的移动 PWA 都要画这张图，分层算法只写一遍。
    前端拿到 `layers` 直接按列渲染，不需要任何图算法。

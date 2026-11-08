@@ -193,7 +193,7 @@ python -m evals --matrix "mimo-v2.5,mimo-v2.5-pro × native,prompt"
 跑一条固定命令、再解读退出码，既费 token 又可能读错）：
 
 ```bash
-cp config/cron.example.yaml .vortocode/cron.yaml   # .vortocode/ 是 gitignored，样例在 config/
+cp config/cron.example.yaml .vortoone/cron.yaml   # .vortoone/ 是 gitignored，样例在 config/
 # 把 nightly_evals 的 enabled 改成 true，然后：
 VORTOONE_CRON=1 vortocode server                  # 起调度（默认不跑自主作业，必须 opt-in）
 

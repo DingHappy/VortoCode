@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from src.utils.ids import safe_id
-from src.utils.state_dir import ensure_state_gitignore
+from src.utils.state_dir import ensure_state_gitignore, state_dir
 
 
 class PipelineBusy(RuntimeError):
@@ -21,7 +21,7 @@ def pipeline_lock(repo_root: str, run_id: str, *, kind: str = "operation"):
     if not safe_id(run_id):
         raise ValueError("无效的流水线运行 id")
     ensure_state_gitignore(repo_root)
-    directory = Path(repo_root).resolve() / ".vortocode" / "pipeline_runs" / ".locks"
+    directory = state_dir(Path(repo_root).resolve()) / "pipeline_runs" / ".locks"
     directory.mkdir(parents=True, exist_ok=True)
     # 不删除锁文件：删除后另一个进程可能锁住新 inode，形成两个执行者。
     with (directory / f"{run_id}.{kind}.lock").open("a+b") as handle:

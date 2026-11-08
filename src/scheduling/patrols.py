@@ -4,7 +4,7 @@
 哪项坏了只在日志里有一行，Desktop 的「定时」页也看不到。现在：
 - 新巡检只要在 `PATROLS` 里登记一项；
 - 每项有协作式异步超时；普通异常或超时记下来后继续，取消（CancelledError）照常往外传；
-- 每项的上次运行、上次成功、连续失败次数记在 `.vortocode/dispatches/patrols.json`，
+- 每项的上次运行、上次成功、连续失败次数记在 `.vortoone/dispatches/patrols.json`，
   「定时」页据此显示「连续失败 N 次」。
 
 任务单跟进和早晚报不在这里：它们共用同一份任务单快照和「首次运行只记现状」的语义，仍由 watch_once 主体负责。
@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class Patrol:
 
 
 def _path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "dispatches" / "patrols.json"
+    return state_dir(root) / "dispatches" / "patrols.json"
 
 
 def load_records(root: str) -> Dict[str, Dict[str, Any]]:

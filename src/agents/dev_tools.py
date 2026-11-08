@@ -730,7 +730,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             _save()
             return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测/或落分支时相互冲突被丢）；建议拆细或用 dev_isolated 逐个做。"
         _progress(f"🔍 对整条分支 {branch}（{landed_ind} 独立 + {dep_done} 依赖）跑最终集成测试"
-                  f"（含运行时验证，如分支配了 .vortocode/verify.yaml）中…")
+                  f"（含运行时验证，如分支配了 .vortoone/verify.yaml）中…")
         # runtime=True：verify_branch 会在**目标分支的 worktree 内**读 verify.yaml 决定跑不跑运行时验证
         # ——从分支自己的配置读（本次改动的 verify.yaml 生效），坏配置判红、没配则只跑单测。
         integ = await await_thread(
@@ -785,7 +785,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         （检出该分支、看得见前面的改动、自测绿才提交、推进 tip 给下一个看）→ 最后对整条分支跑一遍
         集成测试。端到端把大任务做完，不再只做独立那一半就停。全程不碰 main/工作区。
 
-        分解结果 + 逐块状态 **write-ahead 落盘**到 .vortocode/dev_plans/<id>.json（C1）：中断后可用
+        分解结果 + 逐块状态 **write-ahead 落盘**到 .vortoone/dev_plans/<id>.json（C1）：中断后可用
         dev_resume(plan_id) 从断点续跑；计划文件也是进度播报/IM /status 的数据源、可手改后重跑。
         给 open_pr=true 且接了确认门：集成绿后经确认把分支 push 并开 PR（"一句话→PR"闭环）。"""
         import uuid
@@ -931,12 +931,12 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not pid:
             plans = _dp.list_plans(repo_root)
             if not plans:
-                return "没有可续跑的计划（.vortocode/dev_plans/ 为空）。先用 dev_auto 起一个大任务。"
+                return "没有可续跑的计划（.vortoone/dev_plans/ 为空）。先用 dev_auto 起一个大任务。"
             lines = [f"· {p['plan_id']}：{p['status']} — {p['task'][:50]}" for p in plans[:10]]
             return "dev_resume 需要 plan_id。最近的计划：\n" + "\n".join(lines)
         dp = _dp.load_plan(repo_root, pid)
         if dp is None:
-            return f"找不到计划 {pid}（.vortocode/dev_plans/{pid}.json 不存在或损坏）。dev_resume() 不带参可列出可续计划。"
+            return f"找不到计划 {pid}（.vortoone/dev_plans/{pid}.json 不存在或损坏）。dev_resume() 不带参可列出可续计划。"
         from src.workflow.tasks.tasks import TaskLedger
         if any(task.plan_id == pid and task.status == "blocked" and task.development
                for task in TaskLedger(repo_root).list()):
@@ -983,7 +983,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
              "从一个中断的 dev_auto 计划**断点续跑**：已落地(landed)的子任务块跳过、未完成的（含失败）重走，"
              "最后重跑集成验证（原计划要开 PR 的还会接着审查+开 PR）。10 个子任务断在第 7 个不用从头再来。"
              "不传 plan_id 则列出最近可续的计划。仅 build",
-             {"plan_id": "要续跑的计划 id（dev_auto 起跑时会给出、存于 .vortocode/dev_plans/）；省略则列出可续计划"},
+             {"plan_id": "要续跑的计划 id（dev_auto 起跑时会给出、存于 .vortoone/dev_plans/）；省略则列出可续计划"},
              _dev_resume, read_only=False, required_capabilities=("host_process",)),
         Tool("pr_fix",
              "读一个 PR 的 review 评论（含行级、已 resolved 的自动跳过）+ CI 失败检查，在其 **vorto/* 分支**上"

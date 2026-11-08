@@ -162,7 +162,7 @@ async def test_developer_round_edits_in_a_worktree_verifies_and_lands_a_branch(t
     assert "VALUE = 2" in _git(project, "show", f"{branch}:app.py")
     assert _git(project, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
     assert "VALUE = 2" not in (project / "app.py").read_text()          # 主工作区没动
-    assert not (project / ".vortocode" / "worktrees" / f"team-{child.id}-r1").exists()
+    assert not (project / ".vortoone" / "worktrees" / f"team-{child.id}-r1").exists()
     delivery = service.ledger.load(child.id).collaboration["delivery"]
     assert delivery["branch"] == branch and delivery["files"] == ["app.py"] and delivery["verified"] is True
     assert done.collaboration["tainted"] is True                        # 请求过执行 / 联网（虽被拒）

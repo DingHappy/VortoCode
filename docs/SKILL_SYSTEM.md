@@ -303,8 +303,8 @@ class SkillRegistry:
     
     def __init__(self, skill_dirs: List[str] = None):
         self.skill_dirs = skill_dirs or [
-            ".vortocode/skills",
-            "~/.vortocode/skills"
+            ".vortoone/skills",
+            "~/.vortoone/skills"
         ]
         self.skills: Dict[str, Skill] = {}
         self._discover_skills()
@@ -682,7 +682,7 @@ class CompositeSkill(Skill):
 
 ### 1. 定义技能
 
-创建 `.vortocode/skills/code-review/SKILL.md`:
+创建 `.vortoone/skills/code-review/SKILL.md`:
 
 ```yaml
 ---
@@ -732,7 +732,7 @@ arguments:
 from vortocode.skills import SkillRegistry, SkillExecutor
 
 # 初始化
-registry = SkillRegistry([".vortocode/skills"])
+registry = SkillRegistry([".vortoone/skills"])
 executor = SkillExecutor(registry)
 
 # 执行技能
@@ -809,11 +809,11 @@ skills = registry.recommend_for_context(context)
 ## 配置
 
 ```yaml
-# .vortocode/skills.yaml
+# .vortoone/skills.yaml
 skills:
   directories:
-    - ".vortocode/skills"
-    - "~/.vortocode/skills"
+    - ".vortoone/skills"
+    - "~/.vortoone/skills"
     - "/etc/vortocode/skills"
   
   auto_discovery:

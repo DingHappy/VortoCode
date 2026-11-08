@@ -68,7 +68,7 @@ realtime 1772 行、App.tsx 4225 行。行数用于定位耦合，不作为“�
 
 ## 5. 状态与领域合同
 
-任务复用 `.vortocode/tasks/<id>.json`。已有字段保持兼容，新增字段必须有默认值。
+任务复用 `.vortoone/tasks/<id>.json`。已有字段保持兼容，新增字段必须有默认值。
 身份由 runtime 和会话提供，模型输出不能指定新的任务所有者。
 
 | 状态维度 | 当前状态 / 计划状态 | 语义 |
@@ -923,7 +923,7 @@ durable_copy_confirmed=false、capacity_released=false、imported=false。回验
 本轮只实现长期迁移的保存步骤，不释放历史容量。`vc coverage-preserve <export.json>
 --directory <专用目录>` 在调用者明确选择的既有本地目录保留原文字节，文件同步、
 目录同步并回读后才生成固定保存凭据；不接受 HTTP 下发任意服务器写盘路径，不自动
-创建目录。拒绝末端符号链接、非目录、.git/.vortocode 内目标；固定目录设备/inode 和
+创建目录。拒绝末端符号链接、非目录、.git/.vortoone 内目标；固定目录设备/inode 和
 原文件身份。使用原 TASK_STATE_LOCK，目标目录另用非阻塞文件锁避免多个本地 CLI
 争用容量。此锁不提供分布式租约、恶意文件替换或跨任务事务。
 

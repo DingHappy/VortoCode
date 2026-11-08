@@ -126,7 +126,7 @@ def test_ephemeral_idle_session_remains_evictable_without_disk(tmp_path):
     seed(table, tmp_path, "ws-123")
     table.get("sid-new", repo_root=str(tmp_path), factory=agent)
     assert set(table.data) == {"sid-new"}
-    assert not (tmp_path / ".vortocode" / "web_sessions").exists()
+    assert not (tmp_path / ".vortoone" / "web_sessions").exists()
 
 
 @pytest.mark.parametrize("state", ["foreground", "background", "cleanup", "priority", "queued", "confirmation"])

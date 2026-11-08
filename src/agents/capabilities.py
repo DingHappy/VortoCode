@@ -2,7 +2,7 @@
 
 Project files may narrow tool permissions, but they must never be able to grant
 host credentials to an external-content session.  This module therefore keeps
-the capability profile outside ``.vortocode/permissions.yaml`` and makes the
+the capability profile outside ``.vortoone/permissions.yaml`` and makes the
 entry point choose it explicitly.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable
+from src.utils.state_dir import STATE_DIRNAMES
 
 HOST_PROCESS = "host_process"
 AUTHENTICATED_OUTBOUND = "authenticated_outbound"
@@ -90,7 +91,7 @@ _SENSITIVE_NAMES = {
     "service-account.json",
 }
 _SENSITIVE_DIRS = {".ssh", ".aws", ".docker", ".gnupg", ".kube", "secrets"}
-_SENSITIVE_STATE_DIRS = {".vortocode"}
+_SENSITIVE_STATE_DIRS = set(STATE_DIRNAMES)          # .vortoone 与改名前留下的 .vortocode 链接
 _SENSITIVE_STATE_FILES = {"cli_session.json", "sessions.db", "sessions.db-shm", "sessions.db-wal"}
 _SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".keystore"}
 

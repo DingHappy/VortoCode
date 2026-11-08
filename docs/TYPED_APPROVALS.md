@@ -19,7 +19,7 @@ ADR-012 阶段 B 的第一步。类别沿用可信工具传给内核确认门的
 
 ## 原审计与界面
 
-复用 `.vortocode/audit.log`，不增加审批库。内核决定附加可信类别、风险、钥匙级别、决定来源和范围。自动放行标为 `preauthorized` / `existing_trust`；人工卡为 `user` / `once`；系统拒绝为 `system` / `none`。
+复用 `.vortoone/audit.log`，不增加审批库。内核决定附加可信类别、风险、钥匙级别、决定来源和范围。自动放行标为 `preauthorized` / `existing_trust`；人工卡为 `user` / `once`；系统拒绝为 `system` / `none`。
 
 App 人工决定、超时和取消只由卡片闭合记录一次 `approved`、`denied`、`expired` 或 `cancelled`；内核回调只补记 `preauthorized` 和 `system` 决定，保留自动放行及系统拒绝的审计。记录只有卡片或回合 id 与有限元数据，不复制正文或工具参数。工具执行记录仍独立保留，批准不代表执行完成。
 

@@ -1,6 +1,6 @@
 # 开发目标的保存与执行合同
 
-2026-10-30。复用 `.vortocode/goals`、原 TaskLedger、TaskRunner 与工作区执行租约，不新增执行器、队列或自动批准。
+2026-10-30。复用 `.vortoone/goals`、原 TaskLedger、TaskRunner 与工作区执行租约，不新增执行器、队列或自动批准。
 
 ## 保存必须成功
 

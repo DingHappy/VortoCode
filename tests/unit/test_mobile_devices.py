@@ -59,8 +59,8 @@ def test_reads_do_not_create_state_and_corruption_never_reinitializes(tmp_path):
 def test_device_store_refuses_symlink(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "mobile-devices").symlink_to(outside, target_is_directory=True)
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "mobile-devices").symlink_to(outside, target_is_directory=True)
     with pytest.raises(MobileStoreError):
         MobileDevices(str(tmp_path)).issue("A")
     assert not list(outside.iterdir())
@@ -154,7 +154,7 @@ def test_device_routes_require_device_grant_and_admin_routes_do_not_accept_it(ap
     assert (
         client.get("/api/mobile/v1/unknown", headers=device).status_code == 409
     )  # General workspace fence
-    assert not (root / ".vortocode" / "assistant.json").exists()
+    assert not (root / ".vortoone" / "assistant.json").exists()
 
 
 def test_revocation_applies_to_next_request(api):
@@ -258,7 +258,7 @@ def test_source_failure_is_not_a_successful_empty_list(api, monkeypatch):
 
     monkeypatch.setattr(mobile, "_goals", broken)
     grant = _grant(client)
-    (root / ".vortocode" / "main_chat.json").write_text("broken")
+    (root / ".vortoone" / "main_chat.json").write_text("broken")
     response = client.get(
         "/api/mobile/v1/snapshot", headers={"Authorization": f"Bearer {grant['token']}"}
     )

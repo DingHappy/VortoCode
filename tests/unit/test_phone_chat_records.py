@@ -109,7 +109,7 @@ def test_transcript_route_reads_one_local_session_read_only(tmp_path, monkeypatc
     from src.web.server import app
 
     client = TestClient(app)
-    before = (tmp_path / ".vortocode").stat().st_mtime_ns
+    before = (tmp_path / ".vortoone").stat().st_mtime_ns
     body = client.get("/api/assistant/transcript/desk-1").json()
     assert body["title"] == "周三开会"
     assert body["transcript"] == [{"role": "user", "text": "帮我记下周三开会", "rid": "r1", "at": None},
@@ -117,4 +117,4 @@ def test_transcript_route_reads_one_local_session_read_only(tmp_path, monkeypatc
     assert client.get("/api/assistant/transcript/telegram-42").status_code == 404     # 手机聊天走自己的只读入口
     assert client.get("/api/assistant/transcript/nope").status_code == 404
     assert client.get("/api/assistant/transcript/..%2Fx").status_code == 404
-    assert (tmp_path / ".vortocode").stat().st_mtime_ns == before
+    assert (tmp_path / ".vortoone").stat().st_mtime_ns == before

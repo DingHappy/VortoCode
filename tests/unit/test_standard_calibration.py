@@ -61,7 +61,7 @@ async def test_archive_tool_is_scoped_bounded_and_does_not_write_facts(tmp_path)
     from src.agents.tools.memory import build_memory_tools
     tool = next(tool for tool in build_memory_tools(str(tmp_path)) if tool.name == 'search_conversations')
     assert tool.read_only and tool.untrusted_source
-    path = tmp_path / '.vortocode' / 'sessions.db'
+    path = tmp_path / '.vortoone' / 'sessions.db'
     assert '没有匹配' in await tool.handler({'query': 'violin'})
     assert not path.exists()
     store = SessionStore(str(path))
@@ -84,7 +84,7 @@ async def test_archive_tool_reads_gateway_transcripts_and_rejects_symlinks(tmp_p
                                                      {'role': 'assistant', 'text': '电源也需要核对'}], [], None)
     outside = tmp_path / 'outside.json'
     outside.write_text(json.dumps({'transcript': [{'role': 'user', 'text': '显卡 SECRET_OUTSIDE'}]}))
-    (tmp_path / '.vortocode/web_sessions/link.json').symlink_to(outside)
+    (tmp_path / '.vortoone/web_sessions/link.json').symlink_to(outside)
     response = json.loads(await tool.handler({'query': '显卡'}))
     assert response['excerpts'][0]['source_session'] == 'archive'
     assert response['excerpts'][0]['date_kind'] == 'archive_saved_at'

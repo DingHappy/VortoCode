@@ -23,12 +23,12 @@ import os
 import re
 import shlex
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from src.agents.gate import request
 from src.agents.tool import Tool
 from src.agents.trust import INTERACT
+from src.utils.state_dir import state_dir
 
 ENABLE_ENV = "VORTOONE_ENABLE_DESKTOP_CONTROL"
 TARGET_ENV = "VORTOONE_DESKTOP_TARGET"
@@ -227,7 +227,7 @@ def build_desktop_tools(repo_root: str, confirm, *, backend: Optional[DesktopBac
         data = await _backend().run(_SCREENSHOT)
         if not data.startswith(b"\x89PNG"):
             raise RuntimeError("截屏没有返回 PNG（目标机器是否装了 scrot、桌面是否已登录？）")
-        out = Path(repo_root) / ".vortocode" / "artifacts"
+        out = state_dir(repo_root) / "artifacts"
         out.mkdir(parents=True, exist_ok=True)
         target = out / f"desktop-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.png"
         target.write_bytes(data)

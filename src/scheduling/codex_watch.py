@@ -25,6 +25,7 @@ from src.agents.backends.execution import ExecutionProgress, ExecutionSnapshot
 from src.agents.backends.observation_order import ObservationConflict, ObservationCursor, ObservationOrder
 from src.scheduling import codex_goal
 from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
+from src.utils.state_dir import state_dir
 
 WAIT_GRACE = timedelta(minutes=2)
 STALE_AFTER = timedelta(minutes=30)     # 这么久没收到报告：观察员不在了（Mac 合盖、Desktop 关了）
@@ -72,7 +73,7 @@ class ReportAcceptance:
 
 
 def _state_path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "codex" / "state.json"
+    return state_dir(root) / "codex" / "state.json"
 
 
 def load_state(root: str, *, strict: bool = False) -> Dict[str, Any]:
@@ -570,7 +571,7 @@ _ACTIONS_KEEP = 100
 
 
 def _actions_path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "codex" / "actions.json"
+    return state_dir(root) / "codex" / "actions.json"
 
 
 def load_actions(root: str, *, strict: bool = False, max_bytes: int | None = None) -> List[dict]:
@@ -669,7 +670,7 @@ def _find_thread(root: str, wanted: str) -> dict:
 # 监管判断已经做完，就自动收回。
 
 def _handover_path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "codex" / "handover.json"
+    return state_dir(root) / "codex" / "handover.json"
 
 
 def load_handovers(root: str) -> Dict[str, dict]:

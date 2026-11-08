@@ -100,7 +100,7 @@ async def test_run_isolated_task_propagates_strict_error_and_cleans_up(tmp_path)
     with pytest.raises(TimeoutError):
         await worktree.run_isolated_task(
             str(tmp_path), "wt-raise", "desc", lambda p: RaisingAgent())
-    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-raise").exists()  # finally 清理不受影响
+    assert not (tmp_path / ".vortoone" / "worktrees" / "wt-raise").exists()  # finally 清理不受影响
 
 
 # ---------------------------------------------------------------- 死因透传

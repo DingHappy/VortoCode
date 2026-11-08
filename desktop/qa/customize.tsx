@@ -13,10 +13,10 @@ const params = new URLSearchParams(location.search);
 if (params.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
 
 const plugins: AssistantPlugin[] = [
-  { name: "calendar", title: "日历（只读）", status: "available", credential_file: "~/.vortocode/connectors/calendar.token", checkable: true },
-  { name: "mail", title: "邮件（读信、存草稿）", status: "available", credential_file: "~/.vortocode/connectors/mail.token", checkable: true },
-  { name: "notion", title: "Notion（只读）", status: "missing", credential_file: "~/.vortocode/connectors/notion.token", checkable: true },
-  { name: "caldav", title: "日历写入（建日程）", status: "invalid", credential_file: "~/.vortocode/connectors/caldav.token", checkable: true },
+  { name: "calendar", title: "日历（只读）", status: "available", credential_file: "~/.vortoone/connectors/calendar.token", checkable: true },
+  { name: "mail", title: "邮件（读信、存草稿）", status: "available", credential_file: "~/.vortoone/connectors/mail.token", checkable: true },
+  { name: "notion", title: "Notion（只读）", status: "missing", credential_file: "~/.vortoone/connectors/notion.token", checkable: true },
+  { name: "caldav", title: "日历写入（建日程）", status: "invalid", credential_file: "~/.vortoone/connectors/caldav.token", checkable: true },
 ];
 const connectors: AssistantConnector[] = [{
   name: "github", provider: "github", read_only: true, connected: false, expired: false, credential_status: "missing",

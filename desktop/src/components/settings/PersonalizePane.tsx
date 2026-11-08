@@ -1,4 +1,4 @@
-// 设置 → 个性化：用户级全局指令（~/.vortocode/AGENTS.md），对之后所有新会话生效。
+// 设置 → 个性化：用户级全局指令（~/.vortoone/AGENTS.md），对之后所有新会话生效。
 // 保存走原生确认（它会进所有会话的系统提示），失败或取消时保留草稿。
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";

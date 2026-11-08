@@ -1,11 +1,11 @@
 # 职责（常设 Goal）与 IM 审批协议设计（F-4）
 
-> 状态：设计定稿（2026-07-19，Fable 5）。实现排期见 OPC 战略 P1 与 `.vortocode/BACKLOG.md` B7 批。
+> 状态：设计定稿（2026-07-19，Fable 5）。实现排期见 OPC 战略 P1 与 `.vortoone/BACKLOG.md` B7 批。
 > 前置事实（写设计前逐一核对过源码）：
 > - `src/workflow/tasks/decisions.py`：决策队列是持久状态的确定性投影；`confirm:<cid>` 项带 `tainted`
 >   标记且 `can_dismiss=False`；DecisionStore 只是"已查看"台账。
 > - `src/workflow/workbench/goals.py`：Goal = 目标/约束/逐条验收（每条可挂 test/build/lint/file verifier）/
->   证据/状态机（draft→active→blocked/achieved/failed），落 `.vortocode/goals/`。
+>   证据/状态机（draft→active→blocked/achieved/failed），落 `.vortoone/goals/`。
 > - `src/im/bridge.py`：配对制（只服务 owner）、按钮确认走内存 Future、超时 600s=拒绝（fail-closed）。
 >   **局限：确认按钮只能放行 IM 桥自己会话的确认，批不了其他端（Desktop/Web/无人值守）的待决事项。**
 
@@ -14,7 +14,7 @@
 ### 设计决定
 
 1. **职责不改 Goal，引用 Goal。** Goal 语义保持"一次性合同 + 终态"；职责是**无终态的常设合同**，
-   单独落 `.vortocode/duties/`。避免给 Goal 状态机加"recurring"分叉污染现有验收闭环。
+   单独落 `.vortoone/duties/`。避免给 Goal 状态机加"recurring"分叉污染现有验收闭环。
 2. **每次执行不实例化新 Goal。** 例行运行的产物是 Journal 台账行 + （异常时）决策项；
    只有职责升级出"需要开发介入"的工作时，才由人从决策项一键创建普通 Goal。
 3. **Rule of three 仍然生效**：P1 试点（中转站值班）用"裸 cron 作业 + 检查单文件"先跑
@@ -36,7 +36,7 @@ class Duty:
     id: str                         # duty-xxxxxxxxxx
     title: str                      # 中转站夜间值班
     charter: str                    # 职责边界：做什么、绝不做什么（进系统提示，静态注入）
-    checklist_path: str             # 检查单文件（.vortocode/duties/<id>.md，HEARTBEAT.md 模式）
+    checklist_path: str             # 检查单文件（.vortoone/duties/<id>.md，HEARTBEAT.md 模式）
     schedule: str                   # cron 表达式，或 "heartbeat"
     budget_tokens_per_run: int      # 单次运行 token 封顶（接 #188 计量；超限即中止并升级）
     budget_runs_per_day: int        # 频次封顶（双保险，防调度风暴烧钱）

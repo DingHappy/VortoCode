@@ -2,7 +2,7 @@
 
 `browser.steps` 在已有本机页面探测上增加顺序操作和明确断言。没有配置步骤时仍返回 `verification_kind: page_health`；配置有效步骤时返回 `workflow`。截图文件存在本身不代表业务通过。
 
-以下 `.vortocode/verify.yaml` 示例验证新记录保存后能通过刷新重新读取。元素名称需与被验收应用的界面一致，服务命令也需按该项目配置。
+以下 `.vortoone/verify.yaml` 示例验证新记录保存后能通过刷新重新读取。元素名称需与被验收应用的界面一致，服务命令也需按该项目配置。
 
 ```yaml
 profiles:
@@ -28,7 +28,7 @@ profiles:
 
 步骤上限 40，至少有一个明确断言。无效字段、无法识别的操作、无断言的流程都会在启动浏览器前被拒绝，不会退化为只检查页面能否打开。页面加载和操作共用时间预算，失败后的截图与清理另有界限。
 
-每一步记录是否通过、耗时和失败原因；首次失败后停止后续操作，并保留截图及 Playwright trace。trace 未成功写入时不能把流程报为通过。运行时入口继续将文件保存在主工作区 `.vortocode/artifacts/browser-verify/`，避免临时 worktree 删除后证据消失，并记录 run、profile、源码 commit、dirty 状态和本机环境。验收期间源码状态变化会报失败。
+每一步记录是否通过、耗时和失败原因；首次失败后停止后续操作，并保留截图及 Playwright trace。trace 未成功写入时不能把流程报为通过。运行时入口继续将文件保存在主工作区 `.vortoone/artifacts/browser-verify/`，避免临时 worktree 删除后证据消失，并记录 run、profile、源码 commit、dirty 状态和本机环境。验收期间源码状态变化会报失败。
 
 仍保留 HTTP/WebSocket 的 loopback 边界及 service worker 禁用策略。该扩展不自动创建 Goal criterion；已有 Goal 验收的 commit 校验仍由 RunManager/GoalLedger 负责。
 

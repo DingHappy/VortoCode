@@ -25,7 +25,7 @@ def _capture(monkeypatch):
 
 @pytest.mark.parametrize("allow_web", [False, True])
 async def test_general_unattended_session_tools_and_context(tmp_path, monkeypatch, general, allow_web):
-    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortoone").mkdir()
     save_profile(str(tmp_path), name="小V", soul="简短直接", about_you="住在宁波，手机号 138xxxx")
     seen = _capture(monkeypatch)
     assert await session.run_isolated_session(str(tmp_path), "每天早上给我一份简报", allow_web=allow_web) == "ok"
@@ -106,8 +106,8 @@ def test_interactive_general_has_readonly_continuity_even_without_scheduler(tmp_
 async def test_schedule_tools_report_disabled_scheduler_and_exact_failure(tmp_path, monkeypatch):
     from src.scheduling.assistant_watch import build_status_tools
     from src.scheduling.cron import record_outcome
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "cron.yaml").write_text('jobs:\n  - name: brief\n    schedule: "at 09:00"\n    prompt: "简报"\n')
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "cron.yaml").write_text('jobs:\n  - name: brief\n    schedule: "at 09:00"\n    prompt: "简报"\n')
     monkeypatch.setenv("VORTOONE_CRON", "0")
     tools = {tool.name: tool for tool in build_status_tools(str(tmp_path))}
     assert "不会自动执行" in await tools["schedule_list"].handler({})

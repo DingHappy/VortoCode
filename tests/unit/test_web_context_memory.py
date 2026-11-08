@@ -21,7 +21,7 @@ async def test_desktop_repo_memory_requires_confirmation_and_uses_policy(tmp_pat
             confirm=True,
         ))
     assert secret.value.status_code == 422
-    assert not (tmp_path / ".vortocode" / "memory" / "repo.md").exists()
+    assert not (tmp_path / ".vortoone" / "memory" / "repo.md").exists()
 
 
 @pytest.mark.asyncio
@@ -38,7 +38,7 @@ async def test_desktop_repo_memory_returns_effective_redacted_projection(tmp_pat
     assert saved["message"].endswith("下个新会话开始生效")
     assert "npm run codegen" in saved["effective"]
 
-    path = tmp_path / ".vortocode" / "memory" / "repo.md"
+    path = tmp_path / ".vortoone" / "memory" / "repo.md"
     path.write_text(
         path.read_text(encoding="utf-8") + f"- api_key={raw_secret}\n",
         encoding="utf-8",
@@ -47,4 +47,4 @@ async def test_desktop_repo_memory_returns_effective_redacted_projection(tmp_pat
     assert snapshot["redacted"] is True
     assert raw_secret not in snapshot["content"]
     assert "[REDACTED" in snapshot["content"]
-    assert b"repo_memory_added" in (tmp_path / ".vortocode" / "audit.log").read_bytes()
+    assert b"repo_memory_added" in (tmp_path / ".vortoone" / "audit.log").read_bytes()

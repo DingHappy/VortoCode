@@ -12,12 +12,12 @@ from src.agents import mcp_tools
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setattr(mcp_tools.Path, "home", classmethod(lambda cls: tmp_path))
-    (tmp_path / ".vortocode" / "connectors").mkdir(parents=True)
+    (tmp_path / ".vortoone" / "connectors").mkdir(parents=True)
     return tmp_path
 
 
 def _secret(home, name="github", body="ghp_example123", mode=0o600):
-    path = home / ".vortocode" / "connectors" / f"{name}.token"
+    path = home / ".vortoone" / "connectors" / f"{name}.token"
     path.write_text(body + "\n", encoding="utf-8")
     os.chmod(path, mode)
     return path

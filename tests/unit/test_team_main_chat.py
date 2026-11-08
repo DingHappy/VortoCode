@@ -67,8 +67,8 @@ def test_active_team_and_children_get_no_note(tmp_path):
 
 
 async def test_transition_posts_to_main_chat_once_even_without_im(tmp_path, monkeypatch):
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "main_chat.json").write_text(json.dumps({"key": "sid-main"}), encoding="utf-8")
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "main_chat.json").write_text(json.dumps({"key": "sid-main"}), encoding="utf-8")
     monkeypatch.setattr("src.scheduling.assistant_watch.watch_enabled", lambda: False)
     posted = []
 

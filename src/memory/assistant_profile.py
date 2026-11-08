@@ -1,7 +1,7 @@
 """常驻助理的「人」：名字、关于你（服务对象）、它记住的关于你的事。
 
-- 名字存 ``.vortocode/assistant.json``；SOUL（它自己的性格与说话方式）存 ``.vortocode/SOUL.md``；
-  关于你沿用 IM 端已有的 ``.vortocode/persona.md``（【服务对象】）。Desktop 与手机两端共用同一份。
+- 名字存 ``.vortoone/assistant.json``；SOUL（它自己的性格与说话方式）存 ``.vortoone/SOUL.md``；
+  关于你沿用 IM 端已有的 ``.vortoone/persona.md``（【服务对象】）。Desktop 与手机两端共用同一份。
 - 长期记忆就是记忆工具写进 ``sessions.db`` 的 ``__longterm__``（写入已过 write_policy）。
   交互助理每回合按当前问题检索，资料只进入当次请求，不冻结到系统提示；离线定时事项仍可
   使用静态摘录。系统提示的人设保持会话内字节稳定，召回内容不当作当前指令。
@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
+from src.utils.state_dir import state_dir
 
 MAX_NAME = 20
 MAX_ABOUT = 2000
@@ -22,7 +23,7 @@ DEFAULT_NAME = "VortoOne"
 
 
 def _state(root: str) -> Path:
-    return Path(root) / ".vortocode"
+    return state_dir(root)
 
 
 def _db_path(root: str) -> Path:

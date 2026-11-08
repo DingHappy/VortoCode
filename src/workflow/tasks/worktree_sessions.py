@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 from src.agents.dev_plan import list_plans, load_plan
 from src.agents.worktree_bindings import list_worktree_bindings
+from src.utils.state_dir import state_dir
 
 
 def _git(repo_root: str, *args: str) -> subprocess.CompletedProcess:
@@ -22,7 +23,7 @@ def _git(repo_root: str, *args: str) -> subprocess.CompletedProcess:
 def list_worktree_sessions(repo_root: str) -> List[Dict[str, Any]]:
     """List live VortoCode-owned worktrees without exposing unrelated system paths."""
     root = Path(repo_root).resolve()
-    owned_root = (root / ".vortocode" / "worktrees").resolve()
+    owned_root = (state_dir(root) / "worktrees").resolve()
     try:
         result = _git(str(root), "worktree", "list", "--porcelain")
     except (OSError, subprocess.SubprocessError):
@@ -58,7 +59,7 @@ def list_worktree_sessions(repo_root: str) -> List[Dict[str, Any]]:
         binding = bindings.get(worktree_id, {})
         sessions.append({
             "id": worktree_id,
-            "path": f".vortocode/worktrees/{relative.as_posix()}",
+            "path": f".vortoone/worktrees/{relative.as_posix()}",
             "head": fields.get("HEAD", "")[:12],
             "branch": branch,
             "detached": "detached" in flags,

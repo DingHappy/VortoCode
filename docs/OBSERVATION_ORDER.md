@@ -1,6 +1,6 @@
 # 观测快照的顺序与安全重传
 
-范围：Codex 观察员到常驻助理的整份快照上报，复用 `GET /api/codex/status`、`POST /api/codex/report` 和原有 `.vortocode/codex/state.json`。不增加路由、任务数据库、执行池或事件服务。
+范围：Codex 观察员到常驻助理的整份快照上报，复用 `GET /api/codex/status`、`POST /api/codex/report` 和原有 `.vortoone/codex/state.json`。不增加路由、任务数据库、执行池或事件服务。
 
 ## 协议 v1
 

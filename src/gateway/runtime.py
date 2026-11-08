@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from contextlib import AsyncExitStack, asynccontextmanager
 from src.gateway.process_lease import ProcessLease
+from src.utils.state_dir import state_dir
 
 
 class RuntimeServices:
@@ -51,7 +52,7 @@ def scheduling_scope_error() -> str:
 async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
                            make_run_manager, make_terminal_manager, register_im_worker, session_actors=None):
     """Recover before serving; startup failures release all owned resources."""
-    lease = ProcessLease(Path(root) / ".vortocode" / "runtime.lock")
+    lease = ProcessLease(state_dir(root) / "runtime.lock")
     import asyncio
     owned = False
     sched_task = None

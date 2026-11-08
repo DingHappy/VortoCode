@@ -234,7 +234,7 @@ class ToolRuntime:
             if reason:
                 ctx.say(housekeeping(f"🔧 [b]{name}[/b][dim] —— 被会话能力边界拦下[/dim]"))
                 return finish("blocked", f"[能力拦截] {reason}")
-        if ctx.permissions is not None:           # .vortocode/permissions.yaml deny：硬拦（不分模式、最优先）
+        if ctx.permissions is not None:           # .vortoone/permissions.yaml deny：硬拦（不分模式、最优先）
             reason = ctx.permissions.denied(name, args)
             if reason:
                 ctx.say(housekeeping(f"🔧 [b]{name}[/b][dim] —— 被权限规则拦下[/dim]"))

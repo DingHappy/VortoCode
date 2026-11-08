@@ -89,7 +89,7 @@ async def test_uncertain_attempt_retains_worktree_and_reuse_cannot_delete_it(tmp
     else:
         with pytest.raises(RecoveryRequired):
             await invoke()
-    retained = tmp_path / ".vortocode" / "worktrees" / "wt-recovery"
+    retained = tmp_path / ".vortoone" / "worktrees" / "wt-recovery"
     try:
         assert (retained / "partial.txt").read_text() == "retained change"
         assert not (tmp_path / "partial.txt").exists() and not factories and len(calls) == 1

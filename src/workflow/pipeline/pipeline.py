@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, List, Optional
 from src.workflow.pipeline.products import Product, ProductStore
 from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 _RUNS_DIRNAME = "pipeline_runs"
 _DEFS_DIRNAME = "pipelines"
@@ -68,7 +69,7 @@ class StageDef:
     """
 
     id: str
-    role: str = ""                                   # .vortocode/agents/<role>.md
+    role: str = ""                                   # .vortoone/agents/<role>.md
     inputs: List[str] = field(default_factory=list)  # 需要的产出物 kind
     produces: str = ""                               # 产出的 kind
     review: bool = False                             # 产出后是否要人批准，下游才能消费
@@ -170,12 +171,12 @@ def _needs_of(item: Dict[str, Any], pipeline: str, sid: str) -> List[str]:
 
 
 def load_definition(repo_root: str, name: str) -> Optional[PipelineDef]:
-    """读 `.vortocode/pipelines/<name>.yaml`。**这是用户配置，不进 gitignore 托管区**
+    """读 `.vortoone/pipelines/<name>.yaml`。**这是用户配置，不进 gitignore 托管区**
     （与 commands/ skills/ agents/ 同列，可以 git add）。"""
     clean = _clean_id(name)
     if clean is None:
         return None
-    path = Path(repo_root) / ".vortocode" / _DEFS_DIRNAME / f"{clean}.yaml"
+    path = state_dir(repo_root) / _DEFS_DIRNAME / f"{clean}.yaml"
     if not path.is_file():
         return None
     try:
@@ -253,13 +254,13 @@ class PipelineRun:
 
 
 class PipelineStore:
-    """`.vortocode/pipeline_runs/<id>.json`。原子落盘，与 goals/dev_plan/products 同惯例。"""
+    """`.vortoone/pipeline_runs/<id>.json`。原子落盘，与 goals/dev_plan/products 同惯例。"""
 
     def __init__(self, repo_root: str) -> None:
         self.repo_root = str(repo_root)
 
     def _dir(self) -> Path:
-        return Path(self.repo_root) / ".vortocode" / _RUNS_DIRNAME
+        return state_dir(self.repo_root) / _RUNS_DIRNAME
 
     def _path(self, run_id: str) -> Path:
         return self._dir() / f"{run_id}.json"

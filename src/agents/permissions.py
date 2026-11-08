@@ -1,8 +1,8 @@
-""".vortocode/permissions.yaml —— 细粒度工具权限。
+""".vortoone/permissions.yaml —— 细粒度工具权限。
 
 deny 规则在工具执行前硬拦；allow 规则只用于跳过人工确认，不绕过 deny、plan/build 门或危险命令黑名单。
 补在 plan/build 门 + is_dangerous 黑名单之上的"按工具/按参数"精细控制（对标 CC 的 allow/deny）。
-规则写在 `.vortocode/permissions.yaml`：
+规则写在 `.vortoone/permissions.yaml`：
 
     deny:
       - run_command: "rm *"        # 工具 + 主参数 glob 命中 → 拦
@@ -25,8 +25,8 @@ deny 规则在工具执行前硬拦；allow 规则只用于跳过人工确认，
 from __future__ import annotations
 
 from fnmatch import fnmatch
-from pathlib import Path
 from typing import List, Optional, Tuple
+from src.utils.state_dir import state_dir
 
 # 各工具的"主参数"键（按它取值做 glob 匹配）；不在表里的工具只支持整工具 deny
 _PRIMARY_ARG = {
@@ -101,11 +101,11 @@ class Permissions:
             if rtool != tool:
                 continue
             if glob is None:                       # 整工具禁用
-                return f"工具 {tool} 被 .vortocode/permissions.yaml 禁用"
+                return f"工具 {tool} 被 .vortoone/permissions.yaml 禁用"
             if val is None:
                 val = _primary_value(tool, args)
             if val and fnmatch(val, glob):
-                return f"{tool}（{val[:60]}）命中 deny 规则「{glob}」（.vortocode/permissions.yaml）"
+                return f"{tool}（{val[:60]}）命中 deny 规则「{glob}」（.vortoone/permissions.yaml）"
         return None
 
     def allowed(self, tool: str, args: dict) -> Optional[str]:
@@ -115,11 +115,11 @@ class Permissions:
             if rtool != tool:
                 continue
             if glob is None:
-                return f"工具 {tool} 命中 allow 规则（.vortocode/permissions.yaml）"
+                return f"工具 {tool} 命中 allow 规则（.vortoone/permissions.yaml）"
             if val is None:
                 val = _primary_value(tool, args)
             if val and fnmatch(val, glob):
-                return f"{tool}（{val[:60]}）命中 allow 规则「{glob}」（.vortocode/permissions.yaml）"
+                return f"{tool}（{val[:60]}）命中 allow 规则「{glob}」（.vortoone/permissions.yaml）"
         return None
 
 
@@ -158,7 +158,7 @@ def _parse_rules(data: dict, key: str) -> List[Tuple[str, Optional[str]]]:
 
 def load_permissions(repo_root, *, strict: bool = False) -> Permissions:
     """Read project rules; restrictive roles opt into rejecting invalid configuration."""
-    p = Path(repo_root) / ".vortocode" / "permissions.yaml"
+    p = state_dir(repo_root) / "permissions.yaml"
     if not p.is_file():
         if strict and p.exists():
             raise ValueError("项目权限配置不是普通文件；未放行读取")

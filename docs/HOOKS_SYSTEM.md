@@ -4,7 +4,7 @@
 
 Hooks 系统使 vortocode 能够在 Agent 生命周期的关键点执行自定义逻辑，实现自动化、监控和扩展功能。这是构建可扩展、可观察系统的关键组件。
 
-> 安全边界：`.vortocode/hooks.yaml` 属于仓库内容，可能执行命令或向 HTTP 端点发送事件。项目 Hook
+> 安全边界：`.vortoone/hooks.yaml` 属于仓库内容，可能执行命令或向 HTTP 端点发送事件。项目 Hook
 > 默认不执行，必须在 Desktop“工作区与连接”中检查目标后点“信任并启用”，撤销也在同一处。
 > 信任记录保存在仓库外的用户配置目录。只有
 > `pre_tool_use` 返回的明确阻止结果能拦截工具，其余生命周期事件为被动贡献者；默认超时 5 秒，
@@ -647,7 +647,7 @@ class HookSystem:
 
 ### 1. 配置文件
 
-创建 `.vortocode/hooks.yaml`:
+创建 `.vortoone/hooks.yaml`:
 
 ```yaml
 hooks:
@@ -695,7 +695,7 @@ hooks:
 from vortocode.hooks import HookSystem, HookEventType, CommandHook
 
 # 初始化 hook 系统
-hook_system = HookSystem(".vortocode/hooks.yaml")
+hook_system = HookSystem(".vortoone/hooks.yaml")
 
 # 注册自定义 hook
 hook_system.register_hook(CommandHook(
@@ -921,7 +921,7 @@ class NotificationHook(Hook):
 ## 配置
 
 ```yaml
-# .vortocode/hooks.yaml
+# .vortoone/hooks.yaml
 hooks:
   # 全局配置
   config:

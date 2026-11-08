@@ -1,7 +1,7 @@
 """日历写入插件（CalDAV）：主人逐次确认后，在自己的日历里新建一条日程。
 
 凭据是 `邮箱:App 专用密码`（iCloud 自动补服务器），或 `https://账号:密码@服务器[/路径][#日历名]`。
-放在 `~/.vortocode/connectors/caldav.token`，不进配置、系统提示、日志或工具结果。
+放在 `~/.vortoone/connectors/caldav.token`，不进配置、系统提示、日志或工具结果。
 
 - 只做一件事：新建日程（PUT 一条新的 VEVENT，带 If-None-Match: *，不会覆盖已有的）。不改、不删。
 - 每次都过确认门（INTERACT：任何授权档位都不免），问不到人的会话直接拒绝。

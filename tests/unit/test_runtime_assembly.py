@@ -77,7 +77,7 @@ async def test_bound_development_root_does_not_follow_cwd(tmp_path, monkeypatch)
     assert result.status == "done", result.error
     assert calls == [str(original)]
     assert load_plan(original, result.plan_id).branch == "vorto/bound-root"
-    assert not (other / ".vortocode").exists()
+    assert not (other / ".vortoone").exists()
 
 
 @pytest.mark.asyncio
@@ -86,7 +86,7 @@ async def test_cli_heartbeat_does_not_claim_backlog_owned_by_service(tmp_path, m
     from src.gateway.process_lease import ProcessLease
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir()
     backlog = state / "BACKLOG.md"
     backlog.write_text("- [ ] leave this queued\n")

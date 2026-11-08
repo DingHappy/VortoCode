@@ -2,7 +2,7 @@
 
 让可写子 agent 在隔离的 worktree 里改代码，**绝不碰主工作区/主分支**；改动整体产出
 unified diff 待人工确认。这是大工程量"并行实现"的地基（本步先做单个、串行、不自动并入）。
-worktree 建在 .vortocode/worktrees/<id>（gitignored），不污染 git status。
+worktree 建在 .vortoone/worktrees/<id>（gitignored），不污染 git status。
 
 本模块不依赖任何 agent/UI：跑什么由调用方注入（work 回调 / build_agent），便于确定性测试。
 """
@@ -20,6 +20,7 @@ from typing import Awaitable, Callable, Optional
 from src.utils.async_ops import await_thread
 from src.agents.tool import ToolTurnYield
 from src.agents.backends.recovery import RecoveryRequired
+from src.utils.state_dir import state_dir
 
 
 def _git(cwd, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -42,7 +43,7 @@ async def _git_op(fn: Callable, *args, **kwargs):
 
 
 def _worktrees_dir(repo_root) -> Path:
-    return Path(repo_root) / ".vortocode" / "worktrees"
+    return state_dir(repo_root) / "worktrees"
 
 
 def _apply_diff(path, diff: str) -> tuple[bool, str]:
@@ -64,7 +65,7 @@ def _apply_diff(path, diff: str) -> tuple[bool, str]:
 
 
 def add_worktree(repo_root, wid: str) -> Path:
-    """在 .vortocode/worktrees/<wid> 建一个基于当前 HEAD 的 detached worktree。"""
+    """在 .vortoone/worktrees/<wid> 建一个基于当前 HEAD 的 detached worktree。"""
     from src.utils.state_dir import ensure_state_gitignore
     ensure_state_gitignore(repo_root)              # dev_isolated-only 流程也要自忽略（没有计划文件可触发）
     path = _worktrees_dir(repo_root) / wid
@@ -81,7 +82,7 @@ def add_worktree(repo_root, wid: str) -> Path:
 # ── 本地配置带进 worktree（显式选择） ─────────────────────────────────────────
 # worktree 只有被跟踪的文件；.env 这类被 gitignore 的本地配置不在里面，依赖它的测试会红在
 # 「缺配置」上而不是改动上。仓库根目录的 .worktreeinclude（gitignore 语法，一行一个）声明哪些要带进去。
-# **只复制同时被 gitignore 的文件**（它们不会混进 diff），**不复制 .vortocode/ 与 .git/**。
+# **只复制同时被 gitignore 的文件**（它们不会混进 diff），**不复制 .vortoone/ 与 .git/**。
 # 代价要说清楚：子 Agent（模型）能读到复制进去的内容，.env 里的密钥也一样——所以必须显式写这个文件才会发生。
 WORKTREE_INCLUDE = ".worktreeinclude"
 _INCLUDE_MAX_FILES = 200
@@ -98,7 +99,7 @@ def local_includes(repo_root) -> list[str]:
         return []
     listed = _git(root, "ls-files", "-z", "--others", "--ignored", f"--exclude-from={spec}", check=False)
     candidates = [name for name in (listed.stdout or "").split("\0")
-                  if name and not name.startswith((".vortocode/", ".git/")) and ".." not in Path(name).parts]
+                  if name and not name.startswith((".vortoone/", ".vortocode/", ".git/")) and ".." not in Path(name).parts]
     if not candidates:
         return []
     checked = subprocess.run(["git", "-C", str(root), "check-ignore", "-z", "--stdin"],
@@ -783,7 +784,7 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
 
 
 def _fold_runtime_verify(repo_root, worktree, result: dict, run_id: str) -> dict:
-    """单测过后，按**目标分支自己**的 `.vortocode/verify.yaml`（从 worktree 读，不是主工作区！）跑
+    """单测过后，按**目标分支自己**的 `.vortoone/verify.yaml`（从 worktree 读，不是主工作区！）跑
     运行时验证并把结果并进 result。
 
     - 从 worktree 读配置：这样本次分支新增/改的 verify.yaml 会按分支自己的配置执行（而非主工作区旧配置）。
@@ -794,8 +795,8 @@ def _fold_runtime_verify(repo_root, worktree, result: dict, run_id: str) -> dict
     profiles, err = auto_verify_profiles(str(worktree))
     if err:
         result["runtime"] = [{"name": "verify.yaml", "ok": False,
-                              "cmd": ".vortocode/verify.yaml",
-                              "output": f".vortocode/verify.yaml 解析失败，无法执行运行时验证：{err}"}]
+                              "cmd": ".vortoone/verify.yaml",
+                              "output": f".vortoone/verify.yaml 解析失败，无法执行运行时验证：{err}"}]
         result["ok"] = False
     elif profiles:
         runtime = [run_runtime_check(worktree, prof, repo_root=repo_root, run_id=run_id)
@@ -820,7 +821,7 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
 
     （dev_auto 把并行批 + 依赖接力都落到同一分支后，用它对整条分支做一次权威全量复验。）
 
-    runtime=True 且**单测先过**时，再按**目标分支自己**的 `.vortocode/verify.yaml` 里标 auto 的
+    runtime=True 且**单测先过**时，再按**目标分支自己**的 `.vortoone/verify.yaml` 里标 auto 的
     profile 跑运行时验证（"真能跑起来"），结果并进 `result["runtime"]`、任一红/配置坏则整体 ok=False。
     单测就红则跳过运行时（省时，反正已判失败）。
 

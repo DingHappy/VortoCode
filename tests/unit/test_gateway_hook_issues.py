@@ -47,7 +47,7 @@ def test_acknowledgement_lives_outside_repo_and_stores_no_error_text(tmp_path, m
     assert acknowledge_hook_issue(str(tmp_path), "sid-owner", activities, "hook-sensitive") is True
     assert load_hook_issue_acks(str(tmp_path), "sid-owner") == ["hook-sensitive"]
     assert "private command output" not in store.read_text(encoding="utf-8")
-    assert not (tmp_path / ".vortocode" / "hook-issues.json").exists()
+    assert not (tmp_path / ".vortoone" / "hook-issues.json").exists()
     assert forget_hook_issue_session(str(tmp_path), "sid-owner") is True
     assert load_hook_issue_acks(str(tmp_path), "sid-owner") == []
     assert not store.exists()

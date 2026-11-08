@@ -181,7 +181,7 @@ class EmbeddingGenerator:
 class LongTermMemory:
     """长期记忆"""
     
-    def __init__(self, storage_path: str = "~/.vortocode/memory"):
+    def __init__(self, storage_path: str = "~/.vortoone/memory"):
         self.storage_path = storage_path
         self.vector_store = VectorStore()
         self.embedding_generator = EmbeddingGenerator()
@@ -461,7 +461,7 @@ class MemorySystem:
             capacity=self.config.get("short_term_capacity", 100)
         )
         self.long_term = LongTermMemory(
-            storage_path=self.config.get("storage_path", "~/.vortocode/memory")
+            storage_path=self.config.get("storage_path", "~/.vortoone/memory")
         )
         self.expert = ExpertMemory()
         self.knowledge_graph = KnowledgeGraph()
@@ -695,7 +695,7 @@ class MemoryRetriever:
 # 初始化记忆系统
 memory = MemorySystem({
     "short_term_capacity": 100,
-    "storage_path": "~/.vortocode/memory"
+    "storage_path": "~/.vortoone/memory"
 })
 
 # 存储记忆
@@ -734,22 +734,22 @@ await memory.learn_from_task(
 ## 配置
 
 ```yaml
-# .vortocode/memory.yaml
+# .vortoone/memory.yaml
 memory:
   short_term:
     capacity: 100
   
   long_term:
-    storage_path: "~/.vortocode/memory"
+    storage_path: "~/.vortoone/memory"
     embedding_model: "text-embedding-3-small"
     vector_store: "qdrant"  # 或 "milvus", "pinecone"
   
   expert:
-    knowledge_base_path: "~/.vortocode/expert_knowledge"
+    knowledge_base_path: "~/.vortoone/expert_knowledge"
     auto_validate: false
   
   knowledge_graph:
-    storage_path: "~/.vortocode/knowledge_graph"
+    storage_path: "~/.vortoone/knowledge_graph"
     max_entities: 10000
   
   retrieval:

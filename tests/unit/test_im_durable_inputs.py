@@ -258,7 +258,7 @@ async def test_old_history_without_receipts_is_not_silently_adopted(tmp_path, mo
     async with hosted(tmp_path, monkeypatch) as h:
         sid = h.bridge._sid
         await h.host.close()
-        native = h.root / ".vortocode" / "web_sessions" / f"{sid[4:]}.json"
+        native = h.root / ".vortoone" / "web_sessions" / f"{sid[4:]}.json"
         data = json.loads(native.read_text())
         data.pop("managed_im")
         data[field] = [{"role": "user", "text": "old B1 history", "content": "old B1 history"}]
@@ -315,7 +315,7 @@ def test_account_and_native_conversation_identity_are_separate_and_capacity_neve
 
 
 def test_account_receipts_cannot_live_in_project(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOONE_IM_LOCK_DIR", str(tmp_path / ".vortocode" / "locks"))
+    monkeypatch.setenv("VORTOONE_IM_LOCK_DIR", str(tmp_path / ".vortoone" / "locks"))
     with pytest.raises(InputStoreError, match="outside"):
         InputStore("telegram", "account", project_root=tmp_path)
-    assert not (tmp_path / ".vortocode").exists()
+    assert not (tmp_path / ".vortoone").exists()

@@ -41,12 +41,12 @@ def test_wrapper_keeps_the_complete_native_schema():
 
 @pytest.mark.asyncio
 async def test_use_skill_reports_where_relative_resources_live(tmp_path):
-    directory=tmp_path/".vortocode/skills/helper";directory.mkdir(parents=True)
+    directory=tmp_path/".vortoone/skills/helper";directory.mkdir(parents=True)
     (directory/"SKILL.md").write_text('---\nname: helper\ndescription: fixture\n---\nRead references/guide.md.\n')
     tool=next(t for t in build_skill_tools(str(tmp_path),None) if t.name=="use_skill")
     output=await tool.handler({"name":"helper"})
-    assert ".vortocode/skills/helper/SKILL.md" in output
-    assert "路径基准：.vortocode/skills/helper" in output
+    assert ".vortoone/skills/helper/SKILL.md" in output
+    assert "路径基准：.vortoone/skills/helper" in output
 
 @pytest.mark.asyncio
 async def test_mcp_failure_is_a_failed_agent_event():
@@ -104,7 +104,7 @@ async def test_failed_mcp_registration_closes_client(monkeypatch):
 @pytest.mark.asyncio
 async def test_skill_save_cannot_write_through_an_escaping_directory(tmp_path):
     root=tmp_path/"project";root.mkdir();outside=tmp_path/"outside";outside.mkdir()
-    (root/".vortocode").mkdir();(root/".vortocode/skills").symlink_to(outside,target_is_directory=True)
+    (root/".vortoone").mkdir();(root/".vortoone/skills").symlink_to(outside,target_is_directory=True)
     async def confirm(_):return True
     tool=next(t for t in build_skill_tools(str(root),confirm) if t.name=="save_skill")
     result=await tool.handler({"name":"helper","instructions":"fixture"})

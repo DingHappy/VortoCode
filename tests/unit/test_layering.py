@@ -101,8 +101,8 @@ async def test_every_host_exec_gate_follows_the_single_switch(tmp_path, monkeypa
             require_shell()
 
     # ② cron command 作业的手动触发守卫
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "cron.yaml").write_text(_CRON, encoding="utf-8")
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "cron.yaml").write_text(_CRON, encoding="utf-8")
     assert (check_trigger(str(tmp_path), "probe")[1] == "shell_disabled") is (not allowed)
 
 

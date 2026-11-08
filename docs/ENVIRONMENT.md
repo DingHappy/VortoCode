@@ -56,7 +56,7 @@ VortoOne 读取的全部 `VORTOONE_*` 环境变量。常用项的示例与注释
 | `VORTOONE_VISION_MODEL` | `mimo-v2.5` | 看图委派用的模型。 | `llm/client.py` |
 | `VORTOONE_MODEL_PRICES` | — | 每百万 token 的运行方单价（JSON）。不设则费用保持未知。 | `llm/observations.py` |
 | `VORTOONE_COST_BUDGET` | — | 总费用预算，超限告警（去重）。 | `models/cost.py` |
-| `VORTOONE_USAGE_DIR` | `~/.vortocode/usage` | 每日用量台账目录（同机多进程共用，写时加锁）。 | `llm/usage_ledger.py` |
+| `VORTOONE_USAGE_DIR` | `~/.vortoone/usage` | 每日用量台账目录（同机多进程共用，写时加锁）。 | `llm/usage_ledger.py` |
 
 ## Agent 循环与工具限额
 
@@ -127,7 +127,7 @@ VortoOne 读取的全部 `VORTOONE_*` 环境变量。常用项的示例与注释
 | `VORTOONE_DD_WS_HEARTBEAT` | 关 | 钉钉长连接的应用层心跳间隔（秒），如 `30`。 | `im/dingtalk.py` |
 | `VORTOONE_IM_HEARTBEAT_EVERY` | `150` | 后台任务「还活着」心跳的间隔（秒），0 或负数关闭。 | `im/bridge.py` |
 | `VORTOONE_IM_HELLO_QUIET_MIN` | `30` | 距上次打过招呼不足这么多分钟就不再打招呼。 | `im/bridge.py` |
-| `VORTOONE_IM_LOCK_DIR` | `~/.vortocode/channel-locks` | 同一机器人只允许一个进程接管的锁文件目录。 | `gateway/process_lease.py` |
+| `VORTOONE_IM_LOCK_DIR` | `~/.vortoone/channel-locks` | 同一机器人只允许一个进程接管的锁文件目录。 | `gateway/process_lease.py` |
 | `VORTOONE_OWNER_NOTIFY_URL` | — | 本进程不持有 IM 桥时，把通知交给同机哪个服务转发。 | `gateway/im_runtime.py`、`scheduling/assistant_watch.py` |
 | `VORTOONE_PUBLIC_BASE_URL` | — | 手机能打开的控制台地址（通知里的审批链接用它）。 | `gateway/public_url.py` |
 | `VORTOONE_QUIET_HOURS` | — | 手机通知的安静时段，如 `23:00-08:00`。时段内只记台账，结束后合并成一条推送。 | `scheduling/notices.py` |
@@ -143,7 +143,7 @@ VortoOne 读取的全部 `VORTOONE_*` 环境变量。常用项的示例与注释
 | `VORTOONE_HEARTBEAT` | 关 | 启动值班巡视（heartbeat）。 | `gateway/runtime.py`、`scheduling/scheduler.py` 等 |
 | `VORTOONE_HEARTBEAT_EVERY` | `30m` | 值班巡视的间隔。 | `scheduling/heartbeat.py`、`scheduling/assistant_watch.py` |
 | `VORTOONE_HEARTBEAT_HOURS` | 不限 | 值班的活跃时段，如 `9-23`。 | `scheduling/heartbeat.py` |
-| `VORTOONE_HEARTBEAT_CHECKLIST` | `.vortocode/HEARTBEAT.md` | 值班检查单文件。 | `scheduling/heartbeat.py` |
+| `VORTOONE_HEARTBEAT_CHECKLIST` | `.vortoone/HEARTBEAT.md` | 值班检查单文件。 | `scheduling/heartbeat.py` |
 | `VORTOONE_HEARTBEAT_MODEL` | 默认模型 | 值班巡视用的模型。 | `scheduling/heartbeat.py` |
 | `VORTOONE_ASSISTANT_REPORT_TIMES` | `09:00,21:00` | 助理早报、晚报的时间。 | `scheduling/assistant_watch.py` |
 | `VORTOONE_ASSISTANT_NEWS_ROOT` | — | 早报末尾附新闻：指向一个有信号采集产出的项目目录。 | `scheduling/assistant_watch.py` |

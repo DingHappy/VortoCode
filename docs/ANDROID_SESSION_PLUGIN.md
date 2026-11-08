@@ -73,7 +73,7 @@ XML 原文与编辑框/其子节点值不交给模型，已知 password/OTP/PIN/
 
 ## 独占、取消与结果不明
 
-本机资源状态放在 `~/.vortocode/android-control/<sha256(android:udid)>/`，不落项目，不存 UI、
+本机资源状态放在 `~/.vortoone/android-control/<sha256(android:udid)>/`，不落项目，不存 UI、
 输入内容或 Cookie。复用 `ProcessLease`，不同 Appium 端口/会话/应用共享同一设备锁；同进程
 最多 8 个活跃连接，不建等待队列。它约束 VortoOne 协作实例，不阻止外部 Inspector、adb、
 其它 Appium 客户端或真人同时操作设备；实际验证需使用专用测试设备并核对外部控制者。

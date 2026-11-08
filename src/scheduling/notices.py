@@ -1,7 +1,7 @@
 """通知台账 —— 无人值守产出里"人该看到"的那一路（cron 例行作业 / heartbeat 值班）。
 
 例行产出**不进任何人类会话历史**（run lane 规则，见 `cron.py`）：需要人知道的事落这条 JSONL 台账
-（`.vortocode/logs/notices.jsonl`，`logs/` 已在 `.vortocode` 自忽略清单内），再由 GET /api/notices
+（`.vortoone/logs/notices.jsonl`，`logs/` 已在 `.vortoone` 自忽略清单内），再由 GET /api/notices
 查询、WS `notice` 广播、IM 推 owner 三路投递。**台账是唯一有持久保证的一路**，另两路 best-effort。
 
 放在 gateway 而不是留在 web 路由里：CLI（`vc cron run`）与常驻调度循环都要写它，
@@ -16,6 +16,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 # 实时广播给已连接的客户端（WS）。由传输层启动时注册（见 web/routers/tasks.py）——调度层不
 # 反向依赖 Web。没注册（如命令行单独跑 cron）就只走台账与 IM 两路：那时本来也没有客户端在连。
@@ -39,11 +40,11 @@ STALE_HOURS = 12
 
 
 def _path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "logs" / "notices.jsonl"
+    return state_dir(repo_root) / "logs" / "notices.jsonl"
 
 
 def _undelivered_path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "logs" / "undelivered.jsonl"
+    return state_dir(repo_root) / "logs" / "undelivered.jsonl"
 
 
 def record_notice(repo_root: str, text: str, *, source: str = "scheduler",
@@ -223,11 +224,11 @@ MAX_HELD = 100
 
 
 def _held_path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "logs" / "quiet_held.jsonl"
+    return state_dir(repo_root) / "logs" / "quiet_held.jsonl"
 
 
 def _dedup_path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "logs" / "notice_dedup.json"
+    return state_dir(repo_root) / "logs" / "notice_dedup.json"
 
 
 def quiet_window() -> Optional[tuple]:

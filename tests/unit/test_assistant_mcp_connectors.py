@@ -41,7 +41,7 @@ def configured(tmp_path, monkeypatch):
         "servers:\n  - name: fixture\n    transport: http\n"
         "    url: https://connector.example.test/mcp\n    credential: fixture\n    read_only: true\n")
     home = tmp_path / "home"
-    directory = home / ".vortocode/connectors"
+    directory = home / ".vortoone/connectors"
     directory.mkdir(parents=True)
     secret = directory / "fixture.token"
     secret.write_text("synthetic-private-credential\n")

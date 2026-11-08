@@ -1,4 +1,4 @@
-"""每仓库记忆（`.vortocode/memory/repo.md`）。
+"""每仓库记忆（`.vortoone/memory/repo.md`）。
 
 **为什么要它**：隔离 dev 流水线每进一个新仓库都失忆——构建怪癖、真正能跑的测试命令、
 已知的坑，每次重新试错。会话级长期记忆（SessionStore 的 `__longterm__`）是"跟着人"的，
@@ -20,9 +20,10 @@ repo.md 是 **agent 自己攒下来的事实**（gitignored，属本地经验）
 from __future__ import annotations
 
 from pathlib import Path
+from src.utils.state_dir import state_dir
 
-# 相对仓库根的位置。放 .vortocode/ 下 = 默认 gitignored（本地经验，不污染别人的仓库）。
-REPO_MEMORY_REL = Path(".vortocode") / "memory" / "repo.md"
+# 相对仓库根的位置。放 .vortoone/ 下 = 默认 gitignored（本地经验，不污染别人的仓库）。
+REPO_MEMORY_REL = Path(".vortoone") / "memory" / "repo.md"
 
 # 注入上限：仓库记忆是**每轮**都在系统提示里的常驻成本，必须精炼。
 # 超出则截断并明示（宁可截断，也不悄悄丢或撑爆预算）。
@@ -34,7 +35,7 @@ _HEADER = "# 仓库记忆（VortoOne 自动维护）\n\n" \
 
 
 def repo_memory_path(repo_root: str) -> Path:
-    return Path(repo_root) / REPO_MEMORY_REL
+    return state_dir(repo_root) / "memory" / "repo.md"
 
 
 def read_repo_memory(repo_root: str) -> str:
@@ -107,9 +108,9 @@ def load_repo_memory(repo_root: str) -> str:
     note = ""
     if dropped > 0:
         note = (f"\n…(还有 {dropped} 条更早的仓库记忆未注入——已超上限，只带最新的；"
-                "建议精简 .vortocode/memory/repo.md)")
+                "建议精简 .vortoone/memory/repo.md)")
     elif dropped < 0:
-        note = "\n…(仓库记忆过长已截断；建议精简 .vortocode/memory/repo.md)"
+        note = "\n…(仓库记忆过长已截断；建议精简 .vortoone/memory/repo.md)"
     return ("【仓库记忆】(本仓库的既有事实：构建/测试命令、目录约定、已知坑。"
             "与之矛盾时以当前代码为准，并用 remember_repo 更正)\n"
             f"{body}{note}")
@@ -122,7 +123,7 @@ def dev_subagent_system(repo_root: str, base: str) -> str:
     dev_isolated/dev_parallel……）。此前各处各拼一份，加仓库记忆时漏掉了 TUI 那两个
     ——"dev 子 agent 也带上"只在一半路径成立（codex 审出的真问题）。
 
-    注意 repo_root 必须是**主仓库**：`.vortocode/` 是 gitignored，worktree 里没有这份文件。
+    注意 repo_root 必须是**主仓库**：`.vortoone/` 是 gitignored，worktree 里没有这份文件。
     """
     mem = load_repo_memory(repo_root)
     return f"{base}\n\n{mem}" if mem else base

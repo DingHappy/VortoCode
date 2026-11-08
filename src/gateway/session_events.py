@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 _MAX_SEGMENT_BYTES = 2 * 1024 * 1024
 _MAX_SEGMENTS = 4
@@ -31,7 +32,7 @@ class SessionEventJournal:
         self.repo_root = str(repo_root)
         self.sid = _safe_sid(str(key))
         self.directory = (
-            Path(repo_root) / ".vortocode" / "session_events" / self.sid
+            state_dir(repo_root) / "session_events" / self.sid
             if self.sid else None
         )
 

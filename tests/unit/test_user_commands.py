@@ -6,7 +6,7 @@ from src.agents.user_commands import (expand_command,
 
 
 def _cmd_dir(tmp_path):
-    d = tmp_path / ".vortocode" / "commands"
+    d = tmp_path / ".vortoone" / "commands"
     d.mkdir(parents=True)
     return d
 

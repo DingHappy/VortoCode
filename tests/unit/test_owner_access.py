@@ -16,7 +16,7 @@ def test_projection_clamps_policy_and_omits_private_operation_and_tool_payload(t
         decision=True, tainted=False, approval={"operation_kind": "own_data", "approval_scope": "once",
         "decision_source": "user", "approval_outcome": "approved"})
     audit.record_tool_audit(str(tmp_path), session="s", mode="build", name="shell", args={"command": "private-path"}, result="secret")
-    before = (tmp_path / ".vortocode/audit.log").read_bytes()
+    before = (tmp_path / ".vortoone/audit.log").read_bytes()
     value = snapshot(str(tmp_path))
     permissions = value["permissions"]
     assert permissions["stored_level"] == "full" and permissions["effective_level"] == "reads"
@@ -28,7 +28,7 @@ def test_projection_clamps_policy_and_omits_private_operation_and_tool_payload(t
     assert row["origin"] == "app" and row["record_type"] == "decision"
     assert row["approval_outcome"] == "approved"
     assert all(secret not in json.dumps(value, ensure_ascii=False) for secret in ["私人收件人", "private-path", "secret"])
-    assert before == (tmp_path / ".vortocode/audit.log").read_bytes()
+    assert before == (tmp_path / ".vortoone/audit.log").read_bytes()
 
 
 def test_projection_keeps_typed_card_events_and_omits_untyped_domain_audits(tmp_path):
@@ -42,7 +42,7 @@ def test_projection_keeps_typed_card_events_and_omits_untyped_domain_audits(tmp_
 
 def test_unreadable_or_malformed_history_never_becomes_empty_success(tmp_path, monkeypatch):
     assert snapshot(str(tmp_path))["history"]["status"] == "current"
-    folder = tmp_path / ".vortocode"
+    folder = tmp_path / ".vortoone"
     folder.mkdir()
     path = folder / "audit.log"
     path.write_text("not-json\n")
@@ -58,7 +58,7 @@ def test_unreadable_or_malformed_history_never_becomes_empty_success(tmp_path, m
 
 
 def test_projection_is_bounded_and_ids_do_not_expose_legacy_values(tmp_path):
-    folder = tmp_path / ".vortocode"
+    folder = tmp_path / ".vortoone"
     folder.mkdir()
     rows = [{"category": "decision", "id": f"private-path-{n}", "operation": "private", "decision": "denied",
              "operation_kind": "own_data"} for n in range(600)]

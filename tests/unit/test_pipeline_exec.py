@@ -42,7 +42,7 @@ def _outbound_stage(repo, **kw):
     （确认门），所以这里必须把第一道满足掉——否则测出来的是"角色没配对"，
     而那条另有 test_outbound_is_real.py 专门钉。
     """
-    d = pathlib.Path(repo) / ".vortocode" / "agents"
+    d = pathlib.Path(repo) / ".vortoone" / "agents"
     d.mkdir(parents=True, exist_ok=True)
     (d / "courier.md").write_text(
         "---\nname: courier\ndescription: 交付\ntools: deliver\n---\n你是交付者。\n",

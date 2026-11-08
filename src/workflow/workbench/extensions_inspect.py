@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from src.utils.state_dir import state_dir
 
 _MAX_ITEMS = 100
 _MAX_FILE_BYTES = 256 * 1024
-_RULE_CANDIDATES = ("AGENTS.md", "CLAUDE.md", "VORTO.md", ".vortocode/AGENTS.md")
+_RULE_CANDIDATES = ("AGENTS.md", "CLAUDE.md", "VORTO.md", ".vortoone/AGENTS.md")
 _ENABLED_STATUSES = {"active", "available"}
 _ATTENTION_STATUSES = {"blocked", "needs_trust", "error"}
 
@@ -65,6 +66,9 @@ def _rules(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
     candidates: list[tuple[str, int]] = []
     for source in _RULE_CANDIDATES:
         path = root / source
+        if source == ".vortoone/AGENTS.md":                 # 状态目录还没从 .vortocode 搬过来时读旧的
+            path = state_dir(root) / "AGENTS.md"
+            source = f"{path.parent.name}/AGENTS.md"
         try:
             if not path.is_file():
                 continue
@@ -105,7 +109,7 @@ def _skills(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
     items: list[dict[str, Any]] = []
     issues: list[str] = []
     parsed: list[dict[str, Any]] = []
-    for directory in (root / "skills", root / ".vortocode" / "skills"):
+    for directory in (root / "skills", state_dir(root) / "skills"):
         if not directory.exists():
             continue
         if not _within(root, directory):

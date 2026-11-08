@@ -23,6 +23,8 @@ def create_app() -> FastAPI:
     root = os.getenv("VORTOONE_MOBILE_STATE_ROOT", "").strip()
     if not root or not Path(root).is_absolute() or Path(root).resolve() != Path.cwd().resolve():
         raise RuntimeError("手机网关工作目录必须匹配已登记的助手状态目录")
+    from src.utils.state_dir import state_dir
+    state_dir(root)              # 状态目录改名（ADR-018 批次 C）；只读挂载时搬不动，继续用旧目录
     release = os.getenv("VORTOONE_MOBILE_RELEASE", "dev")
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,95}", release):
         raise RuntimeError("手机网关发布标识无效")
