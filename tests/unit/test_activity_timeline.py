@@ -26,7 +26,7 @@ def world(tmp_path, monkeypatch):
                     payload={"goal_id": goal["id"], "revision": goal["revision"]}, source="assistant")
     from src.workflow.tasks import assistant_dispatch
     monkeypatch.setattr(assistant_dispatch, "list_dispatches", lambda r: [
-        {"id": "dsp-0000000001", "project": "VortoCode", "title": "修登录 500", "status": "proposed",
+        {"id": "dsp-0000000001", "project": "VortoOne", "title": "修登录 500", "status": "proposed",
          "created_at": "2026-11-03T09:00:00+08:00", "goal_link": {"id": goal["id"], "objective": "修登录"}}])
     from src.scheduling import codex_watch
     monkeypatch.setattr(codex_watch, "load_actions", lambda r, **kwargs: [

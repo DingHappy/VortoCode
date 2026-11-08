@@ -19,7 +19,7 @@ NOW = datetime(2026, 10, 20, 9, 0)
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
-    path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
+    path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
 
 
@@ -31,7 +31,7 @@ def _goal(root):
 
 def _done_for_goal(root):
     goal_id, criterion_id = _goal(root)
-    entry = dispatch.propose(root, project="VortoCode", title="改登录超时", goal="把超时改成 30 秒",
+    entry = dispatch.propose(root, project="VortoOne", title="改登录超时", goal="把超时改成 30 秒",
                              goal_id=goal_id, criterion_id=criterion_id)
     dispatch._update(root, entry["id"], lambda item: item.update(status="done", branch="vorto/fix", remote_task_id="t1"))
     return dispatch.list_dispatches(root)[0], goal_id
@@ -42,11 +42,11 @@ async def test_propose_validates_the_goal_and_the_assistant_sees_the_link(tmp_pa
     goal_id, criterion_id = _goal(root)
     tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(root)}
     assert "找不到个人目标" in await tools["propose_task"].handler(
-        {"project": "VortoCode", "title": "x", "goal": "y", "goal_id": "personal-nope"})
+        {"project": "VortoOne", "title": "x", "goal": "y", "goal_id": "personal-nope"})
     assert "没有验收标准" in await tools["propose_task"].handler(
-        {"project": "VortoCode", "title": "x", "goal": "y", "goal_id": goal_id, "criterion_id": "c-nope"})
+        {"project": "VortoOne", "title": "x", "goal": "y", "goal_id": goal_id, "criterion_id": "c-nope"})
     assert "已写好任务单" in await tools["propose_task"].handler(
-        {"project": "VortoCode", "title": "改登录超时", "goal": "把超时改成 30 秒", "goal_id": goal_id, "criterion_id": criterion_id})
+        {"project": "VortoOne", "title": "改登录超时", "goal": "把超时改成 30 秒", "goal_id": goal_id, "criterion_id": criterion_id})
     link = dispatch.list_dispatches(root)[0]["goal_link"]
     assert link == {"id": goal_id, "objective": "上线新版登录", "criterion_id": criterion_id, "criterion": "登录超时 30 秒"}
     assert "为目标「上线新版登录」的标准「登录超时 30 秒」" in await tools["list_dispatches"].handler({})
@@ -55,7 +55,7 @@ async def test_propose_validates_the_goal_and_the_assistant_sees_the_link(tmp_pa
 async def test_done_asks_once_and_confirming_records_owner_evidence(tmp_path):
     root = str(tmp_path)
     goal_id, criterion_id = _goal(root)
-    entry = dispatch.propose(root, project="VortoCode", title="改登录超时", goal="把超时改成 30 秒",
+    entry = dispatch.propose(root, project="VortoOne", title="改登录超时", goal="把超时改成 30 秒",
                              goal_id=goal_id, criterion_id=criterion_id)
     sent = []
 
@@ -84,7 +84,7 @@ async def test_done_asks_once_and_confirming_records_owner_evidence(tmp_path):
 
 def test_only_successful_linked_tasks_can_confirm(tmp_path):
     root = str(tmp_path)
-    plain = dispatch.propose(root, project="VortoCode", title="不挂目标", goal="g")
+    plain = dispatch.propose(root, project="VortoOne", title="不挂目标", goal="g")
     with pytest.raises(dispatch.DispatchError, match="挂了验收标准"):
         dispatch.confirm_goal(root, plain["id"])
     item, _ = _done_for_goal(root)
@@ -129,10 +129,10 @@ def test_confirm_route_is_audited(tmp_path, monkeypatch):
 def test_one_live_ticket_per_goal_criterion(tmp_path):
     root = str(tmp_path)
     goal_id, criterion_id = _goal(root)
-    first = dispatch.propose(root, project="VortoCode", title="改超时", goal="g", goal_id=goal_id, criterion_id=criterion_id)
+    first = dispatch.propose(root, project="VortoOne", title="改超时", goal="g", goal_id=goal_id, criterion_id=criterion_id)
     with pytest.raises(dispatch.DispatchError, match="已经有任务单"):
-        dispatch.propose(root, project="VortoCode", title="又改超时", goal="g", goal_id=goal_id, criterion_id=criterion_id)
+        dispatch.propose(root, project="VortoOne", title="又改超时", goal="g", goal_id=goal_id, criterion_id=criterion_id)
     other = PersonalGoals(root).get(goal_id)["acceptance_criteria"][1]["id"]
-    dispatch.propose(root, project="VortoCode", title="手机登录", goal="g", goal_id=goal_id, criterion_id=other)
+    dispatch.propose(root, project="VortoOne", title="手机登录", goal="g", goal_id=goal_id, criterion_id=other)
     dispatch.cancel(root, first["id"])
-    dispatch.propose(root, project="VortoCode", title="重新派", goal="g", goal_id=goal_id, criterion_id=criterion_id)
+    dispatch.propose(root, project="VortoOne", title="重新派", goal="g", goal_id=goal_id, criterion_id=criterion_id)

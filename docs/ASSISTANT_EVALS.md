@@ -1,8 +1,8 @@
 # 私人助手能力与题库
 
-2026-10-12。目标参照 Meta Muse 的长期记忆、持续跟进、目标推进和执行前授权，复用 VortoCode 的 General 会话、记忆写入策略、cron、任务单和项目工作台；不另建代理运行时。
+2026-10-12。目标参照 Meta Muse 的长期记忆、持续跟进、目标推进和执行前授权，复用 VortoOne 的 General 会话、记忆写入策略、cron、任务单和项目工作台；不另建代理运行时。
 
-[Meta 官方介绍](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/)描述了跨应用行动、记住用户、关闭界面后继续工作，以及需要批准时回来询问。VortoCode 当前交互任务卡、记忆候选与定时事项已有对应基础；真实跨应用执行、长期目标自主管理和个人助理综合效果尚不能据此宣称达到 Muse。
+[Meta 官方介绍](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/)描述了跨应用行动、记住用户、关闭界面后继续工作，以及需要批准时回来询问。VortoOne 当前交互任务卡、记忆候选与定时事项已有对应基础；真实跨应用执行、长期目标自主管理和个人助理综合效果尚不能据此宣称达到 Muse。
 
 ## 当前新增能力
 

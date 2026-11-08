@@ -6,7 +6,7 @@ MainAgent，CLI/Web 不另建回路。
 
 ## 官方方案与采用范围
 
-| 官方方案 | VortoCode 当前状态 | 本轮决策 |
+| 官方方案 | VortoOne 当前状态 | 本轮决策 |
 | --- | --- | --- |
 | [OpenCode 角色配置](https://opencode.ai/docs/agents/)：主/子 Agent 可分别配置模型、提示与权限 | 原角色注册/委派/模型路由已实现，plan/build权限由原执行器控制 | 保留当前角色模块和执行池，不复制新的调度系统 |
 | [OpenCode 指令规则](https://opencode.ai/docs/rules/)：AGENTS.md 与 CLAUDE.md 回退，明确来源优先级 | project.py取首个非空候选，有截断说明 | 下一轮先提供来源/范围/截断诊断，不在本轮自动加载父目录、远程文件或另一产品全局配置 |
@@ -58,7 +58,7 @@ MainAgent，CLI/Web 不另建回路。
 - 原 Codex app/features 文档地址现重定向至 ChatGPT Learn；不能把重定向后的
   ChatGPT 页面当作某个旧 Codex 版本的界面证据。
 
-### VortoCode 的下一版设计基线（待视觉确认，尚未实现）
+### VortoOne 的下一版设计基线（待视觉确认，尚未实现）
 
 1. **稳定双栏骨架**：左栏以新对话、项目与最近会话为主；任务中心作为独立次级入口。
    右侧详情默认关闭，发送消息不自动展开，用户打开后保持选择。后台事件用状态提示，

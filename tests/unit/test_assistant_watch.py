@@ -15,7 +15,7 @@ TZ = timezone(timedelta(hours=8))
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
-    path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
+    path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
 
 
@@ -36,12 +36,12 @@ def _items(root):
 
 async def test_first_run_records_without_replaying_then_notifies_changes(tmp_path):
     root, inbox = str(tmp_path), _Inbox()
-    old = dispatch.propose(root, project="VortoCode", title="旧任务", goal="g")
+    old = dispatch.propose(root, project="VortoOne", title="旧任务", goal="g")
     noon = datetime(2026, 10, 11, 12, 0, tzinfo=TZ)
     await watch.watch_once(root, noon, notify=inbox, refresh=_items(root), times=[])
     assert inbox.messages == []                                    # 首次：旧账不推
 
-    new = dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    new = dispatch.propose(root, project="VortoOne", title="修登录", goal="g")
     await watch.watch_once(root, noon, notify=inbox, refresh=_items(root), times=[])
     assert len(inbox.messages) == 1 and "等你确认下发" in inbox.messages[0] and "修登录" in inbox.messages[0]
     await watch.watch_once(root, noon, notify=inbox, refresh=_items(root), times=[])
@@ -60,7 +60,7 @@ async def _facts(root, now, label):
 
 async def test_reports_once_per_slot_within_grace(tmp_path):
     root, inbox = str(tmp_path), _Inbox()
-    dispatch.propose(root, project="VortoCode", title="等确认的", goal="g")
+    dispatch.propose(root, project="VortoOne", title="等确认的", goal="g")
     before = datetime(2026, 10, 11, 8, 59, tzinfo=TZ)
     await watch.watch_once(root, before, notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
     assert inbox.messages == []
@@ -162,7 +162,7 @@ async def test_report_is_written_by_the_model_with_fallback(tmp_path):
 
     root = str(tmp_path)
     save_profile(root, name="小V", soul="简短直接")
-    dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    dispatch.propose(root, project="VortoOne", title="修登录", goal="g")
     now = datetime(2026, 10, 11, 9, 0, tzinfo=TZ)
     seen = []
 
@@ -185,7 +185,7 @@ async def test_report_is_written_by_the_model_with_fallback(tmp_path):
 
 async def test_report_never_shows_internal_ids(tmp_path, monkeypatch):
     root = str(tmp_path)
-    entry = dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    entry = dispatch.propose(root, project="VortoOne", title="修登录", goal="g")
     now = datetime(2026, 10, 11, 9, 0, tzinfo=TZ)
     monkeypatch.setattr(watch, "build_report", lambda *_a: f"等你处理：确认下发任务单 {entry['id']}（修登录）")
     seen = []
@@ -225,7 +225,7 @@ _DEV_REPORT = """已把任务分解为 1 个子任务：1 个独立(并行) + 0 
 
 def test_done_notice_uses_ledger_instead_of_raw_success_claims():
     from src.scheduling.assistant_watch import status_message
-    text = status_message({"project": "VortoCode", "title": "short_hash", "status": "done",
+    text = status_message({"project": "VortoOne", "title": "short_hash", "status": "done",
                            "branch": "vorto/auto-190d3e2b", "result": _DEV_REPORT})
     assert "尚无当前提交的验证结果" in text and "下一步：" in text
     assert "集成后全量测试通过" not in text and "计划已存盘" not in text
@@ -302,7 +302,7 @@ async def test_quiet_day_sends_one_line_morning_and_no_evening_without_the_model
 
 async def test_report_prompt_asks_for_a_glanceable_report(tmp_path):
     root = str(tmp_path)
-    dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    dispatch.propose(root, project="VortoOne", title="修登录", goal="g")
     seen = []
 
     class _LLM:
@@ -333,7 +333,7 @@ async def test_morning_report_carries_fresh_news_outside_the_model(tmp_path, mon
     now = datetime(2026, 10, 18, 9, 0, tzinfo=TZ)
     _signals(news_root, now - timedelta(hours=1))
     monkeypatch.setenv(watch.NEWS_ENV, str(news_root))
-    dispatch.propose(str(root), project="VortoCode", title="修登录", goal="g")
+    dispatch.propose(str(root), project="VortoOne", title="修登录", goal="g")
     seen = []
 
     class _LLM:
@@ -380,14 +380,14 @@ class _ButtonInbox:
 async def test_report_carries_the_only_pending_ticket_and_replaces_the_day_old_reminder(tmp_path):
     root, inbox = str(tmp_path), _ButtonInbox()
     created = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
-    ticket = dispatch.propose(root, project="VortoCode", title="补边界单测", goal="g")
+    ticket = dispatch.propose(root, project="VortoOne", title="补边界单测", goal="g")
     dispatch._update(root, ticket["id"], lambda item: item.update(created_at=created.isoformat()))
     await watch.watch_once(root, created, notify=inbox, refresh=_items(root), times=[])          # 首轮只记现状
     for at in (datetime(2026, 10, 20, 9, 1, tzinfo=TZ), datetime(2026, 10, 21, 8, 47, tzinfo=TZ)):
         await watch.watch_once(root, at, notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
     reports = [(text, cid) for text, cid in inbox.sent if text.startswith("🗒")]
     assert len(reports) == 1 and reports[0][1] == ticket["id"]
-    assert "按钮对应等你确认的任务单：VortoCode：补边界单测" in reports[0][0] and ticket["id"] not in reports[0][0]
+    assert "按钮对应等你确认的任务单：VortoOne：补边界单测" in reports[0][0] and ticket["id"] not in reports[0][0]
     assert not any("写好一天了" in text for text, _ in inbox.sent)
 
 
@@ -395,7 +395,7 @@ async def test_several_pending_tickets_keep_their_own_reminders(tmp_path):
     root, inbox = str(tmp_path), _ButtonInbox()
     created = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
     for title in ("甲", "乙"):
-        ticket = dispatch.propose(root, project="VortoCode", title=title, goal="g")
+        ticket = dispatch.propose(root, project="VortoOne", title=title, goal="g")
         dispatch._update(root, ticket["id"], lambda item: item.update(created_at=created.isoformat()))
     await watch.watch_once(root, created, notify=inbox, refresh=_items(root), times=[])
     for at in (datetime(2026, 10, 20, 9, 1, tzinfo=TZ), datetime(2026, 10, 21, 8, 47, tzinfo=TZ)):
@@ -408,7 +408,7 @@ async def test_several_pending_tickets_keep_their_own_reminders(tmp_path):
 async def test_tainted_ticket_gets_no_button_on_the_report(tmp_path):
     root, inbox = str(tmp_path), _ButtonInbox()
     created = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
-    ticket = dispatch.propose(root, project="VortoCode", title="读过网页拟的", goal="g", tainted=True)
+    ticket = dispatch.propose(root, project="VortoOne", title="读过网页拟的", goal="g", tainted=True)
     dispatch._update(root, ticket["id"], lambda item: item.update(created_at=created.isoformat()))
     await watch.watch_once(root, created, notify=inbox, refresh=_items(root), times=[])
     await watch.watch_once(root, datetime(2026, 10, 20, 9, 1, tzinfo=TZ), notify=inbox, refresh=_items(root),
@@ -420,7 +420,7 @@ async def test_tainted_ticket_gets_no_button_on_the_report(tmp_path):
 # —— 只剩早就写好、今天没动过的待确认单子：早报提一次（带按钮），晚报不再重复 ——
 
 def _aged_ticket(root, title, at, status="proposed"):
-    ticket = dispatch.propose(root, project="VortoCode", title=title, goal="g")
+    ticket = dispatch.propose(root, project="VortoOne", title=title, goal="g")
     items = dispatch._load(root)                       # 直接改台账：_update 会把 updated_at 刷成现在
     for item in items:
         if item["id"] == ticket["id"]:

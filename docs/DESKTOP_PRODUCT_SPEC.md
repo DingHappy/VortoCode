@@ -1,14 +1,14 @@
-# VortoCode Desktop 产品规格
+# VortoOne Desktop 产品规格
 
 > 状态：Desktop-first；V1 已形成运行、Git 审查、Goal 验收、Worktree、PR/CI、决策审计、跨日 Journal、系统通知、可恢复输入队列、多 runtime 常驻与跨项目 Inbox 闭环 · 2026-07-17
 
 ## 一句话定位
 
-VortoCode Desktop 是面向开发者的本地优先 Agent 工作台：在一个窗口里管理项目、会话、
+VortoOne Desktop 是面向开发者的本地优先 Agent 工作台：在一个窗口里管理项目、会话、
 开发目标、隔离 worktree、后台任务、人工决策和交付结果。它不是另一套 agent runtime，也不是把 TUI
 简单包进 WebView。
 
-Desktop 是 VortoCode 当前默认产品与首要分发面；CLI 是高级/自动化入口，Web 是未来团队与托管入口。
+Desktop 是 VortoOne 当前默认产品与首要分发面；CLI 是高级/自动化入口，Web 是未来团队与托管入口。
 三者继续共享一个内核，但新用户主链路、交互质量和跨项目工作首先在 Desktop 验收。
 
 ## 产品原则
@@ -31,14 +31,14 @@ Desktop 是 VortoCode 当前默认产品与首要分发面；CLI 是高级/自�
 
 ## 竞品借鉴矩阵
 
-| 产品 | 借鉴内容 | VortoCode 的落点 |
+| 产品 | 借鉴内容 | VortoOne 的落点 |
 | --- | --- | --- |
 | Codex App | app-server、并行任务台、worktree、集中 diff、自动任务 | 复用 gateway 协议；项目/会话/任务三层导航 |
 | Claude Desktop | 可拖拽多面板、自动 worktree、side chat、Browser Preview、PR/CI | 对话主区 + Diff/任务/通知检查器；结构化终端、预览与 PR/CI 已进入检查器 |
 | 腾讯 Marvis | 常驻、本地隐私、手机接管、系统与文件入口 | 本机 runtime 生命周期；后续做远程伴侣与本地语义搜索 |
 | Marvis Company Brain | Journal、To-dos、Tasks、Project、Universe | 决策队列、每日摘要、项目上下文；知识图谱不进 V0 |
 | xAI grok-build | 服务端权威 Prompt Queue、后台/前台切换、会话事件持久化、稳定 hunk 身份 | 队列、会话交接、持久事件与稳定 hunk/source 第一阶段均已落地 |
-| VortoCode | 隔离 dev 流水线、国产模型 Relay、权限审计 | 作为差异化能力直接显性化，不复制竞品的模型绑定 |
+| VortoOne | 隔离 dev 流水线、国产模型 Relay、权限审计 | 作为差异化能力直接显性化，不复制竞品的模型绑定 |
 
 参考：
 

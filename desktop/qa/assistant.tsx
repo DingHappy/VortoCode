@@ -12,7 +12,7 @@ import "../src/daily.css";
 // 合成数据：结构与 /api/agent/activity、/api/tasks 一致，走与真实数据相同的投影函数。
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const turns: AgentTurn[] = [
-  { sid: "main", session_title: "主要聊天", rid: "r5", title: "调研 VortoCode 项目", outcome: "完成静态审查并归档记录", digest_source: "model", status: "done", tools: 6, tool_names: ["read_file", "grep"], at: ago(8) },
+  { sid: "main", session_title: "主要聊天", rid: "r5", title: "调研 VortoOne 项目", outcome: "完成静态审查并归档记录", digest_source: "model", status: "done", tools: 6, tool_names: ["read_file", "grep"], at: ago(8) },
   { sid: "main", session_title: "主要聊天", rid: "r4", title: "查询宁波天气", outcome: "给出今明两天天气与出行建议", digest_source: "model", status: "done", tools: 3, tool_names: ["web_search", "web_fetch"], at: ago(55) },
   { sid: "side-1", session_title: "整理周报", rid: "r1", title: "整理本周工作周报", outcome: "按项目汇总了 9 个 PR 的进展", digest_source: "model", status: "done", tools: 2, tool_names: ["run_command"], at: ago(130) },
   { sid: "main", session_title: "主要聊天", rid: "r3", title: "检查本地模型连接", outcome: "确认 Qwen3.6 连接正常、工具调用格式正确", digest_source: "model", status: "done", tools: 1, tool_names: ["run_command"], at: ago(60 * 20) },
@@ -25,7 +25,7 @@ const tasks: TaskItem[] = [
 ];
 const feed = [...turns.map(turnFeedItem), ...tasks.map(taskFeedItem)];
 const audit = [
-  { id: "a1", category: "decision" as const, operation: "下发任务单「登录加超时重试」到 VortoCode", decision: "allowed" as const, ts: ago(60 * 23) },
+  { id: "a1", category: "decision" as const, operation: "下发任务单「登录加超时重试」到 VortoOne", decision: "allowed" as const, ts: ago(60 * 23) },
   { id: "a2", category: "decision" as const, operation: "保存长期记忆？\n汇报先给结论，再说细节", decision: "allowed" as const, ts: ago(60 * 5) },
   { id: "a3", category: "decision" as const, operation: "发布制品「本周周报」？", decision: "denied" as const, tainted: true, ts: ago(60 * 26) },
 ];
@@ -58,7 +58,7 @@ function Fixture() {
     <button onClick={() => setPanel(!panel)}>切换右栏</button></header><div className="banner-slot" />
     <div className={`workbench ${panel ? "inspector-open" : "inspector-closed"}`}>
       <aside className="sidebar">
-        <div className="sidebar-brand"><strong>VortoCode</strong><Search size={16} /></div>
+        <div className="sidebar-brand"><strong>VortoOne</strong><Search size={16} /></div>
         <AssistantSidebar mainChat={{ sid: "main", preview: "已完成静态审查并归档记录", busy: true }}
           sideChats={[{ sid: "side-1", title: "整理周报" }, { sid: "side-2", title: "MCP 接入" }]}
           current={current} onSelect={setCurrent} onNewSideChat={() => {}} />
@@ -66,7 +66,7 @@ function Fixture() {
       </aside>
       <section className="conversation"><div className="conversation-header"><strong>{current === "main" ? "主要聊天" : current === "side-1" ? "整理周报" : "MCP 接入"}</strong></div>
         <div className="conversation-scroll">
-          <article className="message user"><div className="message-body">你帮我看一下 VortoCode 这个项目，做一次静态审查。</div></article>
+          <article className="message user"><div className="message-body">你帮我看一下 VortoOne 这个项目，做一次静态审查。</div></article>
           <article className="message assistant"><div className="message-author with-avatar"><AssistantAvatarImage name={profile.name} avatar={avatar} size={22} />{profile.name}</div><div className="message-body"><MarkdownMessage text={"看完了，结论先说：**工程纪律是全场最强的一项**——离线 CI、契约测试钉死路由基线、污点追踪。\n\n完整报告已归档到知识库，右侧动态里有这次的记录。"} /></div></article>
         </div>
         <div className="composer-wrap"><div className="composer"><textarea aria-label="消息" placeholder="给助理交代一件事…" /><div className="composer-footer"><div className="composer-tools"><Paperclip size={16} /><span className="composer-model single"><Cpu size={14} />Qwen3.6 · 本地</span></div><div className="composer-actions"><button className="composer-send" aria-label="发送"><ArrowUp size={16} /></button></div></div></div></div>

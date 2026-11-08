@@ -38,7 +38,7 @@ it("shows what needs the owner: background work, hooks and the work queue", () =
 });
 
 it("footer shows the account as a menu button, and the update button only when there is one", () => {
-  const identity = { initial: "D", name: "me@example.com", detail: "专业版会员", title: "VortoCode 账号" };
+  const identity = { initial: "D", name: "me@example.com", detail: "专业版会员", title: "VortoOne 账号" };
   const none = renderToStaticMarkup(<SidebarFooter identity={identity} update={null} onOpenSettings={noop} />);
   expect(none).toContain("me@example.com"); expect(none).toContain("专业版会员");
   expect(none).toContain('aria-haspopup="menu"'); expect(none).toContain('aria-expanded="false"');
@@ -50,7 +50,7 @@ it("footer shows the account as a menu button, and the update button only when t
 });
 
 it("footer shows where the assistant lives only when given", () => {
-  const identity = { initial: "D", name: "me@example.com", detail: "", title: "VortoCode 账号" };
+  const identity = { initial: "D", name: "me@example.com", detail: "", title: "VortoOne 账号" };
   const footer = (resident?: Parameters<typeof SidebarFooter>[0]["resident"]) =>
     renderToStaticMarkup(<SidebarFooter identity={identity} update={null} resident={resident} onOpenSettings={noop} />);
   expect(footer()).not.toContain("vc-side-resident");
@@ -62,7 +62,7 @@ it("footer shows where the assistant lives only when given", () => {
 });
 
 it("avatar menu holds the set-once things: account, phone and devices, updates and diagnostics, settings", () => {
-  const identity = { initial: "D", name: "me@example.com", detail: "", title: "VortoCode 账号" };
+  const identity = { initial: "D", name: "me@example.com", detail: "", title: "VortoOne 账号" };
   const html = renderToStaticMarkup(<SidebarFooter identity={identity} update={null} onOpenSettings={noop} menuOpen />);
   expect(html).toContain('role="menu"'); expect(html).toContain('aria-expanded="true"');
   const items = [...html.matchAll(/role="menuitem"[^>]*>.*?<span>(.*?)<\/span><\/button>/g)].map((match) => match[1].replace(/<[^>]+>/g, ""));

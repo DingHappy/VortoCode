@@ -1,6 +1,6 @@
 """`.vortocode/` 托管忽略清单的覆盖契约——生成态不该冒进目标仓库的 git status。
 
-真机诊断（2026-09-17）：桌面端的改动列表里混着 `.vortocode/journal`。VortoCode 往目标仓库
+真机诊断（2026-09-17）：桌面端的改动列表里混着 `.vortocode/journal`。VortoOne 往目标仓库
 写运行时状态，`ensure_state_gitignore` 负责让这些状态对用户的 git status 隐形；但清单是手写
 的，新加一处状态就少一条，**而且没有任何东西会红**——直到某天在一个自己没 gitignore
 `.vortocode/` 的仓库里，用户看见一堆不知道哪来的文件。

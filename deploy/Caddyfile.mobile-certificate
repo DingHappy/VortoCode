@@ -23,6 +23,6 @@ https://{$VORTOCODE_HTTPS_HOST}:18443 {
 
 	handle {
 		header Content-Type "text/plain; charset=utf-8"
-		respond "VortoCode 手机入口正在准备，请稍后再试。" 503
+		respond "VortoOne 手机入口正在准备，请稍后再试。" 503
 	}
 }

@@ -1,4 +1,4 @@
-"""任务小组的开发成员（ADR-014 S2）：一次性 worktree 里改代码 → VortoCode 验证 → 落本地分支。
+"""任务小组的开发成员（ADR-014 S2）：一次性 worktree 里改代码 → VortoOne 验证 → 落本地分支。
 
 假的 ACP 框架放在 ``$VORTOCODE_WORKER_HOME/bin/opencode``：它像 OpenCode 一样先请求权限、获准后自己写文件。
 离线验证：只能改 worktree 里的文件、不能执行命令；``.env`` 不进 worktree；改动落成分支并记交付；

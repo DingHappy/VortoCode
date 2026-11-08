@@ -133,7 +133,7 @@ def _connect(account: Account) -> imaplib.IMAP4:
         # 网易系（163/126/yeah）不先报客户端身份就拒绝打开收件箱（Unsafe Login）
         try:
             imaplib.Commands.setdefault("ID", ("AUTH", "SELECTED"))
-            client.xatom("ID", '("name" "VortoCode" "version" "1.0")')
+            client.xatom("ID", '("name" "VortoOne" "version" "1.0")')
         except Exception:  # noqa: BLE001
             pass
     try:

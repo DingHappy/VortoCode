@@ -121,7 +121,7 @@ async def artifact_view(artifact_id: str):
 _VIEW_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__ · VortoCode 制品</title>
+<title>__TITLE__ · VortoOne 制品</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -146,7 +146,7 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
 </style></head>
 <body>
   <header>
-    <b>VortoCode</b> · <span id="title">__TITLE__</span>
+    <b>VortoOne</b> · <span id="title">__TITLE__</span>
     <label>版本 <select id="vsel"></select></label>
     <button class="btn" id="pin">设为默认</button>
     <span class="sp"></span>

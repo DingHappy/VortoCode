@@ -290,7 +290,7 @@ def env_template(channel: str) -> str:
     keys = REQUIRED_KEYS.get((channel or "").strip().lower())
     if not keys:
         return f"# 未知通道 {channel!r}（可选 {'/'.join(REQUIRED_KEYS)}）\n"
-    lines = [f"# VortoCode 助手凭证（{channel}）—— chmod 600，别进 git",
+    lines = [f"# VortoOne 助手凭证（{channel}）—— chmod 600，别进 git",
              "# 每个助手必须在开放平台**各建一个应用**：共用凭证会让两条桥抢同一个机器人。"]
     lines += [f"{k}=" for k in keys]
     lines += ["OPENAI_API_KEY=",

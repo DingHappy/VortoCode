@@ -85,7 +85,7 @@ async def _run(args) -> dict:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="python -m evals", description="VortoCode 真机评测 harness")
+    p = argparse.ArgumentParser(prog="python -m evals", description="VortoOne 真机评测 harness")
     p.add_argument("--suite", choices=["dev", "assistant"], default="dev", help="开发交付或私人助手题集")
     p.add_argument("--live", action="store_true", help="显式运行私人助手真实模型评测")
     p.add_argument("--candidate", metavar="FILE", help="离线复查助手报告并与基线比较，不调用模型")

@@ -96,23 +96,23 @@ it("左侧「最近」：主要聊天置顶在旁聊之前；没有旁聊时给�
 });
 
 it("compact identity keeps status visible while model and computer controls are collapsed", () => {
-  const online = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected modelLabel="Qwen3.6" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}} waiting={2}><p>内容</p></AssistantPanel>);
+  const online = renderToStaticMarkup(<AssistantPanel name="VortoOne" connected modelLabel="Qwen3.6" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}} waiting={2}><p>内容</p></AssistantPanel>);
   expect(online).toContain("已连接 · 在本机运行");
   expect(online).toContain('<small class="vc-panel-model">Qwen3.6</small>');
   expect(online).toContain('<details class="vc-panel-context"><summary>运行信息与电脑</summary>');
   expect(online).not.toContain('<details class="vc-panel-context" open');
   expect(online).toContain('aria-label="2 件等你处理"');
-  const offline = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected={false} host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="audit" onTab={() => {}} onClose={() => {}}><p>内容</p></AssistantPanel>);
+  const offline = renderToStaticMarkup(<AssistantPanel name="VortoOne" connected={false} host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="audit" onTab={() => {}} onClose={() => {}}><p>内容</p></AssistantPanel>);
   expect(offline).toContain("连接中断");
   expect(offline).not.toContain("vc-panel-model");
   expect(offline).not.toContain("等你处理");
-  const noModel = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected modelLabel="未连接模型" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}><p /></AssistantPanel>);
+  const noModel = renderToStaticMarkup(<AssistantPanel name="VortoOne" connected modelLabel="未连接模型" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}><p /></AssistantPanel>);
   expect(noModel).toContain(">还没连接模型<");
 });
 
 it("名片说明助理住在哪：常驻电脑 / 本机；连不上常驻电脑时说清楚并给「重新连接」", () => {
   const panel = (host: import("./AssistantMode").AssistantHostInfo, connected = true) => renderToStaticMarkup(
-    <AssistantPanel name="VortoCode" connected={connected} host={host} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}
+    <AssistantPanel name="VortoOne" connected={connected} host={host} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}
       computer={<button>打开电脑看</button>}><p /></AssistantPanel>);
   const resident = panel({ kind: "resident", name: "home-server" });
   expect(resident).toContain("已连接 · 住在常驻电脑「home-server」");
@@ -165,11 +165,11 @@ it("来源不完整时，零条已读记录不会伪装成没有待处理事项"
 it("审核记录只列决策，写明允许/拒绝与是否读过外部内容", async () => {
   const { AssistantAudit } = await import("./AssistantMode");
   const html = renderToStaticMarkup(<AssistantAudit entries={[
-    { id: "1", category: "decision", operation: "下发任务单「修登录」到 VortoCode", decision: "allowed" },
+    { id: "1", category: "decision", operation: "下发任务单「修登录」到 VortoOne", decision: "allowed" },
     { id: "2", category: "decision", operation: "发布制品？\n本周周报", decision: "denied", tainted: true },
     { id: "3", category: "tool", tool: "web_fetch" },
   ]} />);
-  expect(html).toContain("下发任务单「修登录」到 VortoCode");
+  expect(html).toContain("下发任务单「修登录」到 VortoOne");
   expect(html).toContain("已拒绝 · 读过外部内容后");
   expect(html).not.toContain("web_fetch");
 });
@@ -212,11 +212,11 @@ it("does not point a local-only user at schedules that will never run", () => {
 });
 
 it("identity page lists SOUL, about-you and memory without repeating the panel header", () => {
-  const html = renderToStaticMarkup(<AssistantIdentity profile={{ name: "VortoCode", soul: "", about_you: "在杭州写代码" }}
-    memories={[{ id: "m1", content: "装 VortoCode 的服务器就是助理的电脑", created_at: "2026-10-27T10:00:00" }]}
+  const html = renderToStaticMarkup(<AssistantIdentity profile={{ name: "VortoOne", soul: "", about_you: "在杭州写代码" }}
+    memories={[{ id: "m1", content: "装 VortoOne 的服务器就是助理的电脑", created_at: "2026-10-27T10:00:00" }]}
     proposals={[{ id: "p1", content: "x" } as never]} onAvatar={() => {}} onEdit={() => {}} onDeleteMemory={() => {}} />);
   expect(html).not.toContain("assistant-profile-head");
-  for (const text of ["编辑资料", "换头像", "SOUL", "还没写", "在杭州写代码", "记得 1 件事", "1 条待确认", "装 VortoCode 的服务器就是助理的电脑"]) expect(html).toContain(text);
+  for (const text of ["编辑资料", "换头像", "SOUL", "还没写", "在杭州写代码", "记得 1 件事", "1 条待确认", "装 VortoOne 的服务器就是助理的电脑"]) expect(html).toContain(text);
   // 名片卡在前，SOUL 和记忆是两张卡
   expect(html.indexOf("vc-identity-card")).toBeLessThan(html.indexOf("vc-identity-tile soul"));
   expect(html).toContain('class="vc-identity-tile memory"');

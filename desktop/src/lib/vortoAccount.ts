@@ -1,4 +1,4 @@
-// VortoCode 账号（与中转站「账号」页无关）：登录走系统浏览器 + 本机回环回调（Rust 侧 account.rs），
+// VortoOne 账号（与中转站「账号」页无关）：登录走系统浏览器 + 本机回环回调（Rust 侧 account.rs），
 // 令牌只在 Rust 和 macOS Keychain 里，webview 只拿到邮箱、设备名这类展示信息。
 import { invoke } from "@tauri-apps/api/core";
 
@@ -35,7 +35,7 @@ export function creditsLow(membership: VortoMembership | null): boolean {
     && membership!.creditsAvailable < membership!.creditsPerPeriod * 0.1;
 }
 
-/** 模型配置里「这把 Key 来自 VortoCode 会员」的标记（与 Rust 侧 MEMBER_KEY_SOURCE 一致）。 */
+/** 模型配置里「这把 Key 来自 VortoOne 会员」的标记（与 Rust 侧 MEMBER_KEY_SOURCE 一致）。 */
 export const MEMBER_KEY_SOURCE = "vortocode_member";
 export const ACCOUNT_MANAGE_URL = "https://account.vortotech.com/account";
 
@@ -91,7 +91,7 @@ export interface SidebarIdentity {
   title: string;
 }
 
-/** 左下角显示谁：VortoCode 账号本人（不是模型服务），会员时带上档位。 */
+/** 左下角显示谁：VortoOne 账号本人（不是模型服务），会员时带上档位。 */
 export function sidebarIdentity(status: VortoAccountStatus | null, membership: VortoMembership | null): SidebarIdentity {
   if (!status) return { initial: "", name: "VortoOne 账号", detail: "", title: "VortoOne 账号" };
   if (!status.signedIn) return { initial: "", name: "登录", detail: "", title: "登录 VortoOne 账号" };

@@ -43,7 +43,7 @@ export function selectSourceLine(previous: SourceSelection | null, line: number,
   };
 }
 
-/** 文件列表里不显示 VortoCode 自己的 .vortocode/ 目录；查询按路径子串、忽略大小写。 */
+/** 文件列表里不显示 VortoOne 自己的 .vortocode/ 目录；查询按路径子串、忽略大小写。 */
 export function visibleWorkspaceFiles(files: string[], query: string): string[] {
   const needle = query.trim().toLowerCase();
   const userFiles = files.filter((path) => path !== ".vortocode" && !path.startsWith(".vortocode/"));

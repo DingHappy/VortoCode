@@ -57,7 +57,7 @@ it("外部保存的展开状态只打开对应记录，渲染不会调用导航�
 });
 
 it("有目标的记录保留导航按钮，明确显示状态与准确日期", () => {
-  const html = render("all", [{ ...items[1], dispatchId: "d1", at: "2026-10-09T11:00:00", statusLabel: "待确认下发", sourceLabel: "任务单 · VortoCode" }]);
+  const html = render("all", [{ ...items[1], dispatchId: "d1", at: "2026-10-09T11:00:00", statusLabel: "待确认下发", sourceLabel: "任务单 · VortoOne" }]);
   expect(html).toContain('<button class="activity-feed-item waiting"');
   expect(html).not.toContain("展开完整记录");
   expect(html).toContain('<span class="activity-feed-status">待确认下发</span>');

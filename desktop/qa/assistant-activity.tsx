@@ -35,7 +35,7 @@ import "./assistant-activity.css";
 const now = new Date();
 const at = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
 const items: FeedItem[] = [
-  { id: "waiting", kind: "code", title: "准备下一次项目更新", summary: "安装包已准备，等你确认更新范围", status: "waiting", statusLabel: "待确认下发", sourceLabel: "任务单 · VortoCode", at: at(24 * 60 + 5), dispatchId: "qa-dispatch" },
+  { id: "waiting", kind: "code", title: "准备下一次项目更新", summary: "安装包已准备，等你确认更新范围", status: "waiting", statusLabel: "待确认下发", sourceLabel: "任务单 · VortoOne", at: at(24 * 60 + 5), dispatchId: "qa-dispatch" },
   { id: "running", kind: "task", title: "核对发布结果", summary: "正在核对构建标识与接口健康", status: "running", at: at(1), taskId: "qa-task" },
   { id: "reply", kind: "chat", title: "整理本周工作安排", summary: "已整理下一步与待决定事项", status: "done", statusLabel: "已回复", sourceLabel: "对话", at: at(20), session: "qa-main", rid:"qa-turn" },
   { id: "failed", kind: "web", title: "核对外部资料", summary: "来源暂时不可用，等待下次核对", status: "failed", at: at(90) },
@@ -116,7 +116,7 @@ function Fixture() {
           聊天和动态均为合成数据，不提交任务或调用模型。</div>
       </section>
       {computer ? <ComputerWorkspaceView view={{target:"ssh:vorto-code",url:"http://127.0.0.1:16088/",id:203}} onClose={()=>setComputer(false)} onRetry={()=>setComputer(true)} onWindow={()=>{}} />
-      : !closed && <AssistantPanel name="VortoCode" connected={connected} modelLabel="合成模型"
+      : !closed && <AssistantPanel name="VortoOne" connected={connected} modelLabel="合成模型"
         computer={<ComputerLauncherView status={{target:"ssh:vorto-code",sshConnected:false,viewerUrl:null,computer:null,checkedAt:null,error:null}}
           busy={false} onOpen={()=>setComputer(true)} onSettings={()=>{}} />}
         host={{ kind: "resident", name: "常驻电脑" }} onAddResident={() => {}} onRetryResident={() => setConnected(true)}
@@ -139,7 +139,7 @@ function Fixture() {
         </AssistantActivity>
         : tab === "audit" ? <AssistantAudit entries={qaAudit} />
         : tab === "schedule" ? <AssistantSchedule items={qaSchedule} connected={connected} />
-        : tab === "identity" ? <AssistantIdentity profile={{ name: "VortoCode", soul: "说话直接，先给结论；拿不准的事先问。", about_you: "合成资料：晚上写代码，常用 Mac 和一台常驻电脑。" }}
+        : tab === "identity" ? <AssistantIdentity profile={{ name: "VortoOne", soul: "说话直接，先给结论；拿不准的事先问。", about_you: "合成资料：晚上写代码，常用 Mac 和一台常驻电脑。" }}
           memories={[{ id: "m1", content: "合成记忆：回复用中文，先给结论", created_at: "2026-10-26T10:00:00" }]} proposals={[]}
           onAvatar={() => {}} onEdit={() => {}} onDeleteMemory={() => {}} />
         : <section className="assistant-section"><h5>个人目标</h5><p>合成记录；目标列表需要连接运行端。</p>

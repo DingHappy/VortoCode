@@ -83,7 +83,7 @@ _MANAGED_END = "# <<< vortocode managed <<<"
 def _managed_block() -> str:
     return "\n".join([
         _MANAGED_BEGIN,
-        "# VortoCode 自动生成的运行时状态——不进版本控制。",
+        "# VortoOne 自动生成的运行时状态——不进版本控制。",
         "# 用户配置（permissions.yaml / hooks.yaml / review-policy.yaml / cron.yaml / HEARTBEAT.md / BACKLOG.md /",
         "# commands/ / skills/ / AGENTS.md 等）不在此列，可自行 git add。",
         *_STATE_ENTRIES,

@@ -32,7 +32,7 @@ const installedAppPath = join("/Applications", `${tauriConfig.productName}.app`)
 const evidencePath = join(tauriRoot, "target", "release", "dev-signing-evidence.json");
 const sidecarEntitlementsPath = join(tauriRoot, "SidecarEntitlements.plist");
 const allowIdentityChange = process.env.VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE === "1";
-const defaultDevelopmentIdentity = "VortoCode Development";
+const defaultDevelopmentIdentity = "VortoOne Development";
 // 设置后在签名完成后提交 Apple 公证并装订票据（xcrun notarytool store-credentials 存的 profile 名）。
 const notaryProfile = (process.env.VORTOCODE_NOTARY_PROFILE || "").trim();
 
@@ -137,7 +137,7 @@ function selectIdentity() {
     throw new Error([
       "No valid macOS code-signing identity was found.",
       "Create a persistent Code Signing certificate in Keychain Access, then run:",
-      "  VORTOCODE_CODESIGN_IDENTITY=\"VortoCode Development\" npm run signing:doctor",
+      "  VORTOCODE_CODESIGN_IDENTITY=\"VortoOne Development\" npm run signing:doctor",
     ].join("\n"));
   }
   throw new Error([
@@ -231,7 +231,7 @@ function signatureDetails(path) {
   const appDetails = required("codesign", ["-dv", "--verbose=4", path]);
   const sidecarDetails = required("codesign", ["-dv", "--verbose=4", sidecar]);
   if (/Signature=adhoc/i.test(appDetails) || /Signature=adhoc/i.test(sidecarDetails)) {
-    throw new Error("Ad-hoc signatures are not accepted for VortoCode development installs");
+    throw new Error("Ad-hoc signatures are not accepted for VortoOne development installs");
   }
   const sidecarEntitlements = required("codesign", ["-d", "--entitlements", "-", sidecar]);
   if (!sidecarEntitlements.includes("com.apple.security.cs.disable-library-validation")) {
@@ -293,7 +293,7 @@ function notarize(path, identity) {
     throw new Error("Notarization requires a Developer ID Application identity");
   }
   const work = mkdtempSync(join(tmpdir(), "vortocode-notary-"));
-  const archive = join(work, "VortoCode.zip");
+  const archive = join(work, "VortoOne.zip");
   try {
     required("ditto", ["-c", "-k", "--keepParent", path, archive]);
     console.log(`Submitting ${path} for notarization (profile ${notaryProfile}); this usually takes a few minutes...`);
@@ -390,7 +390,7 @@ function doctor() {
   if (installed) {
     console.log(`Installed designated requirement: ${installed.designatedRequirement}`);
   } else if (existsSync(installedAppPath)) {
-    console.warn("Warning: the installed VortoCode.app is unsigned or has an invalid signature");
+    console.warn("Warning: the installed VortoOne.app is unsigned or has an invalid signature");
   }
   return identity;
 }
@@ -416,7 +416,7 @@ function buildSigned() {
   assertStableRequirement(baseline?.signature, signature, "Previous development build");
   assertStableRequirement(existingSignatureDetails(installedAppPath), signature, "Installed application");
   writeEvidence(identity, signature);
-  console.log(`Signed VortoCode app built at ${appPath}`);
+  console.log(`Signed VortoOne app built at ${appPath}`);
   console.log(`Designated requirement: ${signature.designatedRequirement}`);
   return signature;
 }

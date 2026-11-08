@@ -35,7 +35,7 @@ XcodeBuildMCP 的独立状态查询有时将刚启动的设备报告为 Shutdown
 - `NativeFlowUITests/testRealNativeLoginReadRestoreAndLogout` 本轮实际 1 通过、0 失败、0 跳过。在原登录/重开/退出链路中新增：目标来源不可用仍保留目标、详情显示历史、503 读取失败提示且目标保留、恢复正常后刷新显示各来源读取有效。
 - UI 测试后临时设备记录 3 条、已撤销 3、活动 0。测试服务及合成账号已关闭/删除。
 - 已查看并保留原始截图：`build/ios-proof-20261026-freshness/native-source-unavailable.png`、`native-read-failed.png`、`native-read-recovered.png`。故障通过独立验收脚本注入，仅影响正常认证后的临时响应；产品没有新增测试接口或测试模式。
-- 本轮结果包：`test_sim_2026-10-26T08-56-21-651Z_pid36483_141c539b.xcresult`，位于本机 XcodeBuildMCP 的 VortoCode 工作区 `result-bundles/`。
+- 本轮结果包：`test_sim_2026-10-26T08-56-21-651Z_pid36483_141c539b.xcresult`，位于本机 XcodeBuildMCP 的 VortoOne 工作区 `result-bundles/`。
 
 读取失败场景使用临时服务的 503，未模拟真实手机飞行模式、Wi-Fi/蜂窝切换或长期后台；Keychain 锁定失败仅改进代码与提示，尚无设备交互验收。本轮未重新构建设备 Release，前述设备编译证据属于上一轮；当前新增逻辑仅验收至 Swift 合同、Debug 构建与模拟器完整交互。原有 163 项 Python 回归属于上一轮，本轮未改动产品 Python 服务接口。
 
@@ -50,7 +50,7 @@ XcodeBuildMCP 的独立状态查询有时将刚启动的设备报告为 Shutdown
 - XcodeGen 重新生成工程，新增 `GoalViews.swift`；Debug 模拟器构建、父目录手机 Web 构建和脚本语法检查通过。
 - 实际临时账号服务/Gateway 登录回调与只读隔离链路通过；原生 XCTest 最终 **1 通过、0 失败、0 跳过**。
 - 模拟器交互覆盖：实际账号登录；`oauth 授权` 跨下一步/阻塞搜索；有阻塞筛选；已达成筛选的无匹配提示；清除条件恢复列表；详情直接读取固定临时 PersonalGoals 的新进展；目标从读取结果中缺席后保留已查看的新进展；杀进程重开、Keychain 恢复、部分来源失效、503 读取失败、恢复刷新和退出。
-- 最终结果包：`test_sim_2026-10-26T09-41-31-242Z_pid36483_7996513a.xcresult`，位于本机 XcodeBuildMCP 的 VortoCode 工作区 `result-bundles/`。
+- 最终结果包：`test_sim_2026-10-26T09-41-31-242Z_pid36483_7996513a.xcresult`，位于本机 XcodeBuildMCP 的 VortoOne 工作区 `result-bundles/`。
 - 反复验收后临时设备记录共 5 条、已撤销 5、活动 0；退出已作用到服务端。临时服务已关闭，合成账号与数据已删除。
 - 已查看实际截图，最终原图保存在 `build/ios-proof-20261026-browsing/`：`native-goal-search.png`、`native-goal-filter.png`、`native-detail-updated.png`、`native-detail-retained.png`。截图中的 PT 目标也是合成验收记录，没有执行站点签到。
 

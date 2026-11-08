@@ -1,5 +1,5 @@
 [Unit]
-Description=VortoCode assistant data encrypted backup
+Description=VortoOne assistant data encrypted backup
 After=network-online.target
 
 [Service]

@@ -29,8 +29,8 @@ class _LLM:
 
 
 def test_parse_digest_takes_first_json_object_and_clips():
-    assert parse_digest('好的：{"title": "调研 VortoCode 项目", "outcome": "完成静态审查并归档记录"} 以上') == {
-        "title": "调研 VortoCode 项目", "outcome": "完成静态审查并归档记录", "source": "model"}
+    assert parse_digest('好的：{"title": "调研 VortoOne 项目", "outcome": "完成静态审查并归档记录"} 以上') == {
+        "title": "调研 VortoOne 项目", "outcome": "完成静态审查并归档记录", "source": "model"}
     long = parse_digest('{"title": "' + "很" * 50 + '", "outcome": "' + "长" * 80 + '"}')
     assert len(long["title"]) == 20 and long["title"].endswith("…") and len(long["outcome"]) == 40
     for bad in ("不是 JSON", '{"title": ""}', '{"title": 3, "outcome": "x"}', "{broken"):

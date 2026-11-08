@@ -7,7 +7,7 @@ const instance = "a".repeat(32), token = "vcm_" + "x".repeat(43);
 const observation = <T>(data: T) => ({ status: "current", checked_at: "2026-10-25T15:00:00+00:00", data });
 const unavailable = () => ({ status: "unavailable", checked_at: null, data: null });
 const wire = () => ({ schema_version: 1, instance_id: instance, sources: {
-  profile: observation({ name: "VortoCode" }), main_chat: observation({ sid: "main" }),
+  profile: observation({ name: "VortoOne" }), main_chat: observation({ sid: "main" }),
   goals: observation({ items: [{ id: "personal-1", objective: "核对", status: "active", next_action: "查看依据", blocker: "", revision: 1 }], truncated: false }),
 } });
 const boot = () => ({ schema_version: 1, instance_id: instance,

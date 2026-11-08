@@ -25,9 +25,9 @@ describe("assistantHost", () => {
     expect(mainChatKey("host")).toBe(`${STORAGE_KEYS.mainChatSid}:host`);
   });
 
-  it("只有「本地网络」拦截才换成「重新打开 VortoCode」，别的原因照常重新连接", () => {
-    expect(isLocalNetworkBlocked("这台 Mac 拒绝直连过去（No route to host）。如果终端或别的程序能连上，多半是 macOS「本地网络」没放行 VortoCode")).toBe(true);
-    expect(isLocalNetworkBlocked("常驻电脑拒绝连接：VortoCode 服务可能没在运行")).toBe(false);
+  it("只有「本地网络」拦截才换成「重新打开 VortoOne」，别的原因照常重新连接", () => {
+    expect(isLocalNetworkBlocked("这台 Mac 拒绝直连过去（No route to host）。如果终端或别的程序能连上，多半是 macOS「本地网络」没放行 VortoOne")).toBe(true);
+    expect(isLocalNetworkBlocked("常驻电脑拒绝连接：VortoOne 服务可能没在运行")).toBe(false);
     expect(isLocalNetworkBlocked(null)).toBe(false);
   });
 });

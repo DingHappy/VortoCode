@@ -1,6 +1,6 @@
 """Artifacts（制品）—— 把会话产出的自包含 HTML 发布成可分享、可实时更新的网页。
 
-复刻 Claude Code 的 artifact 能力，落到 VortoCode 的本地优先 / 人在关口模型：
+复刻 Claude Code 的 artifact 能力，落到 VortoOne 的本地优先 / 人在关口模型：
 - 制品存到 `.vortocode/artifacts/<id>/`（gitignored，纯运行时产物，不进版本库）；
 - 由 Web 服务器在 `/artifact/<id>` 渲染（iframe 沙箱 + 限制性 CSP，禁止外联——
   对齐 CC「静态、无外部请求」的隔离：制品脚本可跑但不能联网/SSRF）；

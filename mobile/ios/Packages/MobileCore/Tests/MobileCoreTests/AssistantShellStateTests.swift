@@ -29,7 +29,7 @@ final class AssistantShellStateTests: XCTestCase {
     func testWaitingItemsKeepChatCardsFirst() throws {
         let card = try decode(ChatCard.self, ["id": "c1", "text": "改一下周报\n第二行", "risk": "normal", "status": "pending",
                                               "digest": "d", "operation_kind": "own_data", "tainted": true])
-        let decision = try decode(PendingDecision.self, ["id": "d1", "kind": "interrupt", "thread": "VortoCode", "text": "",
+        let decision = try decode(PendingDecision.self, ["id": "d1", "kind": "interrupt", "thread": "VortoOne", "text": "",
                                                          "tainted": false, "action_digest": "x"])
         let proposal = try decode(DispatchProposal.self, ["id": "p1", "title": "修登录", "goal": "g", "status": "proposed",
                                                           "tainted": false, "criteria": [], "digest": "y"])
@@ -69,7 +69,7 @@ final class TeamModelsTests: XCTestCase {
             ["id": "t1", "objective": "比较三家云", "status": "review", "mode": "auto", "waiting_reason": "", "project": NSNull(),
              "tainted": false, "updated_at": "2026-11-07T10:00:00", "members": [["name": "研究员", "role": "web-researcher"]]],
             ["id": "t2", "objective": "写周报", "status": "waiting", "mode": "auto", "waiting_reason": "预算多少？\n第二行",
-             "project": "VortoCode", "tainted": false, "updated_at": NSNull()],
+             "project": "VortoOne", "tainted": false, "updated_at": NSNull()],
             ["id": "t3", "objective": "查机票", "status": "waiting", "mode": "auto", "waiting_reason": "请打开这个链接",
              "project": NSNull(), "tainted": true, "updated_at": NSNull()],
             ["id": "t4", "objective": "整理资料", "status": "active", "mode": "auto", "waiting_reason": "", "project": NSNull(),

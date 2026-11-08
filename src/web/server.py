@@ -27,7 +27,7 @@ async def _lifespan(_app):
 
 
 app = FastAPI(
-    title="VortoCode",
+    title="VortoOne",
     description="多 Agent 协作开发平台",
     version="0.1.0",
     lifespan=_lifespan,
@@ -165,7 +165,7 @@ def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = ""):
         del adapter                            # 只验配置；真正的 adapter 由 lifespan 构造并管生命周期
         os.environ["VORTOCODE_IM"] = im        # lifespan 从 env 读（uvicorn.run 不传自定义参数）
     print(f"\n{'='*50}")
-    print(f"  VortoCode 服务器启动")
+    print(f"  VortoOne 服务器启动")
     print(f"  访问: http://{host}:{port}")
     if host not in _LOCAL_HOSTS:
         print("  ⚠️  绑定到非本地地址；已设置鉴权/显式放行。请确认 token 足够强。")

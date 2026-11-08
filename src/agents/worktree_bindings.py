@@ -1,7 +1,7 @@
-"""Durable, privacy-bounded ownership metadata for live VortoCode worktrees.
+"""Durable, privacy-bounded ownership metadata for live VortoOne worktrees.
 
 Git already owns the worktree lifecycle.  This small generated-state ledger only
-records which durable task/plan/session caused a VortoCode worktree to exist, so
+records which durable task/plan/session caused a VortoOne worktree to exist, so
 Desktop can reconnect that live worktree to its handoff after a refresh or a
 process restart.  Prompts and source code are deliberately never copied here.
 """
@@ -151,6 +151,6 @@ def forget_worktree_binding(repo_root: str, worktree_id: str) -> None:
 
 
 def list_worktree_bindings(repo_root: str) -> dict[str, dict[str, str]]:
-    """Read a bounded snapshot keyed by VortoCode worktree ID."""
+    """Read a bounded snapshot keyed by VortoOne worktree ID."""
     with _LOCK:
         return {key: dict(value) for key, value in _read_unlocked(repo_root).items()}

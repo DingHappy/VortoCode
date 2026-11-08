@@ -19,7 +19,7 @@ final result: passed
 - [工作动态](design/feed.png)
 - [Android 键盘](design/android-keyboard.png)
 
-同一输入中的并排比较证据，均已实际打开检查：根目录 `.vortocode/artifacts/mobile-muse-review-20261025/prototype-qa/` 中的 `vortocode-mobile-compare-chat.png`、`vortocode-mobile-compare-assistant.png`、`vortocode-mobile-compare-feed.png`。比较页将源图等比放进 393 × 852 的框，使用 contain 保留完整内容；源图比例略有差异，产生的窄留边不判作实现问题。比较的是同一页面类型与深色状态，内容按确认后的 VortoCode 方案替换，并非逐像素复刻。
+同一输入中的并排比较证据，均已实际打开检查：根目录 `.vortocode/artifacts/mobile-muse-review-20261025/prototype-qa/` 中的 `vortocode-mobile-compare-chat.png`、`vortocode-mobile-compare-assistant.png`、`vortocode-mobile-compare-feed.png`。比较页将源图等比放进 393 × 852 的框，使用 contain 保留完整内容；源图比例略有差异，产生的窄留边不判作实现问题。比较的是同一页面类型与深色状态，内容按确认后的 VortoOne 方案替换，并非逐像素复刻。
 
 局部比较证据：同目录 `vortocode-mobile-compare-navigation.png`、`vortocode-mobile-compare-identity.png`，分别检查底部输入/导航和头像/连接/二级导航。这些并排图含用户参考内容，仅保存在忽略的本地目录，不随原型发布。
 
@@ -30,7 +30,7 @@ final result: passed
 | 字体与排版 | 使用系统字体及 PingFang SC / Noto Sans SC 回退。截图无法证明 Muse 的精确字体，故不宣称字体匹配。正文 16px、1.8 行高，标题层级清楚；主导航及详情标签 12px。演示徽标允许更小，非关键操作。主聊天与记录在最终并排图中可读，无正文截断。 |
 | 间距与布局 | 紧凑主头像给正文留空间，详情放大头像。圆角输入与四项导航形成稳定底部区域；滚动区为系统安全区、输入和导航留空间。键盘展示时隐藏主导航，保留输入与阅读区。内容延续到屏幕下方时可独立滚动；与 Muse 不同的密度属于已确认的结构适配。 |
 | 颜色与状态 | 近黑 #09090b、深灰 #1d1d20、正文 #f2f2f3、辅助 #a3a3ad；蓝色用于操作，琥珀用于待决定，绿色仅表达助手服务连接。状态同时提供文字。修正了模板通用段落颜色在深色正文上的继承问题。浅色切换已点验，但未做完整色彩合规审计。 |
-| 图像与资产 | 使用项目已有 VortoCode 品牌 PNG 与模板 Radix 图标。替换 Muse 角色是已确认的品牌决定；未用代码绘图仿造角色。品牌图在约 40px / 78px 显示下清楚，无拉伸。设备外框、系统栏、键盘和 home indicator 保持模板所有；没有把参考截图当作 UI 覆盖层。 |
+| 图像与资产 | 使用项目已有 VortoOne 品牌 PNG 与模板 Radix 图标。替换 Muse 角色是已确认的品牌决定；未用代码绘图仿造角色。品牌图在约 40px / 78px 显示下清楚，无拉伸。设备外框、系统栏、键盘和 home indicator 保持模板所有；没有把参考截图当作 UI 覆盖层。 |
 | 文案与内容 | 对话、动态、目标、成果和详情标签清楚。工作动态使用任务进展示例，未复制用户的业务/新闻内容。执行结束、决定已记录、用户验收分别描述；所有连接与操作均标演示。未将资讯动态解释为真实任务记录。 |
 
 ## 比较与修正记录

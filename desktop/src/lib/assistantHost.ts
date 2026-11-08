@@ -27,7 +27,7 @@ export function mainChatKey(hostId?: string | null): string {
   return hostId ? `${STORAGE_KEYS.mainChatSid}:${hostId}` : STORAGE_KEYS.mainChatSid;
 }
 
-/** 原因是 macOS「本地网络」拦截（Rust 侧 network_failure_reason 的那段话）：提示条据此给「重新打开 VortoCode」。 */
+/** 原因是 macOS「本地网络」拦截（Rust 侧 network_failure_reason 的那段话）：提示条据此给「重新打开 VortoOne」。 */
 export function isLocalNetworkBlocked(reason: string | null | undefined): boolean {
   return Boolean(reason?.includes("本地网络"));
 }

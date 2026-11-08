@@ -1,4 +1,4 @@
-// 设置 → 账号：用 VortoCode 中转站账号登录，取用账号的 Token Plan（即 Desktop 套餐）。
+// 设置 → 账号：用 VortoOne 中转站账号登录，取用账号的 Token Plan（即 Desktop 套餐）。
 // 密码只在这次调用里交给原生层，用完即清空；原生层也不落盘、登录会话用完就登出。
 // 没有套餐时由用户决定：去购买，或者先用一把按量 Key。也可以不登录，直接在「模型」里填 Key 或加第三方模型。
 import { invoke } from "@tauri-apps/api/core";

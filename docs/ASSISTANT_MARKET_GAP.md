@@ -1,10 +1,10 @@
 # 私人助手市场能力对照（2026-10-13）
 
-判断：VortoCode 已有可试用的工程基础，但尚未证明达到成熟通用私人助手的端到端能力。无法用一个百分比或“落后几个月”描述差距：没有相同环境、模型、任务和权限下的竞品实测。官方能力说明也不等于所有场景稳定成功。
+判断：VortoOne 已有可试用的工程基础，但尚未证明达到成熟通用私人助手的端到端能力。无法用一个百分比或“落后几个月”描述差距：没有相同环境、模型、任务和权限下的竞品实测。官方能力说明也不等于所有场景稳定成功。
 
 执行型产品参考 [Manus 官方加入 Meta 的公告](https://manus.im/en/blog/manus-joins-meta-for-next-era-of-innovation)。
 
-| 维度 | 官方公开能力 | VortoCode 当前证据与差距 |
+| 维度 | 官方公开能力 | VortoOne 当前证据与差距 |
 |---|---|---|
 | 长期记忆 | [Claude 支持历史对话搜索和持续更新的主题记忆](https://support.claude.com/en/articles/11817273-use-claude-s-chat-search-and-memory-to-build-on-previous-context) | 已有长期事实写入门、历史检索和中文匹配，本轮补日期/原文定位；冲突和更新尚依赖模型核对，中文语义检索及原生整链未验收。明显差距。 |
 | 跨应用执行 | [Manus 提供应用目录、自定义 MCP 和 API 连接](https://www.manus.im/features/connectors)；[Claude 提供连接器、浏览器及屏幕交互路径](https://support.claude.com/en/articles/14128542-let-claude-use-your-computer-in-cowork) | 已有工具/MCP框架与项目任务路径，但不能由框架存在推导常用邮箱、日历、文档等完整授权及执行均已验收。应用覆盖与任务场景是主要差距。 |

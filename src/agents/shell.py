@@ -1,6 +1,6 @@
 """通用命令执行——让主 agent 能跑任意 shell 命令（测试/lint/git/构建/安装…）。
 
-VortoCode 此前只有专用工具（read/edit/dev_*），缺一个通用 shell，这是对齐 Claude Code /
+VortoOne 此前只有专用工具（read/edit/dev_*），缺一个通用 shell，这是对齐 Claude Code /
 opencode 的核心缺口。**高危/外向**：调用方务必门控（build + 人工确认）。本模块只负责
 执行 + 基本危险拦截（defense-in-depth，非完整沙箱；真正的关口是"人看着命令点确认"）。
 

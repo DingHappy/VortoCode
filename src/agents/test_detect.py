@@ -2,7 +2,7 @@
 
 差异化的隔离实现+验证流水线（run_isolated_task / dev_isolated / dev_parallel / dev_auto）此前
 一律 `pytest -q`，于是只对 Python 仓库成立——JS/Go/Rust 项目跑不出绿、护城河失效。这里据
-标志文件判型，返回对应测试命令；探测不到则退回 pytest（VortoCode 自身就是 Python，保持原行为）。
+标志文件判型，返回对应测试命令；探测不到则退回 pytest（VortoOne 自身就是 Python，保持原行为）。
 
 selector：仅对 pytest 有意义（文件级 narrow）；其它语言多不支持文件级选择，给了也整体跑。
 """
@@ -72,4 +72,4 @@ def detect_test_cmd(repo_root, selector: Optional[str] = None) -> List[str]:
         except Exception:  # noqa: BLE001
             pass
 
-    return _pytest_cmd(root, selector)                      # 兜底：pytest（VortoCode 自身就是 Python）
+    return _pytest_cmd(root, selector)                      # 兜底：pytest（VortoOne 自身就是 Python）

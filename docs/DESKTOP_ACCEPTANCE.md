@@ -252,7 +252,7 @@ Cookie 条目均为 0，没有读取账号、密码、Cookie 值或其它站点�
   变为人工、查看器数为 1。连接前已冻结的旧动作被拒绝；连接期间重新释放控制也被拒绝。
 - 通过 noVNC 正常断开，状态仍为人工、查看器数为 0。重新授予测试会话控制并截屏后，
   仅重启新增桌面服务；新代次默认人工，重启前的许可被真实远端拒绝，没有执行旧按键。
-- 升级后在真实画面打开原离线验收页，仍显示 `VortoCode 24h desktop ready`。这是合成
+- 升级后在真实画面打开原离线验收页，仍显示 `VortoOne 24h desktop ready`。这是合成
   localStorage 数据保留；没有验证真实网站登录、PT 签到、虚拟机整机重启或持续 24 小时运行。
 - 最后桌面 PID `452430`、`NRestarts=0`、约 263 MiB，保持人工控制、无查看器。原三个服务
   PID 仍为 `437790`、`438209`、`438293`，均 active、NRestarts=0。新增监听仍仅为
@@ -268,7 +268,7 @@ cron 或无人值守桌面能力。同用户 shell/直接 X11 仍可绕过协作
 
 ## 2026-10-24 专用常驻虚拟机：远程桌面第一阶段
 
-用户明确整台 `.97` 虚拟机专用于 VortoCode 后，新增独立的
+用户明确整台 `.97` 虚拟机专用于 VortoOne 后，新增独立的
 `vortocode-computer.service`，不更新旧框架 checkout、不重启原助理或项目服务。
 部署脚本、维护及访问说明见 [专用常驻桌面](DESKTOP_CONTROL.md#专用常驻虚拟机的部署底座2026-10-24)。
 
@@ -280,7 +280,7 @@ cron 或无人值守桌面能力。同用户 shell/直接 X11 仍可绕过协作
   通过 SSH 隧道从本机浏览器连接，无新增 LAN/公网控制端口。VNC 不另设密码，同机进程
   仍能连接回环地址；这不是独立凭据服务或 Muse 同等隔离的证明。
 - 使用真实远程画面鼠标/键盘打开不联网的合成页面，输入并保存
-  `VortoCode 24h desktop ready`。重启新桌面服务，重新连接后打开相同页面，仍显示同一
+  `VortoOne 24h desktop ready`。重启新桌面服务，重新连接后打开相同页面，仍显示同一
   已保存记录；证据为真实浏览器 localStorage 持久性，不是网站登录、Cookie 或 PT 签到验收。
 - 重启预检曾误将 TIME_WAIT 识别为端口被占用，已修正并用真实回环连接补回归；
   VNC 库曾额外创建 IPv6 默认端口，最终显式对齐端口并检查实际监听。
@@ -1682,7 +1682,7 @@ LM Studio模型推理或质量验收。未再次启动/探测真实服务，延�
 - 只读发现omlx-server PID30789监听127.0.0.1:11500、PID88424监听127.0.0.1:8100。
   无认证GET /v1/models：11500返回401，8100返回200、owned_by=omlx，模型ID为
   Qwen3.6-35B-A3B-4bit。端口非软件默认值，之前仅11434/11435/1234检查不能覆盖它们。
-- 原VortoCode客户端使用进程局部OMLX供应商配置读取8100模型清单成功；无真实.env/
+- 原VortoOne客户端使用进程局部OMLX供应商配置读取8100模型清单成功；无真实.env/
   profile/角色目录写入，未读/打印服务Key。11500未继续鉴权探测，不借云端Key或绕过401。
 - 同第40节独立源码副本 `/tmp/vorto-local-sdk-validation-jad7jfd2` 的原providers/client
   再次读取8100清单成功，导入路径为副本src/llm/providers.py。三个运行模块SHA与最终
@@ -1815,7 +1815,7 @@ LM Studio模型推理或质量验收。未再次启动/探测真实服务，延�
 
 - 已按用户授权替换/Applications/VortoCode.app；先备份并校验旧包到
   /private/tmp/vorto-desktop-backup-ITeK6o/VortoCode.app。保留旧包，未停止其它应用/
-  项目/模型服务，也未操作窗口、输入法或原生系统权限。安装前未发现VortoCode GUI进程。
+  项目/模型服务，也未操作窗口、输入法或原生系统权限。安装前未发现VortoOne GUI进程。
 - /tmp/vorto-desktop-install-evidence.json：新GUI二进制SHA
   92dc1e151579005301d3cf8c49334c7bf6ecf412d396e144f5ab16adca0a3e41，runtime树SHA
   00ad2944c15a91faae2eb347c1ce2204c233497a3dd4b7ca5283829d509ed102。
@@ -2181,7 +2181,7 @@ app SHA256 cd18ead8bd9352fc6701e3b11eec4900dd7e8c96e953499a58223c5748a2da37，
 runtime树SHA256 4f30e45b56344d5e2b9e122909703d35a42753dc94ae214ec717e62408ade45d。
 源/目标/备份与原签名要求通过，/tmp/vorto-search-dock-installed-signature.log复核通过，
 /tmp/vorto-search-dock-installed-smoke.log记录已安装sidecar健康552ms通过。
-沿已授权入口整理，仅刷新VortoCode主注册，不删除包/备份，不处理Vorto Write文件。
+沿已授权入口整理，仅刷新VortoOne主注册，不删除包/备份，不处理Vorto Write文件。
 没有自动启动、退出或重启GUI，新关闭行为需用户明确退出再打开后加载。
 
 **未验收/发布**：原生Dock最小化/恢复、关闭失败、Quit清理及启动加载期间交互仍未验收，
@@ -2226,7 +2226,7 @@ oMLX一次2搜索/1读取记录保留原范围，不当作搜索相关性修复�
 app SHA256 c277350d1ad7fe8d8ea43ce888c9772848addc25bb6729f2418194db9f2590ce，
 runtime树SHA256 0c5ed420d908dde1ae15f6beeb927f8c9d739b6cd55bf3c95b68758dfa9435b0。
 已安装sidecar健康553ms通过，/tmp/vorto-daily-final-installed-signature.log签名复核通过。
-沿已有入口整理授权只重登VortoCode主入口，/tmp/vorto-daily-final-entry-evidence.json
+沿已有入口整理授权只重登VortoOne主入口，/tmp/vorto-daily-final-entry-evidence.json
 核验系统仅登记/Applications/VortoCode.app；未删除构建包、回退备份或其它项目文件。
 未启动/关闭/重启原生GUI，用户需要⌘Q退出旧实例再开，新关闭按钮是最小化。
 

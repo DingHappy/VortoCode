@@ -34,7 +34,7 @@ profiles:
 
 定位和轨迹接口依据 Playwright 官方的 [Locators](https://playwright.dev/python/docs/locators) 与 [Trace viewer](https://playwright.dev/python/docs/trace-viewer) 文档。
 
-## VortoCode 自身的验收流程
+## VortoOne 自身的验收流程
 
 `tests/live/test_pipeline_browser_workflow.py` 使用真实审批 HTML、生产路由及持久状态，在临时仓库构造确定性产出，覆盖：
 

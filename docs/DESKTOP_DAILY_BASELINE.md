@@ -25,7 +25,7 @@
 ## 用户入口
 
 打开`/Applications/VortoCode.app`。仓库构建包、QA包与临时备份用于开发或回退。
-Vorto Write是独立写作工具，VortoCode更新不替换它。
+Vorto Write是独立写作工具，VortoOne更新不替换它。
 
 安装新包后用 **⌘Q** 退出旧实例再打开；红色关闭按钮隐藏窗口，不能靠它加载新代码。
 模型设置核对地址、模型及连接，Key继续使用既有配置，本页不复制凭据。

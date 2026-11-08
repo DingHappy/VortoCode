@@ -1,4 +1,4 @@
-// VortoCode 账号登录：OAuth 2.0 授权码 + PKCE，按 RFC 8252 走系统浏览器 + 本机回环回调。
+// VortoOne 账号登录：OAuth 2.0 授权码 + PKCE，按 RFC 8252 走系统浏览器 + 本机回环回调。
 // - 密码只在账号网站上输入，Desktop 不经手；
 // - 刷新令牌存 macOS Keychain，访问令牌（15 分钟）只在内存里，二者都不进 webview；
 // - 刷新令牌每次轮换、旧的重放会被服务端判为泄露并吊销整条登录链，所以刷新必须串行（AccountState 的锁）。
@@ -14,7 +14,7 @@ use crate::{keychain_service, platform_keychain};
 use crate::{DesktopAccount, DesktopLlmProfileStatus, DesktopLlmProfileStore};
 
 pub const DEFAULT_ACCOUNT_URL: &str = "https://account.vortotech.com";
-/// 模型配置里标记「这把 Key 是 VortoCode 会员给的」：退出账号时一并清掉。
+/// 模型配置里标记「这把 Key 是 VortoOne 会员给的」：退出账号时一并清掉。
 pub const MEMBER_KEY_SOURCE: &str = "vortocode_member";
 const CLIENT_ID: &str = "vortocode-desktop";
 const KEYCHAIN_SERVICE: &str = "com.vortocode.desktop.account";
@@ -287,7 +287,7 @@ fn http_client(version: &str) -> Result<reqwest::Client, String> {
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
-        .user_agent(format!("VortoCode-Desktop/{version}"))
+        .user_agent(format!("VortoOne-Desktop/{version}"))
         .build()
         .map_err(|error| error.to_string())
 }

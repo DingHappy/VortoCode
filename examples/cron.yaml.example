@@ -1,4 +1,4 @@
-# VortoCode cron 作业表示例——放到目标仓库的 `.vortocode/cron.yaml` 才生效。
+# VortoOne cron 作业表示例——放到目标仓库的 `.vortocode/cron.yaml` 才生效。
 #
 # 调度循环默认**关**：仅当以 opt-in 方式起服务才跑（不擅自跑自主 LLM 作业）——
 #   VORTOCODE_CRON=1 vortocode server      # 起 cron

@@ -96,7 +96,7 @@ def _install_network_boundary(context, blocked: list[dict]) -> None:
         reason = loopback_url_error(url, websocket=True)
         if reason:
             blocked.append({"kind": "websocket", "url": url, "reason": reason})
-            ws.close(code=1008, reason="VortoCode browser verify: non-loopback blocked")
+            ws.close(code=1008, reason="VortoOne browser verify: non-loopback blocked")
         else:
             ws.connect_to_server()
 

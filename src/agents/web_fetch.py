@@ -222,7 +222,7 @@ def fetch_bytes(url: str, *, max_bytes: int = _MAX_BYTES, timeout: int = 20,
             raise FetchError("只支持 https 链接")
         if not _host_is_safe(p.hostname or ""):
             raise FetchError("链接指向的不是公网地址")
-        req = urllib.request.Request(cur, data=data, headers={"User-Agent": "VortoCode/1.0", **(headers or {})},
+        req = urllib.request.Request(cur, data=data, headers={"User-Agent": "VortoOne/1.0", **(headers or {})},
                                      method=method)
         try:
             resp = _urlopen(req, timeout)

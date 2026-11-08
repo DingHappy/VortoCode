@@ -1,4 +1,4 @@
-# VortoCode 常驻助理 —— 给 Desktop「助理」模式住的那台一直开着的电脑（systemd 用户单元）。
+# VortoOne 常驻助理 —— 给 Desktop「助理」模式住的那台一直开着的电脑（systemd 用户单元）。
 #
 # Desktop 的助理模式默认连这里：你交代完就可以合上笔记本，它在服务器上接着做，
 # 回来在「动态」里看结果。连不上时 Desktop 退回本机通用工作区兜底。
@@ -19,7 +19,7 @@
 # 设了则所有 /api/* 与 /ws 强制鉴权）。
 
 [Unit]
-Description=VortoCode assistant (resident personal assistant for Desktop, General scope)
+Description=VortoOne assistant (resident personal assistant for Desktop, General scope)
 After=network-online.target
 Wants=network-online.target
 

@@ -136,7 +136,7 @@ async def pair_telegram(token: str, *, state_dir: Path | None = None,
                     _save_owner(token, sender_id, state_dir)
                     try:
                         await adapter._api("sendMessage", chat_id=sender_id,
-                                           text="✅ 已绑定为主人。请启动 VortoCode Telegram 桥。")
+                                           text="✅ 已绑定为主人。请启动 VortoOne Telegram 桥。")
                     except Exception:  # noqa: BLE001 - persisted pairing remains authoritative
                         pass
                     # Confirm this update before the normal bridge starts, so the

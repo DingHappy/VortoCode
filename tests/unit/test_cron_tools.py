@@ -1,7 +1,7 @@
 """定时作业的观察 + 排班面（agent 侧）。
 
 真机 2026-07-27：用户问"能不能设置定时任务"，agent 答"我目前没有设置定时任务的能力"，
-接着推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoCode 自己的 cron 子系统
+接着推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoOne 自己的 cron 子系统
 当时就跑在那台机器上（`VORTOCODE_CRON=1`，relay_duty 每天 02:00）。就工具而言它没说谎
 （确实一个 cron 工具都没有），但把主人推去用外部服务是实打实的错。
 
@@ -19,7 +19,7 @@ from src.scheduling.cron import (CronEditError, add_job, check_trigger, load_job
 
 # 一份"像真的"的作业表：带主人手写注释 + 一个已有作业。编辑面不许把这些弄丢。
 SEED = """\
-# VortoCode cron 作业表——主人手写的经验都在注释里，别给我抹了。
+# VortoOne cron 作业表——主人手写的经验都在注释里，别给我抹了。
 jobs:
   # 中转站巡检：确定性作业，零 LLM。绝对路径解释器是踩过坑才写死的（PATH 极简）。
   - name: relay_duty

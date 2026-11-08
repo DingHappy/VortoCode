@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 export function dmgAssetName(version) {
   if (!/^\d+\.\d+\.\d+$/.test(String(version))) throw new Error(`版本号不对：${version}`);
-  return `VortoCode_${version}_aarch64.dmg`;
+  return `VortoOne_${version}_aarch64.dmg`;
 }
 
 /** `hdiutil info` 里挂着这个映像的根设备（如 /dev/disk14）；没挂着返回 null。卸根设备会连带卸掉它派生的卷。 */
@@ -71,7 +71,7 @@ function main() {
   const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
   const version = JSON.parse(readFileSync(join(desktop, "src-tauri", "tauri.conf.json"), "utf8")).version;
   const bundle = join(desktop, "src-tauri", "target", "release", "bundle");
-  const app = join(bundle, "macos", "VortoCode.app");
+  const app = join(bundle, "macos", "VortoOne.app");
   const profile = process.env.VORTOCODE_NOTARY_PROFILE || "vortocode-notary";
   if (!existsSync(app)) throw new Error(`没有找到构建好的 App：${app}（先 npm run bundle:dev-signed）`);
   const built = run("plutil", ["-extract", "CFBundleShortVersionString", "raw", join(app, "Contents", "Info.plist")]).trim();
@@ -86,9 +86,9 @@ function main() {
   rmSync(dmg, { force: true });
   const stage = mkdtempSync(join(tmpdir(), "vortocode-dmg-"));
   try {
-    run("ditto", [app, join(stage, "VortoCode.app")]);
+    run("ditto", [app, join(stage, "VortoOne.app")]);
     symlinkSync("/Applications", join(stage, "Applications"));
-    run("hdiutil", ["create", "-volname", "VortoCode", "-srcfolder", stage, "-format", "UDZO", "-ov", dmg]);
+    run("hdiutil", ["create", "-volname", "VortoOne", "-srcfolder", stage, "-format", "UDZO", "-ov", dmg]);
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }

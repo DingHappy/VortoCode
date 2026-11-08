@@ -1,6 +1,6 @@
 # 环境变量参考
 
-VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注释在仓库根目录的 `.env.example`；这里是完整清单，按用途分组。
+VortoOne 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注释在仓库根目录的 `.env.example`；这里是完整清单，按用途分组。
 
 - **默认**：不设时的行为。「—」表示不设就不启用。
 - **读取位置**：相对 `src/` 的模块。改行为前先看那里的注释。
@@ -89,7 +89,7 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_EXTERNAL_WORKER_COOLDOWN_MIN` | `30` | 外部执行者报未登录、限流或额度不足后的冷却时间（分钟）。 | `agents/external_workers.py` |
 | `VORTOCODE_CODEX_BIN` / `VORTOCODE_CLAUDE_BIN` | 走 `PATH` | 外部 CLI 的路径。 | `agents/external_workers.py` |
 | `VORTOCODE_WORKER_HOME` | — | 常驻模式下外部 CLI 登录用的专用 HOME 目录；任务小组的外部框架成员（OpenCode、DeepSeek Harness）的 HOME 在 `<它>/<框架>`，可执行文件优先找 `<它>/bin`，临时工作目录在 `<它>/runs`。 | `agents/external_workers.py`、`agents/team_engines.py`、`cli.py` |
-| `VORTOCODE_RELAY_BASE` / `VORTOCODE_RELAY_KEY` | — | 不由主人设置：VortoCode 起 OpenCode 成员时写进子进程环境，取自默认模型配置的端点与令牌；注入给 OpenCode 的配置只以 `{env:…}` 引用它们。 | `agents/team_engines.py` |
+| `VORTOCODE_RELAY_BASE` / `VORTOCODE_RELAY_KEY` | — | 不由主人设置：VortoOne 起 OpenCode 成员时写进子进程环境，取自默认模型配置的端点与令牌；注入给 OpenCode 的配置只以 `{env:…}` 引用它们。 | `agents/team_engines.py` |
 
 ## 浏览器、桌面控制
 

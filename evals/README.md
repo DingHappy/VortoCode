@@ -1,4 +1,4 @@
-# VortoCode 评测 harness（B1）
+# VortoOne 评测 harness（B1）
 
 把手工 dogfood（#113/#114/#116/#117 等）固化成**可重复的真机评测**：对每个源自真实历练史的
 场景，在一次性 scratch git 仓库里直接驱动隔离 dev 流水线，再用**确定性评分器**从 git 事实（而非

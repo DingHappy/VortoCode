@@ -4,7 +4,7 @@
 
 - ``today_brief``：现在有什么要我处理的。与早晚报、Desktop 决策中心同源（attention_items），不调模型。
 - ``dispatch_status``：某张任务单做得怎么样了。只读。
-- ``propose_task``：让 VortoCode 去做一件事。**只记一张提议**，下发仍要主人在手机或 Desktop 确认。
+- ``propose_task``：让 VortoOne 去做一件事。**只记一张提议**，下发仍要主人在手机或 Desktop 确认。
 
 边界（都不是随手定的）：
 - **专用令牌** ``VORTOCODE_VOICE_MCP_TOKEN``，不收主 API 令牌，主 API 令牌也进不来——音箱那台机器

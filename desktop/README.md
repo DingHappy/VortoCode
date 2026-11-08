@@ -1,6 +1,6 @@
-# VortoCode Desktop
+# VortoOne Desktop
 
-VortoCode Desktop 是当前默认产品与首要分发入口，也是现有 Gateway 的本机 Agent 工作台；它不包含第二套 Agent runtime。它通过冻结的三端协议连接 `vc server`，复用 CLI/TUI/Web 已有的会话、权限门、任务与通知能力。CLI 保留为高级与自动化入口，Web 留作后续团队/托管入口。
+VortoOne Desktop 是当前默认产品与首要分发入口，也是现有 Gateway 的本机 Agent 工作台；它不包含第二套 Agent runtime。它通过冻结的三端协议连接 `vc server`，复用 CLI/TUI/Web 已有的会话、权限门、任务与通知能力。CLI 保留为高级与自动化入口，Web 留作后续团队/托管入口。
 
 ## 当前能力
 
@@ -71,7 +71,7 @@ npm run release:verify -- --mode preview
 ### macOS 稳定开发签名
 
 **优先用 Apple 签发、带 Team ID 的证书**（`Developer ID Application: …`）。模型服务配置已改存本机
-`llm-profile.json`，不再经过钥匙串；登录钥匙串保存 VortoCode 账号的登录令牌
+`llm-profile.json`，不再经过钥匙串；登录钥匙串保存 VortoOne 账号的登录令牌
 （`com.vortocode.desktop.account`）和远程工作区 token（`com.vortocode.desktop.remote`）。调试构建
 （`tauri dev`、`cargo test`）用的是加了 `.dev` 后缀的另一组条目：dev 版读不到正式版的凭据，账号显示未登录、
 远端缺令牌，要测就在 dev 版里重新登录或登记；它也就不会为正式凭据弹钥匙串密码。macOS 除了受信任应用列表，
@@ -80,9 +80,9 @@ npm run release:verify -- --mode preview
 **每装一个新构建就会再弹一次授权**（2026-10-06 实测，模型配置条目里积累了十几个 cdhash——这也是模型配置
 改存文件的原因）。`tauri dev` 的 ad-hoc 二进制同理，每次重编都会再问一次。
 
-不要用普通 `bundle:app` 生成的 unsigned 包反复覆盖 `/Applications/VortoCode.app`：macOS
+不要用普通 `bundle:app` 生成的 unsigned 包反复覆盖 `/Applications/VortoOne.app`：macOS
 Keychain 会把二进制内容变化视为新的调用方，已经选择的“始终允许”无法稳定复用。使用一次性 setup
-在临时目录生成长期有效的 `VortoCode Development` 代码签名证书并导入登录钥匙串；导入完成后临时
+在临时目录生成长期有效的 `VortoOne Development` 代码签名证书并导入登录钥匙串；导入完成后临时
 密钥文件会立即删除，私钥只保留在 Keychain，并只授权系统 `codesign` 使用：
 
 ```bash
@@ -94,10 +94,10 @@ npm run install:dev-signed
 npm run verify:installed
 ```
 
-`signing:setup` 默认使用 `VortoCode Development`；若需要自定义名称，可在 setup 和后续命令中统一
+`signing:setup` 默认使用 `VortoOne Development`；若需要自定义名称，可在 setup 和后续命令中统一
 设置 `VORTOCODE_CODESIGN_IDENTITY`。`signing:doctor` 要求 Keychain 中存在有效的非 ad-hoc 身份。
 未显式指定时按以下顺序自动选择：恰好一张 `Developer ID Application` 证书时用它；否则用
-`VortoCode Development`；只有一个有效身份时用它；仍有多个则必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名主 app；内置 runtime 是放在
+`VortoOne Development`；只有一个有效身份时用它；仍有多个则必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名主 app；内置 runtime 是放在
 `Contents/Resources/runtime/` 的 onedir 目录（Tauri 不签 resources），由脚本逐个签名其中的 Mach-O 后重新封装 app，最后验证 bundle identifier、严格签名和 designated requirement。上一次签名证据或已安装 app
 的 designated requirement 不一致时安装会 fail closed；只有证书有计划轮换时才可临时设置
 `VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE=1`。
@@ -122,8 +122,8 @@ npm run verify:installed
 `sidecar:build` 使用 `requirements-runtime.lock` 在 `src-tauri/target/sidecar-python/<target-triple>` 创建独立 venv，并要求实际 `pip freeze` 与锁文件完全一致；首次同步需要访问 Python 包索引，之后输入、锁、来源配置和 Python 运行时未变化时复用缓存。`requirements-runtime.in` 只保存人工维护的直接依赖，更新后必须在每个受支持平台重新解析并审查完整 lock diff。
 它只暴露固定的本机 Gateway server 入口，不复制完整 `vc` CLI。生成的二进制与构建缓存不会进入 Git。
 
-macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoCode.app` 和
-`src-tauri/target/release/bundle/dmg/VortoCode_<version>_<arch>.dmg`。`sidecar:smoke` 会在随机本机端口验证冻结 runtime 的 health 和 Web 资源；
+macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoOne.app` 和
+`src-tauri/target/release/bundle/dmg/VortoOne_<version>_<arch>.dmg`。`sidecar:smoke` 会在随机本机端口验证冻结 runtime 的 health 和 Web 资源；
 `smoke:bundle` 会启动真实 release bundle，并同时验证 React、Tauri IPC 以及安装包内 sidecar 的定位和启动。冻结完成后还会根据 PyInstaller 实际 Analysis 生成 `THIRD_PARTY_NOTICES.txt` 和结构化依赖清单，覆盖实际冻结的 Python distributions 与 standalone runtime 自带的全部许可证；许可证证据缺失会直接中止构建，notices 会随 app 一起打包。
 
 **一键更新**：设置 → 高级 →「更新」和侧栏的「新版本」按钮会调 Rust 侧 `install_update`。它先弹原生确认框，
@@ -137,7 +137,7 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoCode.app` 和
 
 `release:verify` 检查 target architecture、sidecar/notices 哈希、DMG、Git provenance、代码签名、公证票据和 Gatekeeper，并写入 `src-tauri/target/release/release-evidence/`。`preview` 模式允许未签名但明确记录 warning；`--mode release` 对任一正式发布闸门 fail closed。
 
-当前开发者预览包已经内置 core Gateway runtime，不要求用户预装 Python 或 `vc`。Desktop 启动即自动连接 General；普通对话、研究、规划和 Artifact 不绑定目录。Agent 只有在确实需要文件时才能发出结构化 `workspace_required`，用户可以审阅原因和待继续任务后创建 Scratch 或选择 Git 项目；切换后的新会话不会继承 General 的外部内容/凭据上下文，待继续任务只回填输入框供再次确认。范围切换会自动完成启动、health 等待和协议连接；首选端口被占用时自动分配其他回环端口。启动顺序是内置 runtime、系统 `vc`，然后仅在 VortoCode 开发 checkout 中尝试源码 Python 回退；
+当前开发者预览包已经内置 core Gateway runtime，不要求用户预装 Python 或 `vc`。Desktop 启动即自动连接 General；普通对话、研究、规划和 Artifact 不绑定目录。Agent 只有在确实需要文件时才能发出结构化 `workspace_required`，用户可以审阅原因和待继续任务后创建 Scratch 或选择 Git 项目；切换后的新会话不会继承 General 的外部内容/凭据上下文，待继续任务只回填输入框供再次确认。范围切换会自动完成启动、health 等待和协议连接；首选端口被占用时自动分配其他回环端口。启动顺序是内置 runtime、系统 `vc`，然后仅在 VortoOne 开发 checkout 中尝试源码 Python 回退；
 用户仍可连接自行运行的本机 `vc server` 以使用未冻结的可选依赖。x86_64 sidecar 已使用受管 standalone CPython 构建；arm64 来源资产可在 x86_64 主机上预取和静态验真，但 sidecar、Tauri app 和 DMG 必须在 Apple Silicon 上用该架构的原生 wheels 重新构建和验收，不能把静态资产检查当成 arm64 成品。公开分发还需要人工复核 notices、Apple Developer ID 签名、公证与发布凭据，仓库不会伪造这些步骤。
 
 ## 安全边界
@@ -145,7 +145,7 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoCode.app` 和
 - V0 只接受 `127.0.0.1` 和 `localhost`。
 - API Token 只保存在 Desktop 进程内，不写入 localStorage。
 - LLM API Key 不写入 localStorage、项目 `.env` 或 runtime 恢复注册表；Desktop 把完整模型服务配置保存在 Desktop 配置目录下的 `llm-profile.json`（权限 600），在单次 app 进程中只读取一次并只把它注入新启动的子 runtime 环境。这是明文文件：同一账户下的进程都能读到，安全性低于钥匙串；选择它是为了避免每次重装后的钥匙串授权弹窗（见“macOS 稳定开发签名”）。远程 Base URL 强制 HTTPS，本机 HTTP 只接受 `127.0.0.1` / `localhost`。
-- Desktop 只能以固定参数启动内置 Gateway 或 `vc server`；内置 sidecar 只接受 `server`、回环 host 和 1024–65535 端口，首选端口不可用时由系统分配空闲回环端口。项目路径必须归一化为真实 Git 顶层目录，只有 VortoCode 自身开发 checkout 允许固定的 `python -m src.cli` 回退。
+- Desktop 只能以固定参数启动内置 Gateway 或 `vc server`；内置 sidecar 只接受 `server`、回环 host 和 1024–65535 端口，首选端口不可用时由系统分配空闲回环端口。项目路径必须归一化为真实 Git 顶层目录，只有 VortoOne 自身开发 checkout 允许固定的 `python -m src.cli` 回退。
 - General 的 Agent 工具面和 REST 面同时 fail closed：联网检索、会话、决策、Journal 与 Artifact 可用；文件/命令/任务 API 返回结构化 `workspace_required`。不能用最近项目、HOME 或应用数据目录作为隐式项目。
 - Scratch 位于 Desktop app-data 下的 `workspaces/scratch/<session-id>` 并独立初始化 Git；General 的内部持久化目录不会在状态快照中作为 workdir 暴露。
 - 源码列表只使用 Git tracked/untracked 且未忽略的文件；读取会 canonicalize 并拒绝越界、软链逃逸、二进制和超过 1 MiB 的文本。

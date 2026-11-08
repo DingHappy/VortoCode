@@ -1,4 +1,4 @@
-# VortoCode 专属助手 —— 每人一个实例（systemd 模板单元）。
+# VortoOne 专属助手 —— 每人一个实例（systemd 模板单元）。
 #
 # 一个人一个助手时不需要它（`vc server --im dingtalk` 内嵌一条桥就够）。三个人起就需要：
 # 每人要有**自己的工作区**（人设 / 会话历史 / 记忆按人隔离）、**自己的机器人凭证**、
@@ -26,7 +26,7 @@
 #   - ExecStart 用解释器**绝对路径**（极简 PATH 下裸 `python` 必 127，真机逮到过）。
 
 [Unit]
-Description=VortoCode 专属助手（%i）
+Description=VortoOne 专属助手（%i）
 After=network-online.target
 Wants=network-online.target
 

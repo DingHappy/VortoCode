@@ -115,9 +115,9 @@ async def test_non_owner_ignored_and_counted(tmp_path):
 async def test_owner_message_runs_turn_and_replies(tmp_path):
     adapter = FakeAdapter()
     bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test",
-                      llm=ScriptedLLM("你好，我是 VortoCode。"))   # 直接最终回复、不调工具
+                      llm=ScriptedLLM("你好，我是 VortoOne。"))   # 直接最终回复、不调工具
     await _run_turn_to_completion(bridge, adapter, _msg("在吗"))
-    assert "你好，我是 VortoCode。" in adapter.texts()
+    assert "你好，我是 VortoOne。" in adapter.texts()
 
 
 # ------------------------------------------------------------ 串行不并发（后来的消息排队）

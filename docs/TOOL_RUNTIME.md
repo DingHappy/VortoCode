@@ -2,7 +2,7 @@
 
 工具兼容和 Agent 核心兼容是两个边界。当前先将工具执行从 MainAgent 抽出，现有 Agent 已使用同一实现；其它核心可以通过可信宿主适配调用。当前没有把 Codex、Claude Code 等完整核心接入 Gateway 的会话生命周期，也没有新增对外工具服务。
 
-现有 Codex 会话的状态与轮次控制已另外抽成 [Backend 控制适配层](AGENT_BACKENDS.md)，由观察员实际调用。该控制层与本工具运行层分别接入各自原有路径，尚未把 VortoCode 工具暴露给 Codex。
+现有 Codex 会话的状态与轮次控制已另外抽成 [Backend 控制适配层](AGENT_BACKENDS.md)，由观察员实际调用。该控制层与本工具运行层分别接入各自原有路径，尚未把 VortoOne 工具暴露给 Codex。
 
 ```text
 模型消息 / 会话 / 上下文 / 原生权限    ← Agent 核心与适配器

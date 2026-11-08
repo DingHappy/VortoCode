@@ -28,7 +28,7 @@ def world(tmp_path, monkeypatch):
     assistant = tmp_path / "assistant"
     assistant.mkdir()
     registry = tmp_path / "resident_projects.json"
-    registry.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": str(project), "port": 8082}]}))
+    registry.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": str(project), "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(registry))
     monkeypatch.setenv("VORTOCODE_API_TOKEN", TOKEN)
     monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
@@ -52,7 +52,7 @@ def world(tmp_path, monkeypatch):
     task.status = "blocked"
     assert runner.ledger.save(task)
 
-    entry = dispatch.propose(str(assistant), project="VortoCode", title="改登录超时", goal="把超时改短")
+    entry = dispatch.propose(str(assistant), project="VortoOne", title="改登录超时", goal="把超时改短")
     dispatch._update(str(assistant), entry["id"], lambda item: item.update(
         id=f"dsp-{SUFFIX}", status="running", remote_task_id=task.id, remote_session=f"assistant-{SUFFIX}",
         submission_target={"port": 8082, "repo_root": str(project)}))
@@ -106,7 +106,7 @@ async def test_real_route_refuses_an_answer_from_another_session(world):
 @pytest.mark.asyncio
 async def test_approve_submits_through_the_real_route_and_the_task_belongs_to_the_ticket(world):
     root, http, runner = world["assistant"], world["http"], world["runner"]
-    entry = dispatch.propose(root, project="VortoCode", title="补单测", goal="给 safe_id 补边界单测")
+    entry = dispatch.propose(root, project="VortoOne", title="补单测", goal="给 safe_id 补边界单测")
     sent = await dispatch.approve(root, entry["id"], http=http)
     assert sent["status"] == "running", sent.get("error")
     remote = runner.get(sent["remote_task_id"])

@@ -41,7 +41,7 @@ def session_dashboard_snapshot(repo_root: str, *, live_sessions: Mapping[str, An
     实时状态由宿主（Web 的会话表/actor/确认队列）注入，这里不持有任何进程内全局。
 
     状态优先级参考 grok-build Agent Dashboard：需要用户处理的会话先于工作中、空闲与仅
-    存盘会话。VortoCode 额外保留 ``queued``，表示用户停止后仍有持久输入等待恢复。
+    存盘会话。VortoOne 额外保留 ``queued``，表示用户停止后仍有持久输入等待恢复。
     """
     from pathlib import Path
     from src.workflow.tasks.dashboard import (

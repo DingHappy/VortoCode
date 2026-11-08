@@ -16,7 +16,7 @@ def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     registry = tmp_path / "resident_projects.json"
-    registry.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
+    registry.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(registry))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
@@ -78,7 +78,7 @@ def test_mcp_handshake_and_tool_list(client):
 
 def test_today_brief_and_status_read_the_ledger(client, tmp_path):
     assert _call(client, "today_brief") == ("现在没有需要你处理的事，也没有正在做的任务。", False)
-    dispatch.propose(str(tmp_path), project="VortoCode", title="修登录", goal="g")
+    dispatch.propose(str(tmp_path), project="VortoOne", title="修登录", goal="g")
     text, _ = _call(client, "today_brief")
     assert text == "有 1 件等你处理：任务单等你确认下发 · 修登录。"
     assert _call(client, "dispatch_status", keyword="登录")[0] == "「修登录」等你确认下发。"
@@ -90,7 +90,7 @@ def test_voice_proposal_is_only_recorded_tainted_notified_and_rate_limited(clien
     assert not is_error and "确认后才会开始" in text
     [entry] = dispatch.list_dispatches(str(tmp_path))
     assert entry["status"] == "proposed" and entry["tainted"] is True and entry["session"] == "voice"
-    assert "来自小智语音" in entry["goal"] and entry["project"] == "VortoCode"
+    assert "来自小智语音" in entry["goal"] and entry["project"] == "VortoOne"
     assert len(client.sent) == 1 and "小智记下一张任务提议" in client.sent[0]
 
     for _ in range(2):

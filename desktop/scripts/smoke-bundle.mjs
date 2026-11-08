@@ -9,7 +9,7 @@ const releaseRoot = join(desktopRoot, "src-tauri", "target", "release");
 const marker = join(tmpdir(), `vortocode-desktop-smoke-${process.pid}.json`);
 
 const defaultExecutable = process.platform === "darwin"
-  ? join(releaseRoot, "bundle", "macos", "VortoCode.app", "Contents", "MacOS", "vortocode-desktop")
+  ? join(releaseRoot, "bundle", "macos", "VortoOne.app", "Contents", "MacOS", "vortocode-desktop")
   : process.platform === "win32"
     ? join(releaseRoot, "vortocode-desktop.exe")
     : join(releaseRoot, "vortocode-desktop");

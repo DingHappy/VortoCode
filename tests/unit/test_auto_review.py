@@ -12,7 +12,7 @@ from src.workflow.workbench.personal_goals import PersonalGoals
 NOW = datetime(2026, 11, 3, 10, 0, tzinfo=timezone(timedelta(hours=8)))
 
 
-def contract(text="把 VortoCode 的登录报错修好"):
+def contract(text="把 VortoOne 的登录报错修好"):
     return {"request_id": f"req-{abs(hash(text)) % 10**8:08d}", "objective": text,
             "acceptance_criteria": ["登录接口返回 200"], "next_action": "查一下报错"}
 
@@ -32,7 +32,7 @@ class LLM:
         return {"content": json.dumps(reply, ensure_ascii=False)}
 
 
-DISPATCH = {"action": "dispatch", "reason": "需要改代码", "project": "VortoCode", "title": "修登录 500",
+DISPATCH = {"action": "dispatch", "reason": "需要改代码", "project": "VortoOne", "title": "修登录 500",
             "goal": "定位并修复 /login 的 500", "criteria": ["登录返回 200"]}
 
 
@@ -68,7 +68,7 @@ def world(tmp_path, monkeypatch):
 
 async def _advance(root, notify, llm, state=None, now=NOW):
     return await goal_advancer.advance_once(root, now, state={} if state is None else state, notify=notify,
-                                            llm=llm, projects=["VortoCode"])
+                                            llm=llm, projects=["VortoOne"])
 
 
 async def test_approved_task_order_is_dispatched_automatically(world):

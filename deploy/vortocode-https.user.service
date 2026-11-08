@@ -1,5 +1,5 @@
 [Unit]
-Description=VortoCode mobile HTTPS ingress
+Description=VortoOne mobile HTTPS ingress
 Wants=network-online.target
 After=network-online.target
 

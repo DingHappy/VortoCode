@@ -82,7 +82,7 @@ it("asks running managed runtimes plus registered remote workspaces and the resi
   const project = (id: string, name: string, kind: "local" | "remote", repoRoot: string, baseUrl = ""): DesktopProjectProfile =>
     ({ id, name, kind, repoRoot, baseUrl, lastOpenedAt: 0 });
   const projects = [
-    project("p1", "VortoCode", "local", "/code/vorto"),
+    project("p1", "VortoOne", "local", "/code/vorto"),
     project("r1", "服务器", "remote", "/srv/app", "https://srv.example"),
     project("h1", "家里", "remote", "@assistant", "https://home.example"),
   ];
@@ -97,7 +97,7 @@ it("asks running managed runtimes plus registered remote workspaces and the resi
   ], projects);
   expect(sources.map(item => [item.runtimeId, item.scope, item.label])).toEqual([
     ["general", "general", "通用会话"],
-    ["rt-proj", "project", "VortoCode"],
+    ["rt-proj", "project", "VortoOne"],
     ["rt-scratch-abcdef", "scratch", "Scratch ws1234"],
     ["rt-other", "project", "unknown-repo"],
     ["remote:r1", "project", "远端 · 服务器"],

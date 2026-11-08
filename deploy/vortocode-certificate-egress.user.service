@@ -1,7 +1,7 @@
 # Optional: only install after approving a certificate-only egress dependency.
 # This is outbound SOCKS over SSH, not the public mobile ingress.
 [Unit]
-Description=Restricted outbound network for VortoCode certificate requests
+Description=Restricted outbound network for VortoOne certificate requests
 Wants=network-online.target
 After=network-online.target
 

@@ -291,7 +291,7 @@ pub(crate) fn build_bundled_runtime_command(
     ))
 }
 
-/// 只认构建这个 App 的那棵源码树（按 build.rs 编进来的路径哈希精确比对）：长得像 VortoCode 仓库
+/// 只认构建这个 App 的那棵源码树（按 build.rs 编进来的路径哈希精确比对）：长得像 VortoOne 仓库
 /// 的别处目录一律不算，否则打开一个仿冒仓库就能让 Desktop 跑它的源码。
 pub(crate) fn is_vortocode_development_root(root: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;

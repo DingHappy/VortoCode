@@ -30,10 +30,10 @@ def test_empty_workspace_says_nothing_rather_than_unknown(tmp_path):
 def test_live_work_from_each_source_carries_exact_ids(tmp_path, monkeypatch):
     root = str(tmp_path)
     monkeypatch.setattr(assistant_dispatch, "list_dispatches", lambda r: [
-        {"id": "dsp-0000000001", "title": "修登录 500", "project": "VortoCode", "status": "running",
+        {"id": "dsp-0000000001", "title": "修登录 500", "project": "VortoOne", "status": "running",
          "updated_at": "2026-11-03T08:30:00+00:00"},
-        {"id": "dsp-0000000002", "title": "早就做完", "project": "VortoCode", "status": "done"},
-        {"id": "dsp-0000000003", "title": "等你确认", "project": "VortoCode", "status": "proposed"}])
+        {"id": "dsp-0000000002", "title": "早就做完", "project": "VortoOne", "status": "done"},
+        {"id": "dsp-0000000003", "title": "等你确认", "project": "VortoOne", "status": "proposed"}])
     goal = PersonalGoals(root).create({"request_id": "req-00000001", "objective": "周五前把周报写完",
                                        "acceptance_criteria": ["周报已发出"], "next_action": "列提纲"}, origin="owner")
     _codex(root)

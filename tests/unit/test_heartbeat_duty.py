@@ -149,7 +149,7 @@ def test_no_checklist_keeps_legacy_prompt(tmp_path, monkeypatch):
     monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
     prompt = heartbeat.heartbeat_prompt(str(tmp_path))
     assert prompt == (
-        "你是 VortoCode 的后台值班 agent（周期性心跳）。下面是值班清单，逐条快速看一眼：\n\n"
+        "你是 VortoOne 的后台值班 agent（周期性心跳）。下面是值班清单，逐条快速看一眼：\n\n"
         "（无 HEARTBEAT.md 清单）\n\n"
         "如果没有任何需要现在处理的事，**只回复 `HEARTBEAT_OK`**（不要多说，省得打扰用户）。"
         "如果确有该处理的事，简明说清是什么、建议怎么做（不要现在就动手改代码）。")

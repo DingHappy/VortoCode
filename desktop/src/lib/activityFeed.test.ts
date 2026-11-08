@@ -103,11 +103,11 @@ describe("turnFeedItem", () => {
 
 describe("dispatchFeedItem", () => {
   const dispatch = (overrides: Partial<import("../types").AssistantDispatch>): import("../types").AssistantDispatch => ({
-    id: "d1", project: "VortoCode", title: "修登录超时", goal: "改超时", criteria: [], status: "proposed", tainted: false,
+    id: "d1", project: "VortoOne", title: "修登录超时", goal: "改超时", criteria: [], status: "proposed", tainted: false,
     remote_task_id: "", result: "", error: "", branch: "", created_at: "2026-10-11T01:00:00Z", updated_at: "2026-10-11T01:05:00Z", ...overrides });
 
   it("等你确认下发的置顶并说明项目；含外部内容时提醒细看", () => {
-    expect(dispatchFeedItem(dispatch({}))).toMatchObject({ status: "waiting", summary: "等你确认下发 · VortoCode", dispatchId: "d1", at: "2026-10-11T01:05:00Z" });
+    expect(dispatchFeedItem(dispatch({}))).toMatchObject({ status: "waiting", summary: "等你确认下发 · VortoOne", dispatchId: "d1", at: "2026-10-11T01:05:00Z" });
     expect(dispatchFeedItem(dispatch({ tainted: true }))?.summary).toContain("含外部内容");
   });
 
@@ -119,7 +119,7 @@ describe("dispatchFeedItem", () => {
   });
 
   it("执行结束仍待审查，失联结果标待核对，不把缓存结果当成当前进度", () => {
-    expect(dispatchFeedItem(dispatch({ status: "done" }))).toMatchObject({ statusLabel: "执行结束 · 待审查", sourceLabel: "任务单 · VortoCode" });
+    expect(dispatchFeedItem(dispatch({ status: "done" }))).toMatchObject({ statusLabel: "执行结束 · 待审查", sourceLabel: "任务单 · VortoOne" });
     expect(dispatchFeedItem(dispatch({ status: "done", sync_state: "unreachable" }))).toMatchObject({ statusLabel: "状态待核对" });
     expect(dispatchFeedItem(dispatch({ status: "submission_unknown" }))).toMatchObject({ statusLabel: "提交待核对" });
   });

@@ -539,10 +539,10 @@ pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
     match error.raw_os_error() {
         // EPERM / EHOSTUNREACH：macOS「本地网络」不放行时，直连内网地址就是这样被系统拦下，而且不弹窗。
         // 真机 2026-10-27、10-28：App 内更新后放行记录还停在旧版，重新打开 App 就恢复；从没授权过才要去系统设置。
-        // 前端按「本地网络」四个字给提示条加「重新打开 VortoCode」按钮，改这段话时要留着它。
+        // 前端按「本地网络」四个字给提示条加「重新打开 VortoOne」按钮，改这段话时要留着它。
         Some(1) | Some(65) => "这台 Mac 拒绝直连过去（No route to host）。如果终端或别的程序能连上，\
-            多半是 macOS「本地网络」没放行 VortoCode，更新后常见：重新打开 VortoCode 一般就好；\
-            还不行，到系统设置 → 隐私与安全性 → 本地网络，把 VortoCode 打开"
+            多半是 macOS「本地网络」没放行 VortoOne，更新后常见：重新打开 VortoOne 一般就好；\
+            还不行，到系统设置 → 隐私与安全性 → 本地网络，把 VortoOne 打开"
             .into(),
         Some(51) => "网络不通（Network is unreachable）：检查网络或隧道".into(),
         _ => match error.kind() {
@@ -558,7 +558,7 @@ pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
 ///
 /// TCP 连上还不够：本机开着接管全部流量的代理（TUN / fake-IP）时，断网后代理在本地就把握手接了，
 /// 探测永远「通」，于是每轮都断开本机去切、再撞上 WebSocket 握手失败、把界面清空（真机 2026-10-29 场景 C）。
-/// 所以连上后再要一次免鉴权的 /api/health，得是 VortoCode 的应答才算通。
+/// 所以连上后再要一次免鉴权的 /api/health，得是 VortoOne 的应答才算通。
 #[tauri::command]
 pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Result<(), String> {
     let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
@@ -615,12 +615,12 @@ async fn remote_health(base: &str) -> Result<(), String> {
     if reply {
         Ok(())
     } else {
-        diag("warn", "remote.probe_failed", "health 应答不是 VortoCode 的");
+        diag("warn", "remote.probe_failed", "health 应答不是 VortoOne 的");
         Err(REMOTE_NOT_ANSWERING.into())
     }
 }
 
-/// 应答得是 VortoCode 的健康检查：200 且是带 healthy 字段的 JSON。代理替断网的目标回 502、
+/// 应答得是 VortoOne 的健康检查：200 且是带 healthy 字段的 JSON。代理替断网的目标回 502、
 /// 或者回一个别的网页，都不算。不看 healthy 的值：服务在应答，就该连过去看具体问题。
 pub(crate) fn remote_health_ok(status: u16, body: &str) -> bool {
     status == 200

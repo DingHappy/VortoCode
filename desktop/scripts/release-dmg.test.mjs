@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { attachedDevice, developerIdAuthority, dmgAssetName, notarizationOutcome } from "./release-dmg.mjs";
 
-const DMG = "/repo/desktop/src-tauri/target/release/bundle/dmg/VortoCode_0.2.20_aarch64.dmg";
+const DMG = "/repo/desktop/src-tauri/target/release/bundle/dmg/VortoOne_0.2.20_aarch64.dmg";
 
 // 形状取自真机 `hdiutil info`：块之间用等号行分隔，一个映像会派生出好几个 /dev/disk。
 const info = `framework       : 683.160.3
@@ -30,7 +30,7 @@ test("finds the lingering mount of the DMG that hdiutil create left behind", () 
 });
 
 test("ignores other images and reports nothing when the DMG is not attached", () => {
-  assert.equal(attachedDevice(info, "/elsewhere/VortoCode_0.2.20_aarch64.dmg"), null);
+  assert.equal(attachedDevice(info, "/elsewhere/VortoOne_0.2.20_aarch64.dmg"), null);
   assert.equal(attachedDevice("framework : 1\nimages : 0\n", DMG), null);
   // 路径只是前缀相同也不能算
   assert.equal(attachedDevice(info, DMG.replace(".dmg", "")), null);
@@ -49,6 +49,6 @@ test("only an Accepted notarization counts", () => {
 });
 
 test("names the asset the way the release and download page expect", () => {
-  assert.equal(dmgAssetName("0.2.20"), "VortoCode_0.2.20_aarch64.dmg");
+  assert.equal(dmgAssetName("0.2.20"), "VortoOne_0.2.20_aarch64.dmg");
   assert.throws(() => dmgAssetName("v0.2.20"), /版本号不对/);
 });

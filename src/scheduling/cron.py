@@ -345,7 +345,7 @@ class CronState:
 #    一眼看清后果；prompt 作业跑在 UNATTENDED 档（fail-closed 确认 + 不给出网工具），内容还是
 #    自然语言、人能真读懂。要排 shell 就写成 prompt 让无人值守 agent 去跑，边界不变而可审。
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-_SCAFFOLD = ("# VortoCode cron 作业表。schedule: 'at HH:MM' / 'every Nm|Nh|Nd' / 5 段 cron。\n"
+_SCAFFOLD = ("# VortoOne cron 作业表。schedule: 'at HH:MM' / 'every Nm|Nh|Nd' / 5 段 cron。\n"
              "# 调度循环默认关；起服务时带 VORTOCODE_CRON=1 才跑。\n\njobs:\n")
 
 

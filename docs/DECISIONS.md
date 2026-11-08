@@ -101,7 +101,7 @@
 
 **背景**：
 - Code 侧（任务协作台账、工作台、隔离开发流水线及 Desktop 对应面板）超过 1.5 万行，约占后端四成。
-- 实际使用：常驻电脑上两个月只跑过 1 次开发计划；助理派活两周 1 张任务单。写代码已交给 Mac 上的 Codex，VortoCode 每天真在用的是常驻助理与 Codex 监管。
+- 实际使用：常驻电脑上两个月只跑过 1 次开发计划；助理派活两周 1 张任务单。写代码已交给 Mac 上的 Codex，VortoOne 每天真在用的是常驻助理与 Codex 监管。
 - 2026-10-22 用 `python -m evals` 跑 10 个固定场景（mimo-v2.5-pro，HEAD a8ed403）：落地、诚实、干净都是 100%，共 6 分 22 秒、约 45 万 token。流水线质量没问题，问题是没人用。
 
 **选项**：
@@ -192,7 +192,7 @@
 - **按 id 定位**：拟动作要落到唯一的会话 id（或进度里的 id 尾号）；名字有歧义时拒绝，不猜。批准卡片和通知写明目录。
 - **驾驶时不插话**：交接之后，如果最新一轮是主人自己在 Codex 里发起的（不是助理发出的话），这一轮不判断下一步、不拟话。
 
-**理由**：Codex 是主人自己的工具，VortoCode 是在旁边帮着看的助理。逐条批准只能挡住「发什么」，挡不住「发给谁」：同名、多会话时，人在手机上很难分辨。只读汇报出错的代价低，插手出错会污染主人正在干的活，所以默认值要放在只读一侧。
+**理由**：Codex 是主人自己的工具，VortoOne 是在旁边帮着看的助理。逐条批准只能挡住「发什么」，挡不住「发给谁」：同名、多会话时，人在手机上很难分辨。只读汇报出错的代价低，插手出错会污染主人正在干的活，所以默认值要放在只读一侧。
 
 **不改的部分**：隔离开发流水线把 Codex CLI 当执行者（每次一个独立 worktree），不受这条约束。
 
@@ -434,17 +434,22 @@ Harness、OpenCode、Pi 等），由主 agent 管理与协调；不要固定流�
 
 ## ADR-018：产品改名 VortoOne（2026-11-08）
 
-**背景**：产品已经从「AI 编码 Agent」变成常驻个人助理（ADR-011、ADR-016、ADR-017），名字里的「Code」让人以为只是写代码的工具。iPhone 准备上 TestFlight，App Store Connect 里的 App 还没建，现在改名成本最低。
+**背景**：产品已经从「AI 编码 Agent」变成常驻个人助理（ADR-011、ADR-016、ADR-017），原名 VortoCode 里的「Code」让人以为只是写代码的工具。iPhone 准备上 TestFlight，App Store Connect 里的 App 还没建，现在改名成本最低。
 
-**决定**（丁开心 2026-11-08 确认）：
+**决定**（丁开心 2026-11-08 确认）：全部改成 **VortoOne**，包括内部标识和仓库名。为了不断登录、推送、数据和 97 上的服务，分五批做，每批合并、部署、核对后再做下一批：
 
-1. Desktop 和 iPhone 统一叫 **VortoOne**：「一个常驻助理、一段主要聊天、电脑和手机是同一个它」。
-2. **第一步（本次）只改用户看得到的文字**：两端界面、iPhone 桌面名和通知扩展名、Desktop 窗口标题、助理默认名字、账号与会员的叫法、推送标题、Telegram / 钉钉里发给主人的话、手机网页、语音工具说明、助理系统提示里对自己运行环境的描述。
-3. **不改的标识**：bundle id（`com.vortocode.mobile`、`com.vorto.vortocode`）、推送 topic、钥匙串分组、`Application Support/VortoCode` 和 `Logs/VortoCode` 等路径、中转站套餐名「VortoCode Desktop」（Desktop 拿它匹配账号套餐）、User-Agent、小组引擎 id `vortocode`、仓库名、Python 包、`vc` / `vortocode` 命令、服务名、开发者用的 CLI 与服务启动输出、发给内部 Agent 的提示。这些用户看不到，改了会断推送、钥匙串、自动更新或账号匹配。
-4. **第二步（单独做）**：Desktop 的 App 包名（`productName`，决定 Dock、菜单栏、「访达」和 `/Applications/` 里的名字）。它牵动自动更新替换路径、macOS 本地网络放行记录、发布与安装核对脚本，要单独发一版并在真机上验证更新。在那之前，Dock 和系统设置里仍显示 VortoCode，所以「本地网络」那段指引里保留 VortoCode。
-5. 账号服务（独立仓库）的登录页品牌另行更新。
+| 批 | 内容 | 兼容做法 |
+| --- | --- | --- |
+| 0 | 用户看得到的文字（#792，已发 Desktop 0.2.52） | — |
+| A | Desktop App 包名 `VortoOne.app`、下载文件名、全部文档与注释、命令行与服务输出、User-Agent、内部 Agent 提示、中转站上新建的按量 Key 名 | 原地更新的 Desktop 仍在 `/Applications/VortoCode.app`（更新器沿用原路径），核对脚本两个都认；中转站上旧的「VortoCode Desktop」Key 照样认 |
+| B | 环境变量 `VORTOCODE_*` → `VORTOONE_*` | 先读新名字，读不到再读旧名字；97 的 drop-in 之后再改（改前问主人） |
+| C | 数据目录 `.vortocode`、`~/.vortocode`、`Application Support`、`Logs` 改名 | 启动时自动搬过去，旧位置留链接 |
+| D | bundle id（Desktop `com.vorto.vortoone`、iPhone `com.vortoone.mobile`）、钥匙串服务名、推送 topic | Desktop 迁移设置与钥匙串，本地网络要重新放行；手机重装、重新登录和绑定钥匙；97 的推送 topic 改前问主人 |
+| E | 仓库名 `DingHappy/VortoOne`、Python 包与命令（`vortoone`，保留 `vc`）、iPhone 工程与 target 名、仓库里的链接 | 仓库由主人在 GitHub 上改名，旧地址自动跳转；先实测 Desktop 的更新地址能跳转再发版 |
 
-**以后加界面文字**：给用户看的地方写 VortoOne；上面第 3 条里的标识照旧。
+账号服务和中转站（独立仓库）的品牌另行更新。
+
+**以后加内容**：一律写 VortoOne。还没做到的批次里，相应的旧标识照旧，按上表逐批改。
 
 ---
 

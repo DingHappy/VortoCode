@@ -28,7 +28,7 @@ REPO_MEMORY_REL = Path(".vortocode") / "memory" / "repo.md"
 # 超出则截断并明示（宁可截断，也不悄悄丢或撑爆预算）。
 MAX_REPO_MEMORY_CHARS = 2_000
 
-_HEADER = "# 仓库记忆（VortoCode 自动维护）\n\n" \
+_HEADER = "# 仓库记忆（VortoOne 自动维护）\n\n" \
           "> agent 在本仓库攒下的事实：构建/测试命令、目录约定、踩过的坑。\n" \
           "> 用 `remember_repo` 工具追加（需确认）；直接编辑本文件亦可。\n"
 

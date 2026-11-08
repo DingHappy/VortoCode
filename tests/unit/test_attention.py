@@ -14,7 +14,7 @@ from src.workflow.tasks.decisions import build_decision_queue
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
-    path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
+    path.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
 
 
@@ -42,10 +42,10 @@ def test_a_fixed_command_path_still_resolves_the_same_job():
 def test_attention_merges_dispatches_with_the_decision_queue_most_urgent_first(tmp_path):
     from src.workflow.workbench.runs import CommandRun, RunLedger
     root = str(tmp_path)
-    proposed = dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
-    asking = dispatch.propose(root, project="VortoCode", title="改文档", goal="g")
+    proposed = dispatch.propose(root, project="VortoOne", title="修登录", goal="g")
+    asking = dispatch.propose(root, project="VortoOne", title="改文档", goal="g")
     dispatch._update(root, asking["id"], lambda item: item.update(status="waiting"))
-    done = dispatch.propose(root, project="VortoCode", title="已完成的", goal="g")
+    done = dispatch.propose(root, project="VortoOne", title="已完成的", goal="g")
     dispatch._update(root, done["id"], lambda item: item.update(status="done"))
     run = CommandRun.new("pytest -q", "terminal")
     run.status = "failed"
@@ -61,7 +61,7 @@ def test_attention_merges_dispatches_with_the_decision_queue_most_urgent_first(t
 
 def test_a_broken_ledger_does_not_hide_the_others(tmp_path):
     root = str(tmp_path)
-    dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    dispatch.propose(root, project="VortoOne", title="修登录", goal="g")
     runs_dir = tmp_path / ".vortocode" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     (runs_dir / "run-broken.json").write_text("{not json")

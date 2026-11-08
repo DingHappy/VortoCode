@@ -144,7 +144,7 @@ def included_note(copied: list[str]) -> str:
 # 收集 diff 时兜底排除的构建/缓存噪音（gitignore 语法）：隔离实现子 agent 自测会生成
 # __pycache__/*.pyc 等产物，它们随 `git add -A` 进 diff 后，落分支的 `git apply` 会栽在
 # 二进制补丁上（"cannot apply binary patch ... without full index line"）→ 绿了也落不了分支。
-# 目标仓库没配 .gitignore 时必中招；VortoCode 自己有 .gitignore，故 dogfooding 一直没暴露。
+# 目标仓库没配 .gitignore 时必中招；VortoOne 自己有 .gitignore，故 dogfooding 一直没暴露。
 # 这里用临时 excludesFile 在 `git add` 阶段就挡掉，不依赖目标仓库的 .gitignore。
 _DIFF_ARTIFACT_IGNORES = (
     "__pycache__/",
