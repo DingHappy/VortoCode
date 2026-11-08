@@ -102,3 +102,47 @@ XcodeBuildMCP 的独立状态查询有时将刚启动的设备报告为 Shutdown
 - 配置检查时尚未创建 DNS 密钥配置文件，未提交任何阿里云 DNS 变更。已准备限定根域和所需三个解析操作的 RAM 策略，等待用户经本机页面安全填写。
 
 此阶段只完成 DDNS 组件与配置通道。配置文件权限、目标记录实际更新、既有记录不变、可信 HTTPS、公网入口及 App 连接均需后续分别验证；不把服务 active 或管理页可访问当作 DDNS/外网接入已完成。没有读取或导出阿里云密钥，也没有为此更新常驻助手代码。
+
+## M4：TestFlight 与真机验收（ADR-017，2026-11-08 起）
+
+### 发 TestFlight
+
+一次性准备（主人在 Apple 后台做）：
+
+1. App Store Connect →「App」→ 新建 iOS App：bundle id 选 `com.vortocode.mobile`，名称（商店里要唯一）、主要语言简体中文、SKU 随意。
+2. App Store Connect →「用户和访问」→「集成」→「团队密钥」：新建一把 API 钥匙，角色选「管理」（Admin，Xcode 要用它自动建发布证书和描述文件）。`.p8` 只能下载一次，放到 `~/.appstoreconnect/private_keys/AuthKey_<钥匙 ID>.p8`，`chmod 600`。
+3. 在「TestFlight」→「内部测试」里建一个组，把自己加进去；手机装 TestFlight。
+
+每次发：
+
+```sh
+git fetch && git switch main && git merge --ff-only origin/main
+export ASC_KEY_ID=<钥匙 ID> ASC_ISSUER_ID=<Issuer ID>
+python scripts/ios-testflight.py check
+python scripts/ios-testflight.py build --output build/ios-testflight/<新目录>
+python scripts/ios-testflight.py upload --output build/ios-testflight/<同一目录>
+```
+
+`build` 不上传：归档、导出 ipa，核对推送是 production、不可调试、有 TestFlight 标记、主 App 和通知扩展的 bundle id 与团队对得上、描述文件是 App Store 的，才写回执。`upload` 再核一遍同一个 ipa 才传。上传后 App Store Connect 处理 5–30 分钟，内部测试不用审核。
+
+### 真机验收清单
+
+装 TestFlight 版（Release、production 推送），连 97 的公网入口。每项记下结果和时间；做不到的写原因，不算通过。
+
+| # | 场景 | 通过的标准 |
+| --- | --- | --- |
+| 1 | 首次登录 | 系统认证窗口登录后直接进主要聊天；第一台手机直接生效，或在 Desktop 对上核对码后下拉刷新可写 |
+| 2 | 钥匙在安全芯片里 | 设置里能退出；重新登录后照常可写；钥匙不随 iCloud 备份迁移（换机要重新绑定） |
+| 3 | 主要聊天 | 发一句会查资料的话：回复逐字出现，「执行过程」能展开；Desktop 同一段里看得到这条，标「来自 App」 |
+| 4 | 普通确认卡 | 让它改一条你的事项：出现卡片，点「同意」不弹 Face ID，回合继续；「审核记录」里有这条，来源「人工确认」 |
+| 5 | 加强确认 / Face ID | 批一条 Codex 动作或下发任务单：弹 Face ID；取消 Face ID 不提交；通过后状态写明「批准不代表执行完成」 |
+| 6 | 本轮同类允许 | 连续改两条事项，第一张选「本轮同类允许」（Face ID），第二条不再出卡；读过网页后再改要重新出卡 |
+| 7 | 排队 | 有卡等你时写一句：变成虚线「排队中」；同意后回合正常结束，这句自动发出；故意让上一轮失败时不自动发 |
+| 8 | 任务小组 | 抽屉看得到小组；打开群聊；回话要 Face ID；交付后「验收通过」/「退回」要 Face ID；停止先弹确认 |
+| 9 | 旁聊 | 抽屉里的旁聊能打开，只读，没有输入框 |
+| 10 | 推送 | 锁屏时让助理办一件超过 15 秒的事：收到通知，正文是解密后的内容（不是占位文字）；点开进 App |
+| 11 | 断网重连 | 开飞行模式再关：抽屉显示「连不上」，恢复网络回到前台后自动变「刚刚连上」；进行中的回合能接着看到结果 |
+| 12 | 后台与恢复 | 回合进行中切到后台 1 分钟再回来：继续显示进度或已结束的回复，不重复发送 |
+| 13 | 深色模式 | 系统切深色：颜色和 Desktop 深色一致，没有看不清的文字 |
+| 14 | 大字号 | 系统字号调到最大：主要聊天、卡片、抽屉都能完整读，按钮能点 |
+| 15 | 退出 | 设置里退出：回到欢迎页；Desktop 设备列表里这台手机的会话已撤销 |

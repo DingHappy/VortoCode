@@ -36,6 +36,8 @@ targets:
         UIApplicationSupportsIndirectInputEvents: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSFaceIDUsageDescription: 批准助理拟好的动作前，用 Face ID 确认是你本人。
+        # 只用系统提供的标准加密（HTTPS、CryptoKit、钥匙串），属于出口管制豁免；TestFlight 每次上传不再问
+        ITSAppUsesNonExemptEncryption: false
         # 与通知扩展共享的钥匙串分组；只有签名构建才会展开出团队前缀
         VCKeychainGroup: $(AppIdentifierPrefix)com.vortocode.mobile.shared
     entitlements:
