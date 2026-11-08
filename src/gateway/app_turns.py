@@ -7,6 +7,8 @@
   10 分钟没人处理按拒绝。阶段 A 里 ``owner_device`` 能触发的只有普通一类（你的事项、记忆），
   类别由内核传入，所需签名级别由服务端决定；未知类别按加强确认，不扩展 owner_device 工具面。
 - 回合与 Future 只在内存里；原审计保留不可执行的等待提示。重启后先核对，再显式准备新请求，不恢复旧批准。
+- 回合进行中，App 轮询时还能拿到「到目前为止的回复」（``partial``）和执行步骤（``steps``，每步一句，
+  和 Desktop 时间线同一个 ``tool_summary``）。只是展示：不带工具参数和结果，不改变确认与执行（ADR-017 M2）。
 
 本模块不导入前端（web / im），装配函数由 web 层传入。
 """
@@ -29,6 +31,9 @@ CARD_TIMEOUT = 600.0
 _KEEP_FINISHED = 3600.0
 _MAX_TURNS = 64
 MAX_TEXT = 4000
+MAX_PARTIAL = 20_000       # 回合中途的回复最多带这么多字给 App，完整回复回合结束后从主要聊天读
+MAX_STEPS = 30             # 只留最近这么多步
+_STEP_STATUS = {"running", "succeeded", "failed", "blocked", "timed_out", "cancelled"}
 
 # build(confirm) -> agent：用 owner_device 档案装配一个 agent，确认走传入的 confirm
 AgentFactory = Callable[[Callable[..., Awaitable[bool | ApprovalDecision]]], Any]
@@ -104,10 +109,40 @@ class AppTurn:
     cards: List[Card] = field(default_factory=list)
     started: float = field(default_factory=time.time)
     finished: float = 0.0
+    partial: str = ""
+    steps: List[dict] = field(default_factory=list)
 
     def public(self) -> dict:
         return {"rid": self.rid, "request_id": self.request_id, "state": self.state, "reply": self.reply,
-                "error": self.error, "cards": [card.public(self.rid) for card in self.cards]}
+                "error": self.error, "cards": [card.public(self.rid) for card in self.cards],
+                "partial": self.partial, "steps": [dict(step) for step in self.steps]}
+
+    def stream(self, text: str) -> None:
+        """模型边生成边给的整回合累计正文（见 MainAgent._complete）；只留开头 MAX_PARTIAL 字。"""
+        if self.finished or not isinstance(text, str):
+            return
+        self.partial = text[:MAX_PARTIAL]
+
+    def step(self, stage: str, payload: dict) -> None:
+        """工具开始 / 结束 → 一步。只取一句摘要和状态，不留参数和结果。"""
+        if self.finished or stage not in ("start", "finish") or not isinstance(payload, dict):
+            return
+        from src.gateway.tool_summary import tool_summary
+        step_id = str(payload.get("id") or "")[:64] or f"step-{len(self.steps) + 1}"
+        status = "running" if stage == "start" else str(payload.get("status") or "succeeded")
+        status = status if status in _STEP_STATUS else "unknown"
+        for existing in self.steps:
+            if existing["id"] == step_id:
+                existing["status"] = status
+                return
+        name = str(payload.get("name") or "tool")
+        args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+        try:
+            summary = tool_summary(name, args)
+        except Exception:  # noqa: BLE001 —— 摘要只是展示，失败不能影响回合
+            summary = name.replace("_", " ")
+        self.steps.append({"id": step_id, "summary": summary[:120], "status": status})
+        del self.steps[:-MAX_STEPS]
 
 
 class AppTurns:
@@ -186,7 +221,7 @@ class AppTurns:
             self._current = turn
             try:
                 agent.history = list(history)
-                reply = await agent.run_turn(turn.text, mode="build", owner_text=turn.text)
+                reply = await agent.run_turn(turn.text, mode="build", owner_text=turn.text, stream_cb=turn.stream)
                 return list(agent.history), str(reply or "")
             finally:
                 self._current = None
@@ -210,6 +245,11 @@ class AppTurns:
                     self._settle_card(turn, card, "cancelled", "cancelled")
             if self.notify is not None and turn.finished - turn.started > 15:
                 await self._tell(f"助理回复了：{(turn.reply or turn.error)[:80]}")
+
+    def tool_event(self, stage: str, payload: dict) -> None:
+        """装配时交给 agent 的工具生命周期旁路（on_tool_event）：记到当前这一轮的执行步骤里。"""
+        if self._current is not None:
+            self._current.step(stage, payload)
 
     # —— 待批准卡 ——
 

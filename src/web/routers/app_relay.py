@@ -64,7 +64,8 @@ def turns():
             return build_session(root, kind="web", confirm=confirm, can_ask_human=True,
                                  capability_profile="owner_device", workspace_scope="general",
                                  trust_level=lambda: get_trust_level(root), with_dev=False,
-                                 on_decision=manager.audit_decision, enable_turn_scope=True)
+                                 on_decision=manager.audit_decision, enable_turn_scope=True,
+                                 on_tool_event=lambda stage, payload: manager.tool_event(stage, payload))
 
         async def notify(text: str):
             from src.gateway.mobile_push import push_owner

@@ -144,8 +144,27 @@ public struct ChatTurn: Codable, Sendable, Equatable {
     public let error: String
     public let cards: [ChatCard]
     public let outcome: String?
+    /// 回合进行中到目前为止的回复（旧服务没有这个字段）。完整回复在回合结束后从主要聊天读。
+    public var partial: String? = nil
+    /// 执行步骤，每步一句（和 Desktop 时间线同一个摘要），不含参数和结果。
+    public var steps: [ChatStep]? = nil
     public var isFinished: Bool { outcome == "unknown" || ["done", "failed", "busy"].contains(state) }
     public var pendingCards: [ChatCard] { isFinished ? [] : cards.filter(\.isPending) }
+    /// 正常结束：只有这种情况下排队的消息才自动发出
+    public var finishedCleanly: Bool { state == "done" && outcome != "unknown" }
+}
+
+/// 回合里的一步。`status`：running / succeeded / failed / blocked / timed_out / cancelled / unknown。
+public struct ChatStep: Codable, Identifiable, Sendable, Equatable {
+    public let id: String
+    public let summary: String
+    public let status: String
+    public init(id: String, summary: String, status: String) { self.id = id; self.summary = summary; self.status = status }
+    public var isRunning: Bool { status == "running" }
+    public var statusLabel: String {
+        ["running": VCCopy.Status.running, "succeeded": "完成", "failed": VCCopy.Status.failed, "blocked": "被拦下",
+         "timed_out": "超时", "cancelled": "已取消"][status] ?? VCCopy.Status.unknown
+    }
 }
 
 /// 写入的失败要和读取分开：一次签名失败不该把人登出。
