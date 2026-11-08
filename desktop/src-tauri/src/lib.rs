@@ -4295,6 +4295,29 @@ mod tests {
     }
 
     #[test]
+    fn update_failures_retry_only_network_errors_and_log_without_signed_links() {
+        use tauri_plugin_updater::Error;
+        assert!(retryable(&Error::Network("Download request failed with status: 502".into())));
+        assert!(retryable(&Error::ReleaseNotFound));
+        assert!(!retryable(&Error::SignatureUtf8("x".into())));                 // 签名问题：重试也没用
+        assert!(!retryable(&Error::InvalidUpdaterFormat));
+        assert!(DOWNLOAD_ATTEMPTS >= 2 && CHECK_ATTEMPTS >= 2);
+        assert!(retry_delay(1) < retry_delay(2) && retry_delay(9) == retry_delay(2));
+
+        let raw = "error sending request for url (https://release-assets.githubusercontent.com/a/b?sig=SECRET&se=1): timed out";
+        assert_eq!(update_error_text(&raw),
+            "error sending request for url (https://release-assets.githubusercontent.com/a/b): timed out");
+        assert_eq!(update_error_text(&"see https://x.example/p?q=1 and http://y/z?k=v"), "see https://x.example/p and http://y/z");
+        assert_eq!(update_error_text(&"无链接的错误"), "无链接的错误");
+
+        assert_eq!(progress_step(0, Some(200)), 0);
+        assert_eq!(progress_step(99, Some(200)), 49);
+        assert_eq!(progress_step(500, Some(200)), 100);                          // 超出总量按 100% 算
+        assert_eq!(progress_step(3 * 1024 * 1024 + 5, None), 3);                 // 不知道总量：按 MB
+        assert_eq!(progress_step(10, Some(0)), 0);
+    }
+
+    #[test]
     fn relaunch_after_update_reopens_the_whole_app_bundle() {
         assert_eq!(app_bundle_of(Path::new("/Applications/VortoCode.app/Contents/MacOS/vortocode-desktop")),
             Some(PathBuf::from("/Applications/VortoCode.app")));

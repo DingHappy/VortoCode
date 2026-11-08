@@ -39,16 +39,86 @@ pub(crate) fn update_from_manifest(current: &str, manifest: &serde_json::Value) 
     })
 }
 
+// ── 网络：GitHub 的下载在有些网络下时快时慢，偶尔卡住不动 ──
+// 连接 15 秒连不上、或连上后 30 秒一个字节都没收到，就当这次失败；不设整体时限，慢网也能下完 38MB。
+// 检查和下载失败会重试，每次失败的原文都写进 desktop.log，用户说「更新失败」时有据可查。
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const CHECK_ATTEMPTS: u32 = 2;
+pub(crate) const DOWNLOAD_ATTEMPTS: u32 = 3;
+const PROGRESS_EVENT: &str = "update-progress";
+
+fn updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    app.updater_builder()
+        .configure_client(|client| client.connect_timeout(CONNECT_TIMEOUT).read_timeout(READ_TIMEOUT))
+        .build()
+        .map_err(|error| format!("更新组件不可用：{error}"))
+}
+
+/// 网络类的失败值得再试；验签不过、解包或替换失败重试也没用，直接报。
+pub(crate) fn retryable(error: &tauri_plugin_updater::Error) -> bool {
+    use tauri_plugin_updater::Error;
+    matches!(error, Error::Reqwest(_) | Error::Network(_) | Error::ReleaseNotFound)
+}
+
+/// 第 n 次失败后等多久再试：2 秒、5 秒。
+pub(crate) fn retry_delay(failed_attempt: u32) -> Duration {
+    Duration::from_secs(if failed_attempt <= 1 { 2 } else { 5 })
+}
+
+/// 写进日志和界面的错误：去掉链接里的查询参数（下载地址跳转后带有临时签名）。
+pub(crate) fn update_error_text(error: &impl std::fmt::Display) -> String {
+    let text = error.to_string();
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find("http") {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let end = tail.find(|c: char| c.is_whitespace() || "()\"'<>".contains(c)).unwrap_or(tail.len());
+        let url = &tail[..end];
+        out.push_str(url.split('?').next().unwrap_or(url));
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateProgress {
+    pub(crate) downloaded: u64,
+    pub(crate) total: Option<u64>,
+    pub(crate) attempt: u32,
+}
+
+/// 进度别每个数据块都发：百分比变了才发；不知道总大小时每 1MB 发一次。
+pub(crate) fn progress_step(downloaded: u64, total: Option<u64>) -> u64 {
+    match total {
+        Some(total) if total > 0 => downloaded.min(total) * 100 / total,
+        _ => downloaded / (1024 * 1024),
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, String> {
-    use tauri_plugin_updater::UpdaterExt;
     let current = app.package_info().version.to_string();
-    let found = app
-        .updater()
-        .map_err(|error| format!("更新组件不可用：{error}"))?
-        .check()
-        .await
-        .map_err(|error| format!("连不上 GitHub，稍后再试：{error}"))?;
+    let updater = updater(&app)?;
+    let mut attempt = 1;
+    let found = loop {
+        match updater.check().await {
+            Ok(found) => break found,
+            Err(error) => {
+                let text = update_error_text(&error);
+                diag("warn", "update.check_failed", &format!("第 {attempt} 次：{text}"));
+                if attempt >= CHECK_ATTEMPTS || !retryable(&error) {
+                    return Err(format!("连不上 GitHub，稍后再试：{text}"));
+                }
+                tokio::time::sleep(retry_delay(attempt)).await;
+                attempt += 1;
+            }
+        }
+    };
     match found {
         Some(update) => update_from_manifest(&current, &update.raw_json),
         None => Ok(UpdateCheck {
@@ -66,13 +136,14 @@ pub(crate) async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, Stri
 #[tauri::command]
 pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-    use tauri_plugin_updater::UpdaterExt;
-    let update = app
-        .updater()
-        .map_err(|error| format!("更新组件不可用：{error}"))?
+    let update = updater(&app)?
         .check()
         .await
-        .map_err(|error| format!("检查更新失败：{error}"))?
+        .map_err(|error| {
+            let text = update_error_text(&error);
+            diag("warn", "update.check_failed", &text);
+            format!("检查更新失败：{text}")
+        })?
         .ok_or_else(|| "已经是最新版本".to_string())?;
     let version = update.version.clone();
     // 装完要重启：原生确认在 webview 之外，说清楚正在进行的对话会中断
@@ -92,11 +163,63 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
     if !confirmed {
         return Err("已取消，稍后可在设置里更新".into());
     }
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|error| format!("下载或安装失败（签名不符也会在这里拒绝）：{error}"))?;
+    let bytes = download_with_retry(&app, &update).await?;
+    update.install(bytes).map_err(|error| {
+        let text = update_error_text(&error);
+        diag("error", "update.install_failed", &text);
+        format!("下载好了，但替换 App 失败：{text}")
+    })?;
+    diag("info", "update.installed", &version);
     Ok(version)
+}
+
+/// 下载并验签，网络失败最多试 DOWNLOAD_ATTEMPTS 次；每次从头下（不续传），进度经 update-progress 事件给界面。
+async fn download_with_retry(app: &AppHandle, update: &tauri_plugin_updater::Update) -> Result<Vec<u8>, String> {
+    use tauri::Emitter;
+    let mut attempt = 1;
+    loop {
+        let started = std::time::Instant::now();
+        let mut downloaded = 0u64;
+        let mut last_step = None;
+        let _ = app.emit(PROGRESS_EVENT, UpdateProgress { downloaded: 0, total: None, attempt });
+        let result = update
+            .download(
+                |chunk, total| {
+                    downloaded += chunk as u64;
+                    let step = progress_step(downloaded, total);
+                    if last_step != Some(step) {
+                        last_step = Some(step);
+                        let _ = app.emit(PROGRESS_EVENT, UpdateProgress { downloaded, total, attempt });
+                    }
+                },
+                || {},
+            )
+            .await;
+        match result {
+            Ok(bytes) => {
+                diag("info", "update.downloaded", &format!(
+                    "{} {} 字节，第 {attempt} 次，{:.1} 秒", update.version, bytes.len(), started.elapsed().as_secs_f64()
+                ));
+                return Ok(bytes);
+            }
+            Err(error) => {
+                let text = update_error_text(&error);
+                let again = attempt < DOWNLOAD_ATTEMPTS && retryable(&error);
+                diag(if again { "warn" } else { "error" }, "update.download_failed", &format!(
+                    "第 {attempt} 次，已收到 {downloaded} 字节，{:.1} 秒：{text}", started.elapsed().as_secs_f64()
+                ));
+                if !again {
+                    return Err(if retryable(&error) {
+                        format!("下载更新包失败（试了 {attempt} 次）：{text}")
+                    } else {
+                        format!("更新包没通过校验，已拒绝安装：{text}")
+                    });
+                }
+                tokio::time::sleep(retry_delay(attempt)).await;
+                attempt += 1;
+            }
+        }
+    }
 }
 
 /// 装好更新后重启：走 RunEvent::Exit，托管的引擎进程照常回收。
