@@ -117,7 +117,12 @@ async def send(registration: dict, text: str, *, client: Any = None) -> str:
         reason = str(response.json().get("reason") or "")
     except ValueError:
         pass
-    if response.status_code == 410 or reason in {"BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"}:
+    if reason == "DeviceTokenNotForTopic":
+        # 令牌本身没坏，是服务端的 topic 和 App 的 bundle id 对不上（例如 App 换了 bundle id 而
+        # VORTOONE_APNS_TOPIC 还没改）。清掉登记会让改好 topic 后也推不到，所以只记日志。
+        logger.warning("APNs 拒绝推送：VORTOONE_APNS_TOPIC 与这台手机上 App 的 bundle id 不符")
+        return "failed"
+    if response.status_code == 410 or reason in {"BadDeviceToken", "Unregistered"}:
         return "gone"
     if response.status_code == 403:
         _jwt_cache.clear()                # 令牌过期或被拒：下次重新签

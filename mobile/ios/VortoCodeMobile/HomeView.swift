@@ -2,7 +2,7 @@ import SwiftUI
 import MobileCore
 
 struct HomeView: View {
-    @AppStorage("vortocode.mobile.entry-origin") private var savedOrigin = ""
+    @AppStorage("vortoone.mobile.entry-origin") private var savedOrigin = ""
     @State private var editor: EditorRoute?
     @State private var session = AssistantSession()
     @Environment(\.scenePhase) private var scenePhase

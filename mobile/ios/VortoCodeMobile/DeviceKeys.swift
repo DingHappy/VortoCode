@@ -12,8 +12,8 @@ import Security
 ///
 /// 模拟器没有 Secure Enclave：Debug 构建退回软件钥匙，仅供模拟器联调；Release 构建直接报错。
 enum DeviceKeys {
-    static let service = "com.vortocode.mobile.keys"
-    static let pushTag = Data("com.vortocode.mobile.push".utf8)
+    static let service = "com.vortoone.mobile.keys"
+    static let pushTag = Data("com.vortoone.mobile.push".utf8)
 
     enum KeyError: Error, LocalizedError {
         case unavailable, storage

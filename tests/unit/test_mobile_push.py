@@ -41,7 +41,7 @@ def apns(tmp_path, monkeypatch):
     monkeypatch.setenv("VORTOONE_APNS_KEY_FILE", str(key_file))
     monkeypatch.setenv("VORTOONE_APNS_KEY_ID", "KEY1234567")
     monkeypatch.setenv("VORTOONE_APNS_TEAM_ID", "TEAM123456")
-    monkeypatch.setenv("VORTOONE_APNS_TOPIC", "com.vorto.vortocode.mobile")
+    monkeypatch.setenv("VORTOONE_APNS_TOPIC", "com.vortoone.mobile")
     mobile_push._jwt_cache.clear()
     yield signer
     mobile_push._jwt_cache.clear()
@@ -72,7 +72,7 @@ def test_provider_token_is_es256_signed_and_cached(apns):
 
 
 @pytest.mark.parametrize("status,reason,expected", [
-    (200, "", "ok"), (410, "Unregistered", "gone"), (400, "BadDeviceToken", "gone"),
+    (200, "", "ok"), (410, "Unregistered", "gone"), (400, "BadDeviceToken", "gone"), (400, "DeviceTokenNotForTopic", "failed"),
     (400, "PayloadTooLarge", "failed"), (500, "InternalServerError", "failed")])
 async def test_send_maps_apns_answers(apns, status, reason, expected):
     _, public = _key_pair()
@@ -87,7 +87,7 @@ async def test_send_maps_apns_answers(apns, status, reason, expected):
     assert result == expected
     request = seen[0]
     assert request.url == "https://api.sandbox.push.apple.com/3/device/" + "ab" * 32
-    assert request.headers["apns-topic"] == "com.vorto.vortocode.mobile" and request.headers["apns-push-type"] == "alert"
+    assert request.headers["apns-topic"] == "com.vortoone.mobile" and request.headers["apns-push-type"] == "alert"
     assert "正文" not in request.content.decode()
 
 

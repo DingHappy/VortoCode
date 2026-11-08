@@ -63,8 +63,8 @@ App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/
 | 模拟器 Debug / Release 真机二进制编译 | 通过（未签名） |
 | Secure Enclave、Face ID、APNs、通知扩展共享钥匙串 | **需要真机签名安装验收**；模拟器没有 Secure Enclave，Debug 构建退回软件钥匙，仅供联调 |
 
-签名构建要在 Apple 开发者后台给 `com.vortocode.mobile` 开启推送，并登记扩展 `com.vortocode.mobile.notification`
-与钥匙串分组 `com.vortocode.mobile.shared`。工程里的 `aps-environment` 写的是 development（开发安装用）；按 App Store 导出时 Xcode 换成 production，`scripts/ios-testflight.py` 上传前会核对这一点。发 TestFlight 见 [ACCEPTANCE.md](ACCEPTANCE.md) 的 M4 一节。
+签名构建要在 Apple 开发者后台给 `com.vortoone.mobile` 开启推送，并登记扩展 `com.vortoone.mobile.notification`
+与钥匙串分组 `com.vortoone.mobile.shared`。工程里的 `aps-environment` 写的是 development（开发安装用）；按 App Store 导出时 Xcode 换成 production，`scripts/ios-testflight.py` 上传前会核对这一点。发 TestFlight 见 [ACCEPTANCE.md](ACCEPTANCE.md) 的 M4 一节。
 
 ## 构建
 

@@ -33,7 +33,7 @@ final class AssistantSession {
     var contact: ContactStatus {
         ContactStatus.evaluate(lastContact: lastContact, lastAttemptFailed: lastAttemptFailed, checking: phase == .reading)
     }
-    private static func contactKey(_ entry: AssistantEntry) -> String { "vortocode.mobile.last-contact." + entry.displayAddress }
+    private static func contactKey(_ entry: AssistantEntry) -> String { "vortoone.mobile.last-contact." + entry.displayAddress }
     private(set) var phase = Phase.idle
     var busy: Bool { phase != .idle }
     var note = ""

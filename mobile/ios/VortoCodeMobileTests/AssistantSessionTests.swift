@@ -96,7 +96,7 @@ final class AssistantSessionTests: XCTestCase {
     }
 
     func testContactStatusRemembersLastSuccessAndFlagsAFailedRefresh() async throws {
-        UserDefaults.standard.removeObject(forKey: "vortocode.mobile.last-contact." + entry.displayAddress)
+        UserDefaults.standard.removeObject(forKey: "vortoone.mobile.last-contact." + entry.displayAddress)
         let h = Harness()
         h.saved = SavedSession(origin: entry.displayAddress, credential: try makeCredential())
         let session = AssistantSession(services: h.services)
@@ -110,7 +110,7 @@ final class AssistantSessionTests: XCTestCase {
         h.readError = nil
         reopened.restore(entry)                                                // 重开 App：先拿到存下的时间
         XCTAssertEqual(reopened.lastContact?.timeIntervalSince1970 ?? 0, reached.timeIntervalSince1970, accuracy: 0.001)
-        UserDefaults.standard.removeObject(forKey: "vortocode.mobile.last-contact." + entry.displayAddress)
+        UserDefaults.standard.removeObject(forKey: "vortoone.mobile.last-contact." + entry.displayAddress)
     }
 
     func testExpiredLoginIsNotReportedAsTheAssistantBeingDown() async throws {

@@ -26,7 +26,7 @@ final class NotificationService: UNNotificationServiceExtension {
     static func decrypt(_ sealed: String) -> String? {
         guard let blob = Data(base64Encoded: sealed), blob.count > 65 + 16 else { return nil }
         var query: [String: Any] = [kSecClass as String: kSecClassKey,
-                                    kSecAttrApplicationTag as String: Data("com.vortocode.mobile.push".utf8),
+                                    kSecAttrApplicationTag as String: Data("com.vortoone.mobile.push".utf8),
                                     kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
                                     kSecReturnRef as String: true]
         if let group = Bundle.main.object(forInfoDictionaryKey: "VCKeychainGroup") as? String,
