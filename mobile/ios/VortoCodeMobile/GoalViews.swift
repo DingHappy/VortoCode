@@ -45,7 +45,8 @@ struct GoalListView: View {
                 ContentUnavailableView("目标来源待核对", systemImage: "wifi.exclamationmark", description: Text("请刷新或检查常驻服务。来源不可用不表示没有目标。"))
             }
         }
-        .navigationTitle("目标")
+        .scrollContentBackground(.hidden).background(Palette.bg)
+        .navigationTitle(VCCopy.Panel.goals)
         .searchable(text: $query, isPresented: $searching, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索目标、下一步或阻塞")
         .refreshable { await session.refreshAndWait(entry) }
         .toolbar {
@@ -90,7 +91,7 @@ struct GoalRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(goal.objective).font(.headline)
-            Text(goal.statusLabel).font(.caption).foregroundStyle(goal.status == "blocked" ? .orange : .secondary)
+            Text(goal.statusLabel).font(.caption).foregroundStyle(goal.status == "blocked" ? Palette.waitText : Palette.muted)
             if !goal.nextAction.isEmpty { Text("下一步：\(goal.nextAction)").font(.subheadline).foregroundStyle(.secondary).lineLimit(3) }
         }.padding(.vertical, 5)
     }
@@ -114,7 +115,7 @@ struct GoalDetail: View {
                 Text(goal.objective).font(.title3.bold()).textSelection(.enabled)
                 LabeledContent("原记录状态", value: goal.statusLabel)
                 if session.busy || !session.note.isEmpty { ReadingStatus(session: session) }
-                if historical { Label("历史内容，刷新后重新核对", systemImage: "clock").foregroundStyle(.orange).accessibilityIdentifier("goal-history") }
+                if historical { Label("历史内容，刷新后重新核对", systemImage: "clock").foregroundStyle(Palette.waitText).accessibilityIdentifier("goal-history") }
                 if current == nil, session.reading.goals.freshness == .current {
                     Text("最新读取结果中未找到此目标，以下保留最后查看的记录。列表最多读取 100 条，不能据此判定目标已删除或已完成。")
                         .font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("goal-not-in-read")

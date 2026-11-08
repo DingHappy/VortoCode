@@ -240,9 +240,11 @@
 | 结果不明 | 无法确认 | 灰 |
 | 失败 | 卡住了，需要你 / 失败 | 红 |
 
+两端共用的界面词（面板五段、会话入口、审批类别 / 级别 / 来源 / 范围、上表的短状态词）放在 `design/copy.json`，运行 `python scripts/design_tokens.py` 生成 Desktop 的 `desktop/src/lib/copy.generated.ts` 和 iPhone 的 `MobileCore/Copy.swift`。新加两端都会显示的词时先放进去，不在两边各写一份。
+
 ## 8. 迁移
 
-- **新代码**：不写死字号、圆角和颜色，一律用变量。变量的唯一出处是 `design/tokens.json`，改完运行 `python scripts/design_tokens.py` 生成 `desktop/src/styles/tokens.css` 和 iPhone 的 `MobileCore/DesignTokens.swift`；生成文件不要手改（ADR-017）。
+- **新代码**：不写死字号、圆角和颜色，一律用变量。变量的唯一出处是 `design/tokens.json`，改完运行 `python scripts/design_tokens.py` 生成 `desktop/src/styles/tokens.css` 和 iPhone 的 `MobileCore/DesignTokens.swift`；生成文件不要手改（ADR-017）。两端共用的界面词同理，只改 `design/copy.json`（第 7 节）。
 - **迁移顺序**（ADR-016）：
   1. 先修：打开小组时主要聊天同时显示选中；打开主要聊天不停在最新一条。
   2. 侧栏改成会话列表（资料库、定制收进头像菜单）；打开 App 直接进主要聊天；改掉输入框提示和输入框上方常驻电脑那行的过时说法。

@@ -1,4 +1,5 @@
-import { approvalCategory, approvalSource } from "../lib/approval";
+import { approvalCategory, approvalScope, approvalSource } from "../lib/approval";
+import { COPY } from "../lib/copy.generated";
 import { OwnerAccess } from "./OwnerAccess";
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode, RefObject } from "react";
@@ -142,13 +143,14 @@ export const PANEL_PAGE: Record<AssistantTab, AssistantPage | null> = {
   feed: "tasks", schedule: "schedule", goals: "goals", identity: null, audit: null,
 };
 
-const TABS: Array<{ id: AssistantTab; label: string; hint: string; icon: ReactNode }> = [
-  { id: "feed", label: "动态", hint: "动态 · 查看进展与待处理", icon: <List aria-hidden="true" /> },
-  { id: "goals", label: "目标", hint: "目标 · 查看进度和下一步", icon: <Target aria-hidden="true" /> },
-  { id: "audit", label: "审核记录", hint: "审核记录 · 查看允许与拒绝", icon: <ShieldCheck aria-hidden="true" /> },
-  { id: "schedule", label: "定时", hint: "定时 · 查看计划和执行记录", icon: <Clock3 aria-hidden="true" /> },
-  { id: "identity", label: "身份", hint: "身份 · 资料、性格与记忆", icon: <UserRound aria-hidden="true" /> },
-];
+// 五段的名字和说明来自 design/copy.json，iPhone 助理详情用同一份
+const TABS: Array<{ id: AssistantTab; label: string; hint: string; icon: ReactNode }> = ([
+  { id: "feed", icon: <List aria-hidden="true" /> },
+  { id: "goals", icon: <Target aria-hidden="true" /> },
+  { id: "audit", icon: <ShieldCheck aria-hidden="true" /> },
+  { id: "schedule", icon: <Clock3 aria-hidden="true" /> },
+  { id: "identity", icon: <UserRound aria-hidden="true" /> },
+] as Array<{ id: AssistantTab; icon: ReactNode }>).map(item => ({ ...item, label: COPY.panel[item.id], hint: `${COPY.panel[item.id]} · ${COPY.panel_hint[item.id]}` }));
 
 export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
   name: string; connected: boolean; modelLabel?: string;
@@ -303,7 +305,7 @@ export function AssistantAudit({ entries, now, accessClient, connected = false }
           <span className="assistant-audit-text">
             <strong>{title}</strong>
             {rest.length > 0 && <span>{rest.join(" ").slice(0, 120)}</span>}
-            {entry.operation_kind && <small>{approvalCategory(entry.operation_kind)} · {approvalSource(entry.decision_source)} · {entry.approval_scope === "once" ? "仅本次" : entry.approval_scope === "turn" ? "本轮同类" : entry.approval_scope === "existing_trust" ? "既有授权范围" : "无新增授权"}</small>}
+            {entry.operation_kind && <small>{approvalCategory(entry.operation_kind)} · {approvalSource(entry.decision_source)} · {approvalScope(entry.approval_scope)}</small>}
             <small>{entry.approval_outcome === "expired" ? "已过期，未放行" : entry.approval_outcome === "cancelled" ? "已取消，未放行" : entry.decision === "allowed" ? "已允许" : "已拒绝"}{entry.tainted ? " · 读过外部内容后" : ""}{entry.ts ? ` · ${ago(entry.ts, now)}` : ""}</small>
           </span>
         </li>;

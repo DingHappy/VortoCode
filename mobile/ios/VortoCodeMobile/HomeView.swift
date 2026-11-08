@@ -12,7 +12,7 @@ struct HomeView: View {
     var body: some View {
         Group {
             if let entry, session.credential != nil {
-                AssistantTabs(entry: entry, session: session)
+                AssistantShell(entry: entry, session: session)
             } else {
                 welcome
             }
@@ -50,7 +50,7 @@ struct HomeView: View {
                             .foregroundStyle(.secondary).lineSpacing(5)
                     }
                     connectionCard
-                    if !session.note.isEmpty { Text(session.note).font(.subheadline).foregroundStyle(.orange).accessibilityIdentifier("session-note") }
+                    if !session.note.isEmpty { Text(session.note).font(.subheadline).foregroundStyle(Palette.waitText).accessibilityIdentifier("session-note") }
                     if !session.pendingLogouts.isEmpty { PendingLogoutView(session: session) }
                     VStack(alignment: .leading, spacing: 22) {
                         capability("person.crop.circle.badge.checkmark", "同账号登录", "沿用 VortoCode 账号，日常登录无需手动核对码。")
@@ -62,7 +62,7 @@ struct HomeView: View {
                 }.padding(24).frame(maxWidth: 600)
                     .frame(maxWidth: .infinity)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(Palette.bg)
             .toolbar(.hidden, for: .navigationBar)
 
         }
@@ -77,7 +77,7 @@ struct HomeView: View {
                     .foregroundStyle(.secondary).accessibilityIdentifier("saved-entry")
                 Button { session.login(entry) } label: {
                     Label(session.busy ? session.phase.label : "登录并打开助手", systemImage: "person.crop.circle.badge.checkmark").frame(maxWidth: .infinity, minHeight: 36)
-                }.buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("open-assistant").disabled(session.busy)
+                }.buttonStyle(.borderedProminent).tint(Palette.ink).controlSize(.large).accessibilityIdentifier("open-assistant").disabled(session.busy)
                 Text("登录在系统认证窗口完成，会话安全保存在这台设备。退出与刷新在 App 内处理。")
                     .font(.footnote).foregroundStyle(.secondary)
             } else {
@@ -85,15 +85,16 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
                 Button { editor = .connection } label: {
                     Label("连接常驻助手", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 36)
-                }.buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("connect-assistant")
+                }.buttonStyle(.borderedProminent).tint(Palette.ink).controlSize(.large).accessibilityIdentifier("connect-assistant")
             }
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
+            .background(Palette.surface, in: RoundedRectangle(cornerRadius: VCRadius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: VCRadius.card, style: .continuous).strokeBorder(Palette.border))
     }
 
     private func capability(_ symbol: String, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: symbol).font(.title3).foregroundStyle(.blue).frame(width: 28)
+            Image(systemName: symbol).font(.title3).foregroundStyle(Palette.accent).frame(width: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.headline)

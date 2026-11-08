@@ -95,10 +95,10 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
             }
         }
         public var sourceLabel: String {
-            ["user": "人工确认", "automatic_review": "后台审核", "preauthorized": "既有授权", "system": "系统决定", "timeout": "超时", "cancelled": "已取消"][decisionSource ?? ""] ?? "来源待核对"
+            ApprovalLabels.source(decisionSource)
         }
         public var scopeLabel: String {
-            ["once": "仅本次", "turn": "本轮同类", "existing_trust": "既有授权范围", "none": "无新增授权"][approvalScope ?? ""] ?? "范围待核对"
+            ApprovalLabels.scope(approvalScope)
         }
     }
     public func validate() throws {
@@ -111,9 +111,10 @@ public struct OwnerAccessSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+/// 审批文案来自 design/copy.json（VCCopy），和 Desktop 的 lib/approval.ts 是同一份。
 public enum ApprovalLabels {
-    public static func category(_ kind: String?) -> String {
-        ["read": "只读访问", "own_data": "你的事项", "draft": "本地草稿", "write": "文件修改",
-         "execute": "命令执行", "deliver": "对外发送", "interact": "电脑或网页操作", "irreversible": "不可逆操作"][kind ?? ""] ?? "类别待核对"
-    }
+    public static func category(_ kind: String?) -> String { VCCopy.ApprovalCategory.label(kind) }
+    public static func risk(_ risk: String?) -> String { VCCopy.ApprovalRisk.label(risk) }
+    public static func source(_ source: String?) -> String { VCCopy.ApprovalSource.label(source) }
+    public static func scope(_ scope: String?) -> String { VCCopy.ApprovalScope.label(scope) }
 }

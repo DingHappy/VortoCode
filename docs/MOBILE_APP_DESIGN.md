@@ -25,9 +25,9 @@ iPhone 学 Muse 手机端的形式，结构照搬 Desktop 已按 [ADR-016](DECIS
 
 三层，都只有一个出处：
 
-1. **变量**：`design/tokens.json` 是唯一出处，`python scripts/design_tokens.py` 生成 `desktop/src/styles/tokens.css` 和 `MobileCore/DesignTokens.swift`。`tests/unit/test_design_tokens.py` 检查生成文件没有过期，也没有被手改。SwiftUI 用 `VCColor.bg.color`，跟随系统浅色 / 深色，取值和 Desktop 一样。深色两端统一用 Desktop 的深色（画布 `#141413`、卡片 `#222221`），不另设纯黑。
+1. **变量**：`design/tokens.json` 是唯一出处，`python scripts/design_tokens.py` 生成 `desktop/src/styles/tokens.css` 和 `MobileCore/DesignTokens.swift`。`tests/unit/test_design_tokens.py` 检查生成文件没有过期，也没有被手改。SwiftUI 用 `VCColor.bg.color`，跟随系统浅色 / 深色，取值和 Desktop 一样。深色两端统一用 Desktop 的深色（画布 `#1a1a19`、抽屉和侧栏 `#141413`、卡片 `#222221`），不另设纯黑。
 2. **组件**：审批卡、等你处理、动态记录行、执行过程、小组气泡、头像名片、状态胶囊。两端结构、字段顺序、按钮顺序相同。
-3. **状态词**：沿用 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) 第 7 节。M1 起放进共享文案表，两端引用同一份。
+3. **状态词和界面词**：沿用 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) 第 7 节，放在 `design/copy.json`，同一个脚本生成 Desktop 的 `lib/copy.generated.ts` 和 iPhone 的 `MobileCore/Copy.swift`。
 
 手机按 iOS 习惯处理的部分：
 - 正文跟随 Dynamic Type，不锁死字号；
@@ -58,10 +58,21 @@ iPhone 学 Muse 手机端的形式，结构照搬 Desktop 已按 [ADR-016](DECIS
 | 批 | 内容 | 服务端 |
 | --- | --- | --- |
 | M0 | 本文与 ADR-017；`design/tokens.json` 和生成脚本；Desktop 改用生成的 `tokens.css`（取值不变）；MobileCore 有 `DesignTokens.swift` 和 SwiftUI 适配 | 不动 |
-| M1 | 结构对齐：全屏主要聊天、顶部头像、等你处理、抽屉、头像详情五段；审批卡和动态行换成共享组件；共享文案表 | 用现有接口，不加路由 |
+| M1（已做） | 结构对齐：全屏主要聊天、顶部头像、等你处理、抽屉、头像详情五段；审批卡和动态行换成共享组件；共享文案表 | 用现有接口，不加路由 |
 | M2 | 回复逐字出现、执行过程可展开；有卡待批时也能继续输入，发出后排队 | 手机网关加流式通道；97 的 Caddy 白名单要放行新路径，改前先问主人 |
 | M3 | 抽屉里列出任务小组和旁聊；手机上看群聊、回复、验收或退回 | 新的手机接口，同样涉及 Caddy |
 | M4 | TestFlight 分发；真机核对 Face ID 批准、审批回执、推送、断网重连 | — |
+
+### M1 做到哪里
+
+手机接口目前只有对话、待批准的 Codex 动作和任务单、时间线、目标、审核记录这些。所以：
+
+- 抽屉里的「任务小组」「旁聊」只写着去电脑上看，不显示列表，等 M3 有手机接口再接；
+- 助理详情的「定时」只有说明；「身份」显示名字、手机权限和来源核对，性格与记忆的编辑留在电脑上；
+- 抽屉里的「搜索」只查这台手机已经读到的主要聊天，不发请求；
+- 抽屉右上没有「新对话」：主要聊天只有一段，旁聊等 M3。
+
+审批卡、动态记录行、「等你处理」、状态胶囊、头像在 `OwnerViews.swift` 里各有一个组件，颜色、圆角和间距都用生成的变量，字号跟随 Dynamic Type。头像下面那句状态由 MobileCore 的 `AssistantStatusLine` 决定：连不上 → 等你处理的件数 → 在忙 → 只读 → 来源没读到 → 跟进中的目标数，读不到时照实说，不说成「没事」。
 
 之后再考虑：图片和附件、语音输入、点子页。
 

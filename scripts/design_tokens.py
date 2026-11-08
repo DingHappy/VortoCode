@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""从 design/tokens.json 生成两端的设计变量（docs/DESIGN_SYSTEM.md 第 5 节、ADR-017）。
+"""从 design/ 下的两份定义生成两端的设计变量和共享文案（docs/DESIGN_SYSTEM.md 第 5、7 节，ADR-017）。
 
-- Desktop：desktop/src/styles/tokens.css（--vc-* CSS 变量，浅色 + 两份深色块）
-- iPhone：mobile/ios/Packages/MobileCore/Sources/MobileCore/DesignTokens.swift
+- design/tokens.json → Desktop 的 desktop/src/styles/tokens.css（--vc-* CSS 变量，浅色 + 两份深色块）
+  和 iPhone 的 mobile/ios/Packages/MobileCore/Sources/MobileCore/DesignTokens.swift
+- design/copy.json → Desktop 的 desktop/src/lib/copy.generated.ts 和 iPhone 的 MobileCore/Copy.swift
 
-改变量只改 JSON，然后运行 ``python scripts/design_tokens.py``。
+改变量或文案只改 JSON，然后运行 ``python scripts/design_tokens.py``。
 ``--check`` 只比对不写入：生成结果和仓库里的文件不一致时退出码为 1（测试与 CI 用）。
 """
 from __future__ import annotations
@@ -19,6 +20,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "design" / "tokens.json"
 CSS_OUT = ROOT / "desktop" / "src" / "styles" / "tokens.css"
 SWIFT_OUT = ROOT / "mobile" / "ios" / "Packages" / "MobileCore" / "Sources" / "MobileCore" / "DesignTokens.swift"
+COPY_SOURCE = ROOT / "design" / "copy.json"
+COPY_TS_OUT = ROOT / "desktop" / "src" / "lib" / "copy.generated.ts"
+COPY_SWIFT_OUT = SWIFT_OUT.with_name("Copy.swift")
 
 CSS_HEADER = """/* ── 设计变量（docs/DESIGN_SYSTEM.md 第 5 节）──────────────────────────────
    由 design/tokens.json 生成（python scripts/design_tokens.py），不要手改；iPhone 用同一份生成 DesignTokens.swift。
@@ -151,12 +155,113 @@ def render_swift(data: dict) -> str:
     return "\n".join(out) + "\n"
 
 
+_COPY_KEY = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def load_copy(path: Path = COPY_SOURCE) -> dict:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("version") != 1 or not isinstance(data.get("groups"), list):
+        raise ValueError("design/copy.json 版本或结构不对")
+    names: set[str] = set()
+    for group in data["groups"]:
+        name, strings = group.get("name"), group.get("strings")
+        if not isinstance(name, str) or not _COPY_KEY.fullmatch(name) or name in names:
+            raise ValueError(f"文案分组名不合法或重复：{name}")
+        names.add(name)
+        if not isinstance(strings, dict) or not strings:
+            raise ValueError(f"{name} 没有文案")
+        fallback = group.get("fallback", {})
+        if not isinstance(fallback, dict) or not set(fallback) <= {"missing", "unknown"} \
+                or ("unknown" in fallback and "missing" not in fallback):
+            raise ValueError(f"{name} 的 fallback 只能有 missing 和 unknown，且有 unknown 时必须有 missing")
+        if fallback and set(strings) & {"missing", "unknown", "table", "label"}:
+            raise ValueError(f"{name} 有 fallback 时文案键不能叫 missing / unknown / table / label")
+        for key, text in {**strings, **fallback}.items():
+            if not _COPY_KEY.fullmatch(key) or not isinstance(text, str) or not text.strip():
+                raise ValueError(f"{name}.{key} 的键或文案不合法")
+    return data
+
+
+def _pascal(name: str) -> str:
+    return "".join(part[:1].upper() + part[1:] for part in name.split("_"))
+
+
+def _snake_camel(name: str) -> str:
+    head, *rest = name.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in rest)
+
+
+def _quote(text: str) -> str:
+    return json.dumps(text, ensure_ascii=False)
+
+
+def render_copy_ts(data: dict) -> str:
+    out = [
+        "// 由 design/copy.json 生成（python scripts/design_tokens.py），不要手改。",
+        "// iPhone 用同一份生成 MobileCore/Copy.swift（ADR-017）。",
+        "",
+        "export const COPY = {",
+    ]
+    for group in data["groups"]:
+        out.append(f"  /** {group['title']} */")
+        out.append(f"  {group['name']}: {{")
+        out += [f"    {key}: {_quote(text)}," for key, text in group["strings"].items()]
+        out.append("  },")
+    out += ["} as const;", "", "/** 字段缺失（missing）或值不认识（unknown）时显示的词。 */", "export const COPY_FALLBACK = {"]
+    for group in data["groups"]:
+        fallback = group.get("fallback")
+        if fallback:
+            missing = fallback["missing"]
+            out.append(f"  {group['name']}: {{ missing: {_quote(missing)}, unknown: {_quote(fallback.get('unknown', missing))} }},")
+    out += ["} as const;", "",
+            "/** 按服务端字段值取文案：不是字符串算缺失，不认识的值用 unknown。 */",
+            "export function copyLabel(group: keyof typeof COPY_FALLBACK, value: unknown): string {",
+            "  const table: Record<string, string> = COPY[group];",
+            "  if (typeof value !== \"string\") return COPY_FALLBACK[group].missing;",
+            "  return Object.prototype.hasOwnProperty.call(table, value) ? table[value] : COPY_FALLBACK[group].unknown;",
+            "}"]
+    return "\n".join(out) + "\n"
+
+
+def render_copy_swift(data: dict) -> str:
+    out = [
+        "// 由 design/copy.json 生成（python scripts/design_tokens.py），不要手改。",
+        "// Desktop 用同一份生成 desktop/src/lib/copy.generated.ts（ADR-017）。",
+        "",
+        "public enum VCCopy {",
+    ]
+    for index, group in enumerate(data["groups"]):
+        if index:
+            out.append("")
+        out.append(f"    /// {group['title']}")
+        out.append(f"    public enum {_pascal(group['name'])} {{")
+        out += [f"        public static let {_snake_camel(key)} = {_quote(text)}" for key, text in group["strings"].items()]
+        fallback = group.get("fallback")
+        if fallback:
+            missing = fallback["missing"]
+            pairs = ", ".join(f"{_quote(key)}: {_quote(text)}" for key, text in group["strings"].items())
+            out += [
+                f"        public static let missing = {_quote(missing)}",
+                f"        public static let unknown = {_quote(fallback.get('unknown', missing))}",
+                f"        public static let table: [String: String] = [{pairs}]",
+                "        /// 按服务端字段值取文案：没有这个字段用 missing，不认识的值用 unknown。",
+                "        public static func label(_ value: String?) -> String {",
+                "            guard let value else { return missing }",
+                "            return table[value] ?? unknown",
+                "        }",
+            ]
+        out.append("    }")
+    out.append("}")
+    return "\n".join(out) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="只比对，不写文件")
     args = parser.parse_args(argv)
-    data = load()
-    outputs = {CSS_OUT: render_css(data), SWIFT_OUT: render_swift(data)}
+    data, copy = load(), load_copy()
+    outputs = {CSS_OUT: render_css(data), SWIFT_OUT: render_swift(data),
+               COPY_TS_OUT: render_copy_ts(copy), COPY_SWIFT_OUT: render_copy_swift(copy)}
     stale = [path for path, text in outputs.items()
              if not path.is_file() or path.read_text(encoding="utf-8") != text]
     if args.check:
