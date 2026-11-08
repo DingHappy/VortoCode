@@ -61,7 +61,7 @@ iPhone 学 Muse 手机端的形式，结构照搬 Desktop 已按 [ADR-016](DECIS
 | M1（已做） | 结构对齐：全屏主要聊天、顶部头像、等你处理、抽屉、头像详情五段；审批卡和动态行换成共享组件；共享文案表 | 用现有接口，不加路由 |
 | M2（已做） | 回复逐字出现、执行过程可展开；有卡待批时也能继续输入，发出后排队 | 不加路由：回合状态接口多返回 `partial`、`steps` |
 | M3（已做） | 抽屉里列出任务小组和旁聊；手机上看群聊、回复、验收或退回 | 7 个新手机接口；97 的 Caddy 白名单要放行，改前先问主人 |
-| M4 | TestFlight 分发；真机核对 Face ID 批准、审批回执、推送、断网重连 | — |
+| M4（进行中） | TestFlight 分发；真机核对 Face ID 批准、审批回执、推送、断网重连 | — |
 
 ### M1 做到哪里
 
@@ -88,6 +88,13 @@ iPhone 学 Muse 手机端的形式，结构照搬 Desktop 已按 [ADR-016](DECIS
 - 在群里说话、验收通过、退回（要写原因）都要 Face ID：前两样会让小组接着在常驻电脑上干活，验收会结束小组。停止小组用日常钥匙，先弹确认。
 - 旁聊在手机上**只能看**：接着聊要在电脑上，或者在主要聊天里说。手机发起的回合只进主要聊天，不往别的会话里写。
 - 7 个新接口见 [手机客户端架构](MOBILE_CLIENT_ARCHITECTURE.md)；部署前要在 97 的 Caddy 白名单里放行（仓库模板 `deploy/Caddyfile.mobile-proxy` 已更新，发布脚本在白名单缺路径时停下不切换）。
+
+### M4 做到哪里
+
+- 图标改成满版方形、无透明通道（源文件 `design/app-icon-ios.svg`），App Store 不再拒收。
+- Info.plist 声明只用标准加密（`ITSAppUsesNonExemptEncryption = NO`），每次上传不用再答出口合规。
+- `scripts/ios-testflight.py`：只从干净的最新 main 发；用 App Store Connect API 钥匙让 Xcode 自动签发布版；上传前核对推送是 production、不可调试、有 TestFlight 标记、扩展和团队对得上。步骤和真机验收清单见 `mobile/ios/ACCEPTANCE.md` 的 M4 一节。
+- 要主人做的：在 App Store Connect 建 App、建 API 钥匙、把自己加进内部测试组。
 
 之后再考虑：图片和附件、语音输入、点子页。
 

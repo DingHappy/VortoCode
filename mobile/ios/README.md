@@ -64,7 +64,7 @@ App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/
 | Secure Enclave、Face ID、APNs、通知扩展共享钥匙串 | **需要真机签名安装验收**；模拟器没有 Secure Enclave，Debug 构建退回软件钥匙，仅供联调 |
 
 签名构建要在 Apple 开发者后台给 `com.vortocode.mobile` 开启推送，并登记扩展 `com.vortocode.mobile.notification`
-与钥匙串分组 `com.vortocode.mobile.shared`；`aps-environment` 当前为 development，正式分发前改为 production。
+与钥匙串分组 `com.vortocode.mobile.shared`。工程里的 `aps-environment` 写的是 development（开发安装用）；按 App Store 导出时 Xcode 换成 production，`scripts/ios-testflight.py` 上传前会核对这一点。发 TestFlight 见 [ACCEPTANCE.md](ACCEPTANCE.md) 的 M4 一节。
 
 ## 构建
 
@@ -74,7 +74,7 @@ App 使用 [Apple 系统认证会话](https://developer.apple.com/documentation/
 
 模拟器 App：`/private/tmp/vortocode-ios-derived/Build/Products/Debug-iphonesimulator/VortoCodeMobile.app`。设备 Release 编译输出在 `/private/tmp/vortocode-ios-device-build/Build/Products/Release-iphoneos/VortoCodeMobile.app`，当前禁用签名，不能直接安装到真实手机。真机仍需 Apple 开发团队和签名；没有 IPA、TestFlight 或 App Store 发布。
 
-AppIcon 复用原仓库品牌资源；正式商店发行前仍需处理原图透明通道与发行材料。
+AppIcon 由 `design/app-icon-ios.svg` 导出：满版方形、无透明通道（iOS 自己裁圆角）。正式上架 App Store 前仍要准备截图、描述和隐私标签。
 
 ### 本地开发归档
 
@@ -90,7 +90,7 @@ python scripts/build-ios-app.py verify --output build/ios-delivery/<同一目录
 
 输出包括 Release iPhone arm64 的 `.xcarchive`、私有构建日志和 `receipt.json`。回执记录实际 bundle 版本、签名类别、源码 commit、是否有未提交改动及源码摘要；构建期间源码变化时不生成回执。验证会重新检查 App 资源摘要、设备平台、HTTPS 策略、认证回调、开发签名、嵌入描述文件和权限一致性。`--require-current-source` 另要求当前工作区源码与归档时一致。
 
-开发签名归档仅适用于描述文件授权的设备，仍需要设备连接、开发权限及实际安装验收。归档回执始终将真机安装、线上连接与 App Store 发布标为未验证，不能用编译或签名成功替代这些证据。当前图标带透明通道，仍不是 App Store 发布候选；交付工具也不提供上传或发布功能。
+开发签名归档仅适用于描述文件授权的设备，仍需要设备连接、开发权限及实际安装验收。归档回执始终将真机安装、线上连接与 App Store 发布标为未验证，不能用编译或签名成功替代这些证据。这个交付工具不上传；发 TestFlight 用 `scripts/ios-testflight.py`（见 ACCEPTANCE.md 的 M4 一节）。
 
 ## 验收
 
