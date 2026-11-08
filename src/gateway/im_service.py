@@ -1,6 +1,6 @@
 """IM 桥内嵌服务（b3 PR-5）——把 IM bridge 并进 serve 进程，单进程唯一状态所有者。
 
-此前 `vc im` 是独立进程：它与 serve 各持一个 TaskRunner/会话，同一 .vortocode 有两个
+此前 `vc im` 是独立进程：它与 serve 各持一个 TaskRunner/会话，同一 .vortoone 有两个
 状态所有者。现在 serve 可 **opt-in** 内嵌 bridge（`vc server --im telegram|dingtalk` 或
 env `VORTOONE_IM`）：
 

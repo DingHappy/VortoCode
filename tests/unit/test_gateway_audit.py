@@ -22,7 +22,7 @@ def test_audit_redacts_secrets_and_large_content(tmp_path):
         },
         result="full tool output must not be persisted",
     )
-    raw = (tmp_path / ".vortocode" / "audit.log").read_text(encoding="utf-8")
+    raw = (tmp_path / ".vortoone" / "audit.log").read_text(encoding="utf-8")
     assert "sk-raw-secret" not in raw
     assert "sk-another" not in raw
     assert "abc.def" not in raw
@@ -37,7 +37,7 @@ def test_audit_redacts_secrets_and_large_content(tmp_path):
 
 
 def test_audit_tolerates_bad_and_resanitizes_legacy_lines(tmp_path):
-    path = tmp_path / ".vortocode" / "audit.log"
+    path = tmp_path / ".vortoone" / "audit.log"
     path.parent.mkdir(parents=True)
     legacy = {
         "ts": "2026-07-15T00:00:00+00:00",

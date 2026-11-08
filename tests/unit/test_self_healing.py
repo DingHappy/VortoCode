@@ -313,6 +313,6 @@ def test_remediation_ledger_is_json_and_bounded(tmp_path):
     """冷却台账要是能读的 JSON——排查时人要能看懂"上次什么时候自愈过"。"""
     root = _repo(tmp_path)
     rem.remediate(root, "Author identity unknown", source="test", now=123.0)
-    data = json.loads((Path(root) / ".vortocode" / "logs" / "remediation.json")
+    data = json.loads((Path(root) / ".vortoone" / "logs" / "remediation.json")
                       .read_text(encoding="utf-8"))
     assert data["git-identity"] == 123.0

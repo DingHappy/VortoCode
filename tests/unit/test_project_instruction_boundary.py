@@ -7,7 +7,7 @@ from src.agents.project import find_instructions_file, load_project_instructions
 from src.workflow.workbench.extensions_inspect import inspect_extensions
 
 
-@pytest.mark.parametrize("source", ["AGENTS.md", "CLAUDE.md", "VORTO.md", ".vortocode/AGENTS.md"])
+@pytest.mark.parametrize("source", ["AGENTS.md", "CLAUDE.md", "VORTO.md", ".vortoone/AGENTS.md"])
 def test_external_rule_target_is_never_read(tmp_path, monkeypatch, source):
     root = tmp_path / "project"
     root.mkdir()
@@ -35,7 +35,7 @@ def test_external_parent_directory_is_rejected(tmp_path):
     root.mkdir()
     outside.mkdir()
     (outside / "AGENTS.md").write_text("SYNTHETIC_OUTSIDE_RULE_MARKER")
-    (root / ".vortocode").symlink_to(outside, target_is_directory=True)
+    (root / ".vortoone").symlink_to(outside, target_is_directory=True)
     assert find_instructions_file(str(root)) is None
     assert load_project_instructions(str(root)) == ""
 

@@ -489,7 +489,7 @@ class MCPIntegrationLayer:
         # 扫描配置文件
         config_files = [
             ".mcp.json",
-            ".vortocode/mcp.json",
+            ".vortoone/mcp.json",
             "~/.config/vortocode/mcp.json"
         ]
         

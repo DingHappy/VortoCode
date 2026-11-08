@@ -111,7 +111,7 @@ def test_model_target_is_bound_to_owner_active_round_and_is_not_acceptance(tmp_p
 async def test_owned_role_client_is_closed_after_delegated_execution(tmp_path, monkeypatch):
     from src.agents.main_agent import build_research_tools
     from src.agents.agent_loop import MainAgent
-    directory = tmp_path / ".vortocode/agents"; directory.mkdir(parents=True)
+    directory = tmp_path / ".vortoone/agents"; directory.mkdir(parents=True)
     (directory / "helper.md").write_text("---\nname: helper\nmodel: small-model\n---\n示例角色")
     parent = LLMClient()
     closed = []

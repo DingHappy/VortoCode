@@ -11,14 +11,14 @@ def test_session_event_journal_round_trip_and_sequence_order(tmp_path):
         (1, {"type": "agent_say", "text": "hello", "seq": 1}),
         (2, {"type": "agent_done", "seq": 2}),
     ]
-    ignore = (tmp_path / ".vortocode" / ".gitignore").read_text(encoding="utf-8")
+    ignore = (tmp_path / ".vortoone" / ".gitignore").read_text(encoding="utf-8")
     assert "session_events/" in ignore
 
 
 def test_session_event_journal_ignores_torn_and_invalid_lines(tmp_path):
     journal = SessionEventJournal(str(tmp_path), "sid-safe")
     assert journal.append(1, {"type": "agent_say", "text": "ok", "seq": 1})
-    segment = next((tmp_path / ".vortocode" / "session_events" / "safe").glob("*.jsonl"))
+    segment = next((tmp_path / ".vortoone" / "session_events" / "safe").glob("*.jsonl"))
     with segment.open("a", encoding="utf-8") as handle:
         handle.write('{"seq":2,"event":')
         handle.write("\n" + json.dumps({"seq": "bad", "event": {"type": "agent_done"}}) + "\n")

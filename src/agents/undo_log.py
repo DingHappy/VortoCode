@@ -8,7 +8,7 @@
 2. **撤销 = 状态回退 + 如实列出撤不回的下游影响**：提醒已经推出去了、Codex 已经按某个事项开了一轮，
    这些收不回来。撤销函数返回 `UndoResult.not_recallable` 写明，界面照实显示，不假装什么都没发生过。
 
-落盘 `.vortocode/undo/ops.jsonl`（gitignored），只留最近 `MAX_OPS` 条。快照只存主人自己的业务字段，
+落盘 `.vortoone/undo/ops.jsonl`（gitignored），只留最近 `MAX_OPS` 条。快照只存主人自己的业务字段，
 调用方不得放凭据。读写在文件锁内完成；撤销先在锁内把记录认领为 undoing，再在锁外调撤销函数
 （撤销函数自己可能要写别的状态），最后回锁内落结果——同一条不会被撤两次。
 """
@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
+from src.utils.state_dir import state_dir
 
 MAX_OPS = 500
 _SUMMARY_MAX = 200
@@ -64,7 +65,7 @@ def has_undo(action: str) -> bool:
 
 
 def _path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "undo" / "ops.jsonl"
+    return state_dir(root) / "undo" / "ops.jsonl"
 
 
 @contextmanager

@@ -214,7 +214,7 @@ async def test_http_submit_query_review_followup_and_validation(tmp_path, monkey
 
 def test_development_delivery_and_unknown_roles_rejected(tmp_path):
     from src.agents.dispatch import validate_dispatch_agent
-    root = tmp_path / ".vortocode" / "agents"
+    root = tmp_path / ".vortoone" / "agents"
     root.mkdir(parents=True)
     for name in ("dev", "deliver", "read"):
         (root / f"{name}.md").write_text(f"---\nname: {name}\ntools: {name}\n---\nRole instructions")

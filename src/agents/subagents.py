@@ -1,4 +1,4 @@
-"""自定义子 agent 注册表（`.vortocode/agents/*.md`）——公司架构式的角色分工。
+"""自定义子 agent 注册表（`.vortoone/agents/*.md`）——公司架构式的角色分工。
 
 一个文件一个角色（产品经理/前端/后端/QA…），frontmatter 定元数据、正文即该角色的
 system prompt。主 agent 的 `task`/`research_parallel` 工具用 `agent` 参数按名委派：
@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from src.utils.state_dir import state_dir
 
 _TOOL_FACES = ("read", "dev", "deliver")
 
@@ -99,7 +100,7 @@ def _parse_agent_md(path: Path) -> Optional[SubagentSpec]:
 
 
 class SubagentRegistry:
-    """扫描 `.vortocode/agents/*.md`；坏文件安全跳过。同名后扫的覆盖先扫的（目录序稳定）。"""
+    """扫描 `.vortoone/agents/*.md`；坏文件安全跳过。同名后扫的覆盖先扫的（目录序稳定）。"""
 
     def __init__(self, dirs: list) -> None:
         self._dirs = [Path(d) for d in dirs]
@@ -129,7 +130,7 @@ class SubagentRegistry:
 
 def registry_for(repo_root: str) -> SubagentRegistry:
     """每次现建现扫（文件少、开销小），保证新加/改过的角色文件立刻生效，无缓存失效问题。"""
-    return SubagentRegistry([str(Path(repo_root) / ".vortocode" / "agents")]).load()
+    return SubagentRegistry([str(state_dir(repo_root) / "agents")]).load()
 
 
 def subagent_catalog(repo_root: str) -> str:

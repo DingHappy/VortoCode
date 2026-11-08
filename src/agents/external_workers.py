@@ -13,7 +13,7 @@ VortoOne 仍是中介：拆解、worktree 隔离、自测重试、逐件与集�
     VORTOONE_EXTERNAL_WORKERS=implement=codex,review=claude
     VORTOONE_EXTERNAL_WORKER_TIMEOUT=1800        # 单次运行秒数，超时杀整个进程组
     VORTOONE_CODEX_BIN / VORTOONE_CLAUDE_BIN    # 可选：CLI 路径（缺省走 PATH）
-    VORTOONE_WORKER_HOME=~/.vortocode/workers    # 常驻模式：CLI 用这里的专用登录与配置
+    VORTOONE_WORKER_HOME=~/.vortoone/workers    # 常驻模式：CLI 用这里的专用登录与配置
 
 两种模式（别混）：
 - **本机模式**（没设 VORTOONE_WORKER_HOME）：Desktop / 终端在你自己的电脑上跑，CLI 用你的个人

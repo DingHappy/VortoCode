@@ -141,7 +141,7 @@ v1 检查种类：
 
 | kind | 数据来源 | 游标 / id | 外部 |
 | --- | --- | --- | --- |
-| `runs` | `.vortocode/runs/` 运行台账中已结束的运行 | 结束时间 + run id | 否 |
+| `runs` | `.vortoone/runs/` 运行台账中已结束的运行 | 结束时间 + run id | 否 |
 | `mail` | `plugins/mail` 未读、非群发邮件的发件人与主题 | UIDVALIDITY + UID | 是 |
 | `calendar` | `plugins/calendar_ics` / `caldav` 未来 36 小时日程 | 开始时间 + 标题的哈希 | 是 |
 

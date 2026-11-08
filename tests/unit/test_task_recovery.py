@@ -144,7 +144,7 @@ async def test_corrupt_or_mismatched_recovery_records_do_not_grant_another_run(t
     runner, recovery, source, _, calls, _ = stopped(tmp_path)
     child, _ = recovery.resume(source.id)
     await runner.join(child.id)
-    path = tmp_path / ".vortocode/tasks" / f"{child.id}.json"
+    path = tmp_path / ".vortoone/tasks" / f"{child.id}.json"
     if change == "owner":
         child.owner_session = "sid-other"
         runner.ledger.save(child)
@@ -343,7 +343,7 @@ async def test_pause_save_failure_is_not_reported_as_paused(tmp_path, monkeypatc
 def test_corrupt_plan_identity_is_not_resumable_or_listed(tmp_path, bad_id):
     plan = dev_plan.DevPlan.new("不重定向计划", "vorto/recovery", "main")
     dev_plan.save_plan(str(tmp_path), plan)
-    path = tmp_path / ".vortocode/dev_plans" / f"{plan.plan_id}.json"
+    path = tmp_path / ".vortoone/dev_plans" / f"{plan.plan_id}.json"
     path.write_text(json.dumps({**plan.to_dict(), "plan_id": bad_id}))
     before = path.read_bytes()
     assert dev_plan.load_plan(str(tmp_path), plan.plan_id) is None

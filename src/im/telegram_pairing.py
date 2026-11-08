@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from .telegram import TelegramAdapter
+from src.utils.state_dir import home_state_dir
 
 
 class PairingError(Exception):
@@ -29,7 +30,7 @@ def _bot_id(token: str) -> str:
 
 
 def _pairing_dir(state_dir: Path | None = None) -> Path:
-    return state_dir or Path.home() / ".vortocode" / "im-pairings"
+    return state_dir or home_state_dir() / "im-pairings"
 
 
 def _owner_path(token: str, state_dir: Path | None = None) -> Path:

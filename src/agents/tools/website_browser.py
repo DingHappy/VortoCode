@@ -18,6 +18,7 @@ from src.browser.action_state import BrowserActionState
 from src.browser.connections import BrowserConnections, safe_url, site_origin
 from src.browser.page_privacy import AUTH_STATE_JS, ELEMENT_JS, SNAPSHOT_JS
 from src.gateway.process_lease import ProcessLease
+from src.utils.state_dir import state_dir
 
 _LIVE = set()
 _MAX_OPEN = 8
@@ -470,7 +471,7 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         if not isinstance(state, dict) or state.get("protected") is not False or state.get("frames") is not False:
             return "页面含嵌入内容，未截屏；请真人查看，避免把嵌入登录内容交给模型。"
         data = await holder.browser.screenshot()
-        out = Path(repo_root) / ".vortocode" / "artifacts"
+        out = state_dir(repo_root) / "artifacts"
         out.mkdir(parents=True, exist_ok=True)
         path = out / f"browser-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.png"
         path.write_bytes(data)

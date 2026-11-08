@@ -18,6 +18,7 @@ from pathlib import Path
 import secrets
 import tempfile
 import threading
+from src.utils.state_dir import state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ _LOCK = threading.Lock()
 
 class NativeSessionStore:
     def __init__(self, root: str):
-        self.directory = Path(root) / ".vortocode" / "mobile-devices"
+        self.directory = state_dir(root) / "mobile-devices"
         self.path = self.directory / "native-sessions.bin"
         self.key_path = self.directory / "native-sessions.key"
 

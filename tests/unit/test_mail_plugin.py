@@ -102,7 +102,7 @@ def _fresh_poll_clock():
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(plugins, "plugin_ready", READY)
-    folder = tmp_path / ".vortocode" / "connectors"
+    folder = tmp_path / ".vortoone" / "connectors"
     folder.mkdir(parents=True)
     path = folder / "mail.token"
     path.write_text(mail.validate(f"me@qq.com:{CODE}") + "\n")

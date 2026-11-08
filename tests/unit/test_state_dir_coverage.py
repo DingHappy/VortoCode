@@ -1,13 +1,13 @@
-"""`.vortocode/` 托管忽略清单的覆盖契约——生成态不该冒进目标仓库的 git status。
+"""`.vortoone/` 托管忽略清单的覆盖契约——生成态不该冒进目标仓库的 git status。
 
-真机诊断（2026-09-17）：桌面端的改动列表里混着 `.vortocode/journal`。VortoOne 往目标仓库
+真机诊断（2026-09-17）：桌面端的改动列表里混着 `.vortoone/journal`。VortoOne 往目标仓库
 写运行时状态，`ensure_state_gitignore` 负责让这些状态对用户的 git status 隐形；但清单是手写
 的，新加一处状态就少一条，**而且没有任何东西会红**——直到某天在一个自己没 gitignore
-`.vortocode/` 的仓库里，用户看见一堆不知道哪来的文件。
+`.vortoone/` 的仓库里，用户看见一堆不知道哪来的文件。
 
-这条契约扫出 src 里所有 `.vortocode/<名字>` 路径字面量，逐个丢进真 git 仓库问
+这条契约扫出 src 里所有 `.vortoone/<名字>` 路径字面量，逐个丢进真 git 仓库问
 `git check-ignore`：**工具写的必须被忽略，用户手改的必须不被忽略**。两边都断，所以
-"把整个 .vortocode/ 一忽略了之"也会红——那会挡住用户版本化自己的 permissions.yaml。
+"把整个 .vortoone/ 一忽略了之"也会红——那会挡住用户版本化自己的 permissions.yaml。
 """
 
 import re
@@ -29,27 +29,27 @@ USER_CONFIG = {
 
 # 不是目标仓库里的路径，扫描分辨不出来，在此登记豁免。
 NOT_A_REPO_PATH = {
-    "channel-locks",  # ~/.vortocode 下，同机 Bot 所有权跨仓库共用
-    "im_inbox",      # 在 ~/.vortocode 下（IM 收件箱跨仓库共用），不落目标仓库
-    "browser-profile",  # 在 ~/.vortocode 下（浏览器操控的独立配置目录），不落目标仓库
+    "channel-locks",  # ~/.vortoone 下，同机 Bot 所有权跨仓库共用
+    "im_inbox",      # 在 ~/.vortoone 下（IM 收件箱跨仓库共用），不落目标仓库
+    "browser-profile",  # 在 ~/.vortoone 下（浏览器操控的独立配置目录），不落目标仓库
     "website-connections",  # 本机网站授权及独立登录目录；构造器拒绝放进工作区
     "android-control",  # 本机设备租约与单个待核对占位；拒绝放进工作区
-    "resident_projects.json",  # 在 ~/.vortocode 下（常驻电脑的项目登记表，运维手写），不落目标仓库
-    "connectors",    # 在 ~/.vortocode 下（连接器凭据，权限 600，主人手放），不落目标仓库
-    "usage",         # 在 ~/.vortocode 下（每天按来源的模型用量台账，只有数字），不落目标仓库
-    "workers",       # 常驻模式外部执行者的专用 CLI 登录（VORTOONE_WORKER_HOME 示例值 ~/.vortocode/workers），不落目标仓库
+    "resident_projects.json",  # 在 ~/.vortoone 下（常驻电脑的项目登记表，运维手写），不落目标仓库
+    "connectors",    # 在 ~/.vortoone 下（连接器凭据，权限 600，主人手放），不落目标仓库
+    "usage",         # 在 ~/.vortoone 下（每天按来源的模型用量台账，只有数字），不落目标仓库
+    "workers",       # 常驻模式外部执行者的专用 CLI 登录（VORTOONE_WORKER_HOME 示例值 ~/.vortoone/workers），不落目标仓库
     "sessions",      # 只在 cron.py 的 docstring 里出现，说的是"本模块不写这个"
     ".gitignore",    # 清单文件自己
 }
 
 _PATTERNS = (
-    re.compile(r'\.vortocode"\s*/\s*"([A-Za-z0-9_.-]+)"'),   # Path(root) / ".vortocode" / "x"
-    re.compile(r'\.vortocode/([A-Za-z0-9_.-]+)'),            # 字符串或注释里的 ".vortocode/x"
+    re.compile(r'\.vortoone"\s*/\s*"([A-Za-z0-9_.-]+)"'),   # Path(root) / ".vortoone" / "x"
+    re.compile(r'\.vortoone/([A-Za-z0-9_.-]+)'),            # 字符串或注释里的 ".vortoone/x"
 )
 
 
 def _referenced_names() -> dict[str, str]:
-    """src 里出现过的 `.vortocode/<名字>` → 第一个引用它的文件（报错时好定位）。"""
+    """src 里出现过的 `.vortoone/<名字>` → 第一个引用它的文件（报错时好定位）。"""
     found: dict[str, str] = {}
     for path in sorted(Path("src").rglob("*.py")):
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -61,7 +61,7 @@ def _referenced_names() -> dict[str, str]:
 
 @pytest.fixture()
 def repo(tmp_path):
-    """一个**没有** gitignore 掉 .vortocode/ 的目标仓库——正是出问题的那种。"""
+    """一个**没有** gitignore 掉 .vortoone/ 的目标仓库——正是出问题的那种。"""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     ensure_state_gitignore(str(tmp_path))
     return tmp_path
@@ -77,7 +77,7 @@ def _ignored(repo: Path, name: str) -> bool:
     return any(
         subprocess.run(["git", "check-ignore", "-q", candidate],
                        cwd=repo, capture_output=True).returncode == 0
-        for candidate in (f".vortocode/{name}", f".vortocode/{name}/")
+        for candidate in (f".vortoone/{name}", f".vortoone/{name}/")
     )
 
 
@@ -99,7 +99,7 @@ def test_generated_state_is_invisible_to_the_target_repo(repo):
 
 @pytest.mark.parametrize("name", sorted(USER_CONFIG))
 def test_user_config_stays_versionable(repo, name):
-    """反方向也要断：不能图省事把整个 .vortocode/ 一忽略了之。"""
+    """反方向也要断：不能图省事把整个 .vortoone/ 一忽略了之。"""
     assert not _ignored(repo, name), f"{name} 是用户配置，不该被我们忽略"
 
 
@@ -107,7 +107,7 @@ def test_upgrade_reaches_an_existing_repo(tmp_path):
     """老仓库里已有托管区 → 新条目要能补进去，且区外的用户规则逐字保留。"""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     ensure_state_gitignore(str(tmp_path))
-    gitignore = tmp_path / ".vortocode" / ".gitignore"
+    gitignore = tmp_path / ".vortoone" / ".gitignore"
     gitignore.write_text(
         gitignore.read_text(encoding="utf-8").replace("journal/\n", "") + "\n# 我自己的规则\n*.bak\n",
         encoding="utf-8")

@@ -38,15 +38,15 @@ memory:
     capacity: 100
   
   long_term:
-    storage_path: ".vortocode/memory"
+    storage_path: ".vortoone/memory"
     enabled: true
 
 # 技能系统配置
 skills:
   directories:
     - "skills"
-    - ".vortocode/skills"
-    - "~/.vortocode/skills"
+    - ".vortoone/skills"
+    - "~/.vortoone/skills"
   
   auto_discovery:
     enabled: true
@@ -54,7 +54,7 @@ skills:
 # Hook 系统配置
 hooks:
   enabled: true
-  log_file: ".vortocode/logs/hooks.log"
+  log_file: ".vortoone/logs/hooks.log"
 
 # MCP 配置
 mcp:
@@ -73,4 +73,4 @@ web:
 # 日志配置
 logging:
   level: "INFO"
-  file: ".vortocode/logs/app.log"
+  file: ".vortoone/logs/app.log"

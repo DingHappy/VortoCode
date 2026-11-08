@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 _DIRNAME = "products"
 # 超限即拒绝而不是静默截断——截断过的选题池看起来一切正常，那是最坏的一种坏。
@@ -89,13 +90,13 @@ class Product:
 
 
 class ProductStore:
-    """`.vortocode/products/<id>.json` 的存取。原子落盘，与 goals/dev_plan 同惯例。"""
+    """`.vortoone/products/<id>.json` 的存取。原子落盘，与 goals/dev_plan 同惯例。"""
 
     def __init__(self, repo_root: str) -> None:
         self.repo_root = str(repo_root)
 
     def _dir(self) -> Path:
-        return Path(self.repo_root) / ".vortocode" / _DIRNAME
+        return state_dir(self.repo_root) / _DIRNAME
 
     def _path(self, product_id: str) -> Path:
         return self._dir() / f"{product_id}.json"
@@ -165,7 +166,7 @@ class ProductStore:
         try:
             from src.utils.state_dir import ensure_state_gitignore
 
-            ensure_state_gitignore(self.repo_root)     # 先保证 .vortocode/ 自忽略，别污染目标仓库
+            ensure_state_gitignore(self.repo_root)     # 先保证 .vortoone/ 自忽略，别污染目标仓库
             path.parent.mkdir(parents=True, exist_ok=True)
             from src.workflow.pipeline.pipeline_storage import write_json
             write_json(path, product.to_dict())
@@ -285,7 +286,7 @@ def _short(value: Any, limit: int = _MAX_FIELD) -> str:
 def _render(value: Any, depth: int, lines: List[str], prefix: str = "") -> None:
     """按 **JSON 结构**渲染，不认识任何具体字段名。
 
-    **刻意不写死 schema**：工序定义（`.vortocode/pipelines/*.yaml`）和角色提示词都是用户可改的，
+    **刻意不写死 schema**：工序定义（`.vortoone/pipelines/*.yaml`）和角色提示词都是用户可改的，
     产出物长什么样跟着它们走。在这里写死 `topics`/`article` 这类字段，用户改一次流水线，
     预览就开始漏内容——而漏的那部分恰恰是他要据以拍板的东西。宁可通用一点、少几分漂亮。
     """
@@ -328,4 +329,4 @@ def render_payload(payload: Any, *, limit: int = MAX_PREVIEW_CHARS) -> str:
         return text
     clipped = text[:limit].rsplit("\n", 1)[0]
     left = len(text) - len(clipped)
-    return clipped + f"\n…（还有约 {left} 字，完整内容见 .vortocode/products/）"
+    return clipped + f"\n…（还有约 {left} 字，完整内容见 .vortoone/products/）"

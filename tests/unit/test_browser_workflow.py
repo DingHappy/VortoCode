@@ -25,7 +25,7 @@ def test_invalid_workflows_do_not_degrade_to_page_health(steps, tmp_path):
 
 def test_profile_preserves_steps_and_rejects_an_action_without_assertions(tmp_path):
     import yaml
-    path = tmp_path / ".vortocode" / "verify.yaml"
+    path = tmp_path / ".vortoone" / "verify.yaml"
     path.parent.mkdir()
     steps = [{"action": "fill", "target": {"label": "标题"}, "value": "任务"},
              {"action": "click", "target": {"role": "button", "name": "保存"}},

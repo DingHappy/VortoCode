@@ -1,11 +1,11 @@
 """Bounded read-only recall of confirmed facts for one assistant turn."""
 from contextlib import closing
 import json
-from pathlib import Path
 import re
 import sqlite3
 
 from src.memory.lexical import rank_memories
+from src.utils.state_dir import state_dir
 
 MAX_CANDIDATES = 512
 MAX_ITEMS = 3
@@ -16,7 +16,7 @@ _BOUNDARY = re.compile(r"</?vortocode_untrusted_memory\s*>", re.IGNORECASE)
 def recall_context(root: str, query: str) -> str:
     """No match is not evidence of absence; never creates or repairs a database."""
     query = str(query or "").strip()[:256]
-    path = Path(root) / ".vortocode" / "sessions.db"
+    path = state_dir(root) / "sessions.db"
     if len(query) < 4 or not path.exists():
         return ""
     if path.is_symlink() or path.parent.is_symlink():

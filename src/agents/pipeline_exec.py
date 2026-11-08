@@ -140,7 +140,7 @@ def build_stage_executor(
         spec = registry_for(repo_root).get(stage_def.role) if stage_def.role else None
         if stage_def.role and spec is None:
             raise StageNotStarted(f"工序「{stage_def.id}」声明的角色 {stage_def.role!r} 不存在"
-                               f"（在 .vortocode/agents/{stage_def.role}.md 定义它）")
+                               f"（在 .vortoone/agents/{stage_def.role}.md 定义它）")
 
         # ① 先看**做不做得到**，再问要不要做。对 outbound 来说顺序反了就是：问你"要发吗"、
         #    你点了同意、然后才说"其实我发不了"——那次点头等于白按。

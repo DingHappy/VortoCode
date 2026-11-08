@@ -148,7 +148,7 @@ async def test_existing_status_route_returns_read_only_execution_projection(tmp_
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/api/codex/report", json={"threads": [source]})
         assert response.status_code == 200
-        path = tmp_path / ".vortocode/codex/state.json"
+        path = tmp_path / ".vortoone/codex/state.json"
         before = path.read_bytes()
         response = await client.get("/api/codex/status")
         assert response.status_code == 200

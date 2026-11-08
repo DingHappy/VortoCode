@@ -302,7 +302,7 @@ def test_blocked_subrequest_marks_result_red(tmp_path):
 def test_safe_evidence_path_never_uses_raw_segments(tmp_path):
     path = browser_verify.safe_evidence_path(tmp_path, "../run", "../../profile name")
     relative = path.relative_to(tmp_path)
-    assert relative.parts[:3] == (".vortocode", "artifacts", "browser-verify")
+    assert relative.parts[:3] == (".vortoone", "artifacts", "browser-verify")
     assert ".." not in relative.parts
     assert path.suffix == ".png"
 

@@ -17,6 +17,7 @@ import uuid
 
 from src.gateway.process_lease import ProcessLease
 from src.browser.backend import DEFAULT_BACKEND_ID, validate_backend_id
+from src.utils.state_dir import home_state_dir
 
 MAX_CONNECTIONS = 64
 MAX_BYTES = 128 * 1024
@@ -54,7 +55,7 @@ class BrowserConnections:
     def __init__(self, workspace: str, *, state_root: Path | None = None):
         self.workspace = str(Path(workspace).resolve())
         self.scope = hashlib.sha256(self.workspace.encode()).hexdigest()
-        self.root = state_root or Path.home() / ".vortocode" / "website-connections"
+        self.root = state_root or home_state_dir() / "website-connections"
         canonical = self.root.resolve()
         if canonical == Path(self.workspace) or Path(self.workspace) in canonical.parents:
             raise ValueError("网站授权和登录会话必须保存在工作区之外")

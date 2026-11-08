@@ -108,8 +108,8 @@ def test_log_keeps_only_the_most_recent_ops_and_skips_corrupt_lines(tmp_path, mo
     monkeypatch.setattr(undo_log, "MAX_OPS", 3)
     undo_log.register_undo("goal.update", _restore_note)
     ids = [undo_log.record(root, action="goal.update", summary=f"第 {i} 次", payload={}) for i in range(5)]
-    path = tmp_path / ".vortocode" / "undo" / "ops.jsonl"
+    path = tmp_path / ".vortoone" / "undo" / "ops.jsonl"
     path.write_text(path.read_text(encoding="utf-8") + "{坏行\n", encoding="utf-8")
     assert [entry["id"] for entry in undo_log.recent(root)] == ids[-3:]
     assert all(json.loads(line)["id"] in ids for line in path.read_text(encoding="utf-8").splitlines()[:3])
-    assert (tmp_path / ".vortocode" / ".gitignore").exists()
+    assert (tmp_path / ".vortoone" / ".gitignore").exists()

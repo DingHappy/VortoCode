@@ -1,7 +1,7 @@
 """Artifacts（制品）—— 把会话产出的自包含 HTML 发布成可分享、可实时更新的网页。
 
 复刻 Claude Code 的 artifact 能力，落到 VortoOne 的本地优先 / 人在关口模型：
-- 制品存到 `.vortocode/artifacts/<id>/`（gitignored，纯运行时产物，不进版本库）；
+- 制品存到 `.vortoone/artifacts/<id>/`（gitignored，纯运行时产物，不进版本库）；
 - 由 Web 服务器在 `/artifact/<id>` 渲染（iframe 沙箱 + 限制性 CSP，禁止外联——
   对齐 CC「静态、无外部请求」的隔离：制品脚本可跑但不能联网/SSRF）；
 - 页面随会话**实时更新**：重发同一 id 会 version+1，查看页轮询版本号自动刷新；
@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
+from src.utils.state_dir import state_dir
 
 
 def _slugify(title: str) -> str:
@@ -70,12 +71,12 @@ def render_markdown_doc(title: str, md_text: str) -> str:
 
 
 class ArtifactStore:
-    """文件系统制品库：`.vortocode/artifacts/<id>/{index.html, meta.json}`。"""
+    """文件系统制品库：`.vortoone/artifacts/<id>/{index.html, meta.json}`。"""
 
     _ID_RE = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
     def __init__(self, repo_root: str) -> None:
-        self.root = Path(repo_root) / ".vortocode" / "artifacts"
+        self.root = state_dir(repo_root) / "artifacts"
 
     @classmethod
     def _safe_id(cls, artifact_id: str) -> Optional[str]:

@@ -112,7 +112,7 @@ Desktop 是 VortoOne 当前默认产品与首要分发面；CLI 是高级/自动
 协议新增必须先改 `src/gateway/protocol.py` 并补契约测试；Desktop 不靠匹配文案推断安全状态。
 `hydrate=true` 用于原生 WebSocket 客户端挂好监听后幂等重取版本、历史和计划，避免握手首帧竞态；
 协议 v8 为会话实时事件增加单调 `seq`，`agent_events_replay(after_seq)` 返回有界补收批次；Desktop
-按 sid 保存最后 cursor。事件分段写入 `.vortocode/session_events/`，单段和段数均有上限，坏尾行
+按 sid 保存最后 cursor。事件分段写入 `.vortoone/session_events/`，单段和段数均有上限，坏尾行
 按断电恢复语义忽略；人工确认、原始 reasoning 和工作区升级请求只写 cursor 占位、不持久化正文，
 避免 Gateway 重启后复活已经失效的操作请求。完整 hydrate 仍是新客户端的权威状态基线。
 协议 v9 增加 `git_review_changed`：Project/Scratch 会话的 HEAD、逻辑 index、改动文件或来源账本
@@ -142,10 +142,10 @@ Desktop 是 VortoOne 当前默认产品与首要分发面；CLI 是高级/自动
 - 已落地 Worktree 任务面：实时一次性 worktree、持久 DevPlan 块进度、暂停与断点恢复、父任务血缘和可复制交接摘要。
 - 已落地稳定任务关联：后台 worker 通过执行上下文把 task、owner session 与 plan 绑定到每个实时 worktree；关系账本不保存提示词或源码。会话后台状态、计划和 worktree 均可在 Desktop 直达同一任务交接卡，刷新后仍可恢复。
 - 已落地任务分支审查：任务卡可进入对应持久 `vorto/*` 分支 diff；运行中的一次性 worktree 只读，成功任务可按稳定 hunk 记录接受证据或显式撤销。撤销生成独立审查提交并立即废弃旧测试证据，只有精确新 HEAD 在隔离 worktree 重验通过后才重新开放 Draft PR。
-- 已落地可选团队审查策略：仓库可在 `.vortocode/review-policy.yaml` 要求任务分支的全部当前文本 hunk 都有稳定 ID + patch SHA-256 接受证据；Desktop 显示覆盖率并关闭未满足的 PR 入口，服务端交付时重新读取当前 HEAD，配置错误或覆盖率未知均 fail closed。缺省关闭，不强迫个人工作流逐块确认。
+- 已落地可选团队审查策略：仓库可在 `.vortoone/review-policy.yaml` 要求任务分支的全部当前文本 hunk 都有稳定 ID + patch SHA-256 接受证据；Desktop 显示覆盖率并关闭未满足的 PR 入口，服务端交付时重新读取当前 HEAD，配置错误或覆盖率未知均 fail closed。缺省关闭，不强迫个人工作流逐块确认。
 - 已落地 Goal 自动验收器：test/build/lint 命令必须按无人值守隔离策略执行并受超时约束，file 检查限制在仓库内；所有结果自动回写对应验收标准。
 - 已落地决策中心：聚合实时确认、阻塞 Goal、失败/暂停任务、失败运行和 PR Review/CI；历史本地事项可忽略，实时确认必须明确允许或拒绝。
-- 已落地共享审计时间线：Web/Desktop Agent 与 TUI 写入同一 `.vortocode/audit.log`；敏感键、Bearer/环境变量凭据和文件正文默认脱敏，只记录工具结果长度。
+- 已落地共享审计时间线：Web/Desktop Agent 与 TUI 写入同一 `.vortoone/audit.log`；敏感键、Bearer/环境变量凭据和文件正文默认脱敏，只记录工具结果长度。
 - 已落地 Project Journal：每日摘要与 7 天周报聚合任务、Goal 证据、运行、工具和权限决定；任务交接使用 Gateway 共享投影，快照按内容摘要去重，历史日期只读冻结，手工记录自动脱敏凭据样式内容。
 - 已落地安全的跨日恢复：Desktop 的“继续昨天”只把历史目标 ID 当作线索，Gateway 会与当前待决策队列重新对账；已完成、已忽略或不存在的旧动作不会被执行。
 - 已落地 opt-in 系统通知：只请求检查/申请/发送通知三项 Tauri 权限；首次授权只建立当前高优先级事项基线，后续通知只显示新增数量，不把命令、日志、PR 评论或确认正文带到系统锁屏。
@@ -153,7 +153,7 @@ Desktop 是 VortoOne 当前默认产品与首要分发面；CLI 是高级/自动
 - 已落地项目资产工作台第一阶段：Desktop 可查看当前真正会注入新会话的仓库记忆、超预算与脱敏状态；追加事实需再次确认并复用内核写入策略，当前会话 system 保持不变。Artifact 支持列表、历史版本、认证读取和静态沙箱预览，并可将 `@artifact:<id>` 放回输入框交给 Agent 继续迭代；无 token 时可打开既有服务端交互查看页。
 - 已落地多 runtime 崩溃恢复、自动生命周期、内置 sidecar 与开发者预览打包：每个 runtime 启动时原子更新不含 token 的恢复注册表，子进程异常退出按 runtime 结构化标记；旧的单 runtime 记录自动迁移。重启后先尝试重新附着记录中的本机实例，失败后自动启动新引擎，不根据旧 PID 杀进程或执行任务。每个 runtime 使用独立回环端口与日志；首选端口不可用时自动申请空闲端口，同时托管数量有硬上限，精确停止不会影响其他项目。内置 runtime（PyInstaller onedir 目录，随 resources 放在 `Resources/runtime/`；2026-10-07 起替代 one-file，免去每次启动解压，冷启动约 4s → 0.5s）只暴露固定的回环 Gateway 入口，按当前 target triple 构建并优先于系统 `vc`；runtime 使用与 lock 完全一致的独立 venv，并从固定 URL、大小和 SHA-256 的 standalone CPython full archive 建立，验证上游元数据、架构、许可证和完整运行时树。真实 smoke 验证 health、Web 资源、release WebView、React、Tauri IPC 和 bundle 内 sidecar 启动；实际冻结组件与 CPython runtime 的第三方 notices、哈希和发布证据已结构化生成。正式分发仍需 notices 人工复核、Developer ID 签名、公证、升级策略和 Apple Silicon 原生 arm64 成品验收。
 
-- 已落地一等 Goal 合同：目标、约束、非目标和验收标准持久化到 `.vortocode/goals/`；关联现有
+- 已落地一等 Goal 合同：目标、约束、非目标和验收标准持久化到 `.vortoone/goals/`；关联现有
   `TaskRunner`、`DevPlan`、分支与断点续跑，不增加第二套自治 runtime。
 - 已落地证据完成闸门：自动测试/审查记录为执行证据，但不会擅自替代业务验收；Desktop 可逐项记录
   通过/失败证据，只有全部标准通过才标记 `achieved`，失败项可重新执行或 `dev_resume`。

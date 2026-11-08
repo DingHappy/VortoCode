@@ -106,8 +106,8 @@ def latch_child():
 
 @app.get("/qa/evidence")
 def evidence():
-    files = sorted((data / ".vortocode" / "tasks").glob("*.json"))
-    return {"root": str(root), "model_calls": model_calls, "goal_hashes": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((data / ".vortocode" / "goals").glob("*.json"))}, "task_hashes": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
+    files = sorted((data / ".vortoone" / "tasks").glob("*.json"))
+    return {"root": str(root), "model_calls": model_calls, "goal_hashes": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((data / ".vortoone" / "goals").glob("*.json"))}, "task_hashes": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
 
 app.mount("/", StaticFiles(directory=str(assets), html=True), name="fixture-assets")
 listener = socket.socket()

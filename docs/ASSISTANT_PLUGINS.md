@@ -8,7 +8,7 @@
 
 ## 规则
 
-- **凭据在哪，插件就在哪启用**：凭据只认 `~/.vortocode/connectors/<名字>.token`，要求本人所有、权限 600，
+- **凭据在哪，插件就在哪启用**：凭据只认 `~/.vortoone/connectors/<名字>.token`，要求本人所有、权限 600，
   与 GitHub 连接器共用同一套读取规则和本机撤销规则。删掉这个文件或在本机撤销，插件就停用。
 - 会话装配时，按此刻已启用的插件挂上工具，所以同一会话里的系统提示不变；新放进去的凭据从下一个会话起生效。
   每次调用工具都会重新读凭据，所以撤销立刻生效。
@@ -45,8 +45,8 @@
 放置方式（在跑助理的机器上执行，然后粘贴链接、回车、按 Ctrl-D，链接不会进 shell 历史）：
 
 ```bash
-mkdir -p ~/.vortocode/connectors && chmod 700 ~/.vortocode/connectors
-(umask 077; cat > ~/.vortocode/connectors/calendar.token)
+mkdir -p ~/.vortoone/connectors && chmod 700 ~/.vortoone/connectors
+(umask 077; cat > ~/.vortoone/connectors/calendar.token)
 ```
 
 ## Notion（只读）

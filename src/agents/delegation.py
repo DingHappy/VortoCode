@@ -55,7 +55,7 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
         reg = registry_for(repo_root)
         spec = reg.get(agent_name)
         if spec is None:
-            avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
+            avail = "、".join(reg.specs) or "（无——在 .vortoone/agents/ 放 <名>.md 定义角色）"
             return None, f"没有名为 {agent_name!r} 的子 agent。可用：{avail}"
         return (subagent_factory or build_subagent)(repo_root, spec, llm=llm, confirm=confirm,
                               on_progress=on_progress, capabilities=capabilities), None
@@ -244,7 +244,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
              "适合大型只读调查（读一堆文件/摸清某子系统）——别在主对话里逐个读，委派出去省上下文。"
              "可选 agent=<角色名> 用自定义角色（见系统提示【可用子 agent】；dev 型角色能用隔离流水线写代码）",
              {"description": "要委派给子 agent 的子任务",
-              "agent": "可选：自定义角色名（.vortocode/agents/ 里定义；缺省=只读研究员）",
+              "agent": "可选：自定义角色名（.vortoone/agents/ 里定义；缺省=只读研究员）",
               "task_type": "可选：analysis/coding/review/documentation/translation/extraction；同类任务统计标签，默认 analysis",
               **({"acceptance": "可选：验收标准字符串列表；完成后主 Agent 必须审查结果"} if collaboration else {})},
              _task, read_only=True,
@@ -446,7 +446,7 @@ def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
         if type(selected) is LLMClient:
             selected = LLMClient(selected.config.model_copy(deep=True))
             owns_client = True
-    # 项目级权限硬拦（.vortocode/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
+    # 项目级权限硬拦（.vortoone/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
     sub = agent_factory(tools, llm=selected, max_steps=spec.max_steps, extra_system=extra,
                     permissions=load_permissions(repo_root), capabilities=capabilities, native=native_default())
     sub._owns_role_client = owns_client

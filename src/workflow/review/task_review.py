@@ -24,6 +24,7 @@ from src.agents.git_workflow import _parse_hunks
 from src.workflow.review.change_sources import stable_hunk_id
 from src.workflow.review.git_review import _line_items, normalize_git_path
 from src.workflow.review.review_policy import load_task_review_policy
+from src.utils.state_dir import state_dir
 
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$")
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._-]")
@@ -60,7 +61,7 @@ def _clean_task_id(value: Any) -> str:
 
 
 def _store_path(repo_root: str, task_id: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "task_reviews" / f"{_clean_task_id(task_id)}.json"
+    return state_dir(repo_root) / "task_reviews" / f"{_clean_task_id(task_id)}.json"
 
 
 def _load_store(repo_root: str, task_id: str) -> dict[str, Any]:
@@ -413,7 +414,7 @@ def apply_task_review_action(
         if checked_out:
             raise ValueError(f"任务分支正被 worktree 使用，暂不能撤销：{checked_out}")
         wid = f"review-{_clean_task_id(context['task_id'])[:40]}-{uuid.uuid4().hex[:8]}"
-        worktree = Path(context["root"]) / ".vortocode" / "worktrees" / wid
+        worktree = state_dir(context["root"]) / "worktrees" / wid
         worktree.parent.mkdir(parents=True, exist_ok=True)
         from src.agents.worktree_bindings import (
             bind_worktree_owner, forget_worktree_binding, record_worktree_binding,
@@ -471,7 +472,7 @@ def verify_task_review(repo_root: str, task: Any) -> dict[str, Any]:
         if not context["mutable"]:
             raise ValueError("任务未成功完成，当前不能执行交付重验")
         wid = f"verify-{_clean_task_id(context['task_id'])[:40]}-{uuid.uuid4().hex[:8]}"
-        worktree = Path(context["root"]) / ".vortocode" / "worktrees" / wid
+        worktree = state_dir(context["root"]) / "worktrees" / wid
         worktree.parent.mkdir(parents=True, exist_ok=True)
         add = _git(context["root"], "worktree", "add", "--detach", str(worktree), context["head"])
         if add.returncode != 0:

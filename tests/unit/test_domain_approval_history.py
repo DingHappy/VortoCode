@@ -55,7 +55,7 @@ async def test_dispatch_approved_but_preflight_failed_then_withdrawn_keeps_both_
 
 
 def test_legacy_state_is_not_rewritten_as_a_known_approval(tmp_path):
-    folder = tmp_path / ".vortocode/codex"; folder.mkdir(parents=True)
+    folder = tmp_path / ".vortoone/codex"; folder.mkdir(parents=True)
     path = folder / "actions.json"
     path.write_text(json.dumps([{"id": "private-id", "status": "sent", "text": "private", "updated_at": "2026-11-03T10:00:00Z"},
                                 {"id": "pending", "status": "proposed"}]))
@@ -73,7 +73,7 @@ def test_bounded_retention_and_automated_sources_are_explicit(tmp_path):
     assert len(approval_events(item)) == 20 and item["approval_events_truncated"]
     assert all(e["source"] == "automatic_review" and e["scope"] == "none" for e in approval_events(item))
     item.update(id="cdx-x", status="approved", kind="message")
-    folder = tmp_path / ".vortocode/codex"; folder.mkdir(parents=True)
+    folder = tmp_path / ".vortoone/codex"; folder.mkdir(parents=True)
     (folder / "actions.json").write_text(json.dumps([item]))
     result = snapshot(str(tmp_path))
     assert result["history"]["sources"]["codex"] == "partial" and result["history"]["status"] == "partial"
@@ -82,7 +82,7 @@ def test_bounded_retention_and_automated_sources_are_explicit(tmp_path):
 
 @pytest.mark.parametrize("raw", ["not-json", "{}", "[null]"])
 def test_bad_domain_source_stays_unavailable_without_touching_file(tmp_path, raw):
-    folder = tmp_path / ".vortocode/codex"; folder.mkdir(parents=True)
+    folder = tmp_path / ".vortoone/codex"; folder.mkdir(parents=True)
     path = folder / "actions.json"; path.write_text(raw)
     result = snapshot(str(tmp_path))
     assert result["history"]["sources"]["codex"] == "unavailable"
@@ -95,7 +95,7 @@ def test_domain_reads_are_bounded_and_do_not_call_submit_or_reconciliation(tmp_p
     monkeypatch.setattr(watch, "expire_stale_actions", forbidden)
     monkeypatch.setattr(watch, "settle_unconfirmed_actions", forbidden)
     monkeypatch.setattr(dispatch, "approve", forbidden)
-    folder = tmp_path / ".vortocode/dispatches"; folder.mkdir(parents=True)
+    folder = tmp_path / ".vortoone/dispatches"; folder.mkdir(parents=True)
     path = folder / "ledger.json"; path.write_bytes(b"x" * (2 * 1024 * 1024 + 1))
     result = snapshot(str(tmp_path))
     assert result["history"]["sources"]["dispatches"] == "unavailable"
@@ -103,7 +103,7 @@ def test_domain_reads_are_bounded_and_do_not_call_submit_or_reconciliation(tmp_p
 
 
 def test_bounded_reader_preserves_the_existing_utf8_contract(tmp_path):
-    folder = tmp_path / ".vortocode/codex"; folder.mkdir(parents=True)
+    folder = tmp_path / ".vortoone/codex"; folder.mkdir(parents=True)
     (folder / "actions.json").write_bytes(json.dumps([{"id": "a", "status": "sent"}]).encode("utf-16"))
     assert snapshot(str(tmp_path))["history"]["sources"]["codex"] == "unavailable"
 
@@ -112,7 +112,7 @@ def test_bounded_reader_preserves_the_existing_utf8_contract(tmp_path):
 async def test_broken_dispatch_events_block_approval_but_not_manual_withdrawal(tmp_path, broken):
     root = str(tmp_path)
     item = dispatch.propose(root, project="VortoCode", title="test", goal="test")
-    path = tmp_path / ".vortocode/dispatches/ledger.json"
+    path = tmp_path / ".vortoone/dispatches/ledger.json"
     data = json.loads(path.read_text()); data["dispatches"][0]["approval_events"] = broken
     path.write_text(json.dumps(data)); before = path.read_bytes()
     async def forbidden(*_args, **_kwargs):
@@ -133,7 +133,7 @@ async def test_expired_dispatch_with_broken_events_can_be_withdrawn_by_the_watch
     from src.scheduling import assistant_watch
     root = str(tmp_path)
     item = dispatch.propose(root, project="VortoCode", title="old", goal="test")
-    path = tmp_path / ".vortocode/dispatches/ledger.json"
+    path = tmp_path / ".vortoone/dispatches/ledger.json"
     data = json.loads(path.read_text())
     now = datetime(2026, 11, 7, tzinfo=timezone.utc)
     data["dispatches"][0].update(approval_events=broken, created_at=(now - timedelta(days=8)).isoformat())
@@ -155,7 +155,7 @@ async def test_expired_dispatch_with_broken_events_can_be_withdrawn_by_the_watch
 def test_broken_codex_events_block_approval_but_not_rejection(tmp_path, broken):
     root = str(tmp_path); _seed(root)
     action = watch.propose_action(root, thread="登录", kind="message", text="test")
-    path = tmp_path / ".vortocode/codex/actions.json"
+    path = tmp_path / ".vortoone/codex/actions.json"
     data = json.loads(path.read_text()); data[0]["approval_events"] = broken
     path.write_text(json.dumps(data)); before = path.read_bytes()
     with pytest.raises(watch.CodexActionError, match="审批记录待核对"):

@@ -1,6 +1,6 @@
 """用户自定义斜杠命令（对标 Claude Code 的 .claude/commands/）。
 
-在 `.vortocode/commands/<名>.md` 放一个 Markdown 文件，正文就是提示模板，用户在 TUI 里
+在 `.vortoone/commands/<名>.md` 放一个 Markdown 文件，正文就是提示模板，用户在 TUI 里
 敲 `/<名> [参数]` 即可把模板（替换占位符后）作为一轮输入交给主 agent。
 
 与 SKILL.md 的区别：技能是 **agent 自主**按需调用（渐进披露进系统提示）；自定义命令是
@@ -20,8 +20,8 @@
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Dict, List
+from src.utils.state_dir import state_dir
 
 # 命令名：字母/数字/下划线/连字符（和文件名一致，避免和内置命令解析冲突）
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -141,12 +141,12 @@ def _parse(text: str, name: str) -> UserCommand:
 
 
 def load_commands(repo_root: str) -> Dict[str, UserCommand]:
-    """扫描 `<repo>/.vortocode/commands/*.md`，返回 {名: UserCommand}。
+    """扫描 `<repo>/.vortoone/commands/*.md`，返回 {名: UserCommand}。
 
     目录不存在/文件读不动/名字非法都安全跳过，绝不让坏文件影响 TUI。
     """
     out: Dict[str, UserCommand] = {}
-    d = Path(repo_root) / ".vortocode" / "commands"
+    d = state_dir(repo_root) / "commands"
     if not d.is_dir():
         return out
     for f in sorted(d.glob("*.md")):

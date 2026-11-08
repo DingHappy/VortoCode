@@ -29,7 +29,7 @@ def test_claim_first_wins_and_validates(tmp_path):
         mc.claim_main_chat(root, "sid-../../etc")
     assert mc.claim_main_chat(root, "sid-desk1") == "sid-desk1"
     assert mc.claim_main_chat(root, "sid-desk2") == "sid-desk1"      # 后连上的 Desktop 改用已登记的那段
-    (tmp_path / ".vortocode" / "main_chat.json").write_text("{坏的", encoding="utf-8")
+    (tmp_path / ".vortoone" / "main_chat.json").write_text("{坏的", encoding="utf-8")
     assert mc.main_chat_key(root) is None
 
 
@@ -338,7 +338,7 @@ def test_concurrent_claims_publish_one_complete_registration(tmp_path, monkeypat
         results = [future.result(timeout=5) for future in futures]
     assert results[0] == results[1] == original_read(root)
     assert results[0] in {"sid-first", "sid-second"}
-    assert list((tmp_path / ".vortocode").glob(".main_chat.*.tmp")) == []
+    assert list((tmp_path / ".vortoone").glob(".main_chat.*.tmp")) == []
 
 
 def test_corrupt_registration_is_preserved_and_claim_route_reports_conflict(tmp_path, monkeypatch):
@@ -347,7 +347,7 @@ def test_corrupt_registration_is_preserved_and_claim_route_reports_conflict(tmp_
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
-    path = tmp_path / ".vortocode" / "main_chat.json"
+    path = tmp_path / ".vortoone" / "main_chat.json"
     path.parent.mkdir()
     path.write_text("{broken", encoding="utf-8")
     with pytest.raises(mc.MainChatUnavailable):
@@ -366,7 +366,7 @@ def test_failed_registration_publication_cleans_temporary_file(tmp_path, monkeyp
     with pytest.raises(OSError, match="publication failed"):
         mc.claim_main_chat(str(tmp_path), "sid-new")
     assert mc.main_chat_key(str(tmp_path)) is None
-    assert list((tmp_path / ".vortocode").glob(".main_chat.*.tmp")) == []
+    assert list((tmp_path / ".vortoone").glob(".main_chat.*.tmp")) == []
 
 
 async def test_phone_completion_runs_desktop_queue_with_its_original_executor():

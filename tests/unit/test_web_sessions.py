@@ -258,7 +258,7 @@ def test_api_dashboard_promotes_and_acknowledges_hook_failure(client):
     )
     assert acknowledged.status_code == 200
     assert acknowledged.json()["hook_issues"]["count"] == 0
-    assert "hook_issue_acks" not in (root / ".vortocode" / "web_sessions" / "hook-owner.json").read_text()
+    assert "hook_issue_acks" not in (root / ".vortoone" / "web_sessions" / "hook-owner.json").read_text()
     refreshed = c.get("/api/agent/sessions").json()["sessions"][0]
     assert refreshed["status"] == "inactive" and refreshed["hook_issues"]["count"] == 0
     assert c.post(
@@ -311,7 +311,7 @@ def test_blank_live_sessions_are_not_recent_but_started_sessions_are(client):
 def test_historical_blank_is_hidden_without_deletion_and_named_or_queued_kept(client):
     import json
     c, root = client
-    directory = root / ".vortocode/web_sessions"
+    directory = root / ".vortoone/web_sessions"
     directory.mkdir(parents=True)
     old = directory / "old-empty.json"
     original = json.dumps({"transcript":[],"history":[],"context_usage":{"pct":1}})
@@ -327,7 +327,7 @@ def test_empty_session_with_background_task_stays_visible(client):
     import json
     from src.workflow.tasks.tasks import TaskLedger
     c, root = client
-    directory = root / ".vortocode/web_sessions"
+    directory = root / ".vortoone/web_sessions"
     directory.mkdir(parents=True)
     (directory / "task-owner.json").write_text(json.dumps({"transcript":[]}))
     TaskLedger(str(root)).create("dev","retain evidence",owner_session="sid-task-owner")

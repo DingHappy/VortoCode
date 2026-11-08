@@ -23,6 +23,7 @@ from typing import Callable, Dict, List, Tuple
 import uuid
 
 from src.utils.state_dir import ensure_state_gitignore
+from src.utils.state_dir import state_dir
 
 SCOPE = "assistant:read"
 MAX_DEVICES = 256
@@ -109,7 +110,7 @@ def _regular(path: Path) -> None:
 class MobileDevices:
     def __init__(self, root: str, *, clock: Callable[[], float] = time.time):
         self.root = Path(root)
-        self.directory = self.root / ".vortocode" / "mobile-devices"
+        self.directory = state_dir(self.root) / "mobile-devices"
         self.path = self.directory / "grants.json"
         self.clock = clock
 

@@ -16,7 +16,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/assistant/.vortocode/mobile-devices
+ReadWritePaths=%h/assistant/.vortoone/mobile-devices
 
 [Install]
 WantedBy=default.target

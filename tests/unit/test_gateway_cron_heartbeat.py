@@ -64,7 +64,7 @@ def test_schedule_due():
 
 # --------------------------------------------------------------------- cron: 作业表 + 状态
 def _write_cron_yaml(tmp_path, text):
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir(exist_ok=True)
     (d / "cron.yaml").write_text(text, encoding="utf-8")
 
@@ -105,14 +105,14 @@ def test_cron_state_persist(tmp_path):
 
 
 def test_cron_state_leaves_worktree_clean(tmp_path):
-    """cron_state.json 落 .vortocode/ 后，目标仓库（无自带 .gitignore）git status 仍干净（.vortocode/ 自忽略）。"""
+    """cron_state.json 落 .vortoone/ 后，目标仓库（无自带 .gitignore）git status 仍干净（.vortoone/ 自忽略）。"""
     import subprocess
     def git(*a):
         return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
     git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
     (tmp_path / "f.py").write_text("x=1\n", encoding="utf-8"); git("add", "-A"); git("commit", "-qm", "init")
     cron.CronState(str(tmp_path)).mark("job", datetime(2026, 7, 3, 2, 0))
-    assert (tmp_path / ".vortocode" / "cron_state.json").is_file()
+    assert (tmp_path / ".vortoone" / "cron_state.json").is_file()
     assert git("status", "--porcelain").stdout.strip() == ""     # cron 状态对 git status 隐形
 
 
@@ -197,7 +197,7 @@ def test_heartbeat_every_seconds(monkeypatch):
 
 
 def _write_backlog(tmp_path, text):
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir(exist_ok=True)
     (d / "BACKLOG.md").write_text(text, encoding="utf-8")
 
@@ -207,7 +207,7 @@ def test_backlog_claim_marks_and_advances(tmp_path):
     assert heartbeat.load_backlog_items(str(tmp_path)) == ["补 src/github 单测", "统一 env 前缀"]
     first = heartbeat.claim_backlog_item(str(tmp_path))
     assert first == "补 src/github 单测"
-    body = (tmp_path / ".vortocode" / "BACKLOG.md").read_text(encoding="utf-8")
+    body = (tmp_path / ".vortoone" / "BACKLOG.md").read_text(encoding="utf-8")
     assert "- [~] 补 src/github 单测" in body                       # 标成在跑
     second = heartbeat.claim_backlog_item(str(tmp_path))
     assert second == "统一 env 前缀"                                # 不重复领、领下一条
@@ -264,8 +264,8 @@ def test_record_and_load_notices(tmp_path):
     got = load_notices(str(tmp_path))
     assert [n["text"] for n in got] == ["heartbeat 发现问题", "cron 跑完了"]   # 新的在前
     assert all(n.get("ts") for n in got)
-    # 落在 .vortocode/logs/（已在自忽略清单内）
-    assert (tmp_path / ".vortocode" / "logs" / "notices.jsonl").is_file()
+    # 落在 .vortoone/logs/（已在自忽略清单内）
+    assert (tmp_path / ".vortoone" / "logs" / "notices.jsonl").is_file()
 
 
 def test_notices_truncated_to_cap(tmp_path):
@@ -368,7 +368,7 @@ jobs:
     assert len(after["history"]) == len(history)         # 会话历史长度不变
     assert after["history"] == history and after["transcript"] == transcript
     # 也没偷偷新开一个会话文件
-    assert sorted(p.name for p in (tmp_path / ".vortocode" / "web_sessions").glob("*.json")) == ["alice.json"]
+    assert sorted(p.name for p in (tmp_path / ".vortoone" / "web_sessions").glob("*.json")) == ["alice.json"]
 
     runs = _cron_runs(tmp_path)
     assert len(runs) == 1 and runs[0].status == "done" and runs[0].code == 0
@@ -483,7 +483,7 @@ async def test_run_lane_writes_nothing_outside_the_lane(tmp_path):
 
     比"会话历史长度不变"更硬：任何把例行产出塞进会话/记忆/交接文件的改法都会让这条红。
     """
-    root = tmp_path / ".vortocode"
+    root = tmp_path / ".vortoone"
 
     def snapshot():
         return {str(p.relative_to(root)): p.read_bytes()

@@ -138,7 +138,7 @@ def test_old_plan_files_without_tokens_project_as_zero(tmp_path):
     import json
     p = _plan([_b("a", status="landed")])
     save_plan(str(tmp_path), p)
-    path = tmp_path / ".vortocode" / "dev_plans" / f"{p.plan_id}.json"
+    path = tmp_path / ".vortoone" / "dev_plans" / f"{p.plan_id}.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     for blk in data["blocks"]:
         blk.pop("tokens", None)                  # 模拟旧文件

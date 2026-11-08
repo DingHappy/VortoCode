@@ -1,4 +1,4 @@
-# 活儿清单（BACKLOG.md）——放到目标仓库 `.vortocode/BACKLOG.md` 才生效
+# 活儿清单（BACKLOG.md）——放到目标仓库 `.vortoone/BACKLOG.md` 才生效
 
 <!--
   heartbeat 从这里领活：`- [ ]` 未开始 → 领走时自动标 `- [~]`（进行中）→ 人验收后自己改 `- [x]`。

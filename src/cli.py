@@ -6,6 +6,7 @@ import asyncio
 import sys
 import textwrap
 from pathlib import Path
+from src.utils.state_dir import state_dir
 
 
 def _resolve_log_level(raw) -> int:
@@ -82,7 +83,7 @@ def main():
               %(prog)s -i shot.png "这个报错截图说明什么"     附图（mimo-v2.5 能读图）
               %(prog)s -a memo.mp3 "把这段语音转写并总结"     附音频（mimo-v2.5 能听音频）
               %(prog)s --speak "用一句话介绍这个项目"          回复合成语音 WAV（mimo-v2.5-tts）
-              %(prog)s "/review src/cli.py"                  跑 .vortocode/commands/review.md 自定义命令
+              %(prog)s "/review src/cli.py"                  跑 .vortoone/commands/review.md 自定义命令
               %(prog)s "讲讲这个项目" && %(prog)s -c "那架构呢"   -c 续上一次对话（多轮）
               echo "审一下 cli.py 的健壮性" | %(prog)s        从 stdin 读 prompt（管道）
               %(prog)s --json "列出 src 模块" | jq .reply    JSON 输出，喂给脚本
@@ -111,7 +112,7 @@ def main():
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="以 JSON 输出 {reply, mode, tools, plan}（关闭流式）")
     p.add_argument("--continue", "-c", action="store_true", dest="continue_session",
-                   help="续上一次 CLI 对话（仿 claude -c）；历史每轮落盘 .vortocode/cli_session.json"
+                   help="续上一次 CLI 对话（仿 claude -c）；历史每轮落盘 .vortoone/cli_session.json"
                         "（--attach 下续的是 serve 侧的 cli 会话）")
     p.add_argument("--quiet", "-q", action="store_true",
                    help="不在 stderr 打印工具调用/进度，只留最终输出")
@@ -143,7 +144,7 @@ def main():
     p = sub.add_parser("im-pair", help="Telegram 私聊一次性配对（输出短时配对码，不需预知用户 ID）")
     p.add_argument("channel", choices=["telegram"])
 
-    p = sub.add_parser("cron", help="定时作业（.vortocode/cron.yaml）：list 看表 / run <name> 手动触发一次")
+    p = sub.add_parser("cron", help="定时作业（.vortoone/cron.yaml）：list 看表 / run <name> 手动触发一次")
     p.add_argument("action", choices=["list", "run"], help="list 列出作业 / run 手动跑一个")
     p.add_argument("name", nargs="?", help="run 时的作业名")
 
@@ -157,7 +158,7 @@ def main():
     p = sub.add_parser("digest", help="把最新一份 signals 渲染成早报（零 LLM，给 cron 的 command: 档用）")
     p.add_argument("-n", "--limit", type=int, default=12, help="最多列几条（默认 12）")
 
-    p = sub.add_parser("pipeline", help="作业流水线（.vortocode/pipelines/*.yaml）：非代码流程的工序 + 人批闸门")
+    p = sub.add_parser("pipeline", help="作业流水线（.vortoone/pipelines/*.yaml）：非代码流程的工序 + 人批闸门")
     p.add_argument("action", choices=["list", "show", "start", "advance", "review", "tick"],
                    help="list 看全部 / show <run> 看细节 / start <名字> 开一轮 / "
                         "advance <run> 推一道工序 / review <run> 给人批回执 / "
@@ -181,7 +182,7 @@ def main():
     p.add_argument("--if-idle", action="store_true",
                    help="start 时：已有未完成的运行就不开新的（定时开轮必备，防堆积）")
 
-    p = sub.add_parser("heartbeat", help="心跳值班一次（读 .vortocode/HEARTBEAT.md + 领 BACKLOG.md）")
+    p = sub.add_parser("heartbeat", help="心跳值班一次（读 .vortoone/HEARTBEAT.md + 领 BACKLOG.md）")
     p.add_argument("action", choices=["run"], help="run：立刻值班一次（隔离会话、便宜模型）")
 
     sub.add_parser("doctor", help="一键自检：git/凭证/中转站/serve/权限文件/gh/IM——常驻化后'用不了'大多是管道问题")
@@ -212,7 +213,7 @@ def main():
                         "template <通道> 打印 env 模板")
     p.add_argument("arg", nargs="?", help="template 时的通道名（dingtalk / telegram）")
     p.add_argument("--file", dest="roster_file", default="",
-                   help="名册路径（默认 .vortocode/assistants.yaml）")
+                   help="名册路径（默认 .vortoone/assistants.yaml）")
 
     for command, help_text in (
             ("coverage-verify", "离线只读核验历史 JSON；不导入、不释放容量"),
@@ -265,12 +266,18 @@ def main():
     else:
         _setup_logging()      # 没开结构化日志时的兜底配置（否则整个进程只剩 WARNING，见其 docstring）
 
+    # 状态目录 .vortocode → .vortoone（ADR-018 批次 C）：大多数地方经 state_dir() 按需搬，
+    # 这里先把当前目录和家目录搬好，相对路径写法（.vortoone/sessions.db、~/.vortoone/skills）也就对上了。
+    from src.utils.state_dir import home_state_dir, state_dir
+    state_dir(Path.cwd())
+    home_state_dir()
+
     if args.command == "agent":
         # argparse 的 --attach [URL]（nargs="?"）会把紧跟的任务文本吞成 URL：
         # `vc agent --attach "修个 bug"` → attach="修个 bug"、prompt 空。按"像不像 URL"消歧回来。
         args.prompt, args.attach = _disambiguate_attach(args.prompt, args.attach)
         prompt = _read_prompt_arg(args.prompt)
-        prompt = _maybe_expand_command(prompt, str(Path.cwd()))   # /<名> → 展开 .vortocode/commands 模板
+        prompt = _maybe_expand_command(prompt, str(Path.cwd()))   # /<名> → 展开 .vortoone/commands 模板
         images = args.images or []
         audio = args.audio or []
         if not prompt and not images and not audio:
@@ -458,7 +465,7 @@ async def run_im(channel: str, *, mode: str = "plan"):
         print(warn, file=sys.stderr)
     from src.gateway.process_lease import ProcessLease
     try:
-        with ProcessLease(Path(cwd) / ".vortocode" / "runtime.lock"):
+        with ProcessLease(state_dir(cwd) / "runtime.lock"):
             try:
                 await bridge.run()
             finally:
@@ -494,7 +501,7 @@ async def run_cron(action: str, name=None):
     if action == "list":
         jobs = _cron.load_jobs(cwd)
         if not jobs:
-            print("（无 cron 作业；在 .vortocode/cron.yaml 里定义 jobs）")
+            print("（无 cron 作业；在 .vortoone/cron.yaml 里定义 jobs）")
             return
         state = _cron.CronState(cwd)
         for j in jobs:
@@ -539,7 +546,7 @@ async def run_heartbeat_cli():
     cwd = str(Path.cwd())
     if current_workspace_scope() != "project":
         raise RuntimeError("Autonomous scheduling requires a Project workspace")
-    with ProcessLease(Path(cwd) / ".vortocode" / "runtime.lock"):
+    with ProcessLease(state_dir(cwd) / "runtime.lock"):
         worker = make_background_development_worker(cwd)
         runner = RuntimeServices(cwd, development_worker=worker).runner
         try:
@@ -644,7 +651,7 @@ def _valid_audio_ref(ref: str) -> bool:
 
 
 def _maybe_expand_command(prompt, cwd):
-    """若 prompt 以 /<名> 开头且 <名> 是 .vortocode/commands 里的自定义命令，展开其模板；
+    """若 prompt 以 /<名> 开头且 <名> 是 .vortoone/commands 里的自定义命令，展开其模板；
 
     否则原样返回（不是命令就当普通输入）。与 TUI 的 /<名> 同源（user_commands）——
     自定义命令至此 CLI/TUI 通用，可脚本化：vortocode agent "/review src/foo.py"。
@@ -679,7 +686,7 @@ def _strip_markup(s: str) -> str:
 def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None, on_progress=None,
                           capability_profile="local", auto_approve=False, can_ask_human=False,
                           on_decision=None):
-    """薄壳：装配走 gateway 的单一工厂（kind="cli"，无制品、读 .vortocode/hooks.yaml）。
+    """薄壳：装配走 gateway 的单一工厂（kind="cli"，无制品、读 .vortoone/hooks.yaml）。
 
     工具集与网页 /agent 同源（同一工厂），签名保持兼容供既有调用方/测试。
     on_progress：dev 流水线进度回调（长任务边跑边播到 stderr，免得对着静默 prompt 干等）。
@@ -872,7 +879,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     audio:  可选音频引用列表（路径/data URL），挂到本轮 user 消息（mimo-v2.5 能听音频）。
     speak:  True 则把最终回复合成成语音写 WAV（speak_out，默认 vorto-reply.wav）、TTY 下试播。
     continue_session: True 则续上上一次 CLI 对话（仿 claude -c）——把存盘历史灌回 agent；
-                每轮结束都把历史落盘（.vortocode/cli_session.json），所以下次 -c 能接上。
+                每轮结束都把历史落盘（.vortoone/cli_session.json），所以下次 -c 能接上。
     attach: 非 None 则走协议客户端模式（回合交给常驻 serve；"" = 默认 URL）。连接失败
                 自动回退进程内（提示一行），**回合发出后的错误不回退**（防重复执行）。
     """
@@ -1076,7 +1083,7 @@ def run_workers_cli(command, worker=""):
     return subprocess.run(ew.login_argv(worker), env=ew.worker_env()).returncode
 
 
-_CLI_SESSION = ".vortocode/cli_session.json"
+_CLI_SESSION = ".vortoone/cli_session.json"
 
 
 def _load_cli_session(cwd):

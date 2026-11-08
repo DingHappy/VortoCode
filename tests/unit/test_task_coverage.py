@@ -272,7 +272,7 @@ def test_completed_evidence_becomes_unknown_after_later_mutation(tmp_path):
 def test_corrupt_checkpoint_does_not_guess_or_overwrite_progress(tmp_path):
     service, source, _, _ = fixture(tmp_path)
     report = step(service, source)
-    path = tmp_path / ".vortocode" / "task_scans" / f'{report["scan_id"]}.json'
+    path = tmp_path / ".vortoone" / "task_scans" / f'{report["scan_id"]}.json'
     payload = path.read_text().replace('"sequence": 1', '"sequence": 50')
     path.write_text(payload)
     before = task_bytes(service)

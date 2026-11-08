@@ -19,7 +19,7 @@ def _default_prompt_protocol(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _usage_ledger_in_tmp(monkeypatch, tmp_path_factory):
-    """模型用量台账写到临时目录：测试里的假模型调用不能记进真实的 ~/.vortocode/usage。"""
+    """模型用量台账写到临时目录：测试里的假模型调用不能记进真实的 ~/.vortoone/usage。"""
     monkeypatch.setenv("VORTOONE_USAGE_DIR", str(tmp_path_factory.mktemp("usage")))
 
 
@@ -71,7 +71,7 @@ def _hermetic_ambient_credentials(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _hermetic_user_instructions(monkeypatch, tmp_path_factory):
-    """不让机器上真实的 `~/.vortocode/AGENTS.md` 混进被测的系统提示。
+    """不让机器上真实的 `~/.vortoone/AGENTS.md` 混进被测的系统提示。
 
     全局指令对所有会话生效，开发者本机若写过它，断言系统提示内容的测试就会随机器变。默认指向
     一个不存在的路径；测它本身的用例自行 `monkeypatch.setattr(project, "USER_INSTRUCTIONS_PATH", …)`。
@@ -91,7 +91,7 @@ def _isolated_channel_ownership(monkeypatch, tmp_path_factory, request):
 
 @pytest.fixture(autouse=True)
 def _no_ambient_plugins(monkeypatch):
-    """机器上放了插件凭据（如 ~/.vortocode/connectors/calendar.token）也不该改变测试结论：
+    """机器上放了插件凭据（如 ~/.vortoone/connectors/calendar.token）也不该改变测试结论：
     默认一律当作没接插件。测插件的用例自行把 plugin_ready 换回原函数并指向临时 HOME。"""
     import src.plugins
     monkeypatch.setattr(src.plugins, "plugin_ready", lambda name: False)

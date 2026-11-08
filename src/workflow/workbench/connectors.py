@@ -2,7 +2,7 @@
 
 常驻电脑没有浏览器，所以走设备授权：Desktop 显示一个验证码和链接，你在任何设备的浏览器里
 打开 github.com/login/device、输入验证码、点 Authorize；常驻电脑在后台按 GitHub 给的间隔
-轮询，拿到令牌后写进 `~/.vortocode/connectors/<名字>.token`（权限 600）——与手放令牌是同一个
+轮询，拿到令牌后写进 `~/.vortoone/connectors/<名字>.token`（权限 600）——与手放令牌是同一个
 位置、同一套读取规则（见 agents/mcp_tools.load_connector_secret）。
 
 - 授权挂在主人自己建的 GitHub App 名下（配置里写它的 Client ID，公开信息，不是密钥）；
@@ -22,6 +22,7 @@ import stat
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from src.utils.state_dir import home_state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class AuthorizationSuperseded(RuntimeError):
 
 
 def _connectors_dir() -> Path:
-    return Path.home() / ".vortocode" / "connectors"
+    return home_state_dir() / "connectors"
 
 
 def _token_path(name: str) -> Path:

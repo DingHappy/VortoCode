@@ -112,7 +112,7 @@ def evidence():
             "goals": [{"id": goal["id"], "revision": goal["revision"], "status": goal["status"],
                        "criteria": len(goal["acceptance_criteria"]), "evidence": len(goal["evidence"])} for goal in goals],
             "files": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                      for path in sorted((data / ".vortocode" / "goals").glob("personal-*.json"))}}
+                      for path in sorted((data / ".vortoone" / "goals").glob("personal-*.json"))}}
 
 
 @app.websocket("/ws")

@@ -43,13 +43,13 @@ def test_oversized_truncated(tmp_path):
 
 
 def test_local_vortocode_agents(tmp_path):
-    d = tmp_path / ".vortocode"
+    d = tmp_path / ".vortoone"
     d.mkdir()
     (d / "AGENTS.md").write_text("本地私有约定", encoding="utf-8")
     assert "本地私有约定" in load_project_instructions(str(tmp_path))
 
 
-# ---- 用户级全局指令（~/.vortocode/AGENTS.md）
+# ---- 用户级全局指令（~/.vortoone/AGENTS.md）
 from src.agents import project as project_module
 from src.agents.project import load_user_instructions
 

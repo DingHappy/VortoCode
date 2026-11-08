@@ -28,7 +28,7 @@ def root(tmp_path):
 def test_create_local_edit_shared_and_agent_sees_both(root, tmp_path):
     created = ps.save_skill(root, "local", "release-notes",
                             {"name": "写发布说明", "description": "按 PR 汇总", "instructions": "列出本周合并的 PR", "revision": None})
-    assert created["scope"] == "local" and (tmp_path / ".vortocode" / "skills" / "release-notes" / "SKILL.md").is_file()
+    assert created["scope"] == "local" and (tmp_path / ".vortoone" / "skills" / "release-notes" / "SKILL.md").is_file()
     current = ps.get_skill(root, "shared", "code-review")
     assert current["extra_fields"] == ["arguments", "version"]
     ps.save_skill(root, "shared", "code-review", {"name": "code-review", "description": "审查代码（含安全）",

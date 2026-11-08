@@ -28,7 +28,7 @@ tools: deliver
 2. 逐份各落一条回执：**你真做了什么**（文件名 / 是否送达 / 时间）。
 
 你**没有** write_file —— 交付者不该能改仓库里任何一个文件。`send_document` 只能写进
-`.vortocode/artifacts/`，这是刻意的。
+`.vortoone/artifacts/`，这是刻意的。
 
 ## 规矩
 

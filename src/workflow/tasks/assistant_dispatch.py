@@ -25,6 +25,7 @@ from src.workflow.workbench.resident_projects import load_resident_projects
 from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock, write_json
 from src.workflow.tasks.submissions import submission_task_id
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 MAX_TITLE = 60
 MAX_GOAL = 4000
@@ -60,7 +61,7 @@ def _now() -> str:
 
 
 def _ledger_path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "dispatches" / "ledger.json"
+    return state_dir(root) / "dispatches" / "ledger.json"
 
 
 def _load(root: str, *, max_bytes: int | None = None) -> List[Dict[str, Any]]:

@@ -20,7 +20,7 @@ def test_snapshot_lists_owned_worktree_and_block_progress(tmp_path):
     (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
     _git(tmp_path, "add", "base.txt")
     _git(tmp_path, "commit", "-qm", "base")
-    worktree = tmp_path / ".vortocode" / "worktrees" / "wt-visible"
+    worktree = tmp_path / ".vortoone" / "worktrees" / "wt-visible"
     worktree.parent.mkdir(parents=True)
     _git(tmp_path, "worktree", "add", "--detach", str(worktree), "HEAD")
     (worktree / "base.txt").write_text("changed\n", encoding="utf-8")

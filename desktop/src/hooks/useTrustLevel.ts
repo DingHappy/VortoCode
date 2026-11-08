@@ -1,6 +1,6 @@
 // 工作区授权档位（沿用 useJournal 的 hook 模式与三条红线）。
 //
-// 档位跟着工作区走（后端存在 .vortocode/trust.json），所以连接、换项目（repoRoot）、
+// 档位跟着工作区走（后端存在 .vortoone/trust.json），所以连接、换项目（repoRoot）、
 // 打开设置都要重新拉——这三个由 App 传入，effect 依赖与迁移前一致。
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";

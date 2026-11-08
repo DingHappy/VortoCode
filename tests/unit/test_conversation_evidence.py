@@ -10,7 +10,7 @@ from src.memory.conversation_db import SessionStore
 
 
 def message(tmp_path, content='显卡升级', *, metadata=None):
-    store = SessionStore(str(tmp_path / '.vortocode/sessions.db'))
+    store = SessionStore(str(tmp_path / '.vortoone/sessions.db'))
     sid = store.create_session()
     mid = store.add_message(sid, 'user', content, metadata=metadata)
     return store.db_path, mid
@@ -100,7 +100,7 @@ def test_bad_offset_cannot_read_message(tmp_path, offset):
 async def test_product_tools_search_and_read_both_sources_with_dates(tmp_path):
     from src.agents.tools.memory import build_memory_tools
     path, _ = message(tmp_path, metadata={'history_date': '2024-01-01'})
-    directory = tmp_path / '.vortocode/web_sessions'
+    directory = tmp_path / '.vortoone/web_sessions'
     directory.mkdir()
     (directory / 'gpu.json').write_text(json.dumps({'transcript': [
         {'role': 'user', 'text': '显卡3090Ti', 'timestamp': '2024-01-01'}]}))
@@ -118,7 +118,7 @@ async def test_product_tools_search_and_read_both_sources_with_dates(tmp_path):
 @pytest.mark.asyncio
 async def test_unreadable_legacy_database_does_not_discard_json_results(tmp_path):
     from src.agents.tools.memory import build_memory_tools
-    directory = tmp_path / '.vortocode/web_sessions'
+    directory = tmp_path / '.vortoone/web_sessions'
     directory.mkdir(parents=True)
     (directory / 'gpu.json').write_text(json.dumps({'transcript': [{'role': 'user', 'text': '显卡'}]}))
     (directory.parent / 'sessions.db').write_bytes(b'not a database')

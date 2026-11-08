@@ -1,7 +1,7 @@
 # VortoOne cron 作业表**样例**。
 #
-# 用法：复制到目标仓库的 `.vortocode/cron.yaml`（该目录是 gitignored，所以样例放这里）：
-#     cp config/cron.example.yaml .vortocode/cron.yaml
+# 用法：复制到目标仓库的 `.vortoone/cron.yaml`（该目录是 gitignored，所以样例放这里）：
+#     cp config/cron.example.yaml .vortoone/cron.yaml
 #
 # 调度循环默认**关**：仅当以 opt-in 方式起服务才跑（不擅自跑自主作业）——
 #     VORTOONE_CRON=1 vortocode server

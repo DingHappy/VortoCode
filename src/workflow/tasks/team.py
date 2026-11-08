@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 from src.workflow.tasks.collaboration import CollaborationService
 from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.tasks import BackgroundTask, TaskLedger, TASK_STATE_LOCK
+from src.utils.state_dir import state_dir
 
 KIND = "team"
 MODES = ("open", "private")
@@ -631,12 +632,11 @@ _MAX_HISTORY = 48
 
 
 def _history_path(repo_root: str, root_id: str):
-    from pathlib import Path
     from src.utils.ids import safe_id
     clean = safe_id(root_id)
     if clean is None:
         raise CollaborationConflict("任务上下文 ID 无效")
-    return Path(repo_root) / ".vortocode" / "teams" / f"{clean}.json"
+    return state_dir(repo_root) / "teams" / f"{clean}.json"
 
 
 def load_history(repo_root: str, root_id: str) -> List[dict]:

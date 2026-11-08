@@ -125,7 +125,7 @@ class StdioMCPClient(MCPClient):
         try:
             from src.sandbox.policy import child_env
             # MCP server 常是第三方且联网：以操作密钥围栏为基线，再叠加主人显式配置的 self.env
-            # （self.env 是主人在 .vortocode 里明写的，若需某密钥由它显式放行，不走裸继承）
+            # （self.env 是主人在 .vortoone 里明写的，若需某密钥由它显式放行，不走裸继承）
             env = {**child_env(), **self.env}
 
             self.process = await asyncio.create_subprocess_exec(

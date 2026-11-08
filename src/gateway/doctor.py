@@ -12,10 +12,10 @@ from __future__ import annotations
 import os
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List
 
 from src.utils.http import local_session, outbound_session
+from src.utils.state_dir import state_dir
 
 _TIMEOUT = 5.0
 
@@ -114,7 +114,7 @@ def _check_permissions(cwd: str) -> Check:
     """permissions.yaml 严格解析。**不走** load_permissions——它为运行时安全吞解析错误、
     坏文件静默降级成空权限（fail-safe 对运行时正确，对自检就是漏报：doctor 的职责恰恰是
     把这种静默降级暴露出来，评审 #142）。"""
-    p = Path(cwd) / ".vortocode" / "permissions.yaml"
+    p = state_dir(cwd) / "permissions.yaml"
     if not p.is_file():
         return Check("permissions", "ok", "无 permissions.yaml（默认权限面）")
     try:

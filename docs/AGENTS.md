@@ -86,7 +86,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 ## 主 Agent 与角色子 Agent
 
 主 Agent 负责理解用户目标、按需委派、检查结果和向用户汇总交付。角色定义位于
-`.vortocode/agents/*.md`；角色必须守住自己的职责，例如审核角色不修改代码。
+`.vortoone/agents/*.md`；角色必须守住自己的职责，例如审核角色不修改代码。
 
 - 默认研究子 Agent 只拿仓库只读工具。
 - `tools: dev` 角色只增加 `dev_isolated` / `dev_parallel`，不拿直接写盘、Shell、PR
@@ -97,7 +97,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 ## 委派任务合同
 
 标准主 Agent 工具装配中的 `task` / `research_parallel` 已接入协作服务。任务复用
-`.vortocode/tasks/<id>.json`，以 `kind=delegation` 区别于后台 `dev` 任务，不增加第二份任务台账。
+`.vortoone/tasks/<id>.json`，以 `kind=delegation` 区别于后台 `dev` 任务，不增加第二份任务台账。
 
 任务记录包括发起 Agent 的 `owner_session`、目标，以及 `collaboration` 中的执行角色、
 验收标准、执行轮次、验收状态、任务消息和累积污点。General 无目录会话继续不暴露这些仓库工具。

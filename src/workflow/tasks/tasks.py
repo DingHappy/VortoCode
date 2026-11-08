@@ -1,6 +1,6 @@
 """后台任务 + write-ahead 台账（D1 v1）——把长流水线搬到后台、崩溃可恢复。
 
-`TaskLedger`：每个任务一份 `.vortocode/tasks/<id>.json`，**write-ahead**——提交即写、每次状态转换
+`TaskLedger`：每个任务一份 `.vortoone/tasks/<id>.json`，**write-ahead**——提交即写、每次状态转换
 先写盘再干活/干完再落地。进程启动时扫描：仍是 running 的（上次崩在半路）改标 interrupted，
 其 plan_id 可交给 C1 的 dev_resume 续跑。
 
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 from src.utils.async_ops import cancel_requested, request_cancel
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 _DIRNAME = "tasks"
 _MAX_LOG = 200                                    # 进度日志只留尾部 N 行
@@ -136,7 +137,7 @@ class TaskLedger:
         self.repo_root = str(repo_root)
 
     def _dir(self) -> Path:
-        return Path(self.repo_root) / ".vortocode" / _DIRNAME
+        return state_dir(self.repo_root) / _DIRNAME
 
     def _path(self, tid: str) -> Path:
         return self._dir() / f"{tid}.json"
@@ -183,7 +184,7 @@ class TaskLedger:
         p = self._path(tid)
         try:
             from src.utils.state_dir import ensure_state_gitignore
-            ensure_state_gitignore(self.repo_root)       # .vortocode/ 自忽略：台账不污染目标仓库 git status
+            ensure_state_gitignore(self.repo_root)       # .vortoone/ 自忽略：台账不污染目标仓库 git status
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")

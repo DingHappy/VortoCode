@@ -5,11 +5,11 @@ import json
 import re
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict
 
 from src.workflow.review.git_review import normalize_git_path, review_diff
 from src.utils.ids import typed_id
+from src.utils.state_dir import state_dir
 
 _VALID_SCOPES = frozenset({"working", "staged"})
 _VALID_SIDES = frozenset({"new", "old"})
@@ -29,7 +29,7 @@ class ReviewConflict(ValueError):
 class ReviewThreadStore:
     def __init__(self, repo_root: str):
         self.repo_root = str(repo_root)
-        self.path = Path(repo_root) / ".vortocode" / "review_threads.json"
+        self.path = state_dir(repo_root) / "review_threads.json"
 
     @staticmethod
     def _clean_id(thread_id: str) -> str:

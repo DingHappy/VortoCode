@@ -157,7 +157,7 @@ def test_summary_names_failures_instead_of_hiding_them(tmp_path):
 
 def test_state_file_lands_outside_git(tmp_path):
     collect(str(tmp_path), fetch=lambda u: b"", sources={"t": _src(_sig("a", 1))}, now=NOW)
-    assert (tmp_path / ".vortocode" / "signals_state.json").is_file()
+    assert (tmp_path / ".vortoone" / "signals_state.json").is_file()
 
 
 # ------------------------------------------------------------------ 抖一次要重试

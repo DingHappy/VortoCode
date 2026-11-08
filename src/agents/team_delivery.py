@@ -16,6 +16,7 @@ import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 _OUTPUT_TAIL = 1500
 _MAX_FILES_SHOWN = 20
@@ -36,7 +37,7 @@ def prepare(repo_root: str, child_id: str, number: int, previous_branch: str = "
     """建本轮的一次性 worktree（基于项目当前 HEAD）；返工轮先放上上一轮分支的改动。"""
     from src.utils.state_dir import ensure_state_gitignore
     ensure_state_gitignore(repo_root)
-    path = Path(repo_root) / ".vortocode" / "worktrees" / f"team-{child_id}-r{number}"
+    path = state_dir(repo_root) / "worktrees" / f"team-{child_id}-r{number}"
     if path.exists():
         cleanup(repo_root, path)
     path.parent.mkdir(parents=True, exist_ok=True)

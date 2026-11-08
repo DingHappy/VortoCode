@@ -47,7 +47,7 @@ _IDENTITY_KEY: Dict[str, str] = {
     "telegram": "VORTOONE_TG_TOKEN",
 }
 
-DEFAULT_ROSTER = ".vortocode/assistants.yaml"
+DEFAULT_ROSTER = ".vortoone/assistants.yaml"
 
 
 @dataclass

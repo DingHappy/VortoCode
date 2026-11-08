@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import Any, Dict
+from src.utils.state_dir import state_dir
 
 _ACTIVE_TASKS = frozenset({"queued", "running", "cancelling"})
 _ATTENTION_TASKS = frozenset({"waiting", "blocked", "failed", "paused", "interrupted"})
@@ -65,7 +66,7 @@ def project_dashboard_context(repo_root: str) -> Dict[str, Any]:
         linked = bool(git_path and common_path and git_path != common_path)
 
         owner_root = common_path.parent if common_path and common_path.name == ".git" else git_root
-        owned_root = (owner_root / ".vortocode" / "worktrees").resolve()
+        owned_root = (state_dir(owner_root) / "worktrees").resolve()
         owned_count = 0
         listed = _git(str(git_root), "worktree", "list", "--porcelain")
         if listed.returncode == 0:

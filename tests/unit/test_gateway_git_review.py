@@ -127,7 +127,7 @@ def test_hunk_source_attribution_uses_user_owned_hash_ledger(tmp_path, monkeypat
     assert first["source"] == "agent"
     assert first["source_session"] == "sid-review"
     assert first["source_tool"] == "edit_file"
-    assert ledger.is_file() and not Path(tmp_path, ".vortocode", "change-sources.json").exists()
+    assert ledger.is_file() and not Path(tmp_path, ".vortoone", "change-sources.json").exists()
 
     lines[3] = "external changed\n"
     (tmp_path / "sample.txt").write_text("".join(lines), encoding="utf-8")
@@ -258,8 +258,8 @@ def test_review_threads_persist_and_track_resolution(tmp_path):
     )
     assert created["status"] == "open"
     assert created["hunkSha256"] == hunk["sha256"]
-    assert (tmp_path / ".vortocode" / "review_threads.json").is_file()
-    assert "review_threads.json" in (tmp_path / ".vortocode" / ".gitignore").read_text(encoding="utf-8")
+    assert (tmp_path / ".vortoone" / "review_threads.json").is_file()
+    assert "review_threads.json" in (tmp_path / ".vortoone" / ".gitignore").read_text(encoding="utf-8")
     assert _git(tmp_path, "status", "--short").stdout == " M sample.txt\n"
 
     restored = ReviewThreadStore(str(tmp_path)).list()

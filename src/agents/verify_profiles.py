@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fnmatch import fnmatch
 from pathlib import Path
+from src.utils.state_dir import state_dir
 
 
 def _builtin_profiles(repo_root: str) -> dict[str, dict]:
@@ -135,7 +136,7 @@ def _normalize_profile(name: str, value) -> dict | None:
 
 
 def load_verify_profiles(repo_root: str) -> dict:
-    """Load builtin profiles plus `.vortocode/verify.yaml` profiles.
+    """Load builtin profiles plus `.vortoone/verify.yaml` profiles.
 
     Accepted YAML forms:
 
@@ -148,7 +149,7 @@ def load_verify_profiles(repo_root: str) -> dict:
     smoke: python main.py --help
     """
     profiles = _builtin_profiles(repo_root)
-    path = Path(repo_root) / ".vortocode" / "verify.yaml"
+    path = state_dir(repo_root) / "verify.yaml"
     if not path.is_file():
         return {"ok": True, "profiles": profiles, "path": str(path)}
     try:
@@ -176,7 +177,7 @@ def load_verify_profiles(repo_root: str) -> dict:
 def auto_verify_profiles(repo_root: str) -> "tuple[list[dict], str]":
     """自主流水线（dev_auto 集成验证）该跑的运行时验证 profile，返回 (profiles, error)。
 
-    **仅** `.vortocode/verify.yaml` 里显式标了 `auto: true` 的项目 profile 入选；内置 profile 永不
+    **仅** `.vortoone/verify.yaml` 里显式标了 `auto: true` 的项目 profile 入选；内置 profile 永不
     自动跑（它们是给交互 `/verify` 用的）。每条附上 name。
 
     - 没配 auto profile → ([], "")，dev_auto 只跑单测（行为与今天一致）。
@@ -199,7 +200,7 @@ def format_verify_profiles(result: dict) -> str:
         return str(result.get("error") or "verify profile 加载失败")
     profiles = result.get("profiles") or {}
     if not profiles:
-        return "没有可用 verify profile。可在 .vortocode/verify.yaml 中添加 profiles。"
+        return "没有可用 verify profile。可在 .vortoone/verify.yaml 中添加 profiles。"
     lines = ["Verify profiles:"]
     for name in sorted(profiles):
         item = profiles[name] or {}
@@ -259,7 +260,7 @@ def recommend_verify_profiles(repo_root: str, changed_paths: list[str] | None = 
     """Recommend verify profiles for a changed path set.
 
     Project profiles can opt into recommendations with `paths` / `match`
-    patterns in `.vortocode/verify.yaml`. Builtin profiles use conservative
+    patterns in `.vortoone/verify.yaml`. Builtin profiles use conservative
     repository-specific heuristics.
     """
     loaded = load_verify_profiles(repo_root)

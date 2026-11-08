@@ -1,4 +1,4 @@
-"""自定义子 agent（.vortocode/agents/*.md，公司架构式分工）单测——离线、假 LLM。
+"""自定义子 agent（.vortoone/agents/*.md，公司架构式分工）单测——离线、假 LLM。
 
 安全面是重点：dev 型角色只拿隔离流水线工具（绝无裸写/shell/PR）、永不递归（无 task）、
 task 工具的 dev 委派过确认门（fail-closed）、坏定义文件安全跳过。
@@ -30,7 +30,7 @@ max_steps: 8
 
 
 def _write_agent(tmp_path, fname, text):
-    d = tmp_path / ".vortocode" / "agents"
+    d = tmp_path / ".vortoone" / "agents"
     d.mkdir(parents=True, exist_ok=True)
     (d / fname).write_text(text, encoding="utf-8")
 
@@ -95,7 +95,7 @@ def test_build_subagent_inherits_project_permissions(tmp_path):
     """项目级 permissions.yaml deny 必须继承到子 agent（#148 评审：否则角色文件成了
     绕过项目规则的后门——deny: [dev_isolated] 时 dev 型子 agent 照跑）。"""
     _write_agent(tmp_path, "backend.md", _BACKEND)
-    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+    (tmp_path / ".vortoone" / "permissions.yaml").write_text(
         "deny:\n  - dev_isolated\n", encoding="utf-8")
     spec = registry_for(str(tmp_path)).get("backend-dev")
     sub = build_subagent(str(tmp_path), spec)
@@ -108,7 +108,7 @@ def test_build_subagent_inherits_project_permissions(tmp_path):
 async def test_denied_tool_blocked_at_dispatch_in_subagent(tmp_path):
     """行为级：被 deny 的工具在子 agent 执行层被硬拦（不是只挂了个对象）。"""
     _write_agent(tmp_path, "backend.md", _BACKEND)
-    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+    (tmp_path / ".vortoone" / "permissions.yaml").write_text(
         "deny:\n  - dev_isolated\n", encoding="utf-8")
     spec = registry_for(str(tmp_path)).get("backend-dev")
     sub = build_subagent(

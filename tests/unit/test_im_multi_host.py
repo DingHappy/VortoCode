@@ -369,11 +369,11 @@ async def test_runtime_lifespan_consumes_config_and_owns_the_whole_host(tmp_path
                                register_im_worker=lambda _worker: pytest.fail("research host claimed developer worker")):
         assert len(im_registry.entries()) == 4
         with pytest.raises(RuntimeError, match="Another Runtime"):
-            ProcessLease(root / ".vortocode" / "runtime.lock").acquire()
+            ProcessLease(root / ".vortoone" / "runtime.lock").acquire()
         assert await im_runtime.notify_owner("one precise owner", relay=False)
     assert not im_registry.entries() and all(adapter.closed for adapter in adapters)
     assert stopped.count("shutdown") == 2 and "terminal" in stopped
-    with ProcessLease(root / ".vortocode" / "runtime.lock"):
+    with ProcessLease(root / ".vortoone" / "runtime.lock"):
         pass
 
 

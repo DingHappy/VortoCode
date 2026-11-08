@@ -5,7 +5,7 @@
 
 ## 服务范围
 
-- 下派默认只读研究任务，或 `.vortocode/agents/*.md` 中 `tools: read` 的角色。
+- 下派默认只读研究任务，或 `.vortoone/agents/*.md` 中 `tools: read` 的角色。
 - 查询持久结果与任务消息，验收、请求返工、补充要求、取消。
 - 后台开发任务沿用 `POST /api/tasks`；该接口运行既有隔离 dev 流水线。
 - 本接口不接受 cwd、模型、权限、工具清单、回调 URL 或任意对外发送目标。
@@ -142,7 +142,7 @@ accepted 不得扩展工作；新工作使用新的 request_id 创建新任务�
 调用方查询 interrupted 后，可以明确提交 followup 开始下一轮。
 角色在排队期间发生权限变化时，实际执行前重新校验；改为 dev/deliver 的角色不会被放行。
 
-当前存储模式是一个 runtime 单写进程；不支持多个进程/机器并发共享 `.vortocode/tasks`。
+当前存储模式是一个 runtime 单写进程；不支持多个进程/机器并发共享 `.vortoone/tasks`。
 任务结果可恢复，不承诺模型调用或外部副作用的跨崩溃 exactly-once。
 
 ## 错误约定
@@ -815,7 +815,7 @@ vc coverage-preservation-verify /existing/dedicated/store/<stem>.preservation.js
 
 期望字段同 coverage-verify，可省略；只检查明确给定者。成功 JSON/退出 0，失败
 verified=false/state=unknown/退出 1，参数错误退出 2。目标须已存在，不自动创建，
-拒绝末端符号链接/非目录和 .git/.vortocode 内位置；读取来源沿用普通文件字节上限。
+拒绝末端符号链接/非目录和 .git/.vortoone 内位置；读取来源沿用普通文件字节上限。
 非阻塞目录锁遇到争用即失败；目录设备/inode、锁身份或读取期间文件身份变化不能
 确认保存。本地保存不通过 HTTP 任意路径写盘，不读取或修改当前任务/覆盖台账。
 
@@ -937,7 +937,7 @@ review、handling、validity、round/revision、column/label、recovered_by 分�
 
 ### 本机角色模型（PRD 第39节）
 
-原 `.vortocode/agents/*.md` 的 `model: local:<完整模型ID>` 使用已登记的
+原 `.vortoone/agents/*.md` 的 `model: local:<完整模型ID>` 使用已登记的
 `VORTOONE_PROVIDER_LOCAL_BASE`/`_KEY`，复用原 role 客户端与执行池。
 精确回环地址可以空 Key，用固定非秘密占位符；本机要求鉴权时必须使用本机 token。
 不增加请求字段或客户端自授模型/provider权限，不把本机供应商视为硬预算 provider。

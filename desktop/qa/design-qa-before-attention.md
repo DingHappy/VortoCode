@@ -7,10 +7,10 @@ final result: passed
 ## 对照依据
 
 - 选定设计：Figma `mqudVEm2rBBH6TziS9fBgJ`，节点 `16:627`。
-- 原型源图：`.vortocode/artifacts/settings-design-20261025/v2-evidence/01-computer.png`。
+- 原型源图：`.vortoone/artifacts/settings-design-20261025/v2-evidence/01-computer.png`。
 - 实现：`http://127.0.0.1:5200/qa/settings-redesign.html`。
 - 实现源文件：`desktop/src/components/SettingsModal.tsx` 与 `SettingsModal.css`。
-- 最终截图：`.vortocode/artifacts/settings-implementation-20261025/final-computer-dark.png`、`final-model-dark.png`、`final-computer-light.png`。
+- 最终截图：`.vortoone/artifacts/settings-implementation-20261025/final-computer-dark.png`、`final-model-dark.png`、`final-computer-light.png`。
 - 同一输入中的全图并排比较：上述目录的 `comparison-full.png`；聚焦字体、导航、范围提示及卡片的比较：`comparison-focus.png`。两张比较图均已实际打开检查。
 
 桌面截图均为 1440 × 1000 像素，CSS viewport 1440 × 1000，deviceScaleFactor=1。比较时裁出同尺寸 1180 × 790 模态框：源图 (130,129)，实现 (130,105)，排除原型额外的顶部演示工具栏，无拉伸与密度差异。图像证据仅保存在本地忽略目录。
@@ -83,7 +83,7 @@ final result: passed
 - 确定性夹具新增 `read=fail-once`、`read=stale`、`read=stale-error`、`restart=throw`，继续运行真实 SettingsModal 与 useLlmProfile，不调用真实服务或修改用户配置。
 - 浏览器已验证：读取失败后重试、初次读取中关闭再重开、主界面检查完成、晚到的旧读取不覆盖新草稿、较新配置应用后忽略旧读取成功或失败、写入失败保留草稿、已保存后重启失败仅写入一次、保存提示跨渲染保留、再次编辑清除旧提示。
 - 模型、全局指令、SSH 目标三份草稿可从底部导航逐一返回；分类提示与实际草稿一致。390 × 844 下固定栏无横向溢出，分类提示保持 6px。窄屏只验证模态框，应用原生最小窗口约束未变。
-- 本轮截图在 `.vortocode/artifacts/settings-recovery-20261025/`：`read-error.png`、`read-loading.png`、`pending-navigation.png`、`saved-restart-failed.png`、`pending-mobile-final.png`、`pending-desktop-light.png`。已实际打开检查布局；Runtime/Log 未见未处理异常或 error 级日志。
+- 本轮截图在 `.vortoone/artifacts/settings-recovery-20261025/`：`read-error.png`、`read-loading.png`、`pending-navigation.png`、`saved-restart-failed.png`、`pending-mobile-final.png`、`pending-desktop-light.png`。已实际打开检查布局；Runtime/Log 未见未处理异常或 error 级日志。
 - TypeScript 与生产构建通过；前端 1081 项通过（118 个文件）；Rust 118 项通过、2 项 ignored，cargo check 通过。最初 `check:ci` 的 6 项 Rust 回环端口测试被沙箱 PermissionDenied 阻断，使用允许本机端口的环境重跑 `cargo test --lib --offline` 后通过；没有改测试或跳过这 6 项。
 - 本轮未修改 Python、API 或原生命令；没有重复执行前一轮的全量 Python 门禁。签名、公证、安装与真实模型/远程电脑验收未进行。Git 提交与推送状态以实际 Git 记录为准。
 
@@ -104,7 +104,7 @@ final result: passed
 - 最后的前端聚焦与草稿定位修正后，重跑前端 1088 项及 TypeScript/Vite 生产构建通过。没有改依赖或路由。
 - 原生回归覆盖：同地址不同 ID 的 Key 不混用；改变地址、未知 ID、空 ID、同名主机前缀不能借用 Key；不传 ID 的默认服务旧行为兼容。
 - 浏览器以确定性 IPC 验证取消切换保留草稿、确认切换不携带临时 Key、地址变化后禁用无 Key 保存、无效 ID 阻止保存、添加成功仅写入一次、保存中输入不可修改、保存失败保留输入、保存成功但重启失败保留正确提示、按服务选择查询及直接返回草稿。确认回执由合成夹具提供，未宣称真实 macOS 确认 sheet 已验收。
-- 深色桌面与浅色窄屏截图已打开检查：`.vortocode/artifacts/provider-editor-20261025/provider-form-final.png`、`provider-mobile-light.png`、`provider-return-to-draft.png`。模态框无横向溢出；Runtime/Log 未见未处理异常或 error 级记录。
+- 深色桌面与浅色窄屏截图已打开检查：`.vortoone/artifacts/provider-editor-20261025/provider-form-final.png`、`provider-mobile-light.png`、`provider-return-to-draft.png`。模态框无横向溢出；Runtime/Log 未见未处理异常或 error 级记录。
 - 未使用真实凭据、真实模型服务或远程电脑；未签名、公证或安装。Git 交付状态仍以实际 Git 记录为准。
 
 本轮功能验收结果：passed。
@@ -121,7 +121,7 @@ final result: passed
 
 - `npm run check:ci` 通过：TypeScript、前端 1098 项（122 个文件）、Rust 121 项通过 / 2 项 ignored、cargo check；最终生产构建通过，保留既有大 chunk 提示。仅修改前端与验收夹具，本轮未重复全量 Python 门禁；上一轮全量结果见上文。
 - 合成 IPC 浏览器验收：三处读取失败后可重试；权限关闭时保存参数没有启用或重启；关闭权限请求使用已保存值并保留无效草稿；原生确认取消不改配置、不重启；保存后重启异常仅一次请求；指令保存期间锁定、失败保留、再次输入清除旧提示；读取中关闭重开后，旧回复不覆盖新草稿。
-- 截图在 `.vortocode/artifacts/settings-permissions-20261025/`，已实际打开检查深色桌面与浅色窄屏的 `permissions-final-dark.png`、`permissions-mobile-light.png`。另有 `saved-while-disabled.png`、`disabled-preserved-draft.png`、`instructions-save-error.png`。模态框无横向溢出，底部操作在视口内；Runtime/Log 无未处理异常或 error 级记录。
+- 截图在 `.vortoone/artifacts/settings-permissions-20261025/`，已实际打开检查深色桌面与浅色窄屏的 `permissions-final-dark.png`、`permissions-mobile-light.png`。另有 `saved-while-disabled.png`、`disabled-preserved-draft.png`、`instructions-save-error.png`。模态框无横向溢出，底部操作在视口内；Runtime/Log 无未处理异常或 error 级记录。
 - 原生确认回执、配置存储和重启结果来自模拟接口；未实际启用浏览器/桌面权限、修改用户指令、连接远端、调用模型或安装客户端。没有扩展 IM 或无人值守任务的权限。
 
 本轮功能验收结果：passed。
@@ -131,7 +131,7 @@ final result: passed
 - 原生保存收敛到 `profile_store.rs`：快照版本校验、等待确认/探测期间的并发保护、磁盘外部改动检测、成功落盘后才更新版本；Key 单独变化与清除均更新版本。旧配置按需迁移，不在读取时改写用户文件。
 - 新增独立启动回执与设置页「本机引擎配置」。只核对 Desktop 托管的本机进程，区分当前版本、旧版本与未知；新启动身份可阻止同端口旧响应冒充新引擎。详见 `docs/MODEL_CONFIGURATION.md`。
 - Ego 空间 215 合成验收已结束并关闭：混合状态及工作区明细、无引擎、旧版本响应、失败清除旧成功提示、重试恢复、延迟旧回执不覆盖新配置，以及保存冲突保留草稿且不重启。
-- 视觉证据：`.vortocode/artifacts/settings-configuration-20261025/receipts-dark.png`、`receipts-collapsed.png`。沿用真实设置组件与既有主题、卡片和固定底栏，深色截图已检查。
+- 视觉证据：`.vortoone/artifacts/settings-configuration-20261025/receipts-dark.png`、`receipts-collapsed.png`。沿用真实设置组件与既有主题、卡片和固定底栏，深色截图已检查。
 - 验证：Python unit/integration 离线完整回归 5043 passed、1 skipped；前端 1102 passed；Rust 127 passed、2 ignored；TypeScript、cargo check、ruff、mypy 通过。生产构建通过，保留既有大 chunk 提示。
 - 状态核对不消耗监督器的崩溃转换；专门测试确认正常监督路径仍能观察退出并维护恢复记录。
 - 回执只证明携带该版本完成启动，不证明模型推理、任务验收或部署。浏览器使用合成 IPC，没有保存用户配置、运行真实模型或批准任务。本轮未签名、公证、安装或发布；已安装 0.2.21 不会因源码变动自动更新。
@@ -142,7 +142,7 @@ final result: passed
 - 默认模型与自定义服务共用只读恢复卡片：查看最新配置不替换草稿；明确选择放弃并经原生确认后才重新读取、载入；确认期间发生的新版本不会被旧预览覆盖。
 - 冲突保留输入并阻止重复保存；读取失败可重试，取消保持草稿；处理区域自动获得焦点。载入后重新编辑才能进入正常保存路径。
 - Ego 空间 216 验收完成并关闭：默认模型读取失败/重试、取消、预览后外部版本变化、确认后重新读取；自定义服务草稿保留、保存禁用、取消保留、确认载入后关闭编辑器；恢复后再次编辑和正常保存。恢复动作本身调用重启回调 0 次；后续独立保存回调 1 次，合成环境返回「无运行引擎」。
-- 截图：`.vortocode/artifacts/settings-conflict-20261025/default-preview.png` 和 `provider-preview.png`。已检查冲突卡片文字、摘要对齐、按钮和固定底栏；截图用于冲突卡片布局。最后新增的冲突期间撤下旧引擎回执由真实 SettingsModal SSR 回归验证。
+- 截图：`.vortoone/artifacts/settings-conflict-20261025/default-preview.png` 和 `provider-preview.png`。已检查冲突卡片文字、摘要对齐、按钮和固定底栏；截图用于冲突卡片布局。最后新增的冲突期间撤下旧引擎回执由真实 SettingsModal SSR 回归验证。
 - 本轮前端 1106 passed，Rust 128 passed、2 ignored；TypeScript、cargo check 和生产构建通过。沿用既有大 chunk 提示。Python 源码未变，上一轮完整回归 5043 passed、1 skipped 未在本轮重复。
 - 全程为合成 IPC 验收，没有修改用户配置、调用真实模型或部署到常驻服务器。本轮没有重新打包安装；本机已安装 0.2.21 保持上一轮的构建。
 
@@ -156,7 +156,7 @@ final result: passed
 - 新增 GET /api/runtime-activity：沿用认证，只精确放行 General 的该路径；统计原 actor、输入/确认、TaskRunner、运行监视器、终端和在途写请求，不从历史文件或有界任务列表推断空闲，不返回任务正文或凭据。
 - 完整 ci-local.sh 通过：Python 5055 passed / 10 skipped，e2e 25 passed，前端 1125 passed，Rust 132 passed / 2 ignored，ruff、mypy、TypeScript、cargo check 通过。最终 UI 修正后再次执行生产构建和前端 1125 项通过；原生规范化等价输入测试补强后 Rust 132 项及 cargo check 通过。生产构建保留既有大 chunk 提示。
 - Ego 空间 217 使用真实 SettingsModal、useLlmProfile、useLocalRuntimeControls 和 ManagedRuntimes，原生 IPC/进程/活动数据由夹具提供。已验证繁忙/取消不停止、空闲重载、停止后同入口启动、Scratch 原身份恢复、读取失败保留引擎、远端隔离、延迟核对期间禁用关闭及诊断操作。规范化等价角色输入保存请求 1 次、重启 0 次；繁忙时诊断连接输入可编辑数为 0。
-- 截图与日志在 .vortocode/artifacts/runtime-recovery-20261025/。running-light.png、checking-light.png、stopped-scratch-dark.png 已实际打开检查；截图未覆盖之后补充的诊断禁用规则，该规则另由 DOM/组件回归验证。空间已完成并关闭；Ego 提示有可用更新，本轮未升级。
+- 截图与日志在 .vortoone/artifacts/runtime-recovery-20261025/。running-light.png、checking-light.png、stopped-scratch-dark.png 已实际打开检查；截图未覆盖之后补充的诊断禁用规则，该规则另由 DOM/组件回归验证。空间已完成并关闭；Ego 提示有可用更新，本轮未升级。
 - 这是停止前检查，不是跨客户端原子静默租约；其他客户端在最终读取和停止之间提交新工作仍存在竞态。应用退出及后台工作区移除沿用原路径。详见 docs/LOCAL_RUNTIME_CONTROL.md 和 docs/MODEL_CONFIGURATION.md。
 - 未修改用户模型/权限配置、调用真实模型、操作常驻服务器或重新签名/公证/安装。当前源码改动不在本机之前安装的 0.2.22 中；本轮未推送。Git 提交状态以实际记录为准。
 

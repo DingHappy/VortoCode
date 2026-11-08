@@ -116,4 +116,4 @@ def test_audit_preserves_legacy_absence_and_sanitizes_optional_metadata(tmp_path
     current, legacy = list_audit(str(tmp_path))
     assert "operation_kind" not in legacy
     assert current["operation_kind"] == current["required_key"] == current["approval_scope"] == "unknown"
-    assert "never-save" not in (tmp_path / ".vortocode/audit.log").read_text()
+    assert "never-save" not in (tmp_path / ".vortoone/audit.log").read_text()

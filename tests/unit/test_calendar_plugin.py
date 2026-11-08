@@ -79,7 +79,7 @@ def test_unsupported_rule_gives_first_time_and_says_so():
 
 
 def _token(home, content=SECRET_URL, mode=0o600):
-    folder = home / ".vortocode" / "connectors"
+    folder = home / ".vortoone" / "connectors"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "calendar.token"
     path.write_text(content + "\n")

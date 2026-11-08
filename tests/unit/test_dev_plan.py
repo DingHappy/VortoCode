@@ -31,7 +31,7 @@ def test_devplan_roundtrip(tmp_path):
 
 def test_load_plan_missing_and_bad(tmp_path):
     assert dp.load_plan(str(tmp_path), "nope") is None
-    p = tmp_path / ".vortocode" / "dev_plans" / "broken.json"
+    p = tmp_path / ".vortoone" / "dev_plans" / "broken.json"
     p.parent.mkdir(parents=True)
     p.write_text("{not json", encoding="utf-8")
     assert dp.load_plan(str(tmp_path), "broken") is None
@@ -41,7 +41,7 @@ def test_plan_id_sanitized_against_traversal(tmp_path):
     plan = dp.DevPlan.new("t", "b", "main", plan_id="../../etc/passwd")
     assert dp.save_plan(str(tmp_path), plan) is True
     # 清洗后落在 dev_plans 目录内，不逃逸
-    files = list((tmp_path / ".vortocode" / "dev_plans").glob("*.json"))
+    files = list((tmp_path / ".vortoone" / "dev_plans").glob("*.json"))
     assert files and all(f.parent.name == "dev_plans" for f in files)
 
 
@@ -59,8 +59,8 @@ def _porcelain(repo):
 
 
 def test_save_plan_leaves_worktree_clean(tmp_path):
-    """save_plan 落 .vortocode/dev_plans/ 后，目标仓库（无自带 .gitignore）git status 仍干净——
-    工具生成态经 .vortocode/.gitignore 自忽略，不污染用户工作区（评测 dependency_chain clean=False 根治）。"""
+    """save_plan 落 .vortoone/dev_plans/ 后，目标仓库（无自带 .gitignore）git status 仍干净——
+    工具生成态经 .vortoone/.gitignore 自忽略，不污染用户工作区（评测 dependency_chain clean=False 根治）。"""
     def git(*a):
         subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
     git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
@@ -71,9 +71,9 @@ def test_save_plan_leaves_worktree_clean(tmp_path):
     plan = dp.DevPlan.new("任务", "vorto/auto-x", "main")
     plan.blocks = [dp.Block(id="d1", kind="dependent", desc="做甲")]
     dp.save_plan(str(tmp_path), plan)
-    assert (tmp_path / ".vortocode" / "dev_plans").is_dir()      # 计划确实落了盘
-    assert (tmp_path / ".vortocode" / ".gitignore").is_file()    # 自忽略清单已放
-    assert _porcelain(tmp_path).strip() == ""            # .vortocode/ 生成态对 git status 隐形
+    assert (tmp_path / ".vortoone" / "dev_plans").is_dir()      # 计划确实落了盘
+    assert (tmp_path / ".vortoone" / ".gitignore").is_file()    # 自忽略清单已放
+    assert _porcelain(tmp_path).strip() == ""            # .vortoone/ 生成态对 git status 隐形
 
 
 def test_state_gitignore_keeps_user_config_versionable(tmp_path):
@@ -83,10 +83,10 @@ def test_state_gitignore_keeps_user_config_versionable(tmp_path):
     git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
     (tmp_path / "mod.py").write_text("x=1\n", encoding="utf-8"); git("add", "-A"); git("commit", "-qm", "init")
     dp.ensure_state_gitignore(str(tmp_path))
-    (tmp_path / ".vortocode" / "dev_plans").mkdir(parents=True)
-    (tmp_path / ".vortocode" / "dev_plans" / "x.json").write_text("{}", encoding="utf-8")   # 生成态
-    (tmp_path / ".vortocode" / "permissions.yaml").write_text("deny: []", encoding="utf-8")  # 用户配置
-    git("add", ".vortocode/")
+    (tmp_path / ".vortoone" / "dev_plans").mkdir(parents=True)
+    (tmp_path / ".vortoone" / "dev_plans" / "x.json").write_text("{}", encoding="utf-8")   # 生成态
+    (tmp_path / ".vortoone" / "permissions.yaml").write_text("deny: []", encoding="utf-8")  # 用户配置
+    git("add", ".vortoone/")
     staged = git("diff", "--cached", "--name-only").stdout
     assert "permissions.yaml" in staged and "dev_plans" not in staged
 
@@ -94,7 +94,7 @@ def test_state_gitignore_keeps_user_config_versionable(tmp_path):
 def test_ensure_state_gitignore_upgrades_legacy_and_keeps_custom(tmp_path):
     """旧版无标记文件缺托管条目 → 追加托管区（老仓库也能收到清单升级，#140 评审）；
     用户自定义行逐字保留。"""
-    d = tmp_path / ".vortocode"; d.mkdir()
+    d = tmp_path / ".vortoone"; d.mkdir()
     (d / ".gitignore").write_text("custom\nworktrees/\n", encoding="utf-8")   # 旧清单：缺新条目
     dp.ensure_state_gitignore(str(tmp_path))
     content = (d / ".gitignore").read_text(encoding="utf-8")
@@ -105,7 +105,7 @@ def test_ensure_state_gitignore_upgrades_legacy_and_keeps_custom(tmp_path):
 
 def test_ensure_state_gitignore_legacy_fully_covered_untouched(tmp_path):
     """旧版无标记文件但托管条目**全齐**（用户可能删过注释/改过顺序）→ 一字不动（grandfather）。"""
-    d = tmp_path / ".vortocode"; d.mkdir()
+    d = tmp_path / ".vortoone"; d.mkdir()
     legacy = "\n".join(["# 我的注释"] + dp._STATE_ENTRIES) + "\n"
     (d / ".gitignore").write_text(legacy, encoding="utf-8")
     dp.ensure_state_gitignore(str(tmp_path))
@@ -114,7 +114,7 @@ def test_ensure_state_gitignore_legacy_fully_covered_untouched(tmp_path):
 
 def test_ensure_state_gitignore_managed_block_idempotent_upgrade(tmp_path):
     """标记区内容过期 → 原地重写补齐；区外（用户前后自定义）原样保留；再跑一遍零改动（幂等）。"""
-    d = tmp_path / ".vortocode"; d.mkdir()
+    d = tmp_path / ".vortoone"; d.mkdir()
     stale = (f"pre-custom\n{dp._MANAGED_BEGIN}\nworktrees/\n{dp._MANAGED_END}\npost-custom\n")
     (d / ".gitignore").write_text(stale, encoding="utf-8")
     dp.ensure_state_gitignore(str(tmp_path))
@@ -319,7 +319,7 @@ async def test_resume_honors_hand_edited_plan(tmp_path, monkeypatch):
     dp.save_plan(str(tmp_path), plan)
 
     # 人手改文件：删掉 ind-1、把 ind-0 的描述改掉
-    path = tmp_path / ".vortocode" / "dev_plans" / f"{plan.plan_id}.json"
+    path = tmp_path / ".vortoone" / "dev_plans" / f"{plan.plan_id}.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["blocks"] = [b for b in data["blocks"] if b["id"] == "ind-0"]
     data["blocks"][0]["desc"] = "手改后的新描述"

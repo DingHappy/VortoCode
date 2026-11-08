@@ -129,7 +129,7 @@ try:
     asyncio.run(run("supervised-write-once", True, "WRITE-ALLOWED", 1, "build"))
     assert (workspace / "approved.txt").read_text() == "SUPERVISED-WRITE"
     assert not any(r["reasoning_effort_sent"] for r in requests)
-    audit = (workspace / ".vortocode/audit.log").read_text()
+    audit = (workspace / ".vortoone/audit.log").read_text()
     assert "读取本机文件" in audit
     evidence.update(cases=cases, trust=status, requests=requests, audit=True, passed=True)
 finally:

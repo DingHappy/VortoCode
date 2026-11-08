@@ -23,7 +23,7 @@
 ## 在哪里跑
 
 - `vc canary`：任何时候手动跑，也是 `deploy-agent-vm.sh` 部署后的强制关卡（红了部署即失败）。
-  **不依赖 pytest**（不必装 dev extra）、不触网、不用真模型、不碰真 `.vortocode/`（跑在临时目录里）。
+  **不依赖 pytest**（不必装 dev extra）、不触网、不用真模型、不碰真 `.vortoone/`（跑在临时目录里）。
 - `tests/e2e/test_delivery_chain.py`：同一份 harness 进 CI，另加更细的分项断言。
 
 harness（`FakeChannel` / `ScriptedLLM`）**只写这一份**、两处共用。今天的教训就是同一件事有三个
@@ -37,8 +37,8 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Optional
+from src.utils.state_dir import state_dir
 
 OWNER = "canary-owner"
 
@@ -261,7 +261,7 @@ async def lane_confirm(root: str) -> Lane:
     这条链路的工具面和我脑子里的不是一回事。
     """
     chan = FakeChannel(auto_approve=True)
-    target = Path(root) / ".vortocode" / "skills" / "canary-skill" / "SKILL.md"
+    target = state_dir(root) / "skills" / "canary-skill" / "SKILL.md"
     bridge = _bridge(root, chan, ScriptedLLM(
         '{"tool":"save_skill","args":{"name":"canary-skill","description":"探针",'
         '"instructions":"canary-ok"}}',
@@ -364,7 +364,7 @@ async def lane_cron_delivery(root: str) -> Lane:
         await chan.send_text(str(text))
 
     # 一个 prompt 作业；run_session 注入假实现，不烧 token、不触网。
-    cron_yaml = Path(root) / ".vortocode" / "cron.yaml"
+    cron_yaml = state_dir(root) / "cron.yaml"
     cron_yaml.parent.mkdir(parents=True, exist_ok=True)
     cron_yaml.write_text(
         "jobs:\n"

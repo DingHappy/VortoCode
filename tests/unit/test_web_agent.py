@@ -472,7 +472,7 @@ async def test_nonrecoverable_permission_event_persists_only_cursor(tmp_path):
         )
         raw = "".join(
             path.read_text(encoding="utf-8")
-            for path in (tmp_path / ".vortocode" / "session_events" / "permission-cursor").glob("*.jsonl")
+            for path in (tmp_path / ".vortoone" / "session_events" / "permission-cursor").glob("*.jsonl")
         )
         assert "super-secret" not in raw and "cursor_only" in raw
         realtime._SESSION_EVENT_LOGS.pop(_key(ws), None)
@@ -505,7 +505,7 @@ async def test_task_handoff_persists_without_loaded_session_actor(tmp_path, monk
         assert realtime._SESSION_EVENT_SEQS[key] == 1
         raw = "".join(
             path.read_text(encoding="utf-8")
-            for path in (tmp_path / ".vortocode" / "session_events" / "background-owner").glob("*.jsonl")
+            for path in (tmp_path / ".vortoone" / "session_events" / "background-owner").glob("*.jsonl")
         )
         assert '"task_handoff"' in raw and '"task-1"' in raw
     finally:

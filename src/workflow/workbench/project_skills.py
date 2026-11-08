@@ -2,7 +2,7 @@
 
 两个位置，与 agent 加载技能的目录一致（``agents/tools/skills.py:_skill_registry_for``）：
 - ``shared``：``skills/<id>/SKILL.md``，随仓库提交、团队共享（改动会出现在 git 里）；
-- ``local``：``.vortocode/skills/<id>/SKILL.md``，只在本机、不入库（``save_skill`` 也写这里）。
+- ``local``：``.vortoone/skills/<id>/SKILL.md``，只在本机、不入库（``save_skill`` 也写这里）。
 
 编辑只换 name / description / 正文，frontmatter 里的其它字段（version、arguments、tools…）原样保留。
 写入带版本号：文件在别处被改过就拒绝并要求刷新。删除只删 SKILL.md，同目录的脚本等文件不动。
@@ -20,10 +20,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from src.utils.state_dir import state_dir
 
 MAX_BYTES = 64 * 1024
 MAX_SKILLS = 200
-SCOPES = {"shared": ("skills",), "local": (".vortocode", "skills")}
+SCOPES = {"shared": ("skills",), "local": (".vortoone", "skills")}
 _ID = re.compile(r"[a-z][a-z0-9_-]{0,47}")
 _HEADER = re.compile(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", re.S)
 _LOCK = threading.Lock()
@@ -40,6 +41,8 @@ class SkillConflict(SkillError):
 def _base(root: str, scope: str) -> Path:
     if scope not in SCOPES:
         raise SkillError("位置只能是 shared（随仓库）或 local（只在本机）")
+    if scope == "local":
+        return state_dir(Path(root).resolve()) / "skills"
     return Path(root).resolve().joinpath(*SCOPES[scope])
 
 

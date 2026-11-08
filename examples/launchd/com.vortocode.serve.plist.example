@@ -33,14 +33,14 @@
         <!-- 要内嵌 IM：再追加两个 string 参数（"im 开关"与通道名，写法见 docs/OPS.md；需凭证 env） -->
     </array>
 
-    <!-- 改成 VortoOne 仓库根目录（serve 的状态所有权就落在这个仓库的 .vortocode/） -->
+    <!-- 改成 VortoOne 仓库根目录（serve 的状态所有权就落在这个仓库的 .vortoone/） -->
     <key>WorkingDirectory</key>
     <string>/Users/YOU/personal_project/VortoCode</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <!-- 自主作业开关（默认建议先关，跑顺 attach 后再逐个开）：
-             VORTOONE_CRON=1        起 .vortocode/cron.yaml 定时作业
+             VORTOONE_CRON=1        起 .vortoone/cron.yaml 定时作业
              VORTOONE_HEARTBEAT=1   起值班心跳（读 HEARTBEAT.md/BACKLOG.md，烧 token！）
              VORTOONE_HEARTBEAT_EVERY=30m -->
         <key>VORTOONE_CRON</key>

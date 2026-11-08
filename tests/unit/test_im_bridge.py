@@ -161,7 +161,7 @@ async def test_confirm_approve_writes_skill(tmp_path):
     bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test", mode="build", llm=llm)
     await _run_turn_to_completion(bridge, adapter, _msg("把打招呼存成技能"))
     assert any(k == "confirm" for k, _ in adapter.sent)    # 发了确认按钮
-    assert (tmp_path / ".vortocode" / "skills" / "greet" / "SKILL.md").exists()   # 批准 → 真写了
+    assert (tmp_path / ".vortoone" / "skills" / "greet" / "SKILL.md").exists()   # 批准 → 真写了
     assert any(k == "ack" for k, _ in adapter.sent)        # 回执了按钮点击
 
 
@@ -173,7 +173,7 @@ async def test_confirm_deny_blocks_write(tmp_path):
     bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test", mode="build", llm=llm)
     await _run_turn_to_completion(bridge, adapter, _msg("存个技能"))
     assert any(k == "confirm" for k, _ in adapter.sent)
-    assert not (tmp_path / ".vortocode" / "skills" / "greet" / "SKILL.md").exists()  # 拒绝 → 没写
+    assert not (tmp_path / ".vortoone" / "skills" / "greet" / "SKILL.md").exists()  # 拒绝 → 没写
 
 
 # ------------------------------------------------------------ 命令

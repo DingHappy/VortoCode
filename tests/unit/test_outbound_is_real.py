@@ -14,12 +14,12 @@ from src.workflow.pipeline.pipeline import StageDef
 
 @pytest.fixture
 def repo(tmp_path):
-    (tmp_path / ".vortocode" / "agents").mkdir(parents=True)
+    (tmp_path / ".vortoone" / "agents").mkdir(parents=True)
     return tmp_path
 
 
 def _role(repo, name, tools):
-    (repo / ".vortocode" / "agents" / f"{name}.md").write_text(
+    (repo / ".vortoone" / "agents" / f"{name}.md").write_text(
         f"---\nname: {name}\ndescription: d\ntools: {tools}\n---\n你是 {name}。\n",
         encoding="utf-8")
 

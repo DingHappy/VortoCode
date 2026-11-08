@@ -8,7 +8,7 @@ final result: passed
 
 ## 视觉依据与证据
 
-源视觉：仓库根目录的 `.vortocode/artifacts/mobile-muse-review-20261025/01-muse.jpg` 至 `08-muse.jpg`。核心比较使用 01 主聊天、02 助手详情、03 动态；其余五张用于抽屉、设置、目标和成果结构。源图每张为 1280 × 2781 像素，来自用户附件的本地副本，不假设原设备 CSS 尺寸或 DPR。
+源视觉：仓库根目录的 `.vortoone/artifacts/mobile-muse-review-20261025/01-muse.jpg` 至 `08-muse.jpg`。核心比较使用 01 主聊天、02 助手详情、03 动态；其余五张用于抽屉、设置、目标和成果结构。源图每张为 1280 × 2781 像素，来自用户附件的本地副本，不假设原设备 CSS 尺寸或 DPR。
 
 实现：`http://127.0.0.1:5215/`、`/?screen=assistant`、`/?screen=feed`。Ego TaskSpace 220；浏览器视口 1400 × 1200 CSS px，deviceScaleFactor 1。iPhone 屏幕实测 393 × 852 CSS px、scale 1，截图也为 393 × 852 像素。Pixel 屏幕实测 427 × 952 CSS px；未见聊天区域横向溢出。
 
@@ -19,7 +19,7 @@ final result: passed
 - [工作动态](design/feed.png)
 - [Android 键盘](design/android-keyboard.png)
 
-同一输入中的并排比较证据，均已实际打开检查：根目录 `.vortocode/artifacts/mobile-muse-review-20261025/prototype-qa/` 中的 `vortocode-mobile-compare-chat.png`、`vortocode-mobile-compare-assistant.png`、`vortocode-mobile-compare-feed.png`。比较页将源图等比放进 393 × 852 的框，使用 contain 保留完整内容；源图比例略有差异，产生的窄留边不判作实现问题。比较的是同一页面类型与深色状态，内容按确认后的 VortoOne 方案替换，并非逐像素复刻。
+同一输入中的并排比较证据，均已实际打开检查：根目录 `.vortoone/artifacts/mobile-muse-review-20261025/prototype-qa/` 中的 `vortocode-mobile-compare-chat.png`、`vortocode-mobile-compare-assistant.png`、`vortocode-mobile-compare-feed.png`。比较页将源图等比放进 393 × 852 的框，使用 contain 保留完整内容；源图比例略有差异，产生的窄留边不判作实现问题。比较的是同一页面类型与深色状态，内容按确认后的 VortoOne 方案替换，并非逐像素复刻。
 
 局部比较证据：同目录 `vortocode-mobile-compare-navigation.png`、`vortocode-mobile-compare-identity.png`，分别检查底部输入/导航和头像/连接/二级导航。这些并排图含用户参考内容，仅保存在忽略的本地目录，不随原型发布。
 

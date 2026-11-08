@@ -27,7 +27,7 @@ def _init_repo(root):
 
 def test_project_context_reports_branch_and_owned_worktrees(tmp_path):
     _init_repo(tmp_path)
-    owned = tmp_path / ".vortocode" / "worktrees" / "wt-one"
+    owned = tmp_path / ".vortoone" / "worktrees" / "wt-one"
     owned.parent.mkdir(parents=True)
     assert _git(tmp_path, "worktree", "add", "--detach", str(owned), "HEAD").returncode == 0
 
@@ -65,7 +65,7 @@ def test_background_tasks_are_grouped_by_owner_and_actionability(tmp_path):
     done = ledger.create("dev", "旧任务", owner_session="sid-beta")
     done.status = "done"
     ledger.save(done)
-    owned = tmp_path / ".vortocode" / "worktrees" / "wt-running"
+    owned = tmp_path / ".vortoone" / "worktrees" / "wt-running"
     owned.parent.mkdir(parents=True, exist_ok=True)
     assert _git(tmp_path, "worktree", "add", "--detach", str(owned), "HEAD").returncode == 0
     with bind_worktree_owner(

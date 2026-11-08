@@ -1,10 +1,10 @@
-# 桌宠/状态消费者示例 —— 复制到 .vortocode/hooks.yaml 即生效。
+# 桌宠/状态消费者示例 —— 复制到 .vortoone/hooks.yaml 即生效。
 #
 # 思路：用 hooks 把 agent 的动作状态「广播」给任意外部消费者（桌宠 / 菜单栏 / 通知），
 # 完全不依赖网页 WS，且 TUI / CLI / Web 三端通用——因为这些事件在主 agent loop 里触发。
 #
 # 一条 command hook 订阅整条生命周期，把事件 JSON 从 stdin 交给 examples/pet_state.py，
-# 后者算出状态写 .vortocode/pet_state.json；你的桌宠监听这个文件即可。
+# 后者算出状态写 .vortoone/pet_state.json；你的桌宠监听这个文件即可。
 #
 # 可触发的事件：
 #   agent_start    —— 回合开始（开工）

@@ -61,7 +61,7 @@ it("tells the user how to log in when the CLI is installed but signed out", () =
   expect(html).toContain("但未登录：在终端运行 claude auth login");
 });
 
-const residentSummary = { mode: "resident" as const, home: "/home/vc/.vortocode/workers", roles: { implement: "codex", review: "claude" },
+const residentSummary = { mode: "resident" as const, home: "/home/vc/.vortoone/workers", roles: { implement: "codex", review: "claude" },
   workers: [{ worker: "codex", found: true, logged_in: true, auth: "Logged in using ChatGPT", model: "gpt-x", provider: "" },
     { worker: "claude", found: true, logged_in: false, auth: "", model: "", provider: "" }] };
 
@@ -71,7 +71,7 @@ it("shows the resident instance read-only and separately from the local engine",
   expect(html).toContain("本机引擎：");
   expect(html).toContain("当前连着常驻电脑；切回本机项目后显示本机 CLI 的状态");   // 不拿常驻电脑的状态冒充本机
   expect(html).toContain("常驻电脑「VortoOne」的外部执行者");
-  expect(html).toContain("常驻模式，专用登录在 /home/vc/.vortocode/workers");
+  expect(html).toContain("常驻模式，专用登录在 /home/vc/.vortoone/workers");
   expect(html).toContain("实现：codex — 已就绪 · Logged in using ChatGPT · 模型 gpt-x");
   expect(html).toContain("未登录：在常驻电脑上运行 vc workers login claude");
   const residentPart = html.slice(html.indexOf("llm-resident-workers"));

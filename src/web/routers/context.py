@@ -26,7 +26,7 @@ def _repo_memory_snapshot(repo_root: str) -> dict:
     total_entries = len(entries)
     injected_entries = max(0, total_entries - dropped) if dropped >= 0 else None
     return {
-        "path": ".vortocode/memory/repo.md",
+        "path": ".vortoone/memory/repo.md",
         "content": safe_content,
         "effective": safe_effective,
         "entries": entries,
@@ -83,7 +83,7 @@ async def add_repo_memory(body: RepoMemoryWriteRequest):
         session="desktop",
         mode="build",
         event="repo_memory_added",
-        data={"chars": len(decision.content), "path": ".vortocode/memory/repo.md"},
+        data={"chars": len(decision.content), "path": ".vortoone/memory/repo.md"},
     )
     return {
         **_repo_memory_snapshot(repo_root),

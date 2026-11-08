@@ -12,6 +12,7 @@ from typing import Any, List, Optional, Tuple
 from urllib.parse import parse_qsl, unquote_plus, urlsplit
 from src.utils.async_ops import timeout_scope
 from src.utils.exc_utils import add_note
+from src.utils.state_dir import home_state_dir
 
 
 MCP_CLEANUP_TIMEOUT = 5
@@ -136,11 +137,11 @@ _MAX_SECRET_BYTES = 4096
 
 
 def connector_secret_path(name: str) -> Path:
-    return Path.home() / ".vortocode" / "connectors" / f"{name}.token"
+    return home_state_dir() / "connectors" / f"{name}.token"
 
 
 def load_connector_secret(name: str) -> str:
-    """读连接器凭据：只认 `~/.vortocode/connectors/<name>.token`，且必须是只有本人可读的普通文件。
+    """读连接器凭据：只认 `~/.vortoone/connectors/<name>.token`，且必须是只有本人可读的普通文件。
 
     凭据**只在这里**进内存、只进 HTTP 头：不进配置、不进系统提示、不进任何工具结果。
     权限放宽了（组/其他人可读）就拒绝——别把一个谁都能读的令牌当成主人的授权。"""
@@ -197,7 +198,7 @@ def revoke_connector(name: str):
 def _credentialed_connectors(config: dict) -> list[dict]:
     """带凭据的 HTTP 连接器（如 GitHub）。**只在通用范围**（常驻助理：没有文件/命令/Git）可用。
 
-    配置里只写凭据**名字**（`credential: github`），令牌原文在 `~/.vortocode/connectors/` 下；
+    配置里只写凭据**名字**（`credential: github`），令牌原文在 `~/.vortoone/connectors/` 下；
     配置自带 headers 一律拒绝（防止把令牌直接写进仓库文件）。`read_only: true` 时附上
     GitHub 的只读头，并在客户端只收 readOnlyHint 工具。缺凭据、权限不对 → 跳过这一个。"""
     import logging

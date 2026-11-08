@@ -1,7 +1,7 @@
 """dev_auto 流水线的持久化计划（C1）——把"分解 + 逐块执行状态"落成可读、可 diff、可手改后重跑的文件。
 
 dev_auto 此前全内存：10 个子任务断在第 7 个就得从头再来，长任务跨天没法续。这里把分解结果与每块
-执行状态显式化为 `.vortocode/dev_plans/<id>.json`，**write-ahead**（每次状态转换先写盘再干活），于是：
+执行状态显式化为 `.vortoone/dev_plans/<id>.json`，**write-ahead**（每次状态转换先写盘再干活），于是：
 
 - 断点续跑：`dev_resume(plan_id)` 从文件重建执行状态——已 landed 的块跳过、未完成的重走。
 - 可观测：同一份计划文件是进度播报 / IM /status / （PR-2）后台任务台账的数据源。
@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from src.utils.ids import safe_id
+from src.utils.state_dir import state_dir
 
 _DIRNAME = "dev_plans"
 
@@ -62,7 +63,7 @@ class Block:
 
 @dataclass
 class DevPlan:
-    """dev_auto 一次运行的完整计划 + 执行状态。落盘到 .vortocode/dev_plans/<plan_id>.json。"""
+    """dev_auto 一次运行的完整计划 + 执行状态。落盘到 .vortoone/dev_plans/<plan_id>.json。"""
     plan_id: str
     task: str
     branch: str
@@ -140,9 +141,9 @@ class DevPlan:
         return " · ".join(parts)
 
 
-# .vortocode/ 里"工具生成的运行时状态"清单——放进 .vortocode/.gitignore 让它们对目标仓库 git status
+# .vortoone/ 里"工具生成的运行时状态"清单——放进 .vortoone/.gitignore 让它们对目标仓库 git status
 # 隐形（含 .gitignore 自身，避免自己冒出来当噪音）；用户配置不在此列，仍可正常 git add。
-# 托管的生成态忽略清单（.vortocode/ 相对路径）。新增生成态目录/文件时在这里登记——
+# 托管的生成态忽略清单（.vortoone/ 相对路径）。新增生成态目录/文件时在这里登记——
 # ensure_state_gitignore 会把它幂等升级进所有仓库的托管区（老仓库也能收到，不只新仓库）。
 # 状态目录看护已移到 src/utils/state_dir（它跟 dev 流水线无关，却被 22 个模块
 # 为了它而 import 本模块）。**这里保留再导出**：存量调用点一个字不用改。
@@ -154,7 +155,7 @@ from src.utils.state_dir import (  # noqa: E402,F401
 
 # --------------------------------------------------------------------- 落盘（原子写，仿 session_store）
 def _path(repo_root: str, plan_id: str) -> Path:
-    return Path(repo_root) / ".vortocode" / _DIRNAME / f"{plan_id}.json"
+    return state_dir(repo_root) / _DIRNAME / f"{plan_id}.json"
 
 
 def save_plan(repo_root: str, plan: DevPlan) -> bool:
@@ -166,7 +167,7 @@ def save_plan(repo_root: str, plan: DevPlan) -> bool:
     plan.updated = _now()
     p = _path(repo_root, pid)
     try:
-        ensure_state_gitignore(repo_root)                # 先保证 .vortocode/ 自忽略，别污染目标仓库工作区
+        ensure_state_gitignore(repo_root)                # 先保证 .vortoone/ 自忽略，别污染目标仓库工作区
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -204,7 +205,7 @@ def save_checkpoint(repo_root: str, plan: DevPlan) -> None:
 
 def list_plans(repo_root: str) -> List[Dict[str, Any]]:
     """列出所有计划的概况（供 IM /status 挑最近的 / 未来 UI），按最近更新排序。"""
-    d = Path(repo_root) / ".vortocode" / _DIRNAME
+    d = state_dir(repo_root) / _DIRNAME
     if not d.is_dir():
         return []
     out: List[Dict[str, Any]] = []
@@ -225,7 +226,7 @@ def list_plans(repo_root: str) -> List[Dict[str, Any]]:
 def format_plan_list(plans: List[Dict[str, Any]], *, limit: int = 20) -> str:
     """Format a compact dev plan list for human-facing UIs."""
     if not plans:
-        return "没有 dev 计划（.vortocode/dev_plans/ 为空）。"
+        return "没有 dev 计划（.vortoone/dev_plans/ 为空）。"
     lines = [f"Dev 计划（{len(plans)} 个，最近 {min(len(plans), limit)} 个）:"]
     for p in plans[:limit]:
         lines.append(

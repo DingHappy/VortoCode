@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 def _repo(tmp_path):
     root = tmp_path / "repo"
     (root / ".git").mkdir(parents=True)
-    (root / ".vortocode").mkdir()
-    (root / ".vortocode" / "hooks.yaml").write_text(
+    (root / ".vortoone").mkdir()
+    (root / ".vortoone" / "hooks.yaml").write_text(
         "hooks:\n"
         "  - name: format\n"
         "    type: command\n"
@@ -44,7 +44,7 @@ def test_project_cannot_commit_its_own_hook_trust(tmp_path, monkeypatch):
     ]
     assert set_project_trusted(str(root), True)
     assert is_project_trusted(str(root)) and store.is_file()
-    assert not (root / ".vortocode" / "trusted-folders.json").exists()
+    assert not (root / ".vortoone" / "trusted-folders.json").exists()
     assert set_project_trusted(str(root), False)
     assert not is_project_trusted(str(root))
 
@@ -84,7 +84,7 @@ def test_broken_hook_config_disables_hooks_loudly(tmp_path, monkeypatch, caplog)
 def test_hook_preview_normalizes_single_event_and_invalid_timeout(tmp_path, monkeypatch):
     root = _repo(tmp_path)
     monkeypatch.setenv("VORTOONE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
-    (root / ".vortocode" / "hooks.yaml").write_text(
+    (root / ".vortoone" / "hooks.yaml").write_text(
         "hooks:\n  - name: one\n    event_types: post_tool_use\n"
         "    command: true\n    timeout: not-a-number\n",
         encoding="utf-8",

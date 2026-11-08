@@ -1,7 +1,7 @@
 """Notion 插件（只读）：搜索并读取主人共享给集成的 Notion 页面和数据库。
 
 凭据是 Notion「内部集成」的令牌（notion.so/profile/integrations 新建，能力只勾「读取内容」），
-放在 `~/.vortocode/connectors/notion.token`。集成只能看到主人在页面「连接」里显式加给它的页面，
+放在 `~/.vortoone/connectors/notion.token`。集成只能看到主人在页面「连接」里显式加给它的页面，
 所以能看什么由主人在 Notion 里决定，令牌给得再大也越不过这一层。
 页面内容可能是别人写的或从网上剪藏的，按外部不可信内容处理（摄入即污点）。
 """
@@ -31,7 +31,7 @@ def _token() -> str:
     try:
         token = load_connector_secret(NAME)
     except FileNotFoundError:
-        raise NotionError("还没接 Notion：把内部集成的令牌放进 ~/.vortocode/connectors/notion.token") from None
+        raise NotionError("还没接 Notion：把内部集成的令牌放进 ~/.vortoone/connectors/notion.token") from None
     except (OSError, ValueError) as error:
         raise NotionError(f"Notion 凭据文件不可用：{error}") from None
     if connector_locally_revoked(NAME):

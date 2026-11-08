@@ -63,7 +63,7 @@ export function CatalogCard({ client, connection, activeScope, onInstalled }: {
       <div className="catalog-skill-scope">
         <span>技能装到</span>
         <select value={scope} onChange={event => setScope(event.target.value as ProjectSkillScope)}>
-          <option value="local">只在本机（.vortocode/skills）</option>
+          <option value="local">只在本机（.vortoone/skills）</option>
           <option value="shared">随仓库（skills/，团队共享）</option>
         </select>
       </div>

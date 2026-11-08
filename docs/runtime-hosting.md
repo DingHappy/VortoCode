@@ -21,7 +21,7 @@ routes. No second ledger or execution protocol is introduced.
 
 ## Workspace and channel ownership
 
-A Runtime holds `.vortocode/runtime.lock` before recovering persisted execution
+A Runtime holds `.vortoone/runtime.lock` before recovering persisted execution
 state. A second service, standalone IM process, or one-shot CLI heartbeat using the
 same workspace fails startup. CLI heartbeat acquires ownership before claiming
 backlog work. Recovery failures also stop startup, rather than serving with partially
@@ -31,7 +31,7 @@ fails. The OS releases ownership after a process dies; the empty lock
 file remains intentionally, preventing an inode replacement race.
 
 Telegram polling/pairing and DingTalk Stream consumption also hold a per-channel lock in
-`~/.vortocode/channel-locks` (`VORTOONE_IM_LOCK_DIR` overrides the directory).
+`~/.vortoone/channel-locks` (`VORTOONE_IM_LOCK_DIR` overrides the directory).
 The hashed Bot/application identity remains the same across credential rotations;
 credentials are never written to the lock. Distinct workspace services on the same host
 cannot consume one Bot's update stream concurrently. Pairing cannot consume

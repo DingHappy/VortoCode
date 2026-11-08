@@ -32,7 +32,7 @@ def cases() -> list[dict]:
 
 
 def setup(case: dict, root: Path) -> dict:
-    state = root / ".vortocode"
+    state = root / ".vortoone"
     state.mkdir(parents=True)
     fixture = case["fixture"]
     registry = root / "resident-projects.json"

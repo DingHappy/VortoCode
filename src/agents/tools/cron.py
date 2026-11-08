@@ -1,4 +1,4 @@
-"""排班工具：让 agent 自己建/开关/触发定时作业（.vortocode/cron.yaml）。
+"""排班工具：让 agent 自己建/开关/触发定时作业（.vortoone/cron.yaml）。
 
 ⚠ 三个写工具**必须显式** `read_only=False`：`Tool.read_only` 默认是 True，漏了就等于让
 plan 模式改得动 cron.yaml、跑得动作业——绕过 plan/build 门。这是自测逮到的真洞。
@@ -28,7 +28,7 @@ _SCHEDULER_OFF = ("\n⚠️ 这台机器上的调度**没有打开**（只用 De
 
 
 def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list[Tool]:
-    """定时作业的观察 + 排班面（`.vortocode/cron.yaml`）。
+    """定时作业的观察 + 排班面（`.vortoone/cron.yaml`）。
 
     为什么要有（真机 2026-07-27）：用户问"能不能设置定时任务"，agent 答"我目前没有设置定时
     任务的能力"，然后推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoOne 自己的
@@ -163,7 +163,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
             return "未改动：prompt 不能为空。"
         if job.kind == "command":
             return (f"未改动：{name} 是 command 作业（跑确定性命令），本工具只改 prompt 作业的内容。"
-                    f"改命令是另一个风险类别，只能人工编辑 .vortocode/cron.yaml。")
+                    f"改命令是另一个风险类别，只能人工编辑 .vortoone/cron.yaml。")
         if " ".join(new.split()) == " ".join((job.prompt or "").split()):
             return f"作业 {name} 的内容与你给的完全一致，无需改动。"
 
@@ -236,7 +236,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
              "以及调度总开关是否打开。只读、无需确认",
              {}, _list, read_only=True),
         Tool("cron_add",
-             "新建一个定时作业（写进 .vortocode/cron.yaml）。**只支持 prompt 作业**——要定时跑"
+             "新建一个定时作业（写进 .vortoone/cron.yaml）。**只支持 prompt 作业**——要定时跑"
              "命令，就把命令写进 prompt 交给无人值守 agent 执行。作业先以停用态落盘、经主人确认"
              "后才启用。重名会被拒（改已有作业请人工编辑 cron.yaml）。需确认",
              {"name": "作业名（字母/数字/下划线/连字符，≤64）",

@@ -5,7 +5,7 @@
 的通道（台账、Desktop、IM、App）推出去，不开模型回合。
 
 - 只推三种：完成待验收、失败 / 中断、等回答。取消不推（是主人或主 agent 自己停的）。
-- 同一任务、同一轮、同一状态只推一次；记号存 ``.vortocode/logs/task_notified.json``，只有 id。
+- 同一任务、同一轮、同一状态只推一次；记号存 ``.vortoone/logs/task_notified.json``，只有 id。
 - 子任务读过外部内容（污点）时不带任务标题，只说「有结果待核对」：标题由主 agent 写，可能带着外部文字。
 - 不转述结果正文；结果要回到对话里由主 agent 核对后汇报。
 - 开发流水线任务没有 ``collaboration`` 记录，不在这里推（派活单另由 ``assistant_watch`` 跟进）。
@@ -20,6 +20,7 @@ import logging
 import threading
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Tuple
+from src.utils.state_dir import state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ Notify = Callable[[str], Awaitable[Any]]
 
 
 def _state_path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "logs" / "task_notified.json"
+    return state_dir(root) / "logs" / "task_notified.json"
 
 
 _TEAM_LABELS = {"waiting": "需要你决定", "review": "交付了，等你验收", "failed": "失败了"}

@@ -45,6 +45,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
+from src.utils.state_dir import state_dir
 
 # 同一条处置的冷却（秒）：修过一次还犯，就不是"抖动"，是真有问题 → 升级给人，别再自己较劲。
 _COOLDOWN = 6 * 3600
@@ -180,7 +181,7 @@ _REMEDIES: Tuple[Remedy, ...] = (
         name="cron-no-web",
         what="这个定时作业没有出网许可，所以模型说自己「没有联网工具」——是权限没给，不是能力缺失",
         human_fix="让 agent 跑 cron_set_web 给这个作业开出网许可（会单独向你要一次授权），"
-                  "或手工在 .vortocode/cron.yaml 里给它加 allow_web: true",
+                  "或手工在 .vortoone/cron.yaml 里给它加 allow_web: true",
         pattern=re.compile(r"没有\s*`?web_search`?\s*/?\s*`?web_fetch`?|"
                            r"不包含联网搜索能力|没有联网(?:搜索)?(?:工具|能力)|"
                            r"无法.{0,10}实时(?:抓取|获取)", re.I),
@@ -206,7 +207,7 @@ _REMEDIES: Tuple[Remedy, ...] = (
     Remedy(
         name="token-budget",
         what="本次作业撞到 token 预算上限，已就地停止（这是封顶生效，不是故障）",
-        human_fix="要让它跑完就调高这个作业的 budget（.vortocode/cron.yaml），"
+        human_fix="要让它跑完就调高这个作业的 budget（.vortoone/cron.yaml），"
                   "或把任务拆小；不想封顶就删掉 budget 字段",
         pattern=re.compile(r"token 预算超限|TokenBudget", re.I),
         fix=None,          # 自动抬预算等于把封顶废掉——这条**刻意**不给自动解
@@ -227,7 +228,7 @@ def diagnose(error_text: str) -> Optional[Remedy]:
 
 # --------------------------------------------------------------------- 冷却台账（防重试风暴）
 def _ledger_path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "logs" / "remediation.json"
+    return state_dir(repo_root) / "logs" / "remediation.json"
 
 
 def _load_ledger(repo_root: str) -> dict:

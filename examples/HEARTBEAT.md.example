@@ -1,4 +1,4 @@
-# 值班检查单（HEARTBEAT.md）——放到目标仓库 `.vortocode/HEARTBEAT.md` 才生效
+# 值班检查单（HEARTBEAT.md）——放到目标仓库 `.vortoone/HEARTBEAT.md` 才生效
 
 <!--
   heartbeat 每次醒来只读这一个文件当值班检查单（轻上下文、隔离会话、可用便宜模型）。
@@ -22,7 +22,7 @@
 - 有没有 draft PR 超过 3 天没动静。
 - 有没有后台任务停在 `failed` / `interrupted` 没人管。
 - 主工作区有没有意外的未提交改动（本该只发生在一次性 worktree 里的改动漏了出来）。
-- 磁盘水位、`.vortocode/` 体积有没有异常增长。
+- 磁盘水位、`.vortoone/` 体积有没有异常增长。
 
 以上全部正常 → 回 `HEARTBEAT_OK`。
 有异常 → 点名是哪一项、看到了什么、建议怎么处理（只报告，不动手改）。

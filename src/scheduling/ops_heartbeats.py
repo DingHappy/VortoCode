@@ -5,7 +5,7 @@
 - **该报没报**：超过约定间隔没有报到——机器挂了、cron 没跑、脚本卡住。这正是「每天照样打印完成、
   其实已经 12 天没有新备份」那类静默故障（2026-10-18）。每次断档只推一次，恢复报到后重新计时。
 
-状态存在 ``.vortocode/ops_heartbeats.json``。报到经 ``/api/ops/heartbeat``，用专用令牌，
+状态存在 ``.vortoone/ops_heartbeats.json``。报到经 ``/api/ops/heartbeat``，用专用令牌，
 只能写这里的状态和推一条通知，碰不到别的接口。
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 _SOURCE = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 _MAX_SOURCES = 20
@@ -29,7 +30,7 @@ class HeartbeatError(ValueError):
 
 
 def _path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "ops_heartbeats.json"
+    return state_dir(root) / "ops_heartbeats.json"
 
 
 def _load(root: str) -> Dict[str, Dict[str, Any]]:

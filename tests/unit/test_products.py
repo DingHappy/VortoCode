@@ -112,7 +112,7 @@ def test_product_id_cannot_escape_the_store(store, tmp_path):
     evil = Product(id="../escape", kind="topic_pool")
     assert store.save(evil) is True
     assert not (tmp_path.parent / "escape.json").exists()
-    assert (tmp_path / ".vortocode" / "products" / "escape.json").is_file()
+    assert (tmp_path / ".vortoone" / "products" / "escape.json").is_file()
 
 
 def test_kind_is_required(store):
@@ -122,7 +122,7 @@ def test_kind_is_required(store):
 
 def test_corrupt_file_is_skipped_not_fatal(store, tmp_path):
     good = store.create("topic_pool")
-    bad = tmp_path / ".vortocode" / "products" / "prod-broken.json"
+    bad = tmp_path / ".vortoone" / "products" / "prod-broken.json"
     bad.write_text("{ 这不是 json", encoding="utf-8")
     assert [p.id for p in store.list()] == [good.id]
     assert store.load("prod-broken") is None
@@ -131,7 +131,7 @@ def test_corrupt_file_is_skipped_not_fatal(store, tmp_path):
 def test_unknown_fields_in_stored_file_are_ignored(store, tmp_path):
     """老文件遇到新版本、新文件遇到老版本，都不该崩——只忽略不认识的字段。"""
     product = store.create("topic_pool")
-    path = tmp_path / ".vortocode" / "products" / f"{product.id}.json"
+    path = tmp_path / ".vortoone" / "products" / f"{product.id}.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["future_field"] = {"whatever": 1}
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -141,7 +141,7 @@ def test_unknown_fields_in_stored_file_are_ignored(store, tmp_path):
 def test_products_dir_is_gitignored(store, tmp_path):
     """产出物是运行时状态，不该出现在目标仓库的 git status 里。"""
     store.create("topic_pool")
-    ignore = (tmp_path / ".vortocode" / ".gitignore").read_text(encoding="utf-8")
+    ignore = (tmp_path / ".vortoone" / ".gitignore").read_text(encoding="utf-8")
     assert "products/" in ignore
 
 

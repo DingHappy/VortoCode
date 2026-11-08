@@ -95,12 +95,12 @@ async def test_marks_survive_restart_and_nothing_is_sent_without_a_loop(tmp_path
     await _settle()
     assert task_notices.notify_transition(str(tmp_path), task, notify=notify) is False
     assert len(sent) == 1
-    assert (tmp_path / ".vortocode" / "logs" / "task_notified.json").read_text(encoding="utf-8").count("task-1") == 1
+    assert (tmp_path / ".vortoone" / "logs" / "task_notified.json").read_text(encoding="utf-8").count("task-1") == 1
 
 
 def test_no_event_loop_means_no_push_and_no_mark(tmp_path):
     assert task_notices.notify_transition(str(tmp_path), _task("done", round=1)) is False
-    assert not (tmp_path / ".vortocode" / "logs" / "task_notified.json").exists()
+    assert not (tmp_path / ".vortoone" / "logs" / "task_notified.json").exists()
 
 
 def test_runtime_dispatch_service_is_wired_to_owner_notices(tmp_path, monkeypatch):
@@ -125,7 +125,7 @@ async def test_process_without_a_delivery_channel_does_not_push(tmp_path, monkey
     monkeypatch.delenv("VORTOONE_OWNER_NOTIFY_URL", raising=False)
     assert task_notices.notify_transition(str(tmp_path), _task("done", round=1)) is False
     await _settle()
-    assert not (tmp_path / ".vortocode" / "logs").exists()
+    assert not (tmp_path / ".vortoone" / "logs").exists()
 
 
 async def test_process_with_owner_relay_pushes_through_the_assistant_channel(tmp_path, monkeypatch):

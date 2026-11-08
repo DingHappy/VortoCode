@@ -165,11 +165,11 @@ async def test_confirm_detector_catches_open_gate(box, monkeypatch):
 
 # --------------------------------------------------------------- harness 自身的性质
 async def test_canary_never_touches_real_workspace():
-    """canary 必须跑在临时目录里——部署后在 VM 上跑，绝不能碰真 `.vortocode/`（cron.yaml！）。"""
+    """canary 必须跑在临时目录里——部署后在 VM 上跑，绝不能碰真 `.vortoone/`（cron.yaml！）。"""
     from pathlib import Path
     with _sandbox() as b:
         assert "vc-canary-" in b.root, "工作区不是一次性临时目录"
-        assert not (Path(b.root) / ".vortocode" / "cron.yaml").exists()
+        assert not (Path(b.root) / ".vortoone" / "cron.yaml").exists()
         root = b.root
     assert not Path(root).exists(), "跑完没清掉临时工作区"
 

@@ -7,7 +7,7 @@ from src.memory.archive_search import archive_query_terms, search_archives
 
 
 def archive(root, sid, *contents):
-    directory = root / '.vortocode' / 'web_sessions'
+    directory = root / '.vortoone' / 'web_sessions'
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f'{sid}.json').write_text(json.dumps({'transcript': [
         {'role': 'user', 'text': content} for content in contents]}, ensure_ascii=False))
@@ -68,11 +68,11 @@ async def test_natural_chinese_recall_uses_existing_untrusted_tool_without_fact_
     assert result['kind'] == 'untrusted_conversation_evidence'
     assert result['excerpts'][0]['source_session'] == 'gpu'
     assert tool.read_only and tool.untrusted_source
-    assert not (tmp_path / '.vortocode' / 'sessions.db').exists()
+    assert not (tmp_path / '.vortoone' / 'sessions.db').exists()
 
 
 def test_date_filter_uses_message_date_and_excludes_unknown_or_out_of_range_neighbors(tmp_path):
-    directory = tmp_path / '.vortocode/web_sessions'
+    directory = tmp_path / '.vortoone/web_sessions'
     directory.mkdir(parents=True)
     (directory / 'gpu.json').write_text(json.dumps({'transcript': [
         {'role': 'user', 'text': '显卡 older', 'timestamp': '2026-09-30T23:00:00Z'},
@@ -119,7 +119,7 @@ def test_original_read_rejects_symlink_and_system_messages(tmp_path):
     import hashlib
     from src.memory.archive_search import read_archive_excerpt
     archive(tmp_path, 'gpu', '显卡')
-    path = tmp_path / '.vortocode/web_sessions/gpu.json'
+    path = tmp_path / '.vortoone/web_sessions/gpu.json'
     raw = json.dumps({'transcript': [{'role': 'system', 'content': 'private system'}]}).encode()
     path.write_bytes(raw)
     revision = hashlib.sha256(raw).hexdigest()
@@ -138,7 +138,7 @@ async def test_dated_tool_reports_excluded_sources_and_original_read_is_untruste
     from src.agents.tools.memory import build_memory_tools
     from src.memory.conversation_db import SessionStore
     archive(tmp_path, 'gpu', '显卡 unknown')
-    store = SessionStore(str(tmp_path / '.vortocode/sessions.db'))
+    store = SessionStore(str(tmp_path / '.vortoone/sessions.db'))
     store.add_message(store.create_session(), 'user', '显卡 old sqlite')
     tools = {tool.name: tool for tool in build_memory_tools(str(tmp_path))}
     dated = json.loads(await tools['search_conversations'].handler({'query': '显卡', 'after': '2026-10-01'}))

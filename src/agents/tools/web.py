@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from src.agents.tool import Tool
 from src.agents.tools._common import _truthy
+from src.utils.state_dir import state_dir
 
 
 def build_web_tools() -> list[Tool]:
@@ -94,7 +95,7 @@ def build_screenshot_tool(repo_root: str) -> list[Tool]:
             return ("未安装 playwright，无法截图。装：pip install playwright && "
                     "python -m playwright install chromium")
 
-        out_dir = base / ".vortocode" / "shots" / time.strftime("%Y%m%d")
+        out_dir = state_dir(base) / "shots" / time.strftime("%Y%m%d")
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"{time.strftime('%H%M%S')}-{uuid.uuid4().hex[:6]}.png"
         # 真实 UA + 中文 locale：无头浏览器会被不少站点反爬挡掉（真机撞过 403），

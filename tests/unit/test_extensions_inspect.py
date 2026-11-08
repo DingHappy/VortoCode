@@ -18,9 +18,9 @@ def test_inspect_extensions_reports_effective_sources_without_sensitive_bodies(t
     (root / "AGENTS.md").write_text("Never expose this rule body", encoding="utf-8")
     (root / "CLAUDE.md").write_text("Shadowed rule body", encoding="utf-8")
     _skill(root / "skills" / "review" / "SKILL.md", "review", "Review safely")
-    _skill(root / ".vortocode" / "skills" / "review" / "SKILL.md", "review", "Project override")
+    _skill(root / ".vortoone" / "skills" / "review" / "SKILL.md", "review", "Project override")
 
-    (root / ".vortocode" / "hooks.yaml").write_text(
+    (root / ".vortoone" / "hooks.yaml").write_text(
         "hooks:\n  - name: notify\n    type: http\n    event_types: [agent_end]\n"
         "    url: https://example.test/done?token=do-not-return\n",
         encoding="utf-8",
@@ -55,7 +55,7 @@ def test_inspect_extensions_reports_effective_sources_without_sensitive_bodies(t
     shadowed_rule = next(item for item in rules if item["source"] == "CLAUDE.md")
     assert shadowed_rule["status"] == "available" and shadowed_rule["enabled"] is False
     skills = [item for item in snapshot["items"] if item["kind"] == "skill"]
-    assert next(item for item in skills if item["source"].startswith(".vortocode/"))["status"] == "active"
+    assert next(item for item in skills if item["source"].startswith(".vortoone/"))["status"] == "active"
     shadowed_skill = next(item for item in skills if item["source"].startswith("skills/"))
     assert shadowed_skill["status"] == "available" and shadowed_skill["enabled"] is False
     mcp = {item["name"]: item for item in snapshot["items"] if item["kind"] == "mcp"}

@@ -26,7 +26,7 @@ DEF = {"name": "content-ops", "stages": [
 
 @pytest.fixture
 def repo(tmp_path):
-    d = tmp_path / ".vortocode" / "pipelines"
+    d = tmp_path / ".vortoone" / "pipelines"
     d.mkdir(parents=True)
     (d / "content-ops.yaml").write_text(yaml.safe_dump(DEF, allow_unicode=True), encoding="utf-8")
     return tmp_path

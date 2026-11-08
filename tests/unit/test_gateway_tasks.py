@@ -41,14 +41,14 @@ def test_runner_recover_notifies_subscribers(tmp_path):
 
 
 def test_ledger_save_leaves_worktree_clean(tmp_path):
-    """台账落 .vortocode/tasks/ 后，目标仓库（无自带 .gitignore）git status 仍干净（.vortocode/ 自忽略）。"""
+    """台账落 .vortoone/tasks/ 后，目标仓库（无自带 .gitignore）git status 仍干净（.vortoone/ 自忽略）。"""
     import subprocess
     def git(*a):
         return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
     git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
     (tmp_path / "f.py").write_text("x=1\n", encoding="utf-8"); git("add", "-A"); git("commit", "-qm", "init")
     TaskLedger(str(tmp_path)).create("dev", "干活")
-    assert (tmp_path / ".vortocode" / "tasks").is_dir()
+    assert (tmp_path / ".vortoone" / "tasks").is_dir()
     assert git("status", "--porcelain").stdout.strip() == ""     # 台账对 git status 隐形
 
 
@@ -67,7 +67,7 @@ def test_ledger_rejects_record_identity_mismatching_filename(tmp_path, corrupt_i
     import json
     led = TaskLedger(str(tmp_path))
     task = led.create("dev", "损坏记录")
-    path = tmp_path / ".vortocode" / "tasks" / f"{task.id}.json"
+    path = tmp_path / ".vortoone" / "tasks" / f"{task.id}.json"
     payload = task.to_dict() | {"id": corrupt_id, "status": "running"}
     path.write_text(json.dumps(payload), encoding="utf-8")
     before = path.read_bytes()
@@ -87,7 +87,7 @@ def test_misnamed_record_cannot_duplicate_inbox_or_redirect_state_changes(tmp_pa
     first.status, first.result = "done", "真实交付"
     led.save(first)
     second = led.create("dev", "文件身份不一致", owner_session="sid-owner")
-    root = tmp_path / ".vortocode" / "tasks"
+    root = tmp_path / ".vortoone" / "tasks"
     first_path, second_path = root / f"{first.id}.json", root / f"{second.id}.json"
     second_path.write_text(json.dumps(first.to_dict()), encoding="utf-8")
     before = {path: path.read_bytes() for path in (first_path, second_path)}
@@ -108,7 +108,7 @@ def test_task_filename_alias_cannot_redirect_an_exact_id_lookup(tmp_path):
     task = ledger.create("dev", "精确任务身份", owner_session="sid-owner")
     task.status, task.result = "done", "交付"
     ledger.save(task)
-    path = tmp_path / ".vortocode" / "tasks" / f"{task.id}.json"
+    path = tmp_path / ".vortoone" / "tasks" / f"{task.id}.json"
     before = path.read_bytes()
     for alias in (task.id + "_", "_" + task.id, task.id + "."):
         assert ledger.load(alias) is None

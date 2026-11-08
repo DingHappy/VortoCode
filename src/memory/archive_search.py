@@ -8,9 +8,9 @@ import re
 import stat
 import unicodedata
 from datetime import date, datetime, timezone
-from pathlib import Path
 
 from .conversation_search import _STOP
+from src.utils.state_dir import state_dir
 
 _HAN = re.compile(r'([\u3400-\u9fff]+)')
 _ZH_STOP = set(('什么', '哪些', '之前', '以前', '一下', '帮我', '我们', '你们',
@@ -87,7 +87,7 @@ def read_archive_excerpt(repo_root, evidence_id, revision, *, offset=0):
         raise ValueError('需要检索结果中的 archive_revision')
     if type(offset) is not int or not 0 <= offset <= 1_000_000:
         raise ValueError('offset 需要 0..1000000 的整数')
-    directory = Path(repo_root) / '.vortocode' / 'web_sessions'
+    directory = state_dir(repo_root) / 'web_sessions'
     if directory.is_symlink() or directory.parent.is_symlink():
         raise ValueError('不能读取链接存档目录')
     raw, info = _read_archive(directory / f'{sid}.json')
@@ -115,7 +115,7 @@ def read_archive_excerpt(repo_root, evidence_id, revision, *, offset=0):
 
 def search_archives(repo_root: str, query: str, *, limit=8, after=None, before=None) -> dict:
     start, end = date_bounds(after, before)
-    directory = Path(repo_root) / '.vortocode' / 'web_sessions'
+    directory = state_dir(repo_root) / 'web_sessions'
     result = {'rows': [], 'files_scanned': 0, 'coverage_limited': False, 'undated_messages_excluded': 0}
     if directory.is_symlink() or directory.parent.is_symlink() or not directory.is_dir():
         return result

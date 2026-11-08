@@ -182,14 +182,14 @@ async def test_remember_repo_warns_when_over_injection_limit(tmp_path):
 @pytest.mark.asyncio
 async def test_dev_subagent_inherits_repo_memory(tmp_path, monkeypatch):
     """最值钱的落点：隔离实现子 agent 每次都在全新 worktree 里从零开始，构建怪癖/测试命令
-    本该每次重踩——现在开局就带着仓库记忆。且必须从**主仓库**读（.vortocode 是 gitignored，
+    本该每次重踩——现在开局就带着仓库记忆。且必须从**主仓库**读（.vortoone 是 gitignored，
     worktree 里根本没有这份文件）。"""
     _write_repo_mem(tmp_path, "- 测试命令是 make test（pytest 会漏集成用例）")
 
     built = {}
 
     async def _fake_isolated(repo_root, wid, description, build_agent, mode="build", test_cmd=None):
-        wt = tmp_path / "fake-worktree"                       # 假 worktree：**不含** .vortocode/
+        wt = tmp_path / "fake-worktree"                       # 假 worktree：**不含** .vortoone/
         wt.mkdir(exist_ok=True)
         built["agent"] = build_agent(str(wt))                 # 捕获真正的子 agent
         return "", "done", {"ok": True, "output": "", "cmd": []}   # 空 diff=no-op，不走落分支

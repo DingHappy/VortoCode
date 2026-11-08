@@ -26,7 +26,7 @@ DEF = {
 
 @pytest.fixture
 def repo(tmp_path):
-    d = tmp_path / ".vortocode" / "pipelines"
+    d = tmp_path / ".vortoone" / "pipelines"
     d.mkdir(parents=True)
     (d / "content-ops.yaml").write_text(yaml.safe_dump(DEF, allow_unicode=True), encoding="utf-8")
     return str(tmp_path)
@@ -261,7 +261,7 @@ async def test_a_web_stage_is_not_run_unattended(repo):
     """
     from src.workflow.pipeline.pipeline import load_definition
 
-    d = repo + "/.vortocode/pipelines/web-ops.yaml"
+    d = repo + "/.vortoone/pipelines/web-ops.yaml"
     with open(d, "w", encoding="utf-8") as fh:
         yaml.safe_dump({"name": "web-ops", "stages": [
             {"id": "scout", "produces": "topic_pool", "web": True}]}, fh, allow_unicode=True)
@@ -280,7 +280,7 @@ async def test_a_web_stage_runs_when_a_human_is_at_the_gate(repo):
     """有人在就照跑——"不给网"针对的是没人看着那一档，不是把出网工序永久禁掉。"""
     from src.workflow.pipeline.pipeline import load_definition
 
-    with open(repo + "/.vortocode/pipelines/web-ops.yaml", "w", encoding="utf-8") as fh:
+    with open(repo + "/.vortoone/pipelines/web-ops.yaml", "w", encoding="utf-8") as fh:
         yaml.safe_dump({"name": "web-ops", "stages": [
             {"id": "scout", "produces": "topic_pool", "web": True}]}, fh, allow_unicode=True)
     PipelineStore(repo).start(load_definition(repo, "web-ops"))

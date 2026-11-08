@@ -27,6 +27,7 @@ from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent, chunk_text
 from src.utils.http import outbound_session
+from src.utils.state_dir import home_state_dir
 
 _log = logging.getLogger("vortocode.im.dingtalk")
 
@@ -108,7 +109,7 @@ class DingTalkAdapter(ChannelAdapter):
         self._tok_new: tuple = ("", 0.0)              # (token, 过期时刻 monotonic)
         self._tok_old: tuple = ("", 0.0)
         # 入站附件的落点：刻意**不在仓库工作区里**——用户发来的文件不该被当成代码改动收进 diff
-        self._inbox_dir = str(Path(inbox_dir or Path.home() / ".vortocode" / "im_inbox"))
+        self._inbox_dir = str(Path(inbox_dir or home_state_dir() / "im_inbox"))
 
     # ------------------------------------------------------------ ChannelAdapter
     def conversation_identity(self) -> str:

@@ -20,6 +20,7 @@ import yaml
 
 from src.skills.skill import SkillMetadata
 from src.utils.state_dir import ensure_state_gitignore
+from src.utils.state_dir import state_dir
 
 MAX_BYTES = 64 * 1024
 MAX_SKILLS = 100
@@ -33,7 +34,7 @@ class SkillConflict(ValueError):
 class PersonalSkills:
     def __init__(self, root: str):
         self.root = Path(root).resolve()
-        self.base = self.root / ".vortocode" / "personal-skills"
+        self.base = state_dir(self.root) / "personal-skills"
 
     def _path(self, skill_id: str, leaf: str = "SKILL.md") -> Path:
         if not isinstance(skill_id, str) or not _ID.fullmatch(skill_id):

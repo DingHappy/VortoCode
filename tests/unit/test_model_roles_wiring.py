@@ -113,7 +113,7 @@ def test_decompose_role_reaches_the_planner(monkeypatch):
 
 
 def test_custom_role_file_can_point_at_another_vendor(tmp_path, monkeypatch):
-    """`.vortocode/agents/*.md` 的 `model:` 写成 provider:model 就整个换端点。"""
+    """`.vortoone/agents/*.md` 的 `model:` 写成 provider:model 就整个换端点。"""
     from src.agents.main_agent import build_subagent
 
     class Spec:

@@ -12,6 +12,7 @@ import re
 
 from src.gateway import session_store
 from src.gateway.process_lease import channel_lease
+from src.utils.state_dir import state_dir
 
 MAX_RECEIPTS = 2048
 MAX_BYTES = 2 * 1024 * 1024
@@ -31,7 +32,7 @@ class InputStore:
     def __init__(self, channel: str, account: str, *, project_root=None):
         self.root = channel_lease(channel, account).path.parent / "inputs" / fingerprint([channel, account])
         self.key = "sid-im-inputs"
-        self.path = self.root / ".vortocode" / "web_sessions" / "im-inputs.json"
+        self.path = state_dir(self.root) / "web_sessions" / "im-inputs.json"
         self.blocked = False
         if project_root is not None:
             from pathlib import Path

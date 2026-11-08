@@ -680,7 +680,7 @@ function UnsavedSettingsDialog({ labels, onStay, onDiscard }: { labels: string[]
 function DiagnosticsPane() {
   const [note, setNote] = useState("");
   return <div className="settings-diagnostics">
-    <p>连接常驻电脑、切换工作区、自动重连和界面报错会记在本机的 <code>~/Library/Logs/VortoCode/desktop.log</code>，
+    <p>连接常驻电脑、切换工作区、自动重连和界面报错会记在本机的 <code>~/Library/Logs/VortoOne/desktop.log</code>，
       不含对话内容和密钥。遇到连不上、没反应这类问题时，把这个文件发过来就能排查。</p>
     <button onClick={() => void invoke<string>("reveal_diagnostics_log")
       .then(() => setNote("已在 Finder 中显示"))

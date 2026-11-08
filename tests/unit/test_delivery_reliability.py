@@ -298,8 +298,8 @@ def test_doctor_warns_when_utc_host_runs_at_jobs(tmp_path, monkeypatch):
     import time as _time
     from src.gateway.doctor import _check_schedule_timezone
 
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "cron.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "cron.yaml").write_text(
         "jobs:\n  - name: daily-news\n    schedule: at 09:00\n"
         "    prompt: 搜新闻\n    enabled: true\n", encoding="utf-8")
 
@@ -320,8 +320,8 @@ def test_doctor_ok_on_local_timezone(tmp_path, monkeypatch):
     import time as _time
     from src.gateway.doctor import _check_schedule_timezone
 
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "cron.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "cron.yaml").write_text(
         "jobs:\n  - name: daily-news\n    schedule: at 09:00\n"
         "    prompt: 搜新闻\n    enabled: true\n", encoding="utf-8")
 

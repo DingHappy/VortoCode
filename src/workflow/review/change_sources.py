@@ -17,6 +17,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
+from src.utils.state_dir import app_support_dir, xdg_dir
 
 _HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?P<section>.*)")
 _MAX_RECORDS = 500
@@ -55,9 +56,9 @@ def _store_path(repo_root: str) -> Path:
         target = Path(override).expanduser()
         return target if target.suffix else target / f"{_repo_key(repo_root)}.json"
     if os.name == "posix" and Path.home().joinpath("Library").is_dir():
-        base = Path.home() / "Library" / "Application Support" / "VortoCode" / "change-sources"
+        base = app_support_dir() / "change-sources"
     else:
-        base = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "vortocode" / "change-sources"
+        base = xdg_dir("XDG_STATE_HOME", Path.home() / ".local" / "state") / "change-sources"
     return base / f"{_repo_key(repo_root)}.json"
 
 
@@ -115,7 +116,7 @@ def _status_paths(repo_root: str) -> list[str]:
             clean = _normal_path(value)
         except ValueError:
             continue
-        if clean == ".vortocode" or clean.startswith(".vortocode/"):
+        if clean in (".vortoone", ".vortocode") or clean.startswith((".vortoone/", ".vortocode/")):
             continue
         if clean not in output:
             output.append(clean)

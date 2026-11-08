@@ -100,7 +100,7 @@ async def test_mcp_server(name: str):
         raise HTTPException(400, str(error)) from None
 
 
-# ── 项目技能管理（Desktop 插件页）：skills/（随仓库）与 .vortocode/skills/（只在本机） ──
+# ── 项目技能管理（Desktop 插件页）：skills/（随仓库）与 .vortoone/skills/（只在本机） ──
 
 def _skills_call(fn, *args):
     from src.web.deps import HTTPException

@@ -1,7 +1,7 @@
 """审批台的 REST 面：读要全、写要窄。
 
 IM 负责"叫人"，这条路负责"审阅"——一屏几十行的选题池在手机上读不了。两条路**共用同一份
-状态**（`.vortocode/pipeline_runs/` + 产出物台账），不是两套；所以这里测的是
+状态**（`.vortoone/pipeline_runs/` + 产出物台账），不是两套；所以这里测的是
 "web 上批完，CLI 看到的是同一件事"。
 """
 import pytest
@@ -18,7 +18,7 @@ DEF = {"name": "content-ops", "stages": [
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    d = tmp_path / ".vortocode" / "pipelines"
+    d = tmp_path / ".vortoone" / "pipelines"
     d.mkdir(parents=True)
     (d / "content-ops.yaml").write_text(yaml.safe_dump(DEF, allow_unicode=True), encoding="utf-8")
     monkeypatch.chdir(tmp_path)

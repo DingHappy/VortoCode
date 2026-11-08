@@ -22,11 +22,11 @@ async def test_binding_context_reaches_thread_and_persists_only_ids(tmp_path):
     assert saved is not None
     assert current_worktree_owner() == {}
     assert list_worktree_bindings(str(tmp_path))["wt-one"] == saved
-    raw = (tmp_path / ".vortocode" / "worktree_bindings.json").read_text(encoding="utf-8")
+    raw = (tmp_path / ".vortoone" / "worktree_bindings.json").read_text(encoding="utf-8")
     assert "task-1" in raw and "plan-1" in raw
     assert "prompt" not in raw and "source" not in raw
     assert "worktree_bindings.json" in (
-        tmp_path / ".vortocode" / ".gitignore"
+        tmp_path / ".vortoone" / ".gitignore"
     ).read_text(encoding="utf-8")
 
 
@@ -45,7 +45,7 @@ def test_nested_binding_merges_and_forget_is_idempotent(tmp_path):
 
 
 def test_binding_reader_degrades_on_malformed_state(tmp_path):
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir()
     (state / "worktree_bindings.json").write_text("{broken", encoding="utf-8")
     assert list_worktree_bindings(str(tmp_path)) == {}
@@ -53,7 +53,7 @@ def test_binding_reader_degrades_on_malformed_state(tmp_path):
 
 
 def test_binding_write_failure_does_not_break_worktree_owner(tmp_path):
-    state = tmp_path / ".vortocode"
+    state = tmp_path / ".vortoone"
     state.mkdir()
     (state / "worktree_bindings.json").mkdir()
     with bind_worktree_owner(task_id="task-safe"):

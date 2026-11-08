@@ -10,7 +10,6 @@ import asyncio
 from datetime import datetime, timezone
 import ipaddress
 import os
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.gateway.mobile_devices import MobileDevices, MobileStoreError
 from src.gateway.mobile_pairing import MobilePairing, PairingDenied
 from src.web.auth import get_api_token, is_authed
+from src.utils.state_dir import state_dir
 
 router = APIRouter(tags=["mobile"])
 
@@ -194,7 +194,7 @@ def _main_chat(root: str) -> dict:
     from src.gateway.main_conversation import main_chat_key
 
     key = main_chat_key(root)
-    if key is None and (Path(root) / ".vortocode" / "main_chat.json").exists():
+    if key is None and (state_dir(root) / "main_chat.json").exists():
         raise ValueError("unreadable main-chat registration")
     return {"sid": key[4:] if key else None}
 

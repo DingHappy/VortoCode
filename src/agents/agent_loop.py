@@ -600,7 +600,7 @@ class MainAgent:
         self.context_policy = _normalize_context_policy(os.getenv("VORTOONE_CONTEXT_POLICY") or context_policy)
         self._context_mode = "plan"
         self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
-        self._permissions = permissions        # 可选 .vortocode/permissions.yaml deny 规则（_run_tool 硬拦）
+        self._permissions = permissions        # 可选 .vortoone/permissions.yaml deny 规则（_run_tool 硬拦）
         if capabilities is None:
             from src.agents.capabilities import EXTERNAL_PROFILE, SessionCapabilities
             capabilities = SessionCapabilities.for_profile(EXTERNAL_PROFILE)

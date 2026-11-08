@@ -194,7 +194,7 @@ def _client(provider: ProviderSpec, model: str) -> Any:
 
 
 def client_for_spec(spec: str) -> Optional[Any]:
-    """给一条**显式**的 `provider:model` 造客户端（`.vortocode/agents/*.md` 的 `model:` 用）。
+    """给一条**显式**的 `provider:model` 造客户端（`.vortoone/agents/*.md` 的 `model:` 用）。
 
     不带 provider 前缀（只写模型名）返回 None——那种情况调用方用 `set_model()` 就够了，端点不变。
     端点没登记/没凭据同样返回 None 并记警告，绝不借别家的 key。

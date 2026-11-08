@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
+from src.utils.state_dir import home_state_dir
 
 
 class ProcessLease:
@@ -53,6 +54,6 @@ def channel_lease(channel: str, identity: str) -> ProcessLease:
     if channel not in {"telegram", "dingtalk"}:
         raise ValueError("Unknown IM channel")
     directory = Path(os.getenv("VORTOONE_IM_LOCK_DIR") or
-                     Path.home() / ".vortocode" / "channel-locks")
+                     home_state_dir() / "channel-locks")
     digest = hashlib.sha256(str(identity).encode()).hexdigest()
     return ProcessLease(directory / f"{channel}-{digest}.lock")

@@ -6,7 +6,7 @@
 > 不需要为新Desktop额外安装系统Python SDK；CLI的llm可选依赖合同保持原样。
 
 
-主 Agent 与 `.vortocode/agents/*.md` 角色继续使用原 OpenAI 兼容客户端、路由、工具与
+主 Agent 与 `.vortoone/agents/*.md` 角色继续使用原 OpenAI 兼容客户端、路由、工具与
 权限门。可以全用本机默认模型，也可以保留云端默认服务、让指定角色使用本机供应商。
 不增加第二个 Agent 执行池。看板仍仅属于 Desktop。
 

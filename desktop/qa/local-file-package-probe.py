@@ -119,7 +119,7 @@ try:
     assert status["effective"] == "reads" and status["ceiling"] == "reads"
     asyncio.run(run("file-preapproved", True, "READ-ALLOWED", 0))
     assert not any(r["reasoning_effort_sent"] for r in requests)
-    audit = (workspace / ".vortocode/audit.log").read_text()
+    audit = (workspace / ".vortoone/audit.log").read_text()
     assert "读取本机文件" in audit
     evidence.update(cases=cases, trust=status, requests=requests, audit=True, passed=True)
 finally:

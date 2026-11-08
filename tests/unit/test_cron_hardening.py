@@ -18,7 +18,7 @@ def _job(name, *, prompt="干活", budget=0, command=""):
 
 
 def _notices_text(tmp_path) -> str:
-    path = tmp_path / ".vortocode" / "logs" / "notices.jsonl"
+    path = tmp_path / ".vortoone" / "logs" / "notices.jsonl"
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
@@ -230,7 +230,7 @@ jobs:
 
 
 def _write_cron_yaml(tmp_path):
-    root = tmp_path / ".vortocode"
+    root = tmp_path / ".vortoone"
     root.mkdir(parents=True, exist_ok=True)
     (root / "cron.yaml").write_text(_CRON_YAML, encoding="utf-8")
 

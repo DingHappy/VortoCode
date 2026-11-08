@@ -154,7 +154,7 @@ async def test_progress_or_acceptance_invalidates_pending_approval(tmp_path, mut
 async def test_one_broken_goal_or_notify_does_not_block_others(tmp_path):
     service, first = approved(tmp_path, "first")
     _, second = approved(tmp_path, "second")
-    directory = tmp_path / ".vortocode" / "goals"
+    directory = tmp_path / ".vortoone" / "goals"
     (directory / "personal-broken.json").write_text("{broken")
     calls = []
     async def notify(text):
@@ -231,7 +231,7 @@ async def test_invalid_boolean_receipt_is_not_treated_as_known_rejection(tmp_pat
 async def test_corrupt_reminder_metadata_does_not_block_a_valid_goal(tmp_path):
     service, first = approved(tmp_path, "first")
     _, second = approved(tmp_path, "second")
-    path = tmp_path / ".vortocode" / "goals" / f'{first["id"]}.json'
+    path = tmp_path / ".vortoone" / "goals" / f'{first["id"]}.json'
     first["follow_up"] = "broken"
     path.write_text(json.dumps(first))
     inbox = Inbox()

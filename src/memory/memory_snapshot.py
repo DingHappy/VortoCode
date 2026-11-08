@@ -10,6 +10,7 @@ import re
 import sqlite3
 
 from src.memory.write_policy import redact_secret_like
+from src.utils.state_dir import state_dir
 
 MAX_ITEMS = 1000
 MAX_CONTENT = 4000
@@ -31,7 +32,7 @@ def read_memory_snapshot(root: str, *, limit: int = MAX_ITEMS, instance_id: str 
     """
     limit = max(1, min(int(limit), MAX_ITEMS))
     instance_id = instance_id if isinstance(instance_id, str) and re.fullmatch(r"[a-f0-9]{32}", instance_id) else "未知"
-    path = Path(root) / ".vortocode" / "sessions.db"
+    path = state_dir(root) / "sessions.db"
     if path.is_symlink() or path.parent.is_symlink() or Path(root).is_symlink():
         raise ValueError("不能导出链接记忆库")
     rows, total = [], 0

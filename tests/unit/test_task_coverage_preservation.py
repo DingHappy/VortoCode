@@ -314,7 +314,7 @@ def test_destination_permissions_identity_and_budgets(tmp_path, kind):
     if kind == "missing":
         store.rmdir()
     if kind in ("ledger", "git"):
-        store = tmp_path / (".vortocode" if kind == "ledger" else ".git") / "preserve"
+        store = tmp_path / (".vortoone" if kind == "ledger" else ".git") / "preserve"
         store.mkdir(parents=True)
     if kind == "lock_symlink":
         (store / ".coverage-preservation.lock").symlink_to(file)

@@ -49,7 +49,7 @@ describe("source line selection", () => {
 });
 
 it("hides VortoOne's own directory and filters case-insensitively", () => {
-  const files = [".vortocode", ".vortocode/memory/repo.md", "src/App.tsx", "README.md"];
+  const files = [".vortoone", ".vortoone/memory/repo.md", ".vortocode", ".vortocode/AGENTS.md", "src/App.tsx", "README.md"];
   expect(visibleWorkspaceFiles(files, "")).toEqual(["src/App.tsx", "README.md"]);
   expect(visibleWorkspaceFiles(files, "  app ")).toEqual(["src/App.tsx"]);
   expect(visibleWorkspaceFiles(files, "repo")).toEqual([]);

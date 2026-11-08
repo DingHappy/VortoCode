@@ -98,7 +98,7 @@ export function ProjectAssetsPanel({
               <span>注入预算</span>
               <strong>{repoMemory?.max_chars ?? 2_000} 字</strong>
             </div>
-            <code>{repoMemory?.path ?? ".vortocode/memory/repo.md"}</code>
+            <code>{repoMemory?.path ?? ".vortoone/memory/repo.md"}</code>
           </section>
           {repoMemory?.redacted && <div className="asset-warning">检测到疑似凭据，Desktop 投影已脱敏。</div>}
           {repoMemory?.truncated && (

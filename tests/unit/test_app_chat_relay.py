@@ -117,7 +117,7 @@ async def test_unknown_or_sensitive_category_cannot_be_downgraded_by_prompt(tmp_
     [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == "denied" and entry["decision_source"] == "user"
     assert entry["required_key"] == "approval"
-    assert "只是查看" not in (tmp_path / ".vortocode/audit.log").read_text()
+    assert "只是查看" not in (tmp_path / ".vortoone/audit.log").read_text()
 
 
 def test_card_digest_binds_kind_taint_text_and_turn():
@@ -151,7 +151,7 @@ async def test_deadline_checked_even_before_timer_runs_and_audited_once(tmp_path
     assert turn.cards[0].status == "expired"
     [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["approval_outcome"] == "expired" and entry["decision_source"] == "timeout"
-    assert "敏感私密正文" not in (tmp_path / ".vortocode/audit.log").read_text()
+    assert "敏感私密正文" not in (tmp_path / ".vortoone/audit.log").read_text()
 
 
 async def test_cancelled_confirmation_closes_card_and_denies_late_response(tmp_path):
@@ -244,7 +244,7 @@ async def test_app_automatic_decision_is_audited_once_without_private_operation(
     [entry] = [e for e in list_audit(str(tmp_path)) if e["category"] == "decision"]
     assert entry["operation_kind"] == "own_data" and entry["decision_source"] == source
     assert entry["approval_scope"] == ("existing_trust" if approved else "none") and entry["session"] == turn.rid
-    assert "私人事项正文" not in (tmp_path / ".vortocode/audit.log").read_text()
+    assert "私人事项正文" not in (tmp_path / ".vortoone/audit.log").read_text()
 
 
 async def test_busy_main_chat_is_reported_not_swallowed(tmp_path, monkeypatch):

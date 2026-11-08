@@ -100,10 +100,10 @@ async def test_factory_memory_tools_respect_confirmation_denial(tmp_path):
         return False
 
     tools = {t.name: t for t in build_memory_tools(str(tmp_path), _deny)}
-    assert not (tmp_path / ".vortocode" / "sessions.db").exists()  # 仅装配不产生写足迹
+    assert not (tmp_path / ".vortoone" / "sessions.db").exists()  # 仅装配不产生写足迹
     out = await tools["save_memory"].handler({"content": "用户偏好 pytest -q"})
     assert "取消" in out
-    assert not (tmp_path / ".vortocode" / "sessions.db").exists()  # 拒绝后仍不落盘
+    assert not (tmp_path / ".vortoone" / "sessions.db").exists()  # 拒绝后仍不落盘
     assert "pytest" not in await tools["recall_memory"].handler({"query": "pytest"})
 
 
@@ -140,4 +140,4 @@ async def test_factory_save_skill_respects_confirm_denial(tmp_path):
         return False
     tools = {t.name: t for t in build_skill_tools(str(tmp_path), _deny)}
     r = await tools["save_skill"].handler({"name": "x", "instructions": "步骤"})
-    assert "取消" in r and not (tmp_path / ".vortocode" / "skills" / "x" / "SKILL.md").exists()
+    assert "取消" in r and not (tmp_path / ".vortoone" / "skills" / "x" / "SKILL.md").exists()

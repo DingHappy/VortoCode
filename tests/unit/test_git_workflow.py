@@ -234,8 +234,8 @@ def test_diff_for_review_rejects_empty_changes(tmp_path):
 
 def test_verify_profiles_load_project_yaml_and_resolve(tmp_path):
     _init_repo(tmp_path)
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "verify.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "verify.yaml").write_text(
         "profiles:\n"
         "  smoke:\n"
         "    cmd: python main.py --help\n"
@@ -256,8 +256,8 @@ def test_verify_profiles_load_project_yaml_and_resolve(tmp_path):
 
 def test_verify_profiles_recommend_project_path_match(tmp_path):
     _init_repo(tmp_path)
-    (tmp_path / ".vortocode").mkdir()
-    (tmp_path / ".vortocode" / "verify.yaml").write_text(
+    (tmp_path / ".vortoone").mkdir()
+    (tmp_path / ".vortoone" / "verify.yaml").write_text(
         "profiles:\n"
         "  docs:\n"
         "    cmd: python -m docs_check\n"

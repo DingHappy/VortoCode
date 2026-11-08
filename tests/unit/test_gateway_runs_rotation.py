@@ -143,7 +143,7 @@ def test_prune_removes_corrupt_files(tmp_path, monkeypatch):
     """损坏的记录读不出状态，谈不上保护，顺手清掉而不是让它永久占位。"""
     monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "3")
     ledger = RunLedger(str(tmp_path))
-    directory = tmp_path / ".vortocode" / "runs"
+    directory = tmp_path / ".vortoone" / "runs"
     directory.mkdir(parents=True, exist_ok=True)
     junk = directory / "run-corrupt00.json"
     junk.write_text("{ 这不是合法 json", encoding="utf-8")

@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from src.workflow.tasks import assistant_dispatch
 from src.scheduling.patrols import Patrol, PatrolContext, overview as patrol_overview, run_patrols
+from src.utils.state_dir import state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ def owner_reporter(root: str) -> Notify:
 
 
 def _state_path(root: str) -> Path:
-    return Path(root) / ".vortocode" / "dispatches" / "watch.json"
+    return state_dir(root) / "dispatches" / "watch.json"
 
 
 def _load_state(root: str) -> Optional[Dict[str, Any]]:

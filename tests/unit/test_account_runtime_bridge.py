@@ -237,7 +237,7 @@ def test_internal_bridge_requires_admin_and_live_account_identity(api):
         ).status_code
         == 401
     )
-    saved = (root / ".vortocode/mobile-devices/grants.json").read_text()
+    saved = (root / ".vortoone/mobile-devices/grants.json").read_text()
     assert "a" * 43 not in saved and proof not in saved
     assert client.request("DELETE", path, headers=ROOT, json={"revision": 1}).status_code == 200
     assert client.get("/api/mobile/v1/bootstrap", headers=device).status_code == 401

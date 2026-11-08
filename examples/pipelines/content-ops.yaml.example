@@ -1,4 +1,4 @@
-# 运营部流水线 —— 放到目标仓库的 `.vortocode/pipelines/content-ops.yaml` 才生效。
+# 运营部流水线 —— 放到目标仓库的 `.vortoone/pipelines/content-ops.yaml` 才生效。
 #
 # 用法：
 #   vc pipeline start content-ops        # 开一轮

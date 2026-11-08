@@ -15,7 +15,7 @@ from src.agents.tools.artifacts import (
 def test_publish_creates_files_and_meta(tmp_path):
     store = ArtifactStore(str(tmp_path))
     meta = store.publish("My Page", "<h1>hi</h1>")
-    d = tmp_path / ".vortocode" / "artifacts" / meta["id"]
+    d = tmp_path / ".vortoone" / "artifacts" / meta["id"]
     assert (d / "index.html").read_text(encoding="utf-8") == "<h1>hi</h1>"
     assert meta["version"] == 1 and meta["title"] == "My Page"
     assert meta["bytes"] == len("<h1>hi</h1>")

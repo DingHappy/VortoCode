@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 from src.utils.ids import typed_id
+from src.utils.state_dir import state_dir
 
 _DIRNAME = "runs"
 _VALID_KINDS = frozenset({"terminal", "test", "preview"})
@@ -255,13 +256,13 @@ class CommandRun:
 
 
 class RunLedger:
-    """Atomic per-run records under ``.vortocode/runs``."""
+    """Atomic per-run records under ``.vortoone/runs``."""
 
     def __init__(self, repo_root: str):
         self.repo_root = str(repo_root)
 
     def _dir(self) -> Path:
-        return Path(self.repo_root) / ".vortocode" / _DIRNAME
+        return state_dir(self.repo_root) / _DIRNAME
 
     def _path(self, run_id: str) -> Path:
         return self._dir() / f"{run_id}.json"

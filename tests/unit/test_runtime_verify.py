@@ -34,7 +34,7 @@ def _init_repo(path):
 
 def _write_verify_yaml(path, body: str):
     """写 verify.yaml 到主工作区（给 load/auto_verify_profiles 直接读的用例用）。"""
-    d = path / ".vortocode"
+    d = path / ".vortoone"
     d.mkdir(parents=True, exist_ok=True)
     (d / "verify.yaml").write_text(body, encoding="utf-8")
 
@@ -302,7 +302,7 @@ def test_runtime_check_browser_uses_primary_workspace_evidence_and_cleans_up(
 
     screenshot = result["screenshot_path"]
     assert result["ok"] is True and stopped == ["bg-1"]
-    assert str(root / ".vortocode" / "artifacts" / "browser-verify") in screenshot
+    assert str(root / ".vortoone" / "artifacts" / "browser-verify") in screenshot
     assert ".." not in str(screenshot).replace(str(root), "")
     assert str(worktree_path) not in screenshot
 
@@ -350,7 +350,7 @@ def test_verify_branch_reads_branch_config_not_workspace(tmp_path):
     # 分支自带 auto 运行时验证，但主工作区**没有** verify.yaml → 仍应按分支配置跑（finding 2）
     _init_repo(tmp_path)
     _commit_verify_yaml_on_branch(tmp_path, _AUTO_RED)
-    assert not (tmp_path / ".vortocode" / "verify.yaml").exists()   # 主工作区确实没有
+    assert not (tmp_path / ".vortoone" / "verify.yaml").exists()   # 主工作区确实没有
     res = worktree.verify_branch(str(tmp_path), "vorto/feature", ["true"], "wt-rt5", True)
     assert res["ok"] is False and res["runtime"][0]["name"] == "smoke"
 
@@ -393,7 +393,7 @@ profiles:
         str(tmp_path), "vorto/feature", ["true"], "wt-browser-evidence", True)
     screenshot = result["runtime"][0]["screenshot_path"]
     assert result["ok"] is True
-    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-browser-evidence").exists()
+    assert not (tmp_path / ".vortoone" / "worktrees" / "wt-browser-evidence").exists()
     assert screenshot and Path(screenshot).read_bytes() == b"image"
 
 

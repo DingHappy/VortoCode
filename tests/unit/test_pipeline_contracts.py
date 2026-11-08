@@ -213,7 +213,7 @@ async def test_failed_review_save_does_not_report_success(tmp_path, monkeypatch,
     definition, store, run = setup_run(tmp_path)
     await advance(str(tmp_path), run.run_id, definition=definition, execute=execute)
     viewed = token(store, run)
-    path = Path(tmp_path) / ".vortocode" / "pipeline_runs" / f"{run.run_id}.json"
+    path = Path(tmp_path) / ".vortoone" / "pipeline_runs" / f"{run.run_id}.json"
     before = path.read_bytes()
     monkeypatch.setattr(PipelineStore, "save", lambda *args: False)
     result = review(str(tmp_path), run.run_id, verdict=verdict, comment="redo", review_token=viewed)
@@ -248,7 +248,7 @@ async def test_legacy_interrupted_record_recovers_conservatively(tmp_path, outbo
         {"id": "make", "produces": "result", "outbound": outbound},
     ])
     import json
-    path = Path(tmp_path) / ".vortocode" / "pipeline_runs" / f"{run.run_id}.json"
+    path = Path(tmp_path) / ".vortoone" / "pipeline_runs" / f"{run.run_id}.json"
     legacy = {"run_id": run.run_id, "pipeline": run.pipeline, "status": "running",
               "stages": [{"id": "make", "status": "running", "attempts": 1}]}
     path.write_text(json.dumps(legacy))

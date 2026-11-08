@@ -33,7 +33,7 @@ mockIPC((cmd) => {
     case "get_update_check_enabled": return true;
     case "get_experimental_workers": return false;
     case "get_llm_usage": return { available: false, unlimited: false, periodDays: 30, message: "会员额度见「账号」" };
-    case "get_user_instructions": return { path: "~/.vortocode/AGENTS.md", content: "", exists: false };
+    case "get_user_instructions": return { path: "~/.vortoone/AGENTS.md", content: "", exists: false };
     case "get_browser_control": return { enabled: false, browserPath: null };
     case "get_desktop_control": return { enabled: false, target: "local", apps: "" };
     default: return null;

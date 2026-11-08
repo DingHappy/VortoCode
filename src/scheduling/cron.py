@@ -1,13 +1,13 @@
 """cron — 精确后台定时作业（D3）。
 
-任务表 `.vortocode/cron.yaml`（每项：name / schedule / prompt / model? / announce），调度**隔离会话**
+任务表 `.vortoone/cron.yaml`（每项：name / schedule / prompt / model? / announce），调度**隔离会话**
 跑（全新 MainAgent，不读不写主会话历史），产出进 PR-2 台账、按 announce 投递。schedule 支持三种、
 自写解析（不引重依赖）：
   - `at HH:MM`      每天该时刻跑一次
   - `every Nm|Nh|Nd|Ns`  固定间隔跑
   - 5 段 cron 子集 `m h dom mon dow`（支持 * / 数字 / */N / a,b / a-b）
 
-上次运行时刻持久化到 `.vortocode/cron_state.json`（防重复触发、进程重启不忘）。夜跑评测（B3）、
+上次运行时刻持久化到 `.vortoone/cron_state.json`（防重复触发、进程重启不忘）。夜跑评测（B3）、
 依赖升级检查、CI 红自动修（C3）都挂这里。安全：cron.yaml 由主人自己写；隔离会话默认 build，
 外向操作仍走各自确认/硬闸。
 
@@ -15,12 +15,12 @@
 
 cron 是**机器的例行班次**，不是人的对话。它跑出来的东西只有两个去处：
 
-1. **Journal / 决策台账**——每次作业落一条 `CommandRun(kind="cron")` 到 `.vortocode/runs/`
+1. **Journal / 决策台账**——每次作业落一条 `CommandRun(kind="cron")` 到 `.vortoone/runs/`
    （`record_outcome`）。`build_daily_journal` 从 `RunLedger` 读时间线，`build_decision_queue`
    把 `failed` 的 run 变成一条 `run:<id>` 决策项——"有东西要你拍板"就是这么冒出来的。
 2. **通知台账**——`_announce` 按 announce 投递（notices.jsonl + WS 广播 + IM 推 owner）。
 
-**不追加任何人类会话历史**：本模块没有任何一处拿得到会话对象，也不写 `.vortocode/sessions/*.json`；
+**不追加任何人类会话历史**：本模块没有任何一处拿得到会话对象，也不写 `.vortoone/sessions/*.json`；
 prompt 作业走 `run_isolated_session`（全新 MainAgent，不读不写主会话历史），command 作业走
 `shell.run_command`。产出的唯一出口是上面两条 lane 与函数返回值——人在聊天流里永远不会被
 例行日志刷屏，只会收到"有东西要你拍板"这一条通知。
@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+from src.utils.state_dir import state_dir
 
 _STATE_FILE = "cron_state.json"
 
@@ -206,11 +207,11 @@ _CMD_OUTPUT_TAIL = 2_000
 
 
 def cron_path(repo_root: str) -> Path:
-    return Path(repo_root) / ".vortocode" / "cron.yaml"
+    return state_dir(repo_root) / "cron.yaml"
 
 
 def load_jobs(repo_root: str) -> List[CronJob]:
-    """读 `.vortocode/cron.yaml`。文件不存在 → 空。非法 schedule 的项跳过（best-effort，不炸整表）。
+    """读 `.vortoone/cron.yaml`。文件不存在 → 空。非法 schedule 的项跳过（best-effort，不炸整表）。
 
     作业二选一：
     - `prompt:` → 隔离 LLM 会话（自主判断类活儿）。
@@ -270,10 +271,10 @@ def parse_jobs_text(text: str) -> List[CronJob]:
 
 
 class CronState:
-    """每个 job 上次运行时刻的持久化（.vortocode/cron_state.json），防重复触发、重启不忘。"""
+    """每个 job 上次运行时刻的持久化（.vortoone/cron_state.json），防重复触发、重启不忘。"""
     def __init__(self, repo_root: str):
         self._repo_root = str(repo_root)
-        self._path = Path(repo_root) / ".vortocode" / _STATE_FILE
+        self._path = state_dir(repo_root) / _STATE_FILE
         self._data: Dict[str, str] = {}
         if self._path.is_file():
             try:
@@ -324,7 +325,7 @@ class CronState:
     def _persist(self) -> None:
         try:
             from src.utils.state_dir import ensure_state_gitignore
-            ensure_state_gitignore(self._repo_root)      # .vortocode/ 自忽略：cron 状态不污染目标仓库 git status
+            ensure_state_gitignore(self._repo_root)      # .vortoone/ 自忽略：cron 状态不污染目标仓库 git status
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -451,7 +452,7 @@ def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
 
     existing = {j.name: j.schedule.raw for j in load_jobs(repo_root)}
     if name in existing:
-        raise CronEditError(f"作业 {name} 已存在。改它请人工编辑 .vortocode/cron.yaml；"
+        raise CronEditError(f"作业 {name} 已存在。改它请人工编辑 .vortoone/cron.yaml；"
                             "或用 cron_toggle 停用后另建一个新名字的。")
 
     job: Dict[str, object] = {"name": name, "schedule": str(schedule).strip(), "prompt": prompt}
@@ -594,7 +595,7 @@ def set_job_prompt(repo_root: str, name: str, prompt: str) -> str:
     if before[name][2] == "command":
         raise CronEditError(
             f"{name} 是 command 作业（跑确定性命令），本工具不改它——改命令是另一个风险类别，"
-            f"只能人工编辑 .vortocode/cron.yaml")
+            f"只能人工编辑 .vortoone/cron.yaml")
 
     lines = cron_path(repo_root).read_text(encoding="utf-8").splitlines(True)
     head = re.compile(r"^(\s*)-\s+name\s*:\s*['\"]?" + re.escape(name) + r"['\"]?\s*$")

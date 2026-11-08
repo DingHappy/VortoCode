@@ -15,7 +15,7 @@
 #        sudo $EDITOR /etc/vortocode/assistants/alice.env      # 模板：vc roster template dingtalk
 #   3. sudo systemctl daemon-reload && sudo systemctl enable --now vortocode-assistant@alice
 #
-# 起之前先体检：`vc roster check`（照着 .vortocode/assistants.yaml 查凭证/工作区/白名单）。
+# 起之前先体检：`vc roster check`（照着 .vortoone/assistants.yaml 查凭证/工作区/白名单）。
 #
 # ⚠ 最容易踩的坑：**每个助手必须在钉钉/Telegram 开放平台各建一个应用**。
 #   复制一份 env 改个名字、CLIENT_ID 忘了换 → 两条桥抢同一个机器人，消息随机落到其中一个，
@@ -33,7 +33,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=vortocode
-# 工作区 = 这个助手的全部状态所有权（.vortocode/persona.md、会话、记忆都落这里）。
+# 工作区 = 这个助手的全部状态所有权（.vortoone/persona.md、会话、记忆都落这里）。
 # **每人一个目录**：共用会让人设和会话历史串在一起。
 WorkingDirectory=/opt/vortocode/assistants/%i
 # 每人一份凭证（600）。名册里只放这个路径，绝不放凭证本身。

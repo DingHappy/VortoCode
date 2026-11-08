@@ -13,6 +13,7 @@ import re
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+from src.utils.state_dir import state_dir
 
 _LOCAL_HOSTS = {"localhost"}
 
@@ -54,7 +55,7 @@ def safe_evidence_path(repo_root: str | Path, run_id: str, profile_name: str) ->
 
     run = _segment(run_id, "run")
     profile = _segment(profile_name, "runtime")
-    return root / ".vortocode" / "artifacts" / "browser-verify" / run / f"{profile}.png"
+    return state_dir(root) / "artifacts" / "browser-verify" / run / f"{profile}.png"
 
 
 def _base_result(config: dict, elapsed: float = 0.0) -> dict:
