@@ -93,8 +93,8 @@ def test_every_builtin_tool_has_a_human_label(monkeypatch, tmp_path):
 def test_browser_tools_have_human_labels_when_enabled(monkeypatch, tmp_path):
     """浏览器操控默认不装配，上一条契约扫不到它们；打开开关再过一遍。"""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
-    monkeypatch.setenv("VORTOCODE_ENABLE_BROWSER_CONTROL", "1")
+    monkeypatch.setenv("VORTOONE_DESKTOP_SIDECAR", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_BROWSER_CONTROL", "1")
     from src.web.routers.realtime import _new_agent
 
     browser = [name for name in _new_agent().tools if name.startswith("browser_")]

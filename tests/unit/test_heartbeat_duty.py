@@ -78,10 +78,10 @@ def test_checklist_path_can_be_overridden_by_arg_and_env(tmp_path, monkeypatch):
     _write_checklist(tmp_path, "- 默认清单\n")
     _write_checklist(tmp_path, "- 夜班清单\n", name="NIGHT.md")
 
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     assert "默认清单" in heartbeat.heartbeat_prompt(str(tmp_path))
 
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT_CHECKLIST", ".vortocode/NIGHT.md")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT_CHECKLIST", ".vortocode/NIGHT.md")
     assert "夜班清单" in heartbeat.heartbeat_prompt(str(tmp_path))
 
     # 显式参数压过 env
@@ -93,7 +93,7 @@ def test_checklist_outside_repo_is_refused(tmp_path, monkeypatch):
     """检查单路径必须留在工作目录内：越界不读（fail-closed，退回"无检查单"）。"""
     outside = tmp_path.parent / "outside-secret.md"
     outside.write_text("- 不该被读到的外部文件\n", encoding="utf-8")
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
 
     assert heartbeat.resolve_checklist_path(str(tmp_path), "../outside-secret.md") is None
     assert heartbeat.resolve_checklist_path(str(tmp_path), str(outside)) is None
@@ -146,7 +146,7 @@ def test_oversized_checklist_is_truncated(tmp_path):
 
 # --------------------------------------------------------------- ② 无检查单：行为与从前一致
 def test_no_checklist_keeps_legacy_prompt(tmp_path, monkeypatch):
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     prompt = heartbeat.heartbeat_prompt(str(tmp_path))
     assert prompt == (
         "你是 VortoOne 的后台值班 agent（周期性心跳）。下面是值班清单，逐条快速看一眼：\n\n"
@@ -160,7 +160,7 @@ def test_no_checklist_keeps_legacy_prompt(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_no_checklist_turn_is_not_tainted(tmp_path, monkeypatch):
     """没有检查单就没有摄入不可信内容 → 不该无端进污点态（污点位保持可信）。"""
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     llm = _FakeLLM("HEARTBEAT_OK")
     res = await heartbeat.run_heartbeat(
         str(tmp_path), run_session=_isolated_run_session(llm), hour=12)
@@ -170,7 +170,7 @@ async def test_no_checklist_turn_is_not_tainted(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_empty_checklist_file_behaves_as_no_checklist(tmp_path, monkeypatch):
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     _write_checklist(tmp_path, "   \n\n")
     assert heartbeat.load_checklist(str(tmp_path)).present is False
     assert "vortocode_untrusted_memory" not in heartbeat.heartbeat_prompt(str(tmp_path))
@@ -182,7 +182,7 @@ async def test_anomaly_is_surfaced_and_recorded(tmp_path, monkeypatch):
     from src.workflow.workbench.journal import build_daily_journal
     from src.web.routers.tasks import load_notices, record_notice
 
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     _write_checklist(tmp_path, "- 看 CI 是否红\n- 看磁盘水位\n")
     seen = []
 
@@ -217,7 +217,7 @@ async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path,
     from src.gateway import session_store
     from src.web.routers.tasks import load_notices, record_notice
 
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     _write_checklist(tmp_path, "- 看 CI 是否红\n- 看磁盘水位\n")
 
     # 先造一个真实的主会话历史，心跳跑完必须一个字都没加进去
@@ -278,7 +278,7 @@ async def test_silent_runs_accumulate_one_ledger_line_each(tmp_path, monkeypatch
     """连跑三次静默心跳 → 三行台账、零通知（台账是可数的值班证明，不是噪声开关）。"""
     from src.workflow.workbench.journal import build_daily_journal
 
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_CHECKLIST", raising=False)
     _write_checklist(tmp_path, "- 看 CI 是否红\n")
 
     async def ok_session(repo_root, prompt, **kwargs):

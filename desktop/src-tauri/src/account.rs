@@ -98,7 +98,7 @@ impl AuthError {
     }
 }
 
-/// 账号服务地址：默认线上；开发时可用 VORTOCODE_ACCOUNT_URL 指到本机。只接受 https 或本机回环 http。
+/// 账号服务地址：默认线上；开发时可用 VORTOONE_ACCOUNT_URL 指到本机。只接受 https 或本机回环 http。
 pub fn account_base_url(override_value: Option<&str>) -> Result<String, String> {
     let Some(raw) = override_value
         .map(str::trim)
@@ -106,7 +106,7 @@ pub fn account_base_url(override_value: Option<&str>) -> Result<String, String> 
     else {
         return Ok(DEFAULT_ACCOUNT_URL.to_string());
     };
-    let url = url::Url::parse(raw).map_err(|_| "VORTOCODE_ACCOUNT_URL 不是合法地址".to_string())?;
+    let url = url::Url::parse(raw).map_err(|_| "VORTOONE_ACCOUNT_URL 不是合法地址".to_string())?;
     let loopback = matches!(
         url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]")
     );
@@ -118,12 +118,12 @@ pub fn account_base_url(override_value: Option<&str>) -> Result<String, String> 
     {
         Ok(url.origin().ascii_serialization())
     } else {
-        Err("VORTOCODE_ACCOUNT_URL 只能是 https 地址或本机 http 地址".into())
+        Err("VORTOONE_ACCOUNT_URL 只能是 https 地址或本机 http 地址".into())
     }
 }
 
 fn base_url() -> Result<String, String> {
-    account_base_url(std::env::var("VORTOCODE_ACCOUNT_URL").ok().as_deref())
+    account_base_url(crate::env_names::var("VORTOONE_ACCOUNT_URL").as_deref())
 }
 
 pub fn base64url(bytes: &[u8]) -> String {
@@ -893,14 +893,14 @@ mod tests {
     }
 
     /// 对着真实账号服务走一遍（手动跑，不进 CI）：
-    /// VORTOCODE_ACCOUNT_E2E=http://127.0.0.1:8700 cargo test --lib account::tests::live -- --ignored --nocapture
-    /// 浏览器那一步由外部脚本扮演：读 $VORTOCODE_ACCOUNT_E2E_URLFILE 里的授权地址，登录并点「允许」。
+    /// VORTOONE_ACCOUNT_E2E=http://127.0.0.1:8700 cargo test --lib account::tests::live -- --ignored --nocapture
+    /// 浏览器那一步由外部脚本扮演：读 $VORTOONE_ACCOUNT_E2E_URLFILE 里的授权地址，登录并点「允许」。
     #[test]
     #[ignore]
     fn live_login_refresh_logout() {
         let base =
-            account_base_url(std::env::var("VORTOCODE_ACCOUNT_E2E").ok().as_deref()).unwrap();
-        let url_file = std::env::var("VORTOCODE_ACCOUNT_E2E_URLFILE").unwrap();
+            account_base_url(std::env::var("VORTOONE_ACCOUNT_E2E").ok().as_deref()).unwrap();
+        let url_file = std::env::var("VORTOONE_ACCOUNT_E2E_URLFILE").unwrap();
         let verifier = random_token(32).unwrap();
         let state = random_token(16).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -54,7 +54,7 @@ async def send_owner_media(path: str, caption: str = "", kind: str = "image") ->
 def owner_notify_url() -> str:
     """同机持有 IM 的那个服务（本进程没有 IM 桥时，通知交给它转发）。"""
     import os
-    return os.getenv("VORTOCODE_OWNER_NOTIFY_URL", "").strip().rstrip("/")
+    return os.getenv("VORTOONE_OWNER_NOTIFY_URL", "").strip().rstrip("/")
 
 
 async def relay_owner_notice(text: str, *, source: str = "relay", timed: bool = False) -> bool:
@@ -68,7 +68,7 @@ async def relay_owner_notice(text: str, *, source: str = "relay", timed: bool = 
 
     import aiohttp
 
-    token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
+    token = os.getenv("VORTOONE_API_TOKEN", "").strip()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as client:

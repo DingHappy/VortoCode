@@ -60,7 +60,7 @@ def test_snapshot_and_diff_expose_files_hunks_and_line_numbers(tmp_path):
 def test_review_watch_state_changes_for_external_edits_index_and_attribution(tmp_path, monkeypatch):
     lines = _init_repo(tmp_path)
     ledger = tmp_path.parent / f"{tmp_path.name}-watch-sources.json"
-    monkeypatch.setenv("VORTOCODE_CHANGE_SOURCE_STORE", str(ledger))
+    monkeypatch.setenv("VORTOONE_CHANGE_SOURCE_STORE", str(ledger))
     clean = review_watch_state(str(tmp_path))
     assert clean["files"] == 0 and len(clean["baseline"]) == 64
 
@@ -113,7 +113,7 @@ def test_hunk_identity_survives_unrelated_hunk_inserted_before_it(tmp_path):
 def test_hunk_source_attribution_uses_user_owned_hash_ledger(tmp_path, monkeypatch):
     lines = _init_repo(tmp_path)
     ledger = tmp_path.parent / f"{tmp_path.name}-change-sources.json"
-    monkeypatch.setenv("VORTOCODE_CHANGE_SOURCE_STORE", str(ledger))
+    monkeypatch.setenv("VORTOONE_CHANGE_SOURCE_STORE", str(ledger))
     before = "".join(lines)
     lines[2] = "agent changed\n"
     after = "".join(lines)
@@ -137,7 +137,7 @@ def test_hunk_source_attribution_uses_user_owned_hash_ledger(tmp_path, monkeypat
 
 def test_unrecorded_and_desktop_user_changes_are_distinct(tmp_path, monkeypatch):
     lines = _init_repo(tmp_path)
-    monkeypatch.setenv("VORTOCODE_CHANGE_SOURCE_STORE", str(tmp_path.parent / "sources-user.json"))
+    monkeypatch.setenv("VORTOONE_CHANGE_SOURCE_STORE", str(tmp_path.parent / "sources-user.json"))
     before = "".join(lines)
     lines[2] = "user changed\n"
     after = "".join(lines)
@@ -151,7 +151,7 @@ def test_unrecorded_and_desktop_user_changes_are_distinct(tmp_path, monkeypatch)
 def test_hook_command_side_effects_are_attributed_without_copying_source(tmp_path, monkeypatch):
     lines = _init_repo(tmp_path)
     ledger = tmp_path.parent / f"{tmp_path.name}-hook-sources.json"
-    monkeypatch.setenv("VORTOCODE_CHANGE_SOURCE_STORE", str(ledger))
+    monkeypatch.setenv("VORTOONE_CHANGE_SOURCE_STORE", str(ledger))
     before_state = capture_workspace_state(str(tmp_path))
 
     lines[2] = "formatted by hook\n"
@@ -169,7 +169,7 @@ def test_hook_command_side_effects_are_attributed_without_copying_source(tmp_pat
 
 def test_hook_touching_an_already_dirty_hunk_is_classified_mixed(tmp_path, monkeypatch):
     lines = _init_repo(tmp_path)
-    monkeypatch.setenv("VORTOCODE_CHANGE_SOURCE_STORE", str(tmp_path.parent / "mixed-hook.json"))
+    monkeypatch.setenv("VORTOONE_CHANGE_SOURCE_STORE", str(tmp_path.parent / "mixed-hook.json"))
     lines[2] = "user change\n"
     (tmp_path / "sample.txt").write_text("".join(lines), encoding="utf-8")
     before_state = capture_workspace_state(str(tmp_path))

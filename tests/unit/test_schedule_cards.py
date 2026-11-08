@@ -57,7 +57,7 @@ def test_history_is_bounded_and_uses_job_attribution(tmp_path, monkeypatch):
 
 def test_scheduler_disabled_is_explicit(tmp_path, monkeypatch):
     client, _ = setup(tmp_path, monkeypatch)
-    monkeypatch.delenv('VORTOCODE_CRON', raising=False)
+    monkeypatch.delenv('VORTOONE_CRON', raising=False)
     items = client.get('/api/assistant/schedule').json()['items']
     assert all(item['scheduler_enabled'] is False for item in items if item['kind'] == 'cron')
 

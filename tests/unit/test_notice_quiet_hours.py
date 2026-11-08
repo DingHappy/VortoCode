@@ -168,7 +168,7 @@ async def test_timed_flag_survives_the_relay_to_the_service_holding_im(tmp_path,
     monkeypatch.setattr(im_rt, "notify_owner", local)
     monkeypatch.setattr(notices, "in_quiet_hours", lambda now=None: True)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     from src.web.server import app
     client = TestClient(app)
     assert client.post("/api/im/notify", json={"text": "普通", "source": "assistant"}).json() == {"ok": True}

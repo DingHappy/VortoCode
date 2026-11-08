@@ -287,17 +287,17 @@ pub(crate) fn external_worker_label(worker: &str) -> &'static str {
     }
 }
 
-/// 角色表里的 `cli:*` 分流成 VORTOCODE_EXTERNAL_WORKERS；其余照旧进 VORTOCODE_MODEL_ROLES。
+/// 角色表里的 `cli:*` 分流成 VORTOONE_EXTERNAL_WORKERS；其余照旧进 VORTOONE_MODEL_ROLES。
 /// 找 CLI、补 PATH、查登录都在引擎内核里做（同一份实现服务本机与常驻电脑），这里只传角色表。
 pub(crate) fn configure_external_workers(command: &mut Command, profile: &DesktopLlmProfile) {
     let mut roles: Vec<_> = profile.role_models.iter().collect();
     roles.sort_by_key(|(role, _)| *role);
     let (external, models): (Vec<_>, Vec<_>) = roles.into_iter().partition(|(_, value)| value.starts_with("cli:"));
-    command.env("VORTOCODE_MODEL_ROLES", models.iter().map(|(role, model)| format!("{role}={model}")).collect::<Vec<_>>().join(","));
-    command.env("VORTOCODE_EXTERNAL_WORKERS", external.iter()
+    command.env("VORTOONE_MODEL_ROLES", models.iter().map(|(role, model)| format!("{role}={model}")).collect::<Vec<_>>().join(","));
+    command.env("VORTOONE_EXTERNAL_WORKERS", external.iter()
         .map(|(role, value)| format!("{role}={}", value.trim_start_matches("cli:"))).collect::<Vec<_>>().join(","));
     // 实验开关不随模型配置走，只由引擎启动处按 Desktop 偏好打开（configure_experimental_workers）。
-    command.env_remove("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS");
+    command.env_remove("VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS");
 }
 
 pub(crate) fn context_window_number(value: &serde_json::Value) -> Option<u64> {
@@ -641,8 +641,8 @@ pub(crate) fn configure_llm_profile(command: &mut Command, profile: Option<&Desk
         // 退出登录后默认服务不可用；自定义供应商仍各用各的 Key。
         for provider in &profile.providers {
             let id = provider.id.to_uppercase();
-            command.env(format!("VORTOCODE_PROVIDER_{id}_BASE"), &provider.base_url);
-            command.env(format!("VORTOCODE_PROVIDER_{id}_KEY"), &provider.api_key);
+            command.env(format!("VORTOONE_PROVIDER_{id}_BASE"), &provider.base_url);
+            command.env(format!("VORTOONE_PROVIDER_{id}_KEY"), &provider.api_key);
         }
         return;
     }
@@ -659,9 +659,9 @@ pub(crate) fn configure_llm_profile(command: &mut Command, profile: Option<&Desk
     // 默认服务上可点名的模型清单（同一端点、同一把 Key）。
     let choices = model_choice_ids(profile);
     if choices.is_empty() {
-        command.env_remove("VORTOCODE_MODEL_CHOICES");
+        command.env_remove("VORTOONE_MODEL_CHOICES");
     } else {
-        command.env("VORTOCODE_MODEL_CHOICES", choices.join(","));
+        command.env("VORTOONE_MODEL_CHOICES", choices.join(","));
     }
     // 调度三档：均衡档就是主模型；快速 / 强力没配时显式清掉，免得继承到父进程环境里的旧值。
     command.env("LLM_MODEL_BALANCED", &profile.model);
@@ -676,13 +676,13 @@ pub(crate) fn configure_llm_profile(command: &mut Command, profile: Option<&Desk
     // 自定义供应商：runtime 的 src/llm/providers.py 按这对变量登记端点，key 只随自己的端点走。
     for provider in &profile.providers {
         let id = provider.id.to_uppercase();
-        command.env(format!("VORTOCODE_PROVIDER_{id}_BASE"), &provider.base_url);
-        command.env(format!("VORTOCODE_PROVIDER_{id}_KEY"), &provider.api_key);
+        command.env(format!("VORTOONE_PROVIDER_{id}_BASE"), &provider.base_url);
+        command.env(format!("VORTOONE_PROVIDER_{id}_KEY"), &provider.api_key);
     }
     if let Some(window) = profile.context_window {
-        command.env("VORTOCODE_MODEL_CONTEXT_WINDOW", window.to_string());
+        command.env("VORTOONE_MODEL_CONTEXT_WINDOW", window.to_string());
         command.env(
-            "VORTOCODE_MODEL_CONTEXT_WINDOW_SOURCE",
+            "VORTOONE_MODEL_CONTEXT_WINDOW_SOURCE",
             profile
                 .context_window_source
                 .as_deref()

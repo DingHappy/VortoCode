@@ -62,9 +62,9 @@ def test_list_empty_when_no_dir(tmp_path):
 
 
 def test_artifact_url_env(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_WEB_BASE", raising=False)
+    monkeypatch.delenv("VORTOONE_WEB_BASE", raising=False)
     assert artifact_url(None, "abc") == "http://127.0.0.1:8080/artifact/abc"
-    monkeypatch.setenv("VORTOCODE_WEB_BASE", "https://x.dev/")
+    monkeypatch.setenv("VORTOONE_WEB_BASE", "https://x.dev/")
     assert artifact_url(None, "abc") == "https://x.dev/artifact/abc"
     assert artifact_url("http://h:9/", "abc") == "http://h:9/artifact/abc"
 
@@ -174,7 +174,7 @@ def test_view_escapes_title(client):
 # --------------------------------------------------------------- 鉴权：Cookie（token 已移出 URL，审计 P0#4）
 def test_artifact_api_auth_via_cookie(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     from src.web.server import app
     c = TestClient(app)
     aid = ArtifactStore(str(tmp_path)).publish("T", "<p>x</p>")["id"]
@@ -188,7 +188,7 @@ def test_artifact_api_auth_via_cookie(tmp_path, monkeypatch):
 
 # --------------------------------------------------------------- 体积上限
 def test_publish_rejects_oversize(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_ARTIFACT_MAX_BYTES", "100")
+    monkeypatch.setenv("VORTOONE_ARTIFACT_MAX_BYTES", "100")
     assert max_bytes() == 100
     store = ArtifactStore(str(tmp_path))
     with pytest.raises(ValueError):
@@ -198,7 +198,7 @@ def test_publish_rejects_oversize(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_tool_oversize_message(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_ARTIFACT_MAX_BYTES", "50")
+    monkeypatch.setenv("VORTOONE_ARTIFACT_MAX_BYTES", "50")
     pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
     out = await pub.handler({"title": "t", "html": "y" * 999})
     assert "发布失败" in out and "上限" in out
@@ -206,9 +206,9 @@ async def test_publish_tool_oversize_message(tmp_path, monkeypatch):
 
 
 def test_max_bytes_default_and_bad_env(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_ARTIFACT_MAX_BYTES", raising=False)
+    monkeypatch.delenv("VORTOONE_ARTIFACT_MAX_BYTES", raising=False)
     assert max_bytes() == 16 * 1024 * 1024
-    monkeypatch.setenv("VORTOCODE_ARTIFACT_MAX_BYTES", "notint")
+    monkeypatch.setenv("VORTOONE_ARTIFACT_MAX_BYTES", "notint")
     assert max_bytes() == 16 * 1024 * 1024                  # 坏值回退默认
 
 

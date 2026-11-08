@@ -46,7 +46,7 @@ def test_profile_and_memory_routes(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     from src.web.server import app
 
     client = TestClient(app)
@@ -82,7 +82,7 @@ def test_memory_proposal_routes(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     (tmp_path / ".vortocode").mkdir(exist_ok=True)
     [pid] = profile.propose_memories(str(tmp_path), ["常用 Telegram"], source="im", tainted=True)
     from src.web.server import app
@@ -129,7 +129,7 @@ def test_avatar_routes(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     from src.web.server import app
 
     client = TestClient(app)
@@ -182,7 +182,7 @@ def test_memory_proposal_replace_route_validates_input(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     (tmp_path / ".vortocode").mkdir(exist_ok=True)
     [old_home] = _remember(tmp_path, "住在北京朝阳")
     [pid] = profile.propose_memories(str(tmp_path), ["搬到杭州了"], source="assistant", tainted=False)
@@ -198,15 +198,15 @@ def test_general_assistant_knows_which_computer_it_runs_on(tmp_path, monkeypatch
     import socket
     from src.gateway.agent_session import runtime_host_note
     monkeypatch.setattr(socket, "gethostname", lambda: "vorto-code.lan")
-    monkeypatch.delenv("VORTOCODE_SUPERVISOR_PID", raising=False)
-    monkeypatch.delenv("VORTOCODE_IM", raising=False)
-    monkeypatch.delenv("VORTOCODE_OWNER_NOTIFY_URL", raising=False)
+    monkeypatch.delenv("VORTOONE_SUPERVISOR_PID", raising=False)
+    monkeypatch.delenv("VORTOONE_IM", raising=False)
+    monkeypatch.delenv("VORTOONE_OWNER_NOTIFY_URL", raising=False)
     system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan")
     assert "【你在哪台电脑上】" in system and "「vorto-code」" in system and "不要说自己没有电脑" in system
     assert build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan") == system   # 会话间稳定
-    monkeypatch.setenv("VORTOCODE_IM", "telegram")
+    monkeypatch.setenv("VORTOONE_IM", "telegram")
     assert "常驻电脑「vorto-code」" in runtime_host_note()           # 有汇报渠道：一直开着的常驻电脑
-    monkeypatch.setenv("VORTOCODE_SUPERVISOR_PID", "123")
+    monkeypatch.setenv("VORTOONE_SUPERVISOR_PID", "123")
     note = runtime_host_note()
     assert "用户自己的电脑「vorto-code」" in note and "Desktop 关掉" in note   # Desktop 启动的本机 runtime
 

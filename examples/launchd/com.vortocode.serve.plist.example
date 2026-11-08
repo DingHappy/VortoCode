@@ -11,7 +11,7 @@
   卸载/停止：launchctl unload ~/Library/LaunchAgents/com.vortocode.serve.plist
   看日志：  tail -f ~/Library/Logs/vortocode-serve.log
 
-  ⚠️ 开销提示：VORTOCODE_HEARTBEAT=1 让 agent 定期自主值班（烧中转站 token）——
+  ⚠️ 开销提示：VORTOONE_HEARTBEAT=1 让 agent 定期自主值班（烧中转站 token）——
   确认要花这个钱再开；只想要 attach/后台任务/通知，不开 CRON/HEARTBEAT 即可（零自主消耗）。
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -40,12 +40,12 @@
     <key>EnvironmentVariables</key>
     <dict>
         <!-- 自主作业开关（默认建议先关，跑顺 attach 后再逐个开）：
-             VORTOCODE_CRON=1        起 .vortocode/cron.yaml 定时作业
-             VORTOCODE_HEARTBEAT=1   起值班心跳（读 HEARTBEAT.md/BACKLOG.md，烧 token！）
-             VORTOCODE_HEARTBEAT_EVERY=30m -->
-        <key>VORTOCODE_CRON</key>
+             VORTOONE_CRON=1        起 .vortocode/cron.yaml 定时作业
+             VORTOONE_HEARTBEAT=1   起值班心跳（读 HEARTBEAT.md/BACKLOG.md，烧 token！）
+             VORTOONE_HEARTBEAT_EVERY=30m -->
+        <key>VORTOONE_CRON</key>
         <string>0</string>
-        <key>VORTOCODE_HEARTBEAT</key>
+        <key>VORTOONE_HEARTBEAT</key>
         <string>0</string>
         <!-- 经代理出网的机器把代理也带上（launchd 不继承 shell 环境）：
         <key>HTTPS_PROXY</key><string>http://127.0.0.1:7897</string>

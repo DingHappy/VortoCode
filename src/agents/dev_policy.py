@@ -8,13 +8,13 @@ import re
 from typing import Callable, Optional
 
 def _dev_review_enabled() -> bool:
-    """dev_auto 的 PR 前对抗审查段开关：env `VORTOCODE_DEV_REVIEW`，**默认开**（=0/false/no/off 关）。
+    """dev_auto 的 PR 前对抗审查段开关：env `VORTOONE_DEV_REVIEW`，**默认开**（=0/false/no/off 关）。
 
     集成绿后、开 PR 前跑一个专职挑刺的 reviewer 子 agent（见 src/agents/review.py），把 codex 外审
     反复抓真 bug 的经验内化进流水线。关掉可省一轮 LLM（评测/省钱场景）。
     """
     import os
-    return os.getenv("VORTOCODE_DEV_REVIEW", "1").strip().lower() not in ("0", "false", "no", "off")
+    return os.getenv("VORTOONE_DEV_REVIEW", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 
@@ -22,23 +22,23 @@ def _dev_review_enabled() -> bool:
 
 
 def _dev_attempts() -> int:
-    """隔离实现的最多尝试次数（1 次初始 + 自修复重试）。env VORTOCODE_DEV_ATTEMPTS 调，默认 2、下限 1。"""
+    """隔离实现的最多尝试次数（1 次初始 + 自修复重试）。env VORTOONE_DEV_ATTEMPTS 调，默认 2、下限 1。"""
     import os
     try:
-        return max(1, int(os.getenv("VORTOCODE_DEV_ATTEMPTS") or 2))
+        return max(1, int(os.getenv("VORTOONE_DEV_ATTEMPTS") or 2))
     except ValueError:
         return 2
 
 
 def _dev_parallelism() -> int:
-    """并行隔离实现时最多同时在跑的子任务数。env VORTOCODE_DEV_PARALLEL 调，默认 4、下限 1。
+    """并行隔离实现时最多同时在跑的子任务数。env VORTOONE_DEV_PARALLEL 调，默认 4、下限 1。
 
     防 dev_auto 分解出很多独立子任务时一次性 fan-out 几十个 worktree+LLM 把中转站/磁盘打爆
     （dev_parallel 另有 [:5] 上限，但 dev_auto 的独立批数量取决于分解结果、原先无界）。
     """
     import os
     try:
-        return max(1, int(os.getenv("VORTOCODE_DEV_PARALLEL") or 4))
+        return max(1, int(os.getenv("VORTOONE_DEV_PARALLEL") or 4))
     except (TypeError, ValueError):
         return 4
 

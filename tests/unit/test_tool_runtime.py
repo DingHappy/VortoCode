@@ -368,7 +368,7 @@ async def test_command_missing_args_policy_denial_and_confirmation_are_blocked(t
     for args in [{}, {"command": "rm -rf /"}, {"command": "echo fixture"}]:
         assert (await runtime.execute("run_command", args, "build")).status == "blocked"
     assert len(asked) == 1 and ran == []
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "required")
     monkeypatch.setattr(policy, "sandbox_backend", lambda: "")
     assert (await runtime.execute("run_command", {"command": "echo fixture"}, "build")).status == "blocked"
     assert len(asked) == 1 and ran == []

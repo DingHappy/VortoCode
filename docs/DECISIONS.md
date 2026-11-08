@@ -442,7 +442,7 @@ Harness、OpenCode、Pi 等），由主 agent 管理与协调；不要固定流�
 | --- | --- | --- |
 | 0 | 用户看得到的文字（#792，已发 Desktop 0.2.52） | — |
 | A | Desktop App 包名 `VortoOne.app`、下载文件名、全部文档与注释、命令行与服务输出、User-Agent、内部 Agent 提示、中转站上新建的按量 Key 名 | 原地更新的 Desktop 仍在 `/Applications/VortoCode.app`（更新器沿用原路径），核对脚本两个都认；中转站上旧的「VortoCode Desktop」Key 照样认 |
-| B | 环境变量 `VORTOCODE_*` → `VORTOONE_*` | 先读新名字，读不到再读旧名字；97 的 drop-in 之后再改（改前问主人） |
+| B | 环境变量 `VORTOCODE_*` → `VORTOONE_*` | 进程启动时把旧名字换成新名字（两个都有以新名字为准，旧名字不再传给子进程），Python 引擎、Desktop、构建脚本、运维脚本同一规则；`vc doctor` 提醒还在用的旧名字。97 上的 drop-in、环境文件和 Caddy 占位符暂不动，之后改（改前问主人） |
 | C | 数据目录 `.vortocode`、`~/.vortocode`、`Application Support`、`Logs` 改名 | 启动时自动搬过去，旧位置留链接 |
 | D | bundle id（Desktop `com.vorto.vortoone`、iPhone `com.vortoone.mobile`）、钥匙串服务名、推送 topic | Desktop 迁移设置与钥匙串，本地网络要重新放行；手机重装、重新登录和绑定钥匙；97 的推送 topic 改前问主人 |
 | E | 仓库名 `DingHappy/VortoOne`、Python 包与命令（`vortoone`，保留 `vc`）、iPhone 工程与 target 名、仓库里的链接 | 仓库由主人在 GitHub 上改名，旧地址自动跳转；先实测 Desktop 的更新地址能跳转再发版 |

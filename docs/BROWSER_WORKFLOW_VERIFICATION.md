@@ -43,7 +43,7 @@ profiles:
 3. 故意失败的断言准确标出失败步骤，保留截图和 trace，后面的批准不会执行。
 
 ```bash
-VORTOCODE_LIVE_BROWSER=1 python -m pytest \
+VORTOONE_LIVE_BROWSER=1 python -m pytest \
   tests/live/test_pipeline_browser_workflow.py -q
 ```
 

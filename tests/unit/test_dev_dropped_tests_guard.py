@@ -128,7 +128,7 @@ def test_note_names_the_lost_tests():
 @pytest.mark.asyncio
 async def test_deleting_tests_triggers_a_redo_in_the_same_call(tmp_path, monkeypatch):
     """修复前：直接 ✅ 落分支，三个信号全绿，没有任何东西报警。"""
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "3")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "3")
     progress: list[str] = []
     landed: list[dict] = []
     tool, restore, calls = _dev_tool(
@@ -150,7 +150,7 @@ async def test_deleting_tests_triggers_a_redo_in_the_same_call(tmp_path, monkeyp
 @pytest.mark.asyncio
 async def test_still_warns_loudly_when_every_attempt_deletes_tests(tmp_path, monkeypatch):
     """次数用完还是在删 → 照旧落分支（它确实绿），但结论里必须把丢掉的测试点名。"""
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "2")
     progress: list[str] = []
     landed: list[dict] = []
     tool, restore, calls = _dev_tool(tmp_path, [(REAL_DROP_DIFF, "改好了", GREEN)], progress, landed)
@@ -167,7 +167,7 @@ async def test_still_warns_loudly_when_every_attempt_deletes_tests(tmp_path, mon
 @pytest.mark.asyncio
 async def test_prefers_the_clean_attempt_when_a_later_one_fails(tmp_path, monkeypatch):
     """第一轮删了测试、第二轮干净、第三轮炸了 → 交回干净的那版，别交删测试的。"""
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "3")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "3")
     progress: list[str] = []
     landed: list[dict] = []
     tool, restore, _calls = _dev_tool(

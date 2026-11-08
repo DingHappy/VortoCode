@@ -45,7 +45,7 @@ def test_mixed_pricing_keeps_known_subtotal_without_claiming_complete_cost(monke
     from src.models import cost as cost_mod
     tracker = CostTracker()
     monkeypatch.setattr(cost_mod, "cost_tracker", tracker)
-    monkeypatch.setenv("VORTOCODE_COST_BUDGET", "0.001")
+    monkeypatch.setenv("VORTOONE_COST_BUDGET", "0.001")
     tracker.set_budget("dev", 0.001)
     cost_mod.track_usage("unknown", 1000, 500, agent="dev")
     cost_mod.track_usage("mimo-v2.5", 1000, 1000, agent="dev")
@@ -79,11 +79,11 @@ def test_add_usage_without_model_skips_tracker():
 
 
 def test_add_usage_total_budget_alert(monkeypatch):
-    """经 add_usage 进账也要触发总预算告警（VORTOCODE_COST_BUDGET）。"""
+    """经 add_usage 进账也要触发总预算告警（VORTOONE_COST_BUDGET）。"""
     from src.models.router import CostTracker
     from src.models import cost as cost_mod
     from src.llm.client import add_usage
     monkeypatch.setattr(cost_mod, "cost_tracker", CostTracker())
-    monkeypatch.setenv("VORTOCODE_COST_BUDGET", "0.0001")
+    monkeypatch.setenv("VORTOONE_COST_BUDGET", "0.0001")
     add_usage(1000, 1000, model="mimo-v2.5")          # 0.003 > 0.0001
     assert any(a.get("type") == "total_budget_exceeded" for a in cost_mod.cost_tracker.alerts)

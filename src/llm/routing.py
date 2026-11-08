@@ -52,11 +52,11 @@ def routing_tiers() -> Dict[str, str]:
 
 
 def model_choices() -> set:
-    """默认服务上允许点名的模型（Desktop 从该服务的 /models 拉取后经 VORTOCODE_MODEL_CHOICES 注入）。
+    """默认服务上允许点名的模型（Desktop 从该服务的 /models 拉取后经 VORTOONE_MODEL_CHOICES 注入）。
 
     只是**同一个默认端点、同一把 Key** 下的模型名清单：点名其中任何一个都不会换地址、不会动别家的 Key。
     """
-    raw = os.getenv("VORTOCODE_MODEL_CHOICES") or ""
+    raw = os.getenv("VORTOONE_MODEL_CHOICES") or ""
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 

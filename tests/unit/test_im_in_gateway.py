@@ -70,7 +70,7 @@ async def test_notification_role_blocks_commands_and_approvals_without_agent(tmp
     from src.im.channel import ChannelEvent
     from src.workflow.tasks.tasks import BackgroundTask
 
-    monkeypatch.setenv("VORTOCODE_IM_ROLE", "notify")
+    monkeypatch.setenv("VORTOONE_IM_ROLE", "notify")
     monkeypatch.setattr(IMBridge, "_build_agent", lambda self: pytest.fail("notification sink built an agent"))
     adapter, runner = FakeAdapter(), FakeRunner()
     bridge, _ = im_service.start_embedded("telegram", str(tmp_path), adapter=adapter,
@@ -98,7 +98,7 @@ async def test_notification_role_blocks_commands_and_approvals_without_agent(tmp
 @pytest.mark.asyncio
 async def test_start_embedded_shares_runner_and_registers_dispatch(tmp_path, monkeypatch):
     # 用例测交互桥：宿主若配了「只发通知」（常驻电脑的 .env 就是），桥不收任务，用例会红在环境上
-    for key in ("VORTOCODE_IM_ROLE", "VORTOCODE_IM_ALLOW_FROM", "VORTOCODE_TG_ALLOW_FROM"):
+    for key in ("VORTOONE_IM_ROLE", "VORTOONE_IM_ALLOW_FROM", "VORTOONE_TG_ALLOW_FROM"):
         monkeypatch.delenv(key, raising=False)
     adapter, runner = FakeAdapter(), FakeRunner()
     bridge, _ = im_service.start_embedded("telegram", str(tmp_path),
@@ -243,12 +243,12 @@ async def test_notifier_no_marker_when_delivered(tmp_path, monkeypatch):
 
 # ------------------------------------------------------------ 凭证 fail-closed
 def test_build_adapter_fail_closed_on_missing_creds(monkeypatch):
-    for k in ("VORTOCODE_TG_TOKEN", "VORTOCODE_TG_OWNER_ID",
-              "VORTOCODE_DD_CLIENT_ID", "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_DD_OWNER_ID"):
+    for k in ("VORTOONE_TG_TOKEN", "VORTOONE_TG_OWNER_ID",
+              "VORTOONE_DD_CLIENT_ID", "VORTOONE_DD_CLIENT_SECRET", "VORTOONE_DD_OWNER_ID"):
         monkeypatch.delenv(k, raising=False)
-    with pytest.raises(im_service.IMConfigError, match="VORTOCODE_TG_TOKEN"):
+    with pytest.raises(im_service.IMConfigError, match="VORTOONE_TG_TOKEN"):
         im_service.build_adapter("telegram")
-    with pytest.raises(im_service.IMConfigError, match="VORTOCODE_DD_CLIENT_ID"):
+    with pytest.raises(im_service.IMConfigError, match="VORTOONE_DD_CLIENT_ID"):
         im_service.build_adapter("dingtalk")
     with pytest.raises(im_service.IMConfigError, match="未知"):
         im_service.build_adapter("wechat")
@@ -256,8 +256,8 @@ def test_build_adapter_fail_closed_on_missing_creds(monkeypatch):
 
 def test_server_start_fail_closed_on_im_without_creds(monkeypatch):
     """vc server --im telegram 但没配凭证：启动前就拒（显式要了就不能静默没有）。"""
-    for k in ("VORTOCODE_TG_TOKEN", "VORTOCODE_TG_OWNER_ID"):
+    for k in ("VORTOONE_TG_TOKEN", "VORTOONE_TG_OWNER_ID"):
         monkeypatch.delenv(k, raising=False)
     from src.web.server import start_server
-    with pytest.raises(SystemExit, match="VORTOCODE_TG_TOKEN"):
+    with pytest.raises(SystemExit, match="VORTOONE_TG_TOKEN"):
         start_server(im="telegram")

@@ -10,7 +10,7 @@ from src.workflow.workbench.resident_projects import load_resident_projects
 def _write(tmp_path, monkeypatch, data):
     path = tmp_path / "resident_projects.json"
     path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(path))
 
 
 def test_valid_entries_kept_bad_ones_skipped(tmp_path, monkeypatch):
@@ -30,7 +30,7 @@ def test_valid_entries_kept_bad_ones_skipped(tmp_path, monkeypatch):
 
 
 def test_missing_or_broken_registry_is_empty(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(tmp_path / "absent.json"))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(tmp_path / "absent.json"))
     assert load_resident_projects() == []
     _write(tmp_path, monkeypatch, "{broken")
     assert load_resident_projects() == []

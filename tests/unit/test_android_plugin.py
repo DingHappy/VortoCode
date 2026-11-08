@@ -86,9 +86,9 @@ async def frame(entries):
 def test_gate_requires_explicit_desktop_local_project_with_human(monkeypatch):
     args = dict(profile="local", can_ask_human=True, workspace_scope="project")
     assert not android_control_enabled("web", **args)
-    monkeypatch.setenv("VORTOCODE_ENABLE_ANDROID_CONTROL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_ANDROID_CONTROL", "1")
     assert not android_control_enabled("web", **args)
-    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
+    monkeypatch.setenv("VORTOONE_DESKTOP_SIDECAR", "1")
     assert android_control_enabled("web", **args)
     for kind in ("im", "cli", "unattended"):
         assert not android_control_enabled(kind, **args)
@@ -147,8 +147,8 @@ def test_host_config_is_private_strict_scoped_and_not_a_project_plugin(tmp_path,
 ])
 def test_production_session_assembly_preserves_entrypoint_boundaries(tmp_path, monkeypatch, kind, profile, scope, human, role, expected):
     from src.gateway.agent_session import build_session
-    monkeypatch.setenv("VORTOCODE_ENABLE_ANDROID_CONTROL", "1")
-    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_ANDROID_CONTROL", "1")
+    monkeypatch.setenv("VORTOONE_DESKTOP_SIDECAR", "1")
     agent = build_session(str(tmp_path), kind=kind, confirm=yes, can_ask_human=human,
                           capability_profile=profile, workspace_scope=scope, session_role=role)
     names = {name for name in agent.tools if name.startswith("android_")}

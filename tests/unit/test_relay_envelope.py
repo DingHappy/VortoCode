@@ -83,9 +83,9 @@ def test_forgeries_are_rejected(tmp_path, attack):
 def test_the_gateway_cannot_choose_the_operation(tmp_path, monkeypatch):
     """网关拿着令牌、也拿着一个真签名的「随手记」请求，想送到下发任务单的接口：拒。"""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
     device_id, device, _ = phone(tmp_path)
     from src.web.server import app
     local = TestClient(app, client=("127.0.0.1", 50000))

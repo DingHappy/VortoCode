@@ -42,7 +42,7 @@ def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_DESKTOP_SIDECAR", raising=False)
+    monkeypatch.delenv("VORTOONE_DESKTOP_SIDECAR", raising=False)
     from src.web.server import app
 
     return TestClient(app)
@@ -71,8 +71,8 @@ def test_desktop_project_supervision_clamps_historical_full(tmp_path, monkeypatc
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_DESKTOP_SIDECAR", "1")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     from src.web.server import app
 
     client = TestClient(app)
@@ -115,13 +115,13 @@ def test_desktop_general_can_choose_read_approval_without_project(tmp_path, monk
     from src.web.server import app
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_DESKTOP_SIDECAR", "1")
     client = TestClient(app)
     status = client.put("/api/trust", json={"level": READS}).json()
     assert status["effective"] == READS and status["local_file_reads"] is True
     assert status["ceiling"] == READS and status["workspace_scope"] == "general"
     assert client.get("/api/trust").json()["level"] == READS
     assert client.get("/api/editor/files").status_code == 409
-    monkeypatch.delenv("VORTOCODE_DESKTOP_SIDECAR")
+    monkeypatch.delenv("VORTOONE_DESKTOP_SIDECAR")
     assert client.get("/api/trust").status_code == 409

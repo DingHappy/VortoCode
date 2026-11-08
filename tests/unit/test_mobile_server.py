@@ -14,22 +14,22 @@ from src.web.mobile_server import create_app
 @pytest.fixture
 def mobile_env(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "private-mobile-administrator-token")
-    monkeypatch.setenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", "https://assistant.example.com:18443")
-    monkeypatch.setenv("VORTOCODE_MOBILE_STATE_ROOT", str(tmp_path))
-    monkeypatch.setenv("VORTOCODE_MOBILE_RELEASE", "mobile-test.123")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "private-mobile-administrator-token")
+    monkeypatch.setenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", "https://assistant.example.com:18443")
+    monkeypatch.setenv("VORTOONE_MOBILE_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("VORTOONE_MOBILE_RELEASE", "mobile-test.123")
     return tmp_path
 
 
 def test_gateway_refuses_missing_admin(mobile_env, monkeypatch):
-    monkeypatch.delenv("VORTOCODE_API_TOKEN")
+    monkeypatch.delenv("VORTOONE_API_TOKEN")
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
     with pytest.raises(RuntimeError):
         create_app()
 
 
 def test_gateway_refuses_wrong_state_root(mobile_env, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MOBILE_STATE_ROOT", str(mobile_env / "other"))
+    monkeypatch.setenv("VORTOONE_MOBILE_STATE_ROOT", str(mobile_env / "other"))
     with pytest.raises(RuntimeError):
         create_app()
 

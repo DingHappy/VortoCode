@@ -194,13 +194,13 @@ async def test_routes_general_only_and_accepts_exact_review(tmp_path, monkeypatc
     from src.web.routers import assistant
     service, body = setup(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     for call in (lambda: assistant.skill_proposals_list(), lambda: assistant.skill_proposal_preview("reconnect"),
                  lambda: assistant.skill_proposal_save("reconnect", body),
                  lambda: assistant.skill_proposal_decide("reconnect", {})):
         with pytest.raises(HTTPException) as denied: await call()
         assert denied.value.status_code == 403
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     proposal = await assistant.skill_proposal_save("reconnect", body)
     assert (await assistant.skill_proposals_list())["proposals"]
     bad = decision(proposal); bad["revision"] = "stale"

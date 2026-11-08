@@ -2,7 +2,7 @@
 
 此前 `vc im` 是独立进程：它与 serve 各持一个 TaskRunner/会话，同一 .vortocode 有两个
 状态所有者。现在 serve 可 **opt-in** 内嵌 bridge（`vc server --im telegram|dingtalk` 或
-env `VORTOCODE_IM`）：
+env `VORTOONE_IM`）：
 
 - 复用 bridge 的全部既有面（ChannelAdapter/配对制/纯出站/按钮确认），零改协议；
 - **共享 serve 的 TaskRunner**（单一并发池/台账/订阅集）：IM 的 /task 提交 kind="im-dev"，
@@ -31,8 +31,8 @@ def build_adapter(channel: str, *, env=None) -> Tuple[object, str]:
     channel = (channel or "").strip().lower()
     values = os.environ if env is None else env
     if channel == "telegram":
-        token = values.get("VORTOCODE_TG_TOKEN", "").strip()
-        owner = values.get("VORTOCODE_TG_OWNER_ID", "").strip()
+        token = values.get("VORTOONE_TG_TOKEN", "").strip()
+        owner = values.get("VORTOONE_TG_OWNER_ID", "").strip()
         if token and not owner:
             from src.im.telegram_pairing import PairingError, load_paired_owner
             try:
@@ -41,22 +41,22 @@ def build_adapter(channel: str, *, env=None) -> Tuple[object, str]:
                 raise IMConfigError(str(exc)) from exc
         if not token or not owner:
             raise IMConfigError(
-                "Telegram 桥需要环境变量 VORTOCODE_TG_TOKEN 和 VORTOCODE_TG_OWNER_ID"
+                "Telegram 桥需要环境变量 VORTOONE_TG_TOKEN 和 VORTOONE_TG_OWNER_ID"
                 "（或先运行 vc im-pair telegram 私聊配对；缺失时 fail-closed）。")
         from src.im.telegram import TelegramAdapter
         # bot_username 是**可选**的（群提及门用；不设则首次群消息时 getMe 惰性解析），
         # 刻意不进上面的 fail-closed 必填项——它缺失只会让群消息更不响应，不影响私聊凭证路径。
         return TelegramAdapter(
             token, owner,
-            bot_username=values.get("VORTOCODE_TG_BOT_USERNAME", "").strip() or None), owner
+            bot_username=values.get("VORTOONE_TG_BOT_USERNAME", "").strip() or None), owner
     if channel == "dingtalk":
-        cid = values.get("VORTOCODE_DD_CLIENT_ID", "").strip()
-        secret = values.get("VORTOCODE_DD_CLIENT_SECRET", "").strip()
-        owner = values.get("VORTOCODE_DD_OWNER_ID", "").strip()
+        cid = values.get("VORTOONE_DD_CLIENT_ID", "").strip()
+        secret = values.get("VORTOONE_DD_CLIENT_SECRET", "").strip()
+        owner = values.get("VORTOONE_DD_OWNER_ID", "").strip()
         if not cid or not secret or not owner:
             raise IMConfigError(
-                "钉钉桥需要环境变量 VORTOCODE_DD_CLIENT_ID / VORTOCODE_DD_CLIENT_SECRET / "
-                "VORTOCODE_DD_OWNER_ID（配对制，fail-closed）。\n"
+                "钉钉桥需要环境变量 VORTOONE_DD_CLIENT_ID / VORTOONE_DD_CLIENT_SECRET / "
+                "VORTOONE_DD_OWNER_ID（配对制，fail-closed）。\n"
                 "  钉钉开放平台建企业内机器人应用（Stream 模式）拿 AppKey(ClientID)/AppSecret；"
                 "OWNER_ID 填你自己的 senderStaffId（给机器人发条消息即可在回调里看到）。")
         from src.im.dingtalk import DingTalkAdapter
@@ -67,17 +67,17 @@ def build_adapter(channel: str, *, env=None) -> Tuple[object, str]:
 def load_allow_from(channel: str):
     """读入站白名单配置，返回 None（未配置 → 由 bridge 回落到"只放 owner"）或一个 id 集合。
 
-    通道专属 `VORTOCODE_TG_ALLOW_FROM` / `VORTOCODE_DD_ALLOW_FROM` 优先于通用
-    `VORTOCODE_IM_ALLOW_FROM`；逗号/空白分隔。
+    通道专属 `VORTOONE_TG_ALLOW_FROM` / `VORTOONE_DD_ALLOW_FROM` 优先于通用
+    `VORTOONE_IM_ALLOW_FROM`；逗号/空白分隔。
 
     **"未设置"与"设成空"是两回事**（fail-closed 的关键）：环境变量不存在 = 沿用配对制只放 owner；
-    存在但解析为空（`VORTOCODE_IM_ALLOW_FROM=` 或 `","`）= **显式空白名单 = 全拒**，连 owner
+    存在但解析为空（`VORTOONE_IM_ALLOW_FROM=` 或 `","`）= **显式空白名单 = 全拒**，连 owner
     也进不来。绝不把"空"读成"不限制"。凭证读取（build_adapter）完全不受本函数影响。
     """
     from src.im.bridge import parse_allow_from
-    channel_key = {"telegram": "VORTOCODE_TG_ALLOW_FROM",
-                   "dingtalk": "VORTOCODE_DD_ALLOW_FROM"}.get((channel or "").strip().lower())
-    for key in (channel_key, "VORTOCODE_IM_ALLOW_FROM"):
+    channel_key = {"telegram": "VORTOONE_TG_ALLOW_FROM",
+                   "dingtalk": "VORTOONE_DD_ALLOW_FROM"}.get((channel or "").strip().lower())
+    for key in (channel_key, "VORTOONE_IM_ALLOW_FROM"):
         if key and key in os.environ:
             return parse_allow_from(os.environ[key])
     return None
@@ -85,22 +85,22 @@ def load_allow_from(channel: str):
 
 def load_conversation() -> str:
     """One config path for embedded and standalone IM; a typo cannot join primary chat."""
-    conversation = os.getenv("VORTOCODE_IM_CONVERSATION", "primary").strip().lower()
+    conversation = os.getenv("VORTOONE_IM_CONVERSATION", "primary").strip().lower()
     if conversation not in {"primary", "isolated"}:
-        raise IMConfigError("VORTOCODE_IM_CONVERSATION must be primary or isolated")
+        raise IMConfigError("VORTOONE_IM_CONVERSATION must be primary or isolated")
     return conversation
 
 
 def load_session_role() -> str:
     """Trusted host opt-in, shared by standalone and embedded IM."""
-    role = os.getenv("VORTOCODE_IM_POLICY", "standard").strip().lower()
+    role = os.getenv("VORTOONE_IM_POLICY", "standard").strip().lower()
     if role not in {"standard", "research_read"}:
-        raise IMConfigError("VORTOCODE_IM_POLICY must be standard or research_read")
+        raise IMConfigError("VORTOONE_IM_POLICY must be standard or research_read")
     if role == "research_read" and (load_conversation() != "isolated" or
-                                   os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower() != "interactive"):
+                                   os.getenv("VORTOONE_IM_ROLE", "interactive").strip().lower() != "interactive"):
         raise IMConfigError("research_read requires isolated interactive IM")
-    if role == "research_read" and os.getenv("VORTOCODE_WORKSPACE_SCOPE", "").strip().lower() != "project":
-        raise IMConfigError("research_read requires explicit VORTOCODE_WORKSPACE_SCOPE=project")
+    if role == "research_read" and os.getenv("VORTOONE_WORKSPACE_SCOPE", "").strip().lower() != "project":
+        raise IMConfigError("research_read requires explicit VORTOONE_WORKSPACE_SCOPE=project")
     return role
 
 
@@ -112,9 +112,9 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     from src.gateway import im_registry
     legacy = binding_id is None
     if legacy:
-        role = os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower()
+        role = os.getenv("VORTOONE_IM_ROLE", "interactive").strip().lower()
         if role not in {"interactive", "notify"}:
-            raise IMConfigError("VORTOCODE_IM_ROLE must be interactive or notify")
+            raise IMConfigError("VORTOONE_IM_ROLE must be interactive or notify")
         conversation = load_conversation()
         session_role = load_session_role()
         notification_only = role == "notify"

@@ -84,8 +84,8 @@ async def test_no_budget_keeps_legacy_run_session_signature(tmp_path):
 
 @pytest.mark.asyncio
 async def test_env_default_budget_applies_when_job_has_none(tmp_path, monkeypatch):
-    """作业没写 budget 时吃 env 默认 VORTOCODE_CRON_TOKEN_BUDGET。"""
-    monkeypatch.setenv("VORTOCODE_CRON_TOKEN_BUDGET", "100")
+    """作业没写 budget 时吃 env 默认 VORTOONE_CRON_TOKEN_BUDGET。"""
+    monkeypatch.setenv("VORTOONE_CRON_TOKEN_BUDGET", "100")
     reset_usage()
     seen = {}
 
@@ -148,7 +148,7 @@ async def test_command_job_failures_also_count_toward_streak(tmp_path, monkeypat
         return {"code": 1, "output": "模拟失败", "sandbox": {"backend": "seatbelt", "isolated": True}}
 
     monkeypatch.setattr(shell, "run_command", fake_run_command)
-    monkeypatch.setenv("VORTOCODE_CRON_FAIL_ESCALATE", "2")   # 阈值可调
+    monkeypatch.setenv("VORTOONE_CRON_FAIL_ESCALATE", "2")   # 阈值可调
     job = _job("cmd", command="exit 1")
     await run_job(str(tmp_path), job)
     result = await run_job(str(tmp_path), job)
@@ -170,7 +170,7 @@ async def test_escalation_is_the_first_line_and_survives_quiet_digest(tmp_path, 
         raise RuntimeError("y" * 500)
 
     monkeypatch.setattr(shell, "run_command", fake_run_command)
-    monkeypatch.setenv("VORTOCODE_CRON_FAIL_ESCALATE", "2")
+    monkeypatch.setenv("VORTOONE_CRON_FAIL_ESCALATE", "2")
     sent = []
 
     async def notify(text, **_):
@@ -193,7 +193,7 @@ async def test_escalation_is_the_first_line_and_survives_quiet_digest(tmp_path, 
         digests.append(text)
         return True
 
-    monkeypatch.delenv("VORTOCODE_QUIET_HOURS", raising=False)
+    monkeypatch.delenv("VORTOONE_QUIET_HOURS", raising=False)
     assert await flush_quiet_digest(str(tmp_path), send) == 1
     assert "已连续失败 2 次" in digests[0]
 
@@ -259,7 +259,7 @@ def test_journal_duty_flags_silent_death_when_nothing_ran(tmp_path):
     assert set(duty["expected"]) == {"duty_a", "duty_b"}      # disabled 的 sleeper 不列
     assert set(duty["missing"]) == {"duty_a", "duty_b"}
     assert duty["ran"] == []
-    assert "没有任何运行痕迹" in duty["note"] and "VORTOCODE_CRON" in duty["note"]
+    assert "没有任何运行痕迹" in duty["note"] and "VORTOONE_CRON" in duty["note"]
 
 
 def test_journal_duty_matches_runs_by_stamp_and_command_fallback(tmp_path):

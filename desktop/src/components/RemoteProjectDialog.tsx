@@ -38,7 +38,7 @@ export function RemoteProjectDialog({ purpose = "project", onClose, onRegistered
     <label>名称<input value={name} onChange={(e) => setName(e.target.value)} placeholder={assistant ? "常驻电脑" : "我的服务器"} disabled={busy} /></label>
     <label>服务地址<input autoFocus value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} placeholder={assistant ? "http://内网主机:8081" : "http://内网主机:8080"} disabled={busy} /></label>
     {!assistant && <label>服务器上的项目目录<input value={repoRoot} onChange={(e) => setRepoRoot(e.target.value)} placeholder="/home/user/project" disabled={busy} /></label>}
-    <label>服务访问 Token<input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="VORTOCODE_API_TOKEN（不是 TG Bot Token）" disabled={busy} /></label>
+    <label>服务访问 Token<input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="VORTOONE_API_TOKEN（不是 TG Bot Token）" disabled={busy} /></label>
     <p>访问 Token 保存到系统钥匙串。支持内网或 Tailscale 地址；请填写服务实际使用的项目目录。</p>
     {error && <p role="alert">{error}</p>}
     <div className="settings-actions"><button onClick={onClose} disabled={busy}>取消</button><button onClick={() => void connect()} disabled={busy || !serverUrl.trim() || !repoRoot.trim() || !token.trim()}>{busy ? "正在连接…" : "连接"}</button></div>

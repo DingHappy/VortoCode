@@ -42,7 +42,7 @@ def test_explicit_model_must_be_configured(tiers):
 
 
 def test_models_listed_by_the_default_service_can_be_picked(monkeypatch, tiers):
-    monkeypatch.setenv("VORTOCODE_MODEL_CHOICES", "mimo-v2.6-flash, deepseek-chat,")
+    monkeypatch.setenv("VORTOONE_MODEL_CHOICES", "mimo-v2.6-flash, deepseek-chat,")
     assert resolve_turn_model("deepseek-chat", "x", mode="build").model == "deepseek-chat"
     assert resolve_turn_model("not-listed", "x", mode="build") is None
 

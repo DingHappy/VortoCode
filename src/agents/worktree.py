@@ -345,18 +345,18 @@ async def in_worktree(repo_root, wid: str,
 
 
 def _test_timeout(default: int = 1200) -> int:
-    """测试超时（秒）：`VORTOCODE_TEST_TIMEOUT` 可调（慢机器上全量要更久），非法值用默认。"""
+    """测试超时（秒）：`VORTOONE_TEST_TIMEOUT` 可调（慢机器上全量要更久），非法值用默认。"""
     try:
-        value = int(os.getenv("VORTOCODE_TEST_TIMEOUT", "") or default)
+        value = int(os.getenv("VORTOONE_TEST_TIMEOUT", "") or default)
     except ValueError:
         return default
     return value if value > 0 else default
 
 
 def _parallel_pytest(cmd: list) -> list:
-    """`VORTOCODE_TEST_WORKERS`（如 auto / 4）：pytest 命令加 xdist 并行（按文件分发，与本仓门禁同口径）。
+    """`VORTOONE_TEST_WORKERS`（如 auto / 4）：pytest 命令加 xdist 并行（按文件分发，与本仓门禁同口径）。
     没装 xdist 或命令里已指定 -n 就原样返回——只是提速，不改变测什么。"""
-    workers = os.getenv("VORTOCODE_TEST_WORKERS", "").strip()
+    workers = os.getenv("VORTOONE_TEST_WORKERS", "").strip()
     if not workers or not any("pytest" in str(part) for part in cmd) or "-n" in cmd:
         return cmd
     import importlib.util
@@ -369,7 +369,7 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = Non
               require_isolation: bool = True, output_limit: int = 4000) -> dict:
     """在 worktree 里跑测试做逐件验证；生成代码默认必须在 OS 沙箱中执行。
 
-    ``VORTOCODE_SANDBOX=off`` 是可信环境的显式宿主机 escape hatch。结果携带
+    ``VORTOONE_SANDBOX=off`` 是可信环境的显式宿主机 escape hatch。结果携带
     ``sandbox`` 决策证据，避免 autonomous 路径静默降级。
     """
     from src.sandbox.policy import child_env, resolve_sandbox, sandboxed_exec_argv
@@ -384,15 +384,17 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = Non
                 "sandbox": evidence, "warning": ""}
     exec_cmd = (sandboxed_exec_argv(worktree, cmd, backend=decision.backend)
                 if decision.isolated else cmd)
-    # 被测的是候选改动，不是宿主服务：服务自己的运行配置（.env 读进来的 VORTOCODE_IM_ROLE、
+    # 被测的是候选改动，不是宿主服务：服务自己的运行配置（.env 读进来的 VORTOONE_IM_ROLE、
     # 白名单、调度开关……）不许漏进测试进程——否则用例按宿主的配置走，红在环境而不在改动上
     # （真机 2026-10-11：常驻电脑上 test_im_in_gateway 因继承 IM_ROLE=notify 红）。与本地门禁同口径。
-    env = {key: value for key, value in child_env().items() if not key.startswith("VORTOCODE_")}
+    # 旧名字 VORTOCODE_*（ADR-018 批次 B 之前）也一并挡掉。
+    env = {key: value for key, value in child_env().items()
+           if not key.startswith(("VORTOONE_", "VORTOCODE_"))}
     if decision.isolated:
         # 让被测代码看得见"我在沙箱里"。沙箱按设计禁掉 fork PTY / 起子进程等能力，
         # 依赖这些能力的用例在这里必红——那是环境限制，不是候选改动的问题。
         # 没有这个标记，流水线的验证关会对**任何**改动一律判红（真机复盘：护城河曾因此全堵）。
-        env = {**env, "VORTOCODE_IN_SANDBOX": "1"}
+        env = {**env, "VORTOONE_IN_SANDBOX": "1"}
     cache_dir = None
     if decision.isolated:
         # 沙箱里 $HOME 只读：jedi / pip / pre-commit 这类往 ~/.cache 写缓存的工具会直接失败，

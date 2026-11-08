@@ -110,9 +110,9 @@ def _env_num(name: str, default, cast):
     return v if v > 0 else default
 
 
-_CONTEXT_WINDOW_FRACTION = min(_env_num("VORTOCODE_CONTEXT_WINDOW_FRACTION", 0.5, float), 1.0)
+_CONTEXT_WINDOW_FRACTION = min(_env_num("VORTOONE_CONTEXT_WINDOW_FRACTION", 0.5, float), 1.0)
 _CONTEXT_MIN_WINDOW_TO_SCALE = 16_000
-_CONTEXT_BUDGET_HARD_CAP = _env_num("VORTOCODE_CONTEXT_BUDGET_CAP", 200_000, int)
+_CONTEXT_BUDGET_HARD_CAP = _env_num("VORTOONE_CONTEXT_BUDGET_CAP", 200_000, int)
 
 # 裁剪低水位：超预算触发重算切点时，一次裁到 limit×低水位（而非贴着 limit），给后续步留增长余量。
 # 这样切点在多数步之间保持不动（消息只追加不滑动）→ 请求前缀稳定 → 上游自动前缀缓存可持续命中；
@@ -269,7 +269,7 @@ def _is_weak_final(content: str) -> bool:
 
 
 def native_default() -> bool:
-    """三端统一的 native（原生 function-calling）开关：env `VORTOCODE_NATIVE_TOOLS`。
+    """三端统一的 native（原生 function-calling）开关：env `VORTOONE_NATIVE_TOOLS`。
 
     **默认开**（2026-07 真机对照 dogfood：同一开发任务 native 3/3 正确落地 vs 提示式仅 1/3——
     提示式下模型易把工具结果误当用户消息、凭空编造交付；native 用结构化 tool 消息从根上避免）。
@@ -278,7 +278,7 @@ def native_default() -> bool:
     三端（TUI/Web/CLI）统一读这里。
     """
     import os
-    return os.getenv("VORTOCODE_NATIVE_TOOLS", "1").strip().lower() not in ("0", "false", "no", "off")
+    return os.getenv("VORTOONE_NATIVE_TOOLS", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
@@ -527,17 +527,17 @@ class MainAgent:
         self._execution_check = execution_check
         self._auto_recall = bool(auto_recall)
         self._turn_memory_context = ""
-        self.max_steps = _env_int("VORTOCODE_MAX_STEPS", 6 if max_steps is None else max_steps)
+        self.max_steps = _env_int("VORTOONE_MAX_STEPS", 6 if max_steps is None else max_steps)
         # build 单段默认给得比 plan 宽：plan 只读摸底，build 要读文件→改→跑测试→看输出→再改，
         # 六步连"读两个文件再动手"都不够。真机 2026-09-17：一个三行的改动，每一轮都在读完
         # 两三个文件后播"单段预算已用完，自动继续（n/3）"，三段烧完还是交白卷。
         # 续跑不是免费的：每段都要重放一遍历史，段切得越碎越贵。
         # **调用方显式传了 max_steps 就照它办**（子 agent、测试刻意收紧的封顶不该被这里放开）。
         _build_default = self.max_steps if max_steps is not None else max(16, self.max_steps)
-        self.build_max_steps = _env_int("VORTOCODE_BUILD_MAX_STEPS", _build_default)
+        self.build_max_steps = _env_int("VORTOONE_BUILD_MAX_STEPS", _build_default)
         # build 是真实开发模式，固定 max_steps 只作为"单段预算"；到段尾会自动续跑若干段。
         # 这个安全阈值只防模型无限循环，不应成为正常开发的停止点。
-        self.build_auto_continues = _env_int("VORTOCODE_BUILD_AUTO_CONTINUES", 3, minimum=0)
+        self.build_auto_continues = _env_int("VORTOONE_BUILD_AUTO_CONTINUES", 3, minimum=0)
         self.plan_max_steps = self.max_steps       # 兼容旧属性；plan 不再有专属低步数限制
         self.plan_max_tool_calls = 0               # 0 = 不限制；保留属性给旧代码/测试读取
         # 持久任务清单：大任务的可见/可续骨架。注入系统提示让 agent 始终看得见进度；
@@ -568,13 +568,13 @@ class MainAgent:
         self.tools = {t.name: t for t in self._tool_list}
         # 上下文预算：主要按 **token** 裁剪/压缩（真正决定是否撑爆窗口的是 token，不是消息条数——
         # 少量超大消息条数虽少却能爆窗，大量小消息条数虽多却很省）。max_history 退为**硬条数上限**
-        # 兜底（防极端条数），不再作为压缩触发。env VORTOCODE_MAX_CONTEXT_TOKENS 可调。
+        # 兜底（防极端条数），不再作为压缩触发。env VORTOONE_MAX_CONTEXT_TOKENS 可调。
         self.max_history = max_history
         # max_context_tokens 是历史预算的**保守默认/下限**（8000，刻意压成本/防失焦）。
         # 当用户没用 env 钉死时，_base_context_budget() 会按当前模型的真实窗口**向上自适应**——
         # 大窗口模型（mimo-v2.5/gpt-4o/claude/…）自动放大，未知模型保持这个默认。
         # env 钉死 = 用户显式指定**有效**精确预算 → 不再自适应；缺省/空/坏值都回退默认并自适应。
-        _pinned = _env_num("VORTOCODE_MAX_CONTEXT_TOKENS", None, int)
+        _pinned = _env_num("VORTOONE_MAX_CONTEXT_TOKENS", None, int)
         self.max_context_tokens = _pinned if _pinned is not None else max_context_tokens
         self._context_budget_auto = _pinned is None
         self._task_anchor = ""                 # 原始任务纯文本（首个 user）；压缩后仍作锚点，修"锚到孤儿工具结果"
@@ -593,11 +593,11 @@ class MainAgent:
         self._media_ingested: bool = False     # 本轮是否注入过图片 → 打污点（D0，见 _absorb_tool_media）
         self.history: list[dict] = []          # 跨轮对话历史（不含 system）
         # 对话压缩：历史超窗时把"老段"摘要成滚动纪要（_summary）注入系统提示，物理移出 history，
-        # 而非像 #72 那样硬丢中段。env VORTOCODE_COMPACT=0 关闭（关掉就退回纯锚点裁剪）。
-        env_compact = os.getenv("VORTOCODE_COMPACT")
+        # 而非像 #72 那样硬丢中段。env VORTOONE_COMPACT=0 关闭（关掉就退回纯锚点裁剪）。
+        env_compact = os.getenv("VORTOONE_COMPACT")
         self.compact = (env_compact not in ("0", "false", "no")) if env_compact is not None else compact
-        # 上下文策略：auto 会按模式动态选择；也可用 VORTOCODE_CONTEXT_POLICY 固定为 compact/balanced/preserve。
-        self.context_policy = _normalize_context_policy(os.getenv("VORTOCODE_CONTEXT_POLICY") or context_policy)
+        # 上下文策略：auto 会按模式动态选择；也可用 VORTOONE_CONTEXT_POLICY 固定为 compact/balanced/preserve。
+        self.context_policy = _normalize_context_policy(os.getenv("VORTOONE_CONTEXT_POLICY") or context_policy)
         self._context_mode = "plan"
         self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
         self._permissions = permissions        # 可选 .vortocode/permissions.yaml deny 规则（_run_tool 硬拦）
@@ -612,7 +612,7 @@ class MainAgent:
         self._repeat_calls: dict[str, int] = {}
         # One human turn, including build continuations. This is a dispatch cap,
         # not a provider token/time budget or task acceptance signal.
-        self.max_web_tool_calls = min(64, _env_int("VORTOCODE_MAX_WEB_TOOL_CALLS", 12))
+        self.max_web_tool_calls = min(64, _env_int("VORTOONE_MAX_WEB_TOOL_CALLS", 12))
         self._web_tool_calls = 0
         self._web_budget_exhausted = False
         # 本回合直接改过的文件 / 是否拿到命令或测试成功回执（见 _unverified_writes_note）。
@@ -680,7 +680,7 @@ class MainAgent:
     def set_model(self, model: str) -> None:
         """切换本 agent 后续调用使用的模型：就地改客户端 config.model（惰性客户端先建再改）。
 
-        `供应商:模型`（供应商须经 VORTOCODE_PROVIDER_<ID>_BASE/_KEY 登记）连同端点和 key 一起换；
+        `供应商:模型`（供应商须经 VORTOONE_PROVIDER_<ID>_BASE/_KEY 登记）连同端点和 key 一起换；
         普通模型名则切回原端点。key 只跟着自己的端点走，绝不借给别家（见 llm/providers.py）。
         """
         from src.llm.providers import chat_target

@@ -4,7 +4,7 @@
   新写好等你确认的任务单、完成（含分支）、失败、在等人回答。手机上只是提醒，确认下发仍在 Desktop。
 - 早报 / 晚报（默认 09:00、21:00，本机时区）：今天聊了几件事、任务单各状态几件、哪些等你处理。
   模型整理台账素材，不可用时发数据版；投递失败复用已保存正文。
-- 推送：本进程持有 IM 桥就直接发；否则交给 ``VORTOCODE_OWNER_NOTIFY_URL`` 指向的同机服务。
+- 推送：本进程持有 IM 桥就直接发；否则交给 ``VORTOONE_OWNER_NOTIFY_URL`` 指向的同机服务。
   两者都没有就不启动——Desktop 本机的通用会话（IM 固定关、不配转发）不会冒出推送。
 """
 from __future__ import annotations
@@ -33,16 +33,16 @@ Notify = Callable[[str], Awaitable[bool]]
 
 
 def notify_url() -> str:
-    return os.getenv("VORTOCODE_OWNER_NOTIFY_URL", "").strip().rstrip("/")
+    return os.getenv("VORTOONE_OWNER_NOTIFY_URL", "").strip().rstrip("/")
 
 
 def watch_enabled() -> bool:
     """本进程自己持有 IM，或配了转发地址，才有地方汇报。Desktop 的本机 sidecar 两者都固定关掉。"""
-    return bool(notify_url() or os.getenv("VORTOCODE_IM", "").strip())
+    return bool(notify_url() or os.getenv("VORTOONE_IM", "").strip())
 
 
 def report_times() -> List[str]:
-    raw = os.getenv("VORTOCODE_ASSISTANT_REPORT_TIMES", "09:00,21:00")
+    raw = os.getenv("VORTOONE_ASSISTANT_REPORT_TIMES", "09:00,21:00")
     times = []
     for part in raw.split(","):
         part = part.strip()
@@ -369,7 +369,7 @@ def _scrub_ids(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", _INTERNAL_ID.sub("", text))
 
 
-NEWS_ENV = "VORTOCODE_ASSISTANT_NEWS_ROOT"      # 有 signals 采集产出的项目目录；不设 = 早报不带新闻
+NEWS_ENV = "VORTOONE_ASSISTANT_NEWS_ROOT"      # 有 signals 采集产出的项目目录；不设 = 早报不带新闻
 _NEWS_MAX_AGE = timedelta(hours=24)
 _NEWS_LIMIT = 6
 
@@ -831,8 +831,8 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
                               "next": reminder.get("next_attempt_at") or reminder["due_at"]})
     except (OSError, ValueError, KeyError, TypeError):
         logger.warning("个人目标提醒概览暂不可用")
-    if os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on"):
-        every = (os.getenv("VORTOCODE_HEARTBEAT_EVERY", "30m") or "30m").strip()
+    if os.getenv("VORTOONE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on"):
+        every = (os.getenv("VORTOONE_HEARTBEAT_EVERY", "30m") or "30m").strip()
         items.append({"id": "heartbeat", "kind": "heartbeat", "title": "Heartbeat",
                       "schedule": f"每 {every}", "detail": "按 HEARTBEAT.md 检查单巡视，有情况才告诉你", "enabled": True})
     try:
@@ -842,7 +842,7 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
         now = datetime.now()
         state = CronState(root)
         jobs, revision = config_snapshot(root)
-        scheduler_enabled = os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
+        scheduler_enabled = os.getenv("VORTOONE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
         for job in jobs:
             last = state.last_run(job.name)
             due = next_due(job.schedule, last, now) if job.enabled else None

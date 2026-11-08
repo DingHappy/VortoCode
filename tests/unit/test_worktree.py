@@ -809,7 +809,7 @@ async def test_dev_parallel_all_attempts_fail_reports_red(monkeypatch, tmp_path)
 
 @pytest.mark.asyncio
 async def test_dev_attempts_env_override(monkeypatch, tmp_path):
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "3")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "3")
     import src.agents.worktree as wt
     from src.agents.main_agent import build_dev_tools
     state = {"n": 0}
@@ -1017,7 +1017,7 @@ def test_run_tests_unattended_fails_closed_without_backend(tmp_path, monkeypatch
     from src.sandbox import policy as sb
     from src.agents.worktree import run_tests
     marker = tmp_path / "must-not-exist"
-    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.delenv("VORTOONE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
 
     result = run_tests(

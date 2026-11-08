@@ -18,24 +18,24 @@ def _make(ledger: RunLedger, index: int, status: str = "done") -> CommandRun:
 
 
 def test_max_run_files_reads_env_and_clamps(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_MAX_RUN_FILES", raising=False)
+    monkeypatch.delenv("VORTOONE_MAX_RUN_FILES", raising=False)
     assert max_run_files() == 200
 
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "37")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "37")
     assert max_run_files() == 37
 
     # 手滑写个 0 不该把整个运行台账清空——当作没配，回落默认值
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "0")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "0")
     assert max_run_files() == 200
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "-5")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "-5")
     assert max_run_files() == 200
 
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "不是数字")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "不是数字")
     assert max_run_files() == 200
 
 
 def test_rotation_keeps_newest_and_drops_oldest(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "10")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "10")
     ledger = RunLedger(str(tmp_path))
     created = [_make(ledger, i) for i in range(25)]
 
@@ -50,7 +50,7 @@ def test_rotation_keeps_newest_and_drops_oldest(tmp_path, monkeypatch):
 
 def test_list_limit_bounds_how_many_files_are_parsed(tmp_path, monkeypatch):
     """`limit` 必须真的少读文件，而不是读完再切片——它是给 900ms 轮询用的。"""
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "100")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "100")
     ledger = RunLedger(str(tmp_path))
     for i in range(30):
         _make(ledger, i)
@@ -79,7 +79,7 @@ def test_unprocessed_failed_runs_survive_rotation(tmp_path, monkeypatch):
 
     决策队列靠 run:<id> 把失败摆到人面前；删掉 = 待办没被看见就静默消失。
     """
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "5")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "5")
     ledger = RunLedger(str(tmp_path))
 
     old_failures = [_make(ledger, i, status="failed") for i in range(4)]
@@ -96,7 +96,7 @@ def test_unprocessed_failed_runs_survive_rotation(tmp_path, monkeypatch):
 
 def test_dismissed_failed_runs_become_rotatable(tmp_path, monkeypatch):
     """人处理掉（dismiss）之后，失败记录就不再受保护——否则失败记录永远清不掉。"""
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "5")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "5")
     ledger = RunLedger(str(tmp_path))
     stale = [_make(ledger, i, status="failed") for i in range(4)]
 
@@ -112,7 +112,7 @@ def test_dismissed_failed_runs_become_rotatable(tmp_path, monkeypatch):
 
 def test_running_runs_are_never_rotated(tmp_path, monkeypatch):
     """没结束的 run 删了，recover_interrupted 就再也认不出这条失联进程。"""
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "5")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "5")
     ledger = RunLedger(str(tmp_path))
     live = [_make(ledger, i, status=status)
             for i, status in enumerate(["queued", "running", "cancelling"])]
@@ -130,7 +130,7 @@ def test_running_runs_are_never_rotated(tmp_path, monkeypatch):
 
 def test_rotation_exceeds_cap_rather_than_deleting_protected(tmp_path, monkeypatch):
     """全是受保护记录时，宁可超出上限也不删——上限是软的，证据不是。"""
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "3")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "3")
     ledger = RunLedger(str(tmp_path))
     failures = [_make(ledger, i, status="failed") for i in range(12)]
 
@@ -141,7 +141,7 @@ def test_rotation_exceeds_cap_rather_than_deleting_protected(tmp_path, monkeypat
 
 def test_prune_removes_corrupt_files(tmp_path, monkeypatch):
     """损坏的记录读不出状态，谈不上保护，顺手清掉而不是让它永久占位。"""
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "3")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "3")
     ledger = RunLedger(str(tmp_path))
     directory = tmp_path / ".vortocode" / "runs"
     directory.mkdir(parents=True, exist_ok=True)
@@ -156,7 +156,7 @@ def test_prune_removes_corrupt_files(tmp_path, monkeypatch):
 
 def test_updating_an_existing_run_does_not_trigger_rotation(tmp_path, monkeypatch):
     """_monitor 每收一段输出就 save 一次；那条路径上不该做轮转扫描。"""
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "10")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "10")
     ledger = RunLedger(str(tmp_path))
     run = _make(ledger, 0, status="running")
 
@@ -180,7 +180,7 @@ def test_decision_queue_still_surfaces_old_failed_runs(tmp_path, monkeypatch):
     """端到端：失败 run 被挤成最旧之后，决策队列仍然捞得到它。"""
     from src.workflow.tasks.decisions import build_decision_queue
 
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "5")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "5")
     ledger = RunLedger(str(tmp_path))
     failed = _make(ledger, 0, status="failed")
     for i in range(20):
@@ -193,7 +193,7 @@ def test_decision_queue_still_surfaces_old_failed_runs(tmp_path, monkeypatch):
 
 def test_cron_records_also_rotate(tmp_path, monkeypatch):
     """cron 走的是直接 save（不经 create），轮转钩子必须也覆盖它。"""
-    monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "6")
+    monkeypatch.setenv("VORTOONE_MAX_RUN_FILES", "6")
     ledger = RunLedger(str(tmp_path))
     for i in range(20):
         run = CommandRun.new(f"routine {i}", "cron")

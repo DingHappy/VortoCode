@@ -29,6 +29,6 @@
 
 回归使用纯快照、临时 Git 仓库、假 CLI、模型替身与注入的 reviewer/worker，覆盖执行身份、状态和副作用组合，未开始的安全接手，启动后的限流与普通失败，递归接手拒绝，工作区保留/复用拒绝，以及开发和审查内层重试的停止。测试不调用真实 CLI 账号或真实模型。
 
-本轮新增 29 个离线回归，并调整原限流接手用例以符合新合同。最终 `VORTOCODE_GATE_JOBS=4 bash scripts/ci-local.sh changed`：Ruff、27 个配置范围源码文件的 mypy、Python 5367 passed / 10 skipped、交付链路 canary 25 passed、Desktop tsc 与 1233 项 Vitest 通过；Python 有 10 项已有弃用警告。原生 Cargo 因缺少 runtime 构建产物跳过，不作原生安装或真实 CLI 验收结论。
+本轮新增 29 个离线回归，并调整原限流接手用例以符合新合同。最终 `VORTOONE_GATE_JOBS=4 bash scripts/ci-local.sh changed`：Ruff、27 个配置范围源码文件的 mypy、Python 5367 passed / 10 skipped、交付链路 canary 25 passed、Desktop tsc 与 1233 项 Vitest 通过；Python 有 10 项已有弃用警告。原生 Cargo 因缺少 runtime 构建产物跳过，不作原生安装或真实 CLI 验收结论。
 
 这是当前执行调用链的恢复边界，不是跨用户回合的持久总预算或全系统的恢复平台。目标/任务状态版本化、通知投递回执、跨轮次预算以及业务数据灾备演练仍按后续阶段处理；本轮不新增自动恢复授权，不修改原实验开关的默认关闭状态。

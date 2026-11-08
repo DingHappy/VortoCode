@@ -40,7 +40,7 @@ def record_response(config, model: str, prompt: int, completion: int, exact: boo
 def configured_tariff(provider: str, model: str):
     """Only explicit operator prices, keyed by provider:model; no guessed catalog price."""
     try:
-        prices = json.loads(os.getenv("VORTOCODE_MODEL_PRICES", "{}"))
+        prices = json.loads(os.getenv("VORTOONE_MODEL_PRICES", "{}"))
         price = prices.get(f"{provider}:{model}")
         if (not isinstance(price, dict) or set(price) != {"input_per_million", "output_per_million", "currency"}
                 or price["currency"] not in {"USD", "CNY", "EUR"}

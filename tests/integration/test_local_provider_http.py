@@ -80,8 +80,8 @@ def local_endpoint(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
     monkeypatch.setenv("NO_PROXY", "")
     monkeypatch.setenv("OPENAI_API_KEY", "cloud-canary-must-not-leak")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_LOCAL_BASE", f"http://127.0.0.1:{server.server_port}/v1")
-    monkeypatch.delenv("VORTOCODE_PROVIDER_LOCAL_KEY", raising=False)
+    monkeypatch.setenv("VORTOONE_PROVIDER_LOCAL_BASE", f"http://127.0.0.1:{server.server_port}/v1")
+    monkeypatch.delenv("VORTOONE_PROVIDER_LOCAL_KEY", raising=False)
     reset_cache()
     try:
         yield requests, mode
@@ -174,7 +174,7 @@ async def test_role_file_routes_original_agent_through_read_tool_and_result(loca
     from src.agents.delegation import build_subagent
     requests, mode = local_endpoint
     mode["agent_roundtrip"] = True
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "1")
     role_dir = tmp_path / ".vortocode" / "agents"
     role_dir.mkdir(parents=True)
     (role_dir / "local-reader.md").write_text("---\nname: local-reader\ntools: read\nmodel: local:fixture:7b\nmax_steps: 3\n---\nRead README.md and report findings.")

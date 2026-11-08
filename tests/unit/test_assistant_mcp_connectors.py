@@ -48,7 +48,7 @@ def configured(tmp_path, monkeypatch):
     secret.chmod(0o600)
     monkeypatch.setattr(mcp_tools.Path, "home", classmethod(lambda cls: home))
     monkeypatch.chdir(root)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     agent = MainAgent([])
     agent._capabilities = SimpleNamespace(profile="external")
     record = {"agent": agent}
@@ -86,7 +86,7 @@ async def test_manual_general_connection_loads_named_credential_and_keeps_readon
 async def test_other_scopes_never_load_connector_secrets(configured, monkeypatch, scope):
     from src.agents import mcp_tools
     c = configured
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", scope)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", scope)
     monkeypatch.setattr(mcp_tools, "load_connector_secret", lambda _: pytest.fail("Secret read outside General"))
     with pytest.raises(HTTPException) as caught:
         await c.route("fixture")

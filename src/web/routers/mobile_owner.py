@@ -1,7 +1,7 @@
 """手机 App 作为主人终端的写入（ADR-011 / ADR-009 修订）：绑定钥匙、随手记、等你决定、撤销。
 
 都是确定性的文件操作，不运行模型——手机网关进程本来就没有 Agent、调度和 IM。默认关闭：
-只有设置 ``VORTOCODE_MOBILE_WRITES=1`` 才开放，部署上去不等于开放写入；ADR-009 修订要求先完成
+只有设置 ``VORTOONE_MOBILE_WRITES=1`` 才开放，部署上去不等于开放写入；ADR-009 修订要求先完成
 WireGuard 直连（不开放公网 HTTP 端口）再开启。
 
 身份三层：原生会话（Bearer）证明是哪台设备；每个写请求再带这台设备的签名（见 gateway/mobile_signing）；
@@ -30,7 +30,7 @@ _AUTH_ERRORS = (BrowserDenied, BrowserNotReady, AccountUnavailable, AccountRejec
 
 
 def writes_enabled() -> bool:
-    return os.getenv("VORTOCODE_MOBILE_WRITES", "").strip() == "1"
+    return os.getenv("VORTOONE_MOBILE_WRITES", "").strip() == "1"
 
 
 def _reply(data: dict, status: int = 200) -> JSONResponse:

@@ -1,6 +1,6 @@
 """任务小组的开发成员（ADR-014 S2）：一次性 worktree 里改代码 → VortoOne 验证 → 落本地分支。
 
-假的 ACP 框架放在 ``$VORTOCODE_WORKER_HOME/bin/opencode``：它像 OpenCode 一样先请求权限、获准后自己写文件。
+假的 ACP 框架放在 ``$VORTOONE_WORKER_HOME/bin/opencode``：它像 OpenCode 一样先请求权限、获准后自己写文件。
 离线验证：只能改 worktree 里的文件、不能执行命令；``.env`` 不进 worktree；改动落成分支并记交付；
 返工轮在上一轮分支上继续；只有 Desktop 会话能开这种小组。
 """
@@ -89,8 +89,8 @@ def project(tmp_path, monkeypatch):
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     registry = tmp_path / "resident.json"
     registry.write_text(json.dumps({"projects": [{"name": "Proj", "repo_root": str(repo), "port": 8099}]}))
-    for key, value in {"VORTOCODE_WORKER_HOME": str(home), "OPENAI_API_BASE": "https://relay.example/v1",
-                       "OPENAI_API_KEY": "sk-relay", "VORTOCODE_RESIDENT_PROJECTS": str(registry),
+    for key, value in {"VORTOONE_WORKER_HOME": str(home), "OPENAI_API_BASE": "https://relay.example/v1",
+                       "OPENAI_API_KEY": "sk-relay", "VORTOONE_RESIDENT_PROJECTS": str(registry),
                        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                        "GIT_COMMITTER_EMAIL": "t@t"}.items():
         monkeypatch.setenv(key, value)

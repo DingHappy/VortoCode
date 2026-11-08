@@ -40,6 +40,6 @@
 
 回归使用临时文件、原 TaskRunner 加受控 worker 和客户端 HTTP 替身，覆盖已完成任务的响应重试、并发调用、刷新后新一轮、写入成功但回报失败、准备/排队异常与重启。没有真实模型调用、常驻主机部署或原生应用安装验收。
 
-本轮新增后端 32 项、客户端 2 项回归。最终 `VORTOCODE_GATE_JOBS=4 bash scripts/ci-local.sh changed`：Ruff、配置范围 mypy、Python 5319 passed / 10 skipped、交付链路 canary 25 passed、Desktop tsc 和 1233 项 Vitest 通过。Python 有 10 项已有弃用警告；原生 Cargo 因缺少 runtime 构建产物跳过，不作通过或原生验收结论。
+本轮新增后端 32 项、客户端 2 项回归。最终 `VORTOONE_GATE_JOBS=4 bash scripts/ci-local.sh changed`：Ruff、配置范围 mypy、Python 5319 passed / 10 skipped、交付链路 canary 25 passed、Desktop tsc 和 1233 项 Vitest 通过。Python 有 10 项已有弃用警告；原生 Cargo 因缺少 runtime 构建产物跳过，不作通过或原生验收结论。
 
 监管确认卡通知补发与跨目标累计预算仍是独立开放事项。本合同只处理开发目标保存和提交的一致性，不新增自动推进。

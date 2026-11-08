@@ -195,7 +195,7 @@ python -m evals --matrix "mimo-v2.5,mimo-v2.5-pro × native,prompt"
 ```bash
 cp config/cron.example.yaml .vortocode/cron.yaml   # .vortocode/ 是 gitignored，样例在 config/
 # 把 nightly_evals 的 enabled 改成 true，然后：
-VORTOCODE_CRON=1 vortocode server                  # 起调度（默认不跑自主作业，必须 opt-in）
+VORTOONE_CRON=1 vortocode server                  # 起调度（默认不跑自主作业，必须 opt-in）
 
 vortocode cron run nightly_evals                   # 先手动触发一次验收，别直接指望夜里
 ```

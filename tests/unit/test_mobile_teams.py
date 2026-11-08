@@ -19,9 +19,9 @@ RELAY = {"Authorization": "Bearer relay-token"}
 def assistant(tmp_path, monkeypatch):
     """常驻助理进程：有小组调度器、有本机专用接口、有一台钥匙已信任的手机。"""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
     audits = []
     monkeypatch.setattr("src.gateway.audit.record_decision_audit", lambda *a, **k: audits.append(k))
     runner = FakeRunner(str(tmp_path))

@@ -350,7 +350,7 @@ def test_preflight_passes_with_identity(tmp_path):
 async def test_dev_auto_refuses_to_start_without_identity(tmp_path, monkeypatch):
     """预检不过时 dev_auto 必须**在分解之前**返回——一次 LLM 都不许调。
 
-    自愈层上线后这条要在**自愈关掉**（VORTOCODE_SELF_HEAL=0）时验：不变量本身没变——
+    自愈层上线后这条要在**自愈关掉**（VORTOONE_SELF_HEAL=0）时验：不变量本身没变——
     "环境不合格就别烧 token"——只是现在多了一条更好的出路（能修就修好，见下一条测试）。
     修不了的东西照旧必须拦住，那才是这条测试真正守着的东西。
     """
@@ -360,7 +360,7 @@ async def test_dev_auto_refuses_to_start_without_identity(tmp_path, monkeypatch)
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-    monkeypatch.setenv("VORTOCODE_SELF_HEAL", "0")
+    monkeypatch.setenv("VORTOONE_SELF_HEAL", "0")
 
     async def _boom(*a, **k):
         raise AssertionError("预检没过却开始分解了——白烧 token")

@@ -285,7 +285,7 @@ async def test_real_read_agent_consumes_bounded_untrusted_inputs_and_can_ask(tmp
         return agent
 
     monkeypatch.setattr(adapter, "MainAgent", factory)
-    monkeypatch.setenv("VORTOCODE_MAX_STEPS", "999")
+    monkeypatch.setenv("VORTOONE_MAX_STEPS", "999")
     service.execute = lambda task, collaboration: adapter.execute_dispatch(str(tmp_path), task, collaboration)
     service.release("owner", child.id, 1)
     await runner.join(child.id)
@@ -357,8 +357,8 @@ async def test_http_dependency_submission_release_auth_and_view(tmp_path, monkey
     service, runner, calls = fixture(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(tasks, "_RUNNER", runner)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "local-dependency-test")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "local-dependency-test")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     parent = await source(service, runner, accept=True)
     headers = {"Authorization": "Bearer local-dependency-test"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:

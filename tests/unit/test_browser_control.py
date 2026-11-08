@@ -33,7 +33,7 @@ def test_restricted_sites_and_private_hosts():
 
 
 def test_user_can_add_but_not_remove_blocked_domains(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_BROWSER_BLOCKED_DOMAINS", "intranet.example.com, .corp.example")
+    monkeypatch.setenv("VORTOONE_BROWSER_BLOCKED_DOMAINS", "intranet.example.com, .corp.example")
     assert restricted_reason("https://wiki.intranet.example.com/")
     assert restricted_reason("https://a.corp.example/")
     assert restricted_reason("https://paypal.com/")
@@ -44,13 +44,13 @@ def test_interact_is_never_pre_authorized():
 
 
 def test_enabled_only_for_desktop_web_with_opt_in(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_ENABLE_BROWSER_CONTROL", raising=False)
-    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
+    monkeypatch.delenv("VORTOONE_ENABLE_BROWSER_CONTROL", raising=False)
+    monkeypatch.setenv("VORTOONE_DESKTOP_SIDECAR", "1")
     assert not browser_control_enabled("web")
-    monkeypatch.setenv("VORTOCODE_ENABLE_BROWSER_CONTROL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_BROWSER_CONTROL", "1")
     assert browser_control_enabled("web")
     assert not browser_control_enabled("im") and not browser_control_enabled("cli")
-    monkeypatch.delenv("VORTOCODE_DESKTOP_SIDECAR")
+    monkeypatch.delenv("VORTOONE_DESKTOP_SIDECAR")
     assert not browser_control_enabled("web")
 
 

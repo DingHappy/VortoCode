@@ -1042,7 +1042,7 @@ mod tests {
     #[ignore = "explicit real SSH target; no model, frames or input"]
     fn live_owned_ssh_forward_status_and_cleanup() {
         let target = normalize(
-            &std::env::var("VORTOCODE_DESKTOP_ACCEPTANCE_TARGET").expect("explicit target"),
+            &std::env::var("VORTOONE_DESKTOP_ACCEPTANCE_TARGET").expect("explicit target"),
         )
         .unwrap();
         let mut session = Session::start(&target).unwrap();

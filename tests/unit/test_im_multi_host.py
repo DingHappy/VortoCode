@@ -71,11 +71,11 @@ def setup_config(tmp_path, monkeypatch, data=None):
     root.mkdir(exist_ok=True)
     path = tmp_path / "host.json"
     path.write_text(json.dumps(data or configuration()))
-    monkeypatch.setenv("VORTOCODE_IM_BINDINGS_FILE", str(path))
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
-    monkeypatch.setenv("VORTOCODE_IM", "")
-    monkeypatch.setenv("VORTOCODE_IM_ROLE", "interactive")
-    for key in ("VORTOCODE_IM_ALLOW_FROM", "VORTOCODE_TG_ALLOW_FROM", "VORTOCODE_DD_ALLOW_FROM"):
+    monkeypatch.setenv("VORTOONE_IM_BINDINGS_FILE", str(path))
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_IM", "")
+    monkeypatch.setenv("VORTOONE_IM_ROLE", "interactive")
+    for key in ("VORTOONE_IM_ALLOW_FROM", "VORTOONE_TG_ALLOW_FROM", "VORTOONE_DD_ALLOW_FROM"):
         monkeypatch.delenv(key, raising=False)
     return root, path
 
@@ -116,7 +116,7 @@ async def test_host_protects_all_declared_secrets_before_start_and_after_cleanup
     names = {"CREDENTIAL_CASE_TELEGRAM_TOKEN", "CREDENTIAL_CASE_DINGTALK_CLIENT_SECRET"}
     for name in names:
         monkeypatch.setenv(name, "synthetic-host-secret")
-    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    monkeypatch.delenv("VORTOONE_ENV_PASSTHROUGH", raising=False)
     def factory(spec):
         assert names.isdisjoint(child_env())  # Includes bindings not yet constructed.
         if fail and spec.id == "binding-1":
@@ -319,19 +319,19 @@ def test_invalid_complete_config_fails_before_any_binding_starts(tmp_path, monke
 @pytest.mark.parametrize("case", ["relative", "inside-project", "world-writable", "malformed", "duplicate-key", "large", "general", "legacy-also"])
 def test_host_configuration_trust_and_scope_are_explicit(tmp_path, monkeypatch, case):
     root, path = setup_config(tmp_path, monkeypatch)
-    if case == "relative": monkeypatch.setenv("VORTOCODE_IM_BINDINGS_FILE", "host.json")
+    if case == "relative": monkeypatch.setenv("VORTOONE_IM_BINDINGS_FILE", "host.json")
     elif case == "inside-project":
         inside = root / "bots.json"
         inside.write_text(path.read_text())
-        monkeypatch.setenv("VORTOCODE_IM_BINDINGS_FILE", str(inside))
+        monkeypatch.setenv("VORTOONE_IM_BINDINGS_FILE", str(inside))
     elif case == "world-writable":
         if os.name == "nt": pytest.skip("POSIX file mode check")
         path.chmod(0o666)
     elif case == "malformed": path.write_text("{SECRET_NOT_FOR_ERRORS")
     elif case == "duplicate-key": path.write_text('{"version":1,"version":1}')
     elif case == "large": path.write_text("x" * 65537)
-    elif case == "general": monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    elif case == "legacy-also": monkeypatch.setenv("VORTOCODE_IM", "telegram")
+    elif case == "general": monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    elif case == "legacy-also": monkeypatch.setenv("VORTOONE_IM", "telegram")
     with pytest.raises(im_service.IMConfigError) as error:
         im_host.load_host_config(str(root))
     assert "SECRET_NOT_FOR_ERRORS" not in str(error.value)
@@ -341,15 +341,15 @@ def test_environment_references_are_resolved_without_mutating_process_config(mon
     spec = im_host.BindingSpec("binding-a", "bot-a", "telegram", "123", "owner", "MY_RESEARCH", "research_read")
     monkeypatch.setenv("MY_RESEARCH_TOKEN", "123:synthetic-secret")
     monkeypatch.setenv("MY_RESEARCH_OWNER_ID", "42")
-    monkeypatch.setenv("VORTOCODE_TG_TOKEN", "unrelated-primary-value")
+    monkeypatch.setenv("VORTOONE_TG_TOKEN", "unrelated-primary-value")
     adapter, owner = im_host._adapter(spec)
     assert adapter.conversation_identity() == "123" and owner == "42"
-    assert os.environ["VORTOCODE_TG_TOKEN"] == "unrelated-primary-value"
+    assert os.environ["VORTOONE_TG_TOKEN"] == "unrelated-primary-value"
 
 
 async def test_runtime_lifespan_consumes_config_and_owns_the_whole_host(tmp_path, monkeypatch):
     root, _ = setup_config(tmp_path, monkeypatch, configuration(4))
-    for key in ("VORTOCODE_CRON", "VORTOCODE_HEARTBEAT", "VORTOCODE_SUPERVISOR_PID"):
+    for key in ("VORTOONE_CRON", "VORTOONE_HEARTBEAT", "VORTOONE_SUPERVISOR_PID"):
         monkeypatch.setenv(key, "")
     adapters = []
     def factory(spec):
@@ -514,7 +514,7 @@ async def test_logical_bot_reassignment_does_not_import_another_bots_history(tmp
 
 async def test_explicit_empty_allowlist_still_blocks_managed_inputs(tmp_path, monkeypatch):
     root, _ = setup_config(tmp_path, monkeypatch, configuration(1))
-    monkeypatch.setenv("VORTOCODE_IM_ALLOW_FROM", "")
+    monkeypatch.setenv("VORTOONE_IM_ALLOW_FROM", "")
     client = ScriptedLLM("must not run")
     inject_models(monkeypatch, {"account-0": client})
     host = await im_host.start_host(str(root), runner=FakeRunner(), register_worker=lambda _worker: None,

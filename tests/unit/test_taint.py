@@ -423,7 +423,7 @@ async def test_conversation_evidence_tools_taint_current_turn(tmp_path, name):
 def test_realtime_memory_candidates_keep_conversation_evidence_taint(tmp_path, monkeypatch, name, same_turn):
     from src.web.routers.realtime import _propose_turn_memories
     seen = []
-    monkeypatch.setenv('VORTOCODE_WORKSPACE_SCOPE', 'general')
+    monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     monkeypatch.setattr('src.memory.assistant_profile.propose_memories', lambda *args, **kwargs: seen.append(kwargs))
     sess = {'repo_root': str(tmp_path), 'activities': [{'type': 'agent_tool', 'name': name, 'rid': 'current' if same_turn else 'previous'}]}
     _propose_turn_memories(sess, 'current', ['fictional preference'])

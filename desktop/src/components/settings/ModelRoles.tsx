@@ -40,10 +40,10 @@ export function ResidentWorkers({ view }: { view: ResidentWorkersView }) {
   let body;
   if (view.error) body = <small className="danger">{view.error}</small>;
   else if (!summary) body = <small>该实例版本还不会报告外部执行者状态。</small>;
-  else if (summary.experimental === false) body = <small>该实例没有开启实验功能（VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS），实现与审查用内置子 Agent。</small>;
+  else if (summary.experimental === false) body = <small>该实例没有开启实验功能（VORTOONE_EXPERIMENTAL_EXTERNAL_WORKERS），实现与审查用内置子 Agent。</small>;
   else if (!Object.keys(summary.roles).length) body = <small>未配置外部执行者：实现与审查用内置子 Agent。</small>;
   else body = <>
-    {summary.mode !== "resident" && <small className="danger">该实例没有设 VORTOCODE_WORKER_HOME，会用服务账号自己的个人 CLI 配置；建议改成常驻模式的专用登录。</small>}
+    {summary.mode !== "resident" && <small className="danger">该实例没有设 VORTOONE_WORKER_HOME，会用服务账号自己的个人 CLI 配置；建议改成常驻模式的专用登录。</small>}
     {Object.entries(summary.roles).sort().map(([role, worker]) => {
       const item = summary.workers.find(entry => entry.worker === worker);
       const state = !item?.found ? <span className="danger">找不到 {worker} 命令</span>

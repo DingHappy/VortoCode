@@ -80,7 +80,7 @@ it("shows the resident instance read-only and separately from the local engine",
 it("warns when a resident instance still uses the service account's personal CLI config", () => {
   const view = (summary: typeof residentSummary | null) => ({ place: "resident" as const, name: "x", summary });
   const html = renderToStaticMarkup(<ResidentWorkers view={view({ ...residentSummary, mode: "local", home: null } as never)} />);
-  expect(html).toContain("没有设 VORTOCODE_WORKER_HOME");
+  expect(html).toContain("没有设 VORTOONE_WORKER_HOME");
   expect(renderToStaticMarkup(<ResidentWorkers view={view(null)} />)).toContain("还不会报告");
   expect(renderToStaticMarkup(<ResidentWorkers view={view({ ...residentSummary, roles: {} as never })} />)).toContain("未配置外部执行者");
 });

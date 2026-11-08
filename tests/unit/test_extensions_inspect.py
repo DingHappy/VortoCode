@@ -35,7 +35,7 @@ def test_inspect_extensions_reports_effective_sources_without_sensitive_bodies(t
         "    url: https://mcp.example.test/private\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
+    monkeypatch.setenv("VORTOONE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
 
     from src.workflow.workbench.extensions_inspect import inspect_extensions
 
@@ -68,7 +68,7 @@ def test_extensions_inspect_route_uses_project_boundary(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / ".git").mkdir(parents=True)
     monkeypatch.chdir(root)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     from fastapi.testclient import TestClient
     from src.web.server import app
 

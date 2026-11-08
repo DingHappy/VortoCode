@@ -70,7 +70,7 @@ def test_cron_overview_reports_jobs_with_state(tmp_path, monkeypatch):
     state.mark("duty", datetime(2026, 7, 21, 2, 0))
     state.record_result("duty", ok=False)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_CRON", raising=False)
+    monkeypatch.delenv("VORTOONE_CRON", raising=False)
 
     payload = TestClient(app).get("/api/cron").json()
 
@@ -126,18 +126,18 @@ def test_trigger_rejects_disabled_job(tmp_path, monkeypatch):
 
 
 def test_trigger_command_job_requires_shell_gate(tmp_path, monkeypatch):
-    """command 作业的 HTTP 触发与 /api/runs 同闸：未开 VORTOCODE_ENABLE_SHELL 即 403
+    """command 作业的 HTTP 触发与 /api/runs 同闸：未开 VORTOONE_ENABLE_SHELL 即 403
     fail-closed（对抗审查 F3）；开闸后放行。"""
     _write_cron_yaml(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_ENABLE_SHELL", raising=False)
+    monkeypatch.delenv("VORTOONE_ENABLE_SHELL", raising=False)
     assert TestClient(app).post("/api/cron/duty/run").status_code == 403
 
     async def fake_run(cwd, name):
         return None
 
     monkeypatch.setattr("src.web.routers.cron._run_named_job", fake_run)
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_SHELL", "1")
     assert TestClient(app).post("/api/cron/duty/run").json()["started"] is True
 
 

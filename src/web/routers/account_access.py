@@ -83,7 +83,7 @@ async def registration():
         raise HTTPException(503, "账号服务配置暂不可用") from None
     public = None
     try:
-        public = account_origin(os.getenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", "")) + "/mobile"
+        public = account_origin(os.getenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", "")) + "/mobile"
     except ValueError:
         pass
     return {**result, "account_issuer": issuer, "mobile_entry_url": public}

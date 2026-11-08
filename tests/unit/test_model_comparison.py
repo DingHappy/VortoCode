@@ -20,9 +20,9 @@ def configured(monkeypatch):
     monkeypatch.setenv("OPENAI_API_BASE", "https://models.example.test/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-model-key")
     monkeypatch.setenv("DEFAULT_MODEL", "large")
-    monkeypatch.setenv("VORTOCODE_MODEL_CHOICES", "small,large")
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "research=default:small,implement=default:large,assess=default:judge")
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", json.dumps({
+    monkeypatch.setenv("VORTOONE_MODEL_CHOICES", "small,large")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "research=default:small,implement=default:large,assess=default:judge")
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", json.dumps({
         "default:small": {"input_per_million": .1, "output_per_million": .2, "currency": "CNY"},
         "default:large": {"input_per_million": 1, "output_per_million": 2, "currency": "CNY"},
         "default:judge": {"input_per_million": 1, "output_per_million": 2, "currency": "CNY"}}))
@@ -92,9 +92,9 @@ def test_latency_tradeoff_does_not_become_a_cheapest_model_order(tmp_path):
 
 def test_changing_price_blocks_ranking_without_rewriting_historical_cost(tmp_path, monkeypatch):
     service = CollaborationService(str(tmp_path), "owner"); current = populate(service)
-    prices = json.loads(os.environ["VORTOCODE_MODEL_PRICES"])
+    prices = json.loads(os.environ["VORTOONE_MODEL_PRICES"])
     prices["default:small"]["input_per_million"] = 50
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", json.dumps(prices))
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", json.dumps(prices))
     result = comparison(service, current)
     small = next(r for r in result["candidates"] if r["model"] == "small")
     assert "pricing_missing_or_changed" in small["missing"] and not result["recommended_target"]
@@ -125,9 +125,9 @@ def test_changed_judge_tariff_is_also_a_comparison_gap(tmp_path, monkeypatch):
     service = CollaborationService(str(tmp_path), "owner"); current = populate(service)
     cheap = next(t for t in service.list() if t.collaboration["model_target"]["model"] == "small")
     judge_fee(service, cheap, amount=.000001)
-    prices = json.loads(os.environ["VORTOCODE_MODEL_PRICES"])
+    prices = json.loads(os.environ["VORTOONE_MODEL_PRICES"])
     prices["default:judge"]["input_per_million"] = 100
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", json.dumps(prices))
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", json.dumps(prices))
     result = comparison(service, current)
     small = next(r for r in result["candidates"] if r["model"] == "small")
     assert "pricing_missing_or_changed" in small["missing"] and result["recommended_target"] is None
@@ -145,9 +145,9 @@ def test_unknown_or_other_currency_judge_fee_is_not_zero(tmp_path, amount, curre
 
 
 def test_mixed_worker_currencies_are_not_converted_or_ranked(tmp_path, monkeypatch):
-    prices = json.loads(os.environ["VORTOCODE_MODEL_PRICES"])
+    prices = json.loads(os.environ["VORTOONE_MODEL_PRICES"])
     prices["default:small"]["currency"] = "USD"
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", json.dumps(prices))
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", json.dumps(prices))
     service = CollaborationService(str(tmp_path), "owner"); current = populate(service)
     assert comparison(service, current)["recommended_target"] is None
 
@@ -158,8 +158,8 @@ def test_partial_scan_and_removed_model_configuration_do_not_recommend(tmp_path,
     monkeypatch.setattr(service.ledger, "scan", lambda **kwargs: replace(full, truncated=True))
     result = comparison(service, current)
     assert not result["coverage_complete"] and not result["recommended_target"]
-    monkeypatch.setenv("VORTOCODE_MODEL_CHOICES", "large")
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "implement=default:large,assess=default:judge")
+    monkeypatch.setenv("VORTOONE_MODEL_CHOICES", "large")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "implement=default:large,assess=default:judge")
     assert {r["model"] for r in comparison(service, current)["candidates"]} == {"large"}
 
 
@@ -171,16 +171,16 @@ def test_sparse_evidence_and_explicit_free_prices(tmp_path, monkeypatch):
     result = comparison(service, current)
     assert "too_few_tasks" in next(r for r in result["candidates"] if r["model"] == "small")["missing"]
     # A new repository with explicitly configured zero prices is genuinely zero estimate.
-    prices = json.loads(os.environ["VORTOCODE_MODEL_PRICES"])
+    prices = json.loads(os.environ["VORTOONE_MODEL_PRICES"])
     prices["default:small"].update(input_per_million=0, output_per_million=0)
-    monkeypatch.setenv("VORTOCODE_MODEL_PRICES", json.dumps(prices))
+    monkeypatch.setenv("VORTOONE_MODEL_PRICES", json.dumps(prices))
     other = CollaborationService(str(tmp_path / "other"), "owner"); current = populate(other)
     assert comparison(other, current)["recommended_target"]["model"] == "small"
 
 
 @pytest.mark.asyncio
 async def test_cost_comparison_works_with_judge_disabled_and_never_sends_a_request(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "research=default:small,implement=default:large")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "research=default:small,implement=default:large")
     service = CollaborationService(str(tmp_path), "owner"); current = populate(service)
     async def forbidden(*args, **kwargs): pytest.fail("deterministic comparison must not send")
     monkeypatch.setattr(LLMClient, "chat", forbidden)
@@ -213,7 +213,7 @@ def test_failed_dependencies_stop_before_buying_judgment(tmp_path):
 
 
 def test_candidate_configuration_is_bounded_secret_free_and_has_no_assessor_only_model(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_CHOICES", ",".join(f"model-{n}" for n in range(80)))
+    monkeypatch.setenv("VORTOONE_MODEL_CHOICES", ",".join(f"model-{n}" for n in range(80)))
     result = configured_worker_targets()
     assert len(result["targets"]) == 64 and result["truncated"]
     assert "judge" not in {r["model"] for r in result["targets"]}

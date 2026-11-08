@@ -239,8 +239,8 @@ async def test_http_answer_contract_auth_scope_and_replay(tmp_path, monkeypatch)
     dispatch, runner = pool(tmp_path, execute)
     monkeypatch.setattr(delegations, "get_dispatch_service", lambda: dispatch)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "question-test-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "question-test-token")
     endpoint = f"/api/delegations/{task.id}/answer"
     body = {"session": "owner", "round": 1, "question_id": qid, "answer": "测试环境"}
     headers = {"Authorization": "Bearer question-test-token"}
@@ -249,9 +249,9 @@ async def test_http_answer_contract_auth_scope_and_replay(tmp_path, monkeypatch)
         for change in ({"round": True}, {"answer": False}, {"question_id": "../wrong"}, {"permissions": ["shell"]}):
             assert (await client.post(endpoint, json={**body, **change}, headers=headers)).status_code == 422
         assert (await client.post(endpoint, json={**body, "session": "other"}, headers=headers)).status_code == 409
-        monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+        monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
         assert (await client.post(endpoint, json=body, headers=headers)).status_code == 409
-        monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "scratch")
+        monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "scratch")
         response = await client.post(endpoint, json=body, headers=headers)
         assert response.status_code == 202 and response.json()["answered_question_id"] == qid
         assert response.json()["questions"][0]["status"] == "answered"
@@ -285,7 +285,7 @@ async def test_real_dispatch_rebuilds_contract_and_keeps_role_and_budget_boundar
         return agent
 
     monkeypatch.setattr(adapter, "MainAgent", factory)
-    monkeypatch.setenv("VORTOCODE_MAX_STEPS", "100")
+    monkeypatch.setenv("VORTOONE_MAX_STEPS", "100")
     dispatch, runner = pool(tmp_path, lambda task, service: adapter.execute_dispatch(str(tmp_path), task, service))
     task, _ = dispatch.submit(session="owner", request_id="research", prompt="核对配置", max_steps=2, timeout_seconds=30)
     await runner.join(task.id)

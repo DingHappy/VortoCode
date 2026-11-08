@@ -80,9 +80,9 @@ run_python_gate "mypy（范围见 pyproject [tool.mypy]）" mypy python3 -m mypy
 # CI 刻意不给 API key / shell / browser：保证测试离线、确定性。这里保持一致，
 # 否则本地"绿"可能只是因为你的 .env 里有 key，而 CI 上根本不是这个环境。
 export OPENAI_API_KEY=""
-export VORTOCODE_API_TOKEN=""
-export VORTOCODE_ENABLE_SHELL=""
-export VORTOCODE_ENABLE_BROWSER=""
+export VORTOONE_API_TOKEN=""
+export VORTOONE_ENABLE_SHELL=""
+export VORTOONE_ENABLE_BROWSER=""
 # 同理屏蔽**全局 git 身份**：开发机上 user.name/email 是配好的，CI runner 上没有。
 # 依赖这份"环境自带身份"的测试在本地永远绿、一上 CI 全红——2026-07-26 就这么被咬了一次
 # （新加的流水线预检打挂 8 条存量测试，本地门禁却全绿）。测试要自带身份，不许蹭环境的。
@@ -94,12 +94,12 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # 实测 2026-08-01（本机 10 核）：串行 260s → 并行 82s。
 #   --dist loadfile：**同一个文件的用例始终落在同一个 worker**。文件级的 fixture 与
 #   模块状态假设因此照旧成立——按用例散开（默认 load）才是把隐藏耦合变成随机红的那种改法。
-#   0 = 显式关掉（VORTOCODE_GATE_JOBS=0），排查疑似并行相关的怪现象时用。
+#   0 = 显式关掉（VORTOONE_GATE_JOBS=0），排查疑似并行相关的怪现象时用。
 #
 # 注意先后：**先把那条 69 秒的空跑测试修掉再谈并行**。并行只是把墙钟摊开，
 # 单条 69 秒的用例照样卡住它所在的 worker——那条占了全套 349s 里的 20%（见 #T3）。
 PYTEST_PAR=()
-JOBS="${VORTOCODE_GATE_JOBS:-auto}"
+JOBS="${VORTOONE_GATE_JOBS:-${VORTOCODE_GATE_JOBS:-auto}}"
 if [ "$JOBS" != "0" ] && python3 -c "import xdist" 2>/dev/null; then
   PYTEST_PAR=(-n "$JOBS" --dist loadfile)
 fi

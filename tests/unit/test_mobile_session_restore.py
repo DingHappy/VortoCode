@@ -55,7 +55,7 @@ def test_changed_ownership_or_expiry_is_not_restored(setup, monkeypatch):  # noq
     client, _sessions, now, _calls, root, _ = setup
     headers = _login(client)
     client.get("/api/mobile/native/bootstrap", headers=headers)
-    monkeypatch.setenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", "https://other.test")   # 入口换了
+    monkeypatch.setenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", "https://other.test")   # 入口换了
     _restart(monkeypatch, now)
     assert client.get("/api/mobile/native/bootstrap", headers=headers).status_code in (401, 503)
     assert NativeSessionStore(str(root))._read() == {}                        # 不认就删

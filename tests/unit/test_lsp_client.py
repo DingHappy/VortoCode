@@ -146,7 +146,7 @@ def test_lsp_server_env_strips_operating_secret(monkeypatch):
     """语言服务器子进程 env 必须显式传（非继承父进程整套）且剥掉操作密钥。"""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-must-not-leak")
     monkeypatch.setenv("PATH", "/usr/bin")
-    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    monkeypatch.delenv("VORTOONE_ENV_PASSTHROUGH", raising=False)
     env = _capture_lsp_env(monkeypatch)
     assert env is not None, "必须显式传 env（env=None 即继承父进程整套 = 密钥泄漏）"
     assert "OPENAI_API_KEY" not in env, "操作密钥必须被 child_env 剥出语言服务器 env"
@@ -156,6 +156,6 @@ def test_lsp_server_env_strips_operating_secret(monkeypatch):
 def test_lsp_server_env_honors_passthrough(monkeypatch):
     """走的确实是 child_env——allowlist 逃生口能把显式放行的密钥放回（证明非临时黑名单）。"""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-allowed")
-    monkeypatch.setenv("VORTOCODE_ENV_PASSTHROUGH", "OPENAI_API_KEY")
+    monkeypatch.setenv("VORTOONE_ENV_PASSTHROUGH", "OPENAI_API_KEY")
     env = _capture_lsp_env(monkeypatch)
     assert env.get("OPENAI_API_KEY") == "sk-allowed"

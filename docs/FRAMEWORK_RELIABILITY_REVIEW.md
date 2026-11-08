@@ -50,6 +50,6 @@
 
 ## 验收边界
 
-本轮新增 19 个离线回归用例。最终本地 `VORTOCODE_GATE_JOBS=4 bash scripts/ci-local.sh changed`：Ruff 与配置范围的 mypy 通过，Python 全量 5306 passed / 10 skipped，交付链路 canary 25 passed；有 10 项已有弃用警告。未改 Desktop，按 changed 模式跳过其门禁，不把跳过算作通过。
+本轮新增 19 个离线回归用例。最终本地 `VORTOONE_GATE_JOBS=4 bash scripts/ci-local.sh changed`：Ruff 与配置范围的 mypy 通过，Python 全量 5306 passed / 10 skipped，交付链路 canary 25 passed；有 10 项已有弃用警告。未改 Desktop，按 changed 模式跳过其门禁，不把跳过算作通过。
 
 所有故障复现和新增回归使用临时目录、模型/任务/通知替身。没有真实 provider 请求、真实任务执行、服务部署、原生安装或正式发布。上述尚未修复项目仍是开放问题，本轮不将它们记作已解决。

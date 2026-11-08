@@ -19,7 +19,7 @@ def test_per_agent_budget_alert():
 
 def test_total_budget_alert(monkeypatch):
     _reset()
-    monkeypatch.setenv("VORTOCODE_COST_BUDGET", "0.001")
+    monkeypatch.setenv("VORTOONE_COST_BUDGET", "0.001")
     track_usage("gpt-4o", 1000, 500, agent="x")
     assert any(a["type"] == "total_budget_exceeded" for a in cost_tracker.alerts)
 

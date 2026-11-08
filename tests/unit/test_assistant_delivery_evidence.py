@@ -66,7 +66,7 @@ async def test_explicit_refresh_reads_review_but_regular_poll_does_not(tmp_path,
 
     registry = tmp_path / "registry.json"
     registry.write_text(json.dumps({"projects": [{"name": "demo", "repo_root": "/srv/demo", "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(registry))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(registry))
     root = str(tmp_path)
     entry = dispatch.propose(root, project="demo", title="fix", goal="repair")
     dispatch._update(root, entry["id"], lambda item: item.update(status="running", remote_task_id="t1"))

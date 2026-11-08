@@ -14,9 +14,9 @@ from src.web.mobile_server import create_app
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "mobile-exemption-admin-token")
-    monkeypatch.setenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", "https://assistant.example.com")
-    monkeypatch.setenv("VORTOCODE_MOBILE_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "mobile-exemption-admin-token")
+    monkeypatch.setenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", "https://assistant.example.com")
+    monkeypatch.setenv("VORTOONE_MOBILE_STATE_ROOT", str(tmp_path))
     return create_app()
 
 

@@ -20,7 +20,7 @@ def _now() -> str:
 
 
 def trust_store_path() -> Path:
-    override = os.getenv("VORTOCODE_HOOK_TRUST_STORE", "").strip()
+    override = os.getenv("VORTOONE_HOOK_TRUST_STORE", "").strip()
     if override:
         return Path(override).expanduser()
     if os.name == "posix" and Path.home().joinpath("Library").is_dir():

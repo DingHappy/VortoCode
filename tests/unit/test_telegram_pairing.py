@@ -101,8 +101,8 @@ def test_build_adapter_loads_paired_owner(monkeypatch, tmp_path):
 
     pairing._save_owner("123:x", "42", tmp_path)
     monkeypatch.setattr(pairing, "_pairing_dir", lambda state_dir=None: tmp_path)
-    monkeypatch.setenv("VORTOCODE_TG_TOKEN", "123:x")
-    monkeypatch.delenv("VORTOCODE_TG_OWNER_ID", raising=False)
+    monkeypatch.setenv("VORTOONE_TG_TOKEN", "123:x")
+    monkeypatch.delenv("VORTOONE_TG_OWNER_ID", raising=False)
     adapter, owner = build_adapter("telegram")
     assert owner == "42" and adapter.owner_id == "42"
 

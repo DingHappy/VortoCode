@@ -12,7 +12,7 @@ router = APIRouter()
 
 
 def _cron_enabled() -> bool:
-    return os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("VORTOONE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # 触发守卫（F2–F5）与在跑表已上收到 `src.scheduling.cron`：agent 的 cron_run 工具走同一份判定，

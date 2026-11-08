@@ -22,7 +22,7 @@ _STEPS = {
 
 @pytest.mark.parametrize('case', cases(), ids=lambda case: case['name'])
 async def test_scripted_loop_uses_production_handlers_and_state_checks(tmp_path, monkeypatch, case):
-    monkeypatch.setenv('VORTOCODE_NATIVE_TOOLS', '0')
+    monkeypatch.setenv('VORTOONE_NATIVE_TOOLS', '0')
     class Scripted:
         calls = 0
         async def chat(self, messages, **kwargs):
@@ -44,7 +44,7 @@ def test_expected_words_without_actions_do_not_pass(tmp_path):
 
 
 async def test_model_error_is_failure_not_success_or_skip(tmp_path, monkeypatch):
-    monkeypatch.setenv('VORTOCODE_NATIVE_TOOLS', '0')
+    monkeypatch.setenv('VORTOONE_NATIVE_TOOLS', '0')
     class Broken:
         async def chat(self, *args, **kwargs):
             raise TimeoutError('synthetic timeout')

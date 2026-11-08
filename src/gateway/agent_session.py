@@ -30,7 +30,7 @@ def runtime_host_note() -> str:
     """【你在哪台电脑上】：助理以前不知道自己跑在哪，会说「我没有自己的电脑」（真机 2026-10-27）。
 
     装配时读一次、会话内不变（system 要字节级稳定）。Desktop 启动的本机 runtime 带
-    ``VORTOCODE_SUPERVISOR_PID``；没有它就是独立跑的服务，配了汇报渠道的才是常驻电脑。
+    ``VORTOONE_SUPERVISOR_PID``；没有它就是独立跑的服务，配了汇报渠道的才是常驻电脑。
     """
     import platform
     import socket
@@ -228,7 +228,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             tools += build_personal_skill_tools(repo_root)
             # 交代定时的事（「每天早上帮我…」）：只在本进程真的会跑调度时给——Desktop 本机 sidecar
             # 固定关调度，给了只会建出永远不跑的作业。建/改都过确认门；要联网的作业创建时单独问人。
-            if os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on"):
+            if os.getenv("VORTOONE_CRON", "").strip().lower() in ("1", "true", "yes", "on"):
                 from src.agents.tools.cron import build_cron_tools
                 tools += build_cron_tools(repo_root, gated_confirm)
             # Read-only continuity remains useful even when this host does not run cron.
@@ -323,7 +323,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         parts.extend(assistant_system_parts(repo_root, include_memories=False))
         parts.append(PROACTIVE_NOTE)
         parts.append(runtime_host_note())
-        kwargs["auto_recall"] = os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
+        kwargs["auto_recall"] = os.getenv("VORTOONE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
     if active_plugins:
         from src.plugins import plugin_prompt
         parts.append(plugin_prompt(active_plugins))

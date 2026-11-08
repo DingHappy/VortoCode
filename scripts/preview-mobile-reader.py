@@ -25,8 +25,8 @@ def main():
         os.chdir(directory)
         try:
             token = secrets.token_urlsafe(32)
-            os.environ["VORTOCODE_API_TOKEN"] = token
-            os.environ["VORTOCODE_WORKSPACE_SCOPE"] = "general"
+            os.environ["VORTOONE_API_TOKEN"] = token
+            os.environ["VORTOONE_WORKSPACE_SCOPE"] = "general"
             from src.gateway.main_conversation import claim_main_chat
             from src.memory.assistant_profile import save_profile
             from src.workflow.workbench.personal_goals import PersonalGoals

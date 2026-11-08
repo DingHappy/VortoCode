@@ -63,14 +63,14 @@ def test_contract_A_cli_subset_of_web_registered_differences(monkeypatch, tmp_pa
 
 # ------------------------------------------------------------ 契约 C：native 开关三端一致
 def test_contract_C_native_default_honored_by_all_three_ends(monkeypatch, tmp_path):
-    """VORTOCODE_NATIVE_TOOLS 必须被 CLI 与 Web 遵从（#115：此前只 TUI 读，CLI/Web 硬写 False；TUI 已退役）。"""
+    """VORTOONE_NATIVE_TOOLS 必须被 CLI 与 Web 遵从（#115：此前只 TUI 读，CLI/Web 硬写 False；TUI 已退役）。"""
     monkeypatch.chdir(tmp_path)
 
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "1")
     assert _cli_agent(tmp_path)._native is True
     assert _web_agent()._native is True
 
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "0")
     assert _cli_agent(tmp_path)._native is False
     assert _web_agent()._native is False
 

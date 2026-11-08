@@ -74,7 +74,7 @@ class AndroidBinding:
 
 
 def load_binding(workspace: str, path: Path | None = None) -> AndroidBinding:
-    path = path or Path(os.getenv("VORTOCODE_ANDROID_SESSION_FILE", ""))
+    path = path or Path(os.getenv("VORTOONE_ANDROID_SESSION_FILE", ""))
     root = Path(workspace).resolve()
     if not path.is_absolute() or root == path.resolve() or root in path.resolve().parents:
         raise AndroidError("Android 会话配置必须是工作区外的宿主绝对路径")

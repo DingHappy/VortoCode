@@ -38,10 +38,10 @@ def apns(tmp_path, monkeypatch):
     key_file = tmp_path / "AuthKey_TEST.p8"
     key_file.write_bytes(signer.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                               serialization.NoEncryption()))
-    monkeypatch.setenv("VORTOCODE_APNS_KEY_FILE", str(key_file))
-    monkeypatch.setenv("VORTOCODE_APNS_KEY_ID", "KEY1234567")
-    monkeypatch.setenv("VORTOCODE_APNS_TEAM_ID", "TEAM123456")
-    monkeypatch.setenv("VORTOCODE_APNS_TOPIC", "com.vorto.vortocode.mobile")
+    monkeypatch.setenv("VORTOONE_APNS_KEY_FILE", str(key_file))
+    monkeypatch.setenv("VORTOONE_APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("VORTOONE_APNS_TEAM_ID", "TEAM123456")
+    monkeypatch.setenv("VORTOONE_APNS_TOPIC", "com.vorto.vortocode.mobile")
     mobile_push._jwt_cache.clear()
     yield signer
     mobile_push._jwt_cache.clear()
@@ -140,7 +140,7 @@ async def test_push_owner_clears_dead_tokens_and_does_nothing_without_config(tmp
     monkeypatch.setattr(mobile_push, "send", gone)
     assert await mobile_push.push_owner(root, "x") is False
     assert store.push_targets() == []
-    monkeypatch.delenv("VORTOCODE_APNS_TOPIC")
+    monkeypatch.delenv("VORTOONE_APNS_TOPIC")
     assert await mobile_push.push_owner(root, "x") is False
 
 

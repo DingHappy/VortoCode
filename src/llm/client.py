@@ -15,14 +15,9 @@ from src.llm.streaming import StreamInterrupted, close_stream
 logger = logging.getLogger(__name__)
 
 # 加载 .env 文件
-try:
-    from dotenv import load_dotenv
+from src.env_compat import load_env_file
 
-    env_path = Path(__file__).parent.parent.parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
-except ImportError:
-    pass
+load_env_file(Path(__file__).parent.parent.parent / ".env")
 
 
 # 模型分级配置（可通过环境变量覆盖）
@@ -70,7 +65,7 @@ def _raise_content_filtered(messages, response_model, usage, *, requested_model,
 
 # 各模型的**上下文窗口**（token）：让历史预算按模型自适应，而非死守一个保守值。
 # 只登记「有把握」且来自官方模型资料的公开模型；服务端 /models 返回更小的实际部署上限时，
-# Desktop 会把该值经 VORTOCODE_MODEL_CONTEXT_WINDOW 注入并优先覆盖这里。前缀/包含匹配采用
+# Desktop 会把该值经 VORTOONE_MODEL_CONTEXT_WINDOW 注入并优先覆盖这里。前缀/包含匹配采用
 # 最长命中，避免 mimo-v2.5-base 被更短的 mimo-v2.5 抢先匹配。
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "mimo-v2.5-base": 256_000,
@@ -97,12 +92,12 @@ _window_overrides_cache: tuple = ("", {})   # (raw env 串, 解析结果)——�
 
 
 def _model_window_overrides() -> Dict[str, int]:
-    """env VORTOCODE_MODEL_CONTEXT_WINDOWS 的**按模型**窗口表："model=window,model=window"。
+    """env VORTOONE_MODEL_CONTEXT_WINDOWS 的**按模型**窗口表："model=window,model=window"。
     自有中转跑多个模型时用它按名配各自窗口（匹配规则同主表：前缀/包含）；
-    单模型场景用 VORTOCODE_MODEL_CONTEXT_WINDOW 全局值即可。坏项静默跳过、不炸。
+    单模型场景用 VORTOONE_MODEL_CONTEXT_WINDOW 全局值即可。坏项静默跳过、不炸。
     结果按 env 原串缓存（env 可在运行中改，串没变就不重解析）。"""
     global _window_overrides_cache
-    raw = os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOWS") or ""
+    raw = os.getenv("VORTOONE_MODEL_CONTEXT_WINDOWS") or ""
     if raw == _window_overrides_cache[0]:
         return _window_overrides_cache[1]
     out: Dict[str, int] = {}
@@ -133,7 +128,7 @@ def model_context_window(model: str) -> Optional[int]:
                     best = (len(prefix), window)
         if best is not None:
             return best[1]
-    env = os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOW")
+    env = os.getenv("VORTOONE_MODEL_CONTEXT_WINDOW")
     if env:
         try:
             v = int(env)
@@ -153,8 +148,8 @@ def model_context_window(model: str) -> Optional[int]:
 
 def model_context_window_source(model: str) -> str:
     """返回窗口值来源，供 Desktop 区分服务探测/配置覆盖/官方目录/未知。"""
-    if os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOW"):
-        return os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOW_SOURCE") or "configured"
+    if os.getenv("VORTOONE_MODEL_CONTEXT_WINDOW"):
+        return os.getenv("VORTOONE_MODEL_CONTEXT_WINDOW_SOURCE") or "configured"
     name = (model or "").strip().lower()
     if name and any(name.startswith(prefix) or prefix in name
                     for prefix in _model_window_overrides()):
@@ -173,9 +168,9 @@ def _stream_usage_enabled(base_url: str) -> bool:
     """精确流式 usage 是可选扩展，不能用一次长超时的失败请求去探测兼容性。
 
     OpenAI 官方端点默认开启；兼容中转默认关闭并使用本地估算。供应商明确支持时可用
-    VORTOCODE_STREAM_USAGE=1 开启，明确关闭则对官方端点也生效。
+    VORTOONE_STREAM_USAGE=1 开启，明确关闭则对官方端点也生效。
     """
-    override = os.getenv("VORTOCODE_STREAM_USAGE")
+    override = os.getenv("VORTOONE_STREAM_USAGE")
     if override is not None:
         return override.strip().lower() in ("1", "true", "yes", "on")
     try:
@@ -495,7 +490,7 @@ class LLMConfig(BaseModel):
     # 主模型不支持图片时，把"看图"外包给它。空 = 关闭外包（撞到图片直接如实报错）。
     # 真机 2026-07-27：mimo-v2.5-pro 无视觉（404 No endpoints found that support image input），
     # 而 mimo-v2.5 能准确读图——同一中转站里就有互补的能力，没有理由让整条链路因此瘫掉。
-    vision_model: str = Field(default_factory=lambda: os.getenv("VORTOCODE_VISION_MODEL", "mimo-v2.5"))
+    vision_model: str = Field(default_factory=lambda: os.getenv("VORTOONE_VISION_MODEL", "mimo-v2.5"))
     temperature: float = 0.7
     max_tokens: int = 4096
     # **空闲**超时：多久没收到任何字节才判定这次请求卡死。Desktop 交互不能无提示卡两分钟，
@@ -651,7 +646,7 @@ class LLMClient:
             return messages
         if not vm or vm == main_model:
             note = (f"[图片未能读取：主模型 {main_model} 不支持图片输入，"
-                    f"且未配置可用的视觉模型（VORTOCODE_VISION_MODEL）]")
+                    f"且未配置可用的视觉模型（VORTOONE_VISION_MODEL）]")
             return _append_note(stripped, note)
 
         client = await self._get_client()

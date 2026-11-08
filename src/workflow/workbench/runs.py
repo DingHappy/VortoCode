@@ -142,12 +142,12 @@ def _now() -> str:
 
 
 def max_run_files() -> int:
-    """run 文件保留条数，env `VORTOCODE_MAX_RUN_FILES` 可调。
+    """run 文件保留条数，env `VORTOONE_MAX_RUN_FILES` 可调。
 
     0/负数/非数字一律当作"没配"回落默认值——**不当作"一条都不留"**：
     一个手滑的 `=0` 不该把整个运行台账清空。真想少留就写具体数字。
     """
-    raw = str(os.getenv("VORTOCODE_MAX_RUN_FILES", "") or "").strip()
+    raw = str(os.getenv("VORTOONE_MAX_RUN_FILES", "") or "").strip()
     if not raw:
         return _DEFAULT_MAX_RUN_FILES
     try:

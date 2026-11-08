@@ -39,7 +39,7 @@ def test_later_success_for_same_lifecycle_id_clears_issue():
 
 def test_acknowledgement_lives_outside_repo_and_stores_no_error_text(tmp_path, monkeypatch):
     store = tmp_path.parent / f"{tmp_path.name}-hook-acks.json"
-    monkeypatch.setenv("VORTOCODE_HOOK_ISSUE_STORE", str(store))
+    monkeypatch.setenv("VORTOONE_HOOK_ISSUE_STORE", str(store))
     activities = [{
         "type": "agent_hook", "id": "hook-sensitive", "name": "audit",
         "status": "failed", "error": "private command output",

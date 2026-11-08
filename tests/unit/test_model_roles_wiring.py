@@ -13,11 +13,11 @@ from src.llm.providers import reset_cache
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_MODEL_ROLES", raising=False)
+    monkeypatch.delenv("VORTOONE_MODEL_ROLES", raising=False)
     monkeypatch.setenv("OPENAI_API_BASE", "https://relay.example.com/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "relay-key")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_VENDORB_BASE", "https://b.example.com/v1")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_VENDORB_KEY", "vendor-b-key")
+    monkeypatch.setenv("VORTOONE_PROVIDER_VENDORB_BASE", "https://b.example.com/v1")
+    monkeypatch.setenv("VORTOONE_PROVIDER_VENDORB_KEY", "vendor-b-key")
     reset_cache()
     yield
     reset_cache()
@@ -41,7 +41,7 @@ def _captured_agents(monkeypatch):
 @pytest.mark.asyncio
 async def test_implement_role_reaches_the_isolated_writer(tmp_path, monkeypatch):
     """dev_isolated 的实现子 agent 从前连 llm= 都不传（自己 new 默认客户端）。"""
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "implement=vendorb:strong-coder")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "implement=vendorb:strong-coder")
     seen = _captured_agents(monkeypatch)
 
     import src.agents.worktree as worktree
@@ -54,7 +54,7 @@ async def test_implement_role_reaches_the_isolated_writer(tmp_path, monkeypatch)
     worktree.run_isolated_task = fake_run_isolated_task
     try:
         tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
-        monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+        monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
         await tool.handler({"description": "随便做点什么"})
     finally:
         worktree.run_isolated_task = original
@@ -68,7 +68,7 @@ async def test_implement_role_reaches_the_isolated_writer(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_research_role_reaches_the_default_subagent(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "research=vendorb:cheap-reader")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "research=vendorb:cheap-reader")
     seen = _captured_agents(monkeypatch)
     tools = {t.name: t for t in build_research_tools(str(tmp_path))}
     spawn = tools["task"]
@@ -104,7 +104,7 @@ async def test_nothing_configured_changes_nothing(tmp_path, monkeypatch):
 
 
 def test_decompose_role_reaches_the_planner(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "decompose=vendorb:planner-xl")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "decompose=vendorb:planner-xl")
     from src.agents.task_analyzer import TaskDecomposer
     d = TaskDecomposer()
     assert d.llm_client is not None

@@ -140,9 +140,9 @@ def test_role_ignores_expansive_ambient_defaults_and_does_not_load_other_context
     monkeypatch.setattr(project, "load_project_instructions", forbidden)
     monkeypatch.setattr(repo_memory, "load_repo_memory", forbidden)
     monkeypatch.setattr(main_agent, "skill_catalog", forbidden)
-    for key in ("VORTOCODE_MAX_STEPS", "VORTOCODE_BUILD_MAX_STEPS", "VORTOCODE_BUILD_AUTO_CONTINUES"):
+    for key in ("VORTOONE_MAX_STEPS", "VORTOONE_BUILD_MAX_STEPS", "VORTOONE_BUILD_AUTO_CONTINUES"):
         monkeypatch.setenv(key, "1000")
-    monkeypatch.setenv("VORTOCODE_COMPACT", "1")
+    monkeypatch.setenv("VORTOONE_COMPACT", "1")
     agent = reader(tmp_path, capability_profile="local", with_dev=True, allow_local_files=True)
     assert agent._capabilities.profile == RESEARCH_READ_PROFILE
     assert agent.max_steps == agent.build_max_steps == 12
@@ -253,9 +253,9 @@ def test_reader_does_not_share_project_material_with_an_expanded_allowlist(tmp_p
 
 
 def test_embedded_entry_uses_the_same_role_without_stealing_owner_routes(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_IM_POLICY", "research_read")
-    monkeypatch.setenv("VORTOCODE_IM_CONVERSATION", "isolated")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_IM_POLICY", "research_read")
+    monkeypatch.setenv("VORTOONE_IM_CONVERSATION", "isolated")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     registered = []
     runner = FakeRunner()
     try:
@@ -270,9 +270,9 @@ def test_embedded_entry_uses_the_same_role_without_stealing_owner_routes(tmp_pat
 
 @pytest.mark.parametrize("scope", ["general", "scratch", "projet", ""])
 def test_host_policy_requires_explicit_project_selection(tmp_path, monkeypatch, scope):
-    monkeypatch.setenv("VORTOCODE_IM_POLICY", "research_read")
-    monkeypatch.setenv("VORTOCODE_IM_CONVERSATION", "isolated")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", scope)
+    monkeypatch.setenv("VORTOONE_IM_POLICY", "research_read")
+    monkeypatch.setenv("VORTOONE_IM_CONVERSATION", "isolated")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", scope)
     with pytest.raises(im_service.IMConfigError, match="explicit"):
         im_service.load_session_role()
 
@@ -282,8 +282,8 @@ def test_host_policy_requires_explicit_project_selection(tmp_path, monkeypatch, 
     ("research_read", "isolated", "notify"), ("", "isolated", "interactive"),
 ])
 def test_invalid_host_config_never_falls_back_to_standard(tmp_path, monkeypatch, policy, conversation, role):
-    monkeypatch.setenv("VORTOCODE_IM_POLICY", policy)
-    monkeypatch.setenv("VORTOCODE_IM_CONVERSATION", conversation)
-    monkeypatch.setenv("VORTOCODE_IM_ROLE", role)
+    monkeypatch.setenv("VORTOONE_IM_POLICY", policy)
+    monkeypatch.setenv("VORTOONE_IM_CONVERSATION", conversation)
+    monkeypatch.setenv("VORTOONE_IM_ROLE", role)
     with pytest.raises(im_service.IMConfigError):
         im_service.load_session_role()

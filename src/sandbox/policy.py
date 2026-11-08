@@ -45,17 +45,17 @@ class SandboxDecision:
 
 
 def _policy_value() -> tuple[str, str]:
-    raw = str(os.getenv("VORTOCODE_SANDBOX") or "").strip().lower()
+    raw = str(os.getenv("VORTOONE_SANDBOX") or "").strip().lower()
     if not raw:
         return "auto", ""
     if raw in _TRUE:
-        return "required", ""  # legacy VORTOCODE_SANDBOX=1 meant explicitly enabled
+        return "required", ""  # legacy VORTOONE_SANDBOX=1 meant explicitly enabled
     if raw in _FALSE:
         return "off", ""
     if raw in _POLICIES:
         return raw, ""
     return "invalid", (
-        f"VORTOCODE_SANDBOX={raw!r} 无效；仅支持 auto / required / off "
+        f"VORTOONE_SANDBOX={raw!r} 无效；仅支持 auto / required / off "
         "（兼容 1/0、true/false）")
 
 
@@ -117,7 +117,7 @@ def resolve_sandbox(*, require_isolation: bool = False) -> SandboxDecision:
     if policy == "off":
         return SandboxDecision(
             policy, "", True, False, False,
-            "⚠ OS 沙箱已由 VORTOCODE_SANDBOX=off 显式关闭；命令将在宿主机执行。",
+            "⚠ OS 沙箱已由 VORTOONE_SANDBOX=off 显式关闭；命令将在宿主机执行。",
         )
     backend = sandbox_backend()
     if backend:
@@ -131,12 +131,12 @@ def resolve_sandbox(*, require_isolation: bool = False) -> SandboxDecision:
         return SandboxDecision(
             policy, "", False, False, False,
             f"{why}，但 OS 沙箱不可用：{hint}。"
-            "如确认环境可信，可显式设置 VORTOCODE_SANDBOX=off。",
+            "如确认环境可信，可显式设置 VORTOONE_SANDBOX=off。",
         )
     return SandboxDecision(
         policy, "", True, False, True,
         f"⚠ OS 沙箱不可用，交互命令将显式降级到宿主机：{hint}。"
-        "可设 VORTOCODE_SANDBOX=required 禁止降级。",
+        "可设 VORTOONE_SANDBOX=required 禁止降级。",
     )
 
 
@@ -205,16 +205,16 @@ def sandboxed_argv(repo_root: str, cmd: str, *, backend: str = "") -> list[str]:
 # 剥掉「VortoOne 自己用的操作密钥」即切断这条链：任何被起的子命令都不需要它们。
 #
 # 精确名单、VortoOne provider 命名空间与可信宿主登记的名称；不用 *KEY*/*TOKEN* 通配符：
-# VORTOCODE_CRON_TOKEN_BUDGET（数字预算）、VORTOCODE_MAX_CONTEXT_TOKENS、
+# VORTOONE_CRON_TOKEN_BUDGET（数字预算）、VORTOONE_MAX_CONTEXT_TOKENS、
 # TEXTUAL_DISABLE_KITTY_KEY（UI 开关）。GITHUB_TOKEN 是「任务令牌」（gh 子命令要用），
 # 故不在此列；外部 CLI 的执行者另行剥掉交付令牌。
 _STRIPPED_ENV_KEYS = frozenset({
     "OPENAI_API_KEY",                                    # LLM 中转站钥匙
-    "VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN",          # Web 永久 admin 主钥（含旧名）
-    "VORTOCODE_RELAY_ADMIN_TOKEN",                       # 中转站 admin
-    "VORTOCODE_CODEX_REPORT_TOKEN",                      # 本机到常驻助理的控制凭证
-    "VORTOCODE_OPS_TOKEN", "VORTOCODE_VOICE_MCP_TOKEN",  # 常驻端的独立操作入口
-    "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_TG_TOKEN",  # IM 桥接凭据
+    "VORTOONE_API_TOKEN", "AUTODEV_API_TOKEN",          # Web 永久 admin 主钥（含旧名）
+    "VORTOONE_RELAY_ADMIN_TOKEN",                       # 中转站 admin
+    "VORTOONE_CODEX_REPORT_TOKEN",                      # 本机到常驻助理的控制凭证
+    "VORTOONE_OPS_TOKEN", "VORTOONE_VOICE_MCP_TOKEN",  # 常驻端的独立操作入口
+    "VORTOONE_DD_CLIENT_SECRET", "VORTOONE_TG_TOKEN",  # IM 桥接凭据
 })
 _SECRET_ENV_LOCK = threading.RLock()
 _REGISTERED_SECRET_ENV_NAMES: set[str] = set()
@@ -244,7 +244,7 @@ def _operating_secret_names() -> frozenset[str]:
 
 def _operating_secret(name: str, names: frozenset[str]) -> bool:
     # An orphaned provider key is still a secret even without a corresponding BASE.
-    prefix, suffix = "VORTOCODE_PROVIDER_", "_KEY"
+    prefix, suffix = "VORTOONE_PROVIDER_", "_KEY"
     return name in names or (name.startswith(prefix) and name.endswith(suffix)
                              and len(name) > len(prefix) + len(suffix))
 
@@ -252,12 +252,12 @@ def _operating_secret(name: str, names: frozenset[str]) -> bool:
 def _env_passthrough_allowlist() -> frozenset[str]:
     """主人显式放行、准许穿透到子进程的变量名（逗号分隔）。
 
-    走环境变量 VORTOCODE_ENV_PASSTHROUGH 而非 .vortocode/ 文件：能设主进程 env 的才是
+    走环境变量 VORTOONE_ENV_PASSTHROUGH 而非 .vortocode/ 文件：能设主进程 env 的才是
     主人；若放仓库里，凡能写仓库的（含被投毒的生成代码）就能把密钥重新放行，等于多开
     一个投毒面。典型用途：目标项目自身用 OPENAI_API_KEY、其测试子进程需要它。
     变量名大小写敏感（Unix env 语义）：须与真实变量名一字不差，写错则 fail-closed（仍剥）。
     """
-    raw = os.getenv("VORTOCODE_ENV_PASSTHROUGH", "")
+    raw = os.getenv("VORTOONE_ENV_PASSTHROUGH", "")
     return frozenset(name.strip() for name in raw.split(",") if name.strip())
 
 
@@ -270,7 +270,7 @@ def child_env() -> dict[str, str]:
     """构造子进程环境：主进程 env 去掉操作密钥，但保留 allowlist 放行项。
 
     所有起子进程处（run_command / run_command_background / run_tests）都必须用它——沙箱
-    与非沙箱路径同样适用，VORTOCODE_SANDBOX=off 的宿主机 escape hatch 不能变成密钥泄漏
+    与非沙箱路径同样适用，VORTOONE_SANDBOX=off 的宿主机 escape hatch 不能变成密钥泄漏
     口。PATH/HOME/代理/语言环境等一律保留，故 sandbox-exec/bwrap wrapper 与工具链不受影响。
     """
     allow = _env_passthrough_allowlist()
@@ -280,12 +280,12 @@ def child_env() -> dict[str, str]:
 
 
 def shell_enabled() -> bool:
-    """宿主机命令执行开关（VORTOCODE_ENABLE_SHELL）。**全仓唯一一份判定。**
+    """宿主机命令执行开关（VORTOONE_ENABLE_SHELL）。**全仓唯一一份判定。**
 
     Web 的 require_shell、cron 的 command 作业触发都只认这里。此前 web/auth 与已删除的
     sandbox/runner 各读一遍环境变量——逻辑当下相同，但两份
     迟早漂移，而这是 fail-closed 的安全闸。调用方请函数内导入，测试 patch 这里即可覆盖全部。
     """
     from src.env_compat import env_compat
-    raw = env_compat("VORTOCODE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL") or ""
+    raw = env_compat("VORTOONE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL") or ""
     return raw.strip().lower() in ("1", "true", "yes", "on")

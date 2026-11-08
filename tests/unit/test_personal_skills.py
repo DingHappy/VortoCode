@@ -165,11 +165,11 @@ async def test_api_requires_general_scope_and_exact_preview_revision(tmp_path, m
     from fastapi import HTTPException
     from src.web.routers import assistant
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     with pytest.raises(HTTPException) as denied:
         await assistant.personal_skills_list()
     assert denied.value.status_code == 403
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     saved = await assistant.personal_skill_save("compare", draft())
     preview = await assistant.personal_skill_preview("compare")
     assert preview["revision"] == saved["revision"]

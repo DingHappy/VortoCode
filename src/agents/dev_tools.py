@@ -206,7 +206,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         def _mk(_desc):
             def _b(wt):
-                # 配了外部执行者（VORTOCODE_EXTERNAL_WORKERS implement=codex|claude）就交给它在本 worktree 里写；
+                # 配了外部执行者（VORTOONE_EXTERNAL_WORKERS implement=codex|claude）就交给它在本 worktree 里写；
                 # 自测重试、逐件/集成验证、落分支照旧由本流水线负责。
                 from src.agents.external_workers import external_agent_for_role
                 external = external_agent_for_role("implement", wt, system=extra,
@@ -479,7 +479,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         """薄封装：把"依赖接力修复"作为 repair 注入 review.run_gate（挑刺→修→重审），返回 (note, blocked)。
 
         reviewer 按 review.PERSPECTIVES 造多份（同一套工具+证据铁律，各配一只聚焦镜头）并行
-        对抗审查；视角集由 VORTOCODE_DEV_REVIEW_PERSPECTIVES 控制（默认全部）。
+        对抗审查；视角集由 VORTOONE_DEV_REVIEW_PERSPECTIVES 控制（默认全部）。
         """
         import uuid
         from src.agents import review as _review

@@ -24,7 +24,7 @@ pub(crate) fn remote_project_id(normalized_url: &str, remote_repo_root: &str) ->
 pub(crate) fn normalize_remote_token(token: &str) -> Result<String, String> {
     let trimmed = token.trim();
     if trimmed.is_empty() {
-        return Err("远程工作区需要访问 token（服务器已设 VORTOCODE_API_TOKEN）".into());
+        return Err("远程工作区需要访问 token（服务器已设 VORTOONE_API_TOKEN）".into());
     }
     if !trimmed.bytes().all(|byte| (0x21..=0x7e).contains(&byte)) {
         return Err(

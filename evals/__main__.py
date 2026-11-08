@@ -77,7 +77,7 @@ async def _run(args) -> dict:
             "execution_mode": "agent" if args.via_agent else "tool",
             "harness_source_sha256": source_hash.hexdigest(),
             "dirty": bool(status.stdout.strip()) if status.returncode == 0 else None,
-            "protocol": "prompt" if os.getenv("VORTOCODE_NATIVE_TOOLS") in ("0", "false", "no", "off")
+            "protocol": "prompt" if os.getenv("VORTOONE_NATIVE_TOOLS") in ("0", "false", "no", "off")
                         else "native",
             "head": _head(), "repeat": args.repeat,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")}
@@ -204,13 +204,13 @@ def _report_passed(report: dict) -> bool:
 
 
 def _apply_model_protocol(model, protocol) -> None:
-    """把 model/protocol 落到环境（DEFAULT_MODEL / VORTOCODE_NATIVE_TOOLS）。"""
+    """把 model/protocol 落到环境（DEFAULT_MODEL / VORTOONE_NATIVE_TOOLS）。"""
     if model:
         os.environ["DEFAULT_MODEL"] = model
     if protocol == "prompt":
-        os.environ["VORTOCODE_NATIVE_TOOLS"] = "0"
+        os.environ["VORTOONE_NATIVE_TOOLS"] = "0"
     elif protocol == "native":
-        os.environ.pop("VORTOCODE_NATIVE_TOOLS", None)
+        os.environ.pop("VORTOONE_NATIVE_TOOLS", None)
 
 
 def _write_report(report: dict, out_dir: Path, *, md: str, kind: str) -> None:

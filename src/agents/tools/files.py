@@ -389,7 +389,7 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             cap = _max_image_bytes()
             if size > cap:
                 return (f"(图片过大: {rel} 共 {size // 1024} KB，超过上限 {cap // 1024} KB，未注入；"
-                        f"可设 VORTOCODE_MAX_IMAGE_BYTES 调整)")
+                        f"可设 VORTOONE_MAX_IMAGE_BYTES 调整)")
             return {"text": f"(已读取图片 {rel}，{max(1, size // 1024)} KB；"
                             "内容已作为图片附件注入本回合上下文，直接查看即可)",
                     "images": [str(p)]}

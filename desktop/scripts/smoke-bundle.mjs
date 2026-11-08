@@ -1,3 +1,4 @@
+import "./env-names.mjs";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,8 +14,8 @@ const defaultExecutable = process.platform === "darwin"
   : process.platform === "win32"
     ? join(releaseRoot, "vortocode-desktop.exe")
     : join(releaseRoot, "vortocode-desktop");
-const executable = process.env.VORTOCODE_DESKTOP_SMOKE_EXECUTABLE
-  ? resolve(process.env.VORTOCODE_DESKTOP_SMOKE_EXECUTABLE)
+const executable = process.env.VORTOONE_DESKTOP_SMOKE_EXECUTABLE
+  ? resolve(process.env.VORTOONE_DESKTOP_SMOKE_EXECUTABLE)
   : defaultExecutable;
 
 if (!existsSync(executable)) {
@@ -29,7 +30,7 @@ try {
 
 const launched = spawnSync(executable, [], {
   cwd: desktopRoot,
-  env: { ...process.env, VORTOCODE_DESKTOP_SMOKE_FILE: marker },
+  env: { ...process.env, VORTOONE_DESKTOP_SMOKE_FILE: marker },
   encoding: "utf8",
   timeout: 60_000,
 });

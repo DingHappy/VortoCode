@@ -26,8 +26,8 @@ RELAY_KEY = "relay-key-do-not-leak"
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     for key in list(__import__("os").environ):
-        if key.startswith("VORTOCODE_PROVIDER_") or key in (
-                "VORTOCODE_MODEL_ROLES", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
+        if key.startswith("VORTOONE_PROVIDER_") or key in (
+                "VORTOONE_MODEL_ROLES", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("OPENAI_API_BASE", "https://relay.example.com/v1")
     monkeypatch.setenv("OPENAI_API_KEY", RELAY_KEY)
@@ -76,8 +76,8 @@ def test_anthropic_is_registered_from_the_existing_env_names(monkeypatch):
 
 
 def test_generic_providers_can_be_added(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_PROVIDER_OPENAI_BASE", "https://api.openai.com/v1")
-    monkeypatch.setenv("VORTOCODE_PROVIDER_OPENAI_KEY", "sk-oai")
+    monkeypatch.setenv("VORTOONE_PROVIDER_OPENAI_BASE", "https://api.openai.com/v1")
+    monkeypatch.setenv("VORTOONE_PROVIDER_OPENAI_KEY", "sk-oai")
     assert providers()["openai"].usable
 
 
@@ -91,7 +91,7 @@ def test_unconfigured_role_changes_nothing():
 
 def test_model_only_stays_on_the_relay(monkeypatch):
     """只换模型名：端点仍是那一个中转站——这是 One API 用户的默认路径。"""
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "decompose=gpt-5")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "decompose=gpt-5")
     target = resolve("decompose")
     assert target is not None
     assert target.provider.name == DEFAULT_PROVIDER
@@ -102,7 +102,7 @@ def test_model_only_stays_on_the_relay(monkeypatch):
 def test_direct_vendor_endpoint(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-xxx")
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "review=anthropic:claude-sonnet-5")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "review=anthropic:claude-sonnet-5")
     target = resolve("review")
     assert target is not None
     assert target.provider.base_url == "https://api.anthropic.com/v1"
@@ -114,7 +114,7 @@ def test_mixed_relay_and_direct(monkeypatch):
     """混用：审查走官方直连，实现留在中转站。"""
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-xxx")
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES",
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES",
                        "review=anthropic:claude-sonnet-5,implement=mimo-v2.5")
     assert resolve("review").provider.name == "anthropic"          # type: ignore[union-attr]
     assert resolve("implement").provider.name == DEFAULT_PROVIDER  # type: ignore[union-attr]
@@ -124,16 +124,16 @@ def test_mixed_relay_and_direct(monkeypatch):
 
 def test_a_provider_without_a_key_never_borrows_the_relay_key(monkeypatch):
     """把中转站的 key 发到另一家厂商的地址上是真事故——宁可回落默认。"""
-    monkeypatch.setenv("VORTOCODE_PROVIDER_OPENAI_BASE", "https://api.openai.com/v1")
+    monkeypatch.setenv("VORTOONE_PROVIDER_OPENAI_BASE", "https://api.openai.com/v1")
     # 故意不设 _KEY
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "review=openai:gpt-5")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "review=openai:gpt-5")
     assert providers()["openai"].usable is False
     assert resolve("review") is None, "没凭据的端点必须不可用"
     assert client_for_role("review") is None
 
 
 def test_unknown_provider_falls_back_instead_of_raising(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "review=nosuchvendor:some-model")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "review=nosuchvendor:some-model")
     assert resolve("review") is None
     assert "配置未生效" in describe_roles()
 
@@ -143,7 +143,7 @@ def test_unknown_provider_falls_back_instead_of_raising(monkeypatch):
 def test_client_carries_the_right_endpoint_and_is_cached(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-xxx")
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "review=anthropic:claude-sonnet-5")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "review=anthropic:claude-sonnet-5")
     first = client_for_role("review")
     assert first is not None
     assert first.config.base_url == "https://api.anthropic.com/v1"
@@ -153,11 +153,11 @@ def test_client_carries_the_right_endpoint_and_is_cached(monkeypatch):
 
 
 def test_different_roles_on_the_same_target_share_one_client(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "review=gpt-5,verify=gpt-5")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "review=gpt-5,verify=gpt-5")
     assert client_for_role("review") is client_for_role("verify")
 
 
 def test_describe_roles_is_readable(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "review=gpt-5,implement=mimo-v2.5")
+    monkeypatch.setenv("VORTOONE_MODEL_ROLES", "review=gpt-5,implement=mimo-v2.5")
     line = describe_roles()
     assert "review=default:gpt-5" in line and "implement=default:mimo-v2.5" in line

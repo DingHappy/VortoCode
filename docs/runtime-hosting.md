@@ -31,7 +31,7 @@ fails. The OS releases ownership after a process dies; the empty lock
 file remains intentionally, preventing an inode replacement race.
 
 Telegram polling/pairing and DingTalk Stream consumption also hold a per-channel lock in
-`~/.vortocode/channel-locks` (`VORTOCODE_IM_LOCK_DIR` overrides the directory).
+`~/.vortocode/channel-locks` (`VORTOONE_IM_LOCK_DIR` overrides the directory).
 The hashed Bot/application identity remains the same across credential rotations;
 credentials are never written to the lock. Distinct workspace services on the same host
 cannot consume one Bot's update stream concurrently. Pairing cannot consume
@@ -45,7 +45,7 @@ standalone IM channel.
 
 ## Scope and notifications
 
-IM inherits `VORTOCODE_WORKSPACE_SCOPE` when assembling its agent. General cannot
+IM inherits `VORTOONE_WORKSPACE_SCOPE` when assembling its agent. General cannot
 gain file/Shell/Git tools through an IM message. Scratch keeps its restricted
 folder tools. Project-only `/task`, `/tasks`, and pipeline commands are rejected
 in both General and Scratch, including direct background task submission.
@@ -61,7 +61,7 @@ accidentally reactivate a resident service. Connect Desktop to an explicitly reg
 shared tasks and notifications. Independent Desktop children currently have no
 cross-host notification relay to that service.
 
-Set `VORTOCODE_IM_ROLE=notify` on a resident service to use IM only for notifications.
+Set `VORTOONE_IM_ROLE=notify` on a resident service to use IM only for notifications.
 This mode does not construct an IM agent or register an IM task worker; incoming
 messages and approval callbacks cannot submit tasks or authorize operations.
 Telegram discards inbound updates before fetching attachments. It sends terminal

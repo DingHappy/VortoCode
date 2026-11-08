@@ -162,8 +162,8 @@ def test_resident_read_identifies_lost_wait_without_constructing_an_agent(tmp_pa
     assert open_card(root, rid="r", cid="c", request_id="req-api-001", kind="own_data", tainted=False)
     before = (tmp_path / ".vortocode/audit.log").read_bytes()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.web.routers import app_relay
     monkeypatch.setattr(app_relay, "_turns", None)
     from src.web.server import app
@@ -179,9 +179,9 @@ def test_known_request_replay_returns_a_review_code_without_starting_a_turn(tmp_
     assert open_card(root, rid="r", cid="c", request_id="req-api-002", kind="own_data", tainted=False)
     device_id, device, _ = phone(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-token")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-token")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.web.routers import app_relay
     manager = AppTurns(root, lambda _: pytest.fail("replay built an Agent"))
     monkeypatch.setattr(app_relay, "_turns", manager)

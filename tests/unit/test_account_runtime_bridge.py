@@ -122,8 +122,8 @@ def test_tampered_owner_binding_and_corruption_fail_closed(tmp_path):
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "root-account-bridge-test")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "root-account-bridge-test")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.web.server import app
     from src.web.routers import account_access
 
@@ -149,8 +149,8 @@ ROOT = {"Authorization": "Bearer root-account-bridge-test"}
 
 def test_desktop_setup_metadata_and_atomic_instance_check(api, monkeypatch):
     client, root, calls = api
-    monkeypatch.setenv("VORTOCODE_ACCOUNT_URL", "https://account.test")
-    monkeypatch.setenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", "https://phone.test")
+    monkeypatch.setenv("VORTOONE_ACCOUNT_URL", "https://account.test")
+    monkeypatch.setenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", "https://phone.test")
     path = "/api/mobile/account/registration"
     assert client.get(path).status_code == 401
     current = client.get(path, headers=ROOT).json()

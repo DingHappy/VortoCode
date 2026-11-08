@@ -2,7 +2,7 @@
 
 只读：计划的**写**路径只有一条（dev_auto/dev_resume 的 write-ahead），这里绝不提供
 改计划的接口——要改，语义上等于改一次运行的历史，那不是 REST 该开的口子。
-鉴权与全站一致：设了 VORTOCODE_API_TOKEN 则所有 /api/* 强制鉴权（见 web/auth）。
+鉴权与全站一致：设了 VORTOONE_API_TOKEN 则所有 /api/* 强制鉴权（见 web/auth）。
 """
 from src.web.deps import *  # noqa: F401,F403
 

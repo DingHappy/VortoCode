@@ -132,17 +132,17 @@ def test_malformed_metadata_remains_unknown_and_schema_is_not_repaired(tmp_path)
 def test_http_export_scope_auth_and_unavailable_store(tmp_path, monkeypatch):
     from src.web.server import app
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "offline-test-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "offline-test-token")
     client = TestClient(app)
     assert client.get("/api/assistant/memory-snapshot").status_code == 401
     headers = {"Authorization": "Bearer offline-test-token"}
     result = client.get("/api/assistant/memory-snapshot", headers=headers)
     assert result.status_code == 200 and result.json()["count"] == 0
     assert result.headers["Cache-Control"] == "no-store"
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     assert client.get("/api/assistant/memory-snapshot", headers=headers).status_code == 403
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     state = tmp_path / ".vortocode"
     state.mkdir()
     (state / "sessions.db").write_bytes(b"not a database")

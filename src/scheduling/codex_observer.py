@@ -5,7 +5,7 @@ Codex CLI（0.16x）的本机后台服务在 ``~/.codex/app-server-control/app-s
 所以这里看到的就是用户正在跑的那几个会话的实时状态。
 
 只读：列出已加载的会话、读最近一轮的摘要，压成一份精简进度 POST 给常驻助理
-（``VORTOCODE_CODEX_REPORT_URL`` + ``VORTOCODE_CODEX_REPORT_TOKEN``，由 Desktop 启动本机引擎时注入）。
+（``VORTOONE_CODEX_REPORT_URL`` + ``VORTOONE_CODEX_REPORT_TOKEN``，由 Desktop 启动本机引擎时注入）。
 不发完整对话和完整 diff：只有任务、最后几句说明、计划、改动的文件名、正在等批准的命令。
 另带一个数：这台 Mac 的键盘鼠标多久没动了——助理据此判断你在不在电脑前，在的话例行进度不推手机。
 """
@@ -48,8 +48,8 @@ def socket_path() -> Path:
 
 
 def report_target() -> Optional[tuple]:
-    url = os.getenv("VORTOCODE_CODEX_REPORT_URL", "").strip().rstrip("/")
-    token = os.getenv("VORTOCODE_CODEX_REPORT_TOKEN", "").strip()
+    url = os.getenv("VORTOONE_CODEX_REPORT_URL", "").strip().rstrip("/")
+    token = os.getenv("VORTOONE_CODEX_REPORT_TOKEN", "").strip()
     return (url, token) if url and token else None
 
 

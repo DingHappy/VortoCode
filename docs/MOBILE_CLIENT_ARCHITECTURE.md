@@ -23,7 +23,7 @@
 
 ## 本轮完成的授权基础
 
-管理员接口沿用整站管理员鉴权，但必须明确配置 `VORTOCODE_API_TOKEN`；本机无令牌的兼容模式不能发放手机授权。手机设备接口只接收自己的 Bearer 凭证，不回退到管理员令牌、Cookie、query 参数或 X-API-Token。管理员的浏览器请求需要同源；设备接口需要 HTTPS，本机回环 HTTP 仅用于开发验收。
+管理员接口沿用整站管理员鉴权，但必须明确配置 `VORTOONE_API_TOKEN`；本机无令牌的兼容模式不能发放手机授权。手机设备接口只接收自己的 Bearer 凭证，不回退到管理员令牌、Cookie、query 参数或 X-API-Token。管理员的浏览器请求需要同源；设备接口需要 HTTPS，本机回环 HTTP 仅用于开发验收。
 
 | 方法与路径 | 身份与效果 |
 | --- | --- |
@@ -97,7 +97,7 @@ AES-GCM），键是会话凭据的摘要，凭据本身不落盘；网关重启�
 手机 App 从只读伴侣变成主人终端之一。写入只开给原生 App（`/api/mobile/native/*`），都是确定性的文件操作，
 手机网关进程里仍然没有 Agent、调度和 IM。
 
-**默认关闭**：服务端设置 `VORTOCODE_MOBILE_WRITES=1` 才开放；部署代码不等于开放写入。写入路由走现有公网 HTTPS 入口
+**默认关闭**：服务端设置 `VORTOONE_MOBILE_WRITES=1` 才开放；部署代码不等于开放写入。写入路由走现有公网 HTTPS 入口
 （反向代理要把下表路径加进放行名单），不要求 WireGuard，前提是下面的「新手机要批准」（见 DECISIONS「ADR-011 修订」）。
 
 **新手机要批准**：信任挂在钥匙上。第一台手机首次使用即信任；之后新的钥匙对停在「待确认」，`/keys` 回
@@ -115,7 +115,7 @@ AES-GCM），键是会话凭据的摘要，凭据本身不落盘；网关重启�
 | `POST /api/mobile/native/undo` | 会话 + 日常钥匙签名 | `{op_id}`：撤销一条改动，撤不回的下游影响在 `not_recallable` 里 |
 
 **对话（2026-11-02，ADR-012 阶段 A）**：App 是主要聊天的第三个入口（Desktop、Telegram 之后）。手机网关核对会话与签名后，
-经本机专用接口（`VORTOCODE_APP_RELAY_TOKEN`，只收回环来源）转给常驻助理；助理以 `owner_device` 档案跑回合并写进主要聊天，
+经本机专用接口（`VORTOONE_APP_RELAY_TOKEN`，只收回环来源）转给常驻助理；助理以 `owner_device` 档案跑回合并写进主要聊天，
 Desktop 同一段对话可见。回合中途要确认的动作变成待批准卡，App 用设备钥匙签名批准（卡片摘要必须对上）；10 分钟没人处理按拒绝。
 
 | 方法与路径 | 身份 | 效果 |
@@ -189,4 +189,4 @@ Secure Enclave 里第三把专用于解密推送的 P-256 公钥、`production` 
 
 服务端在现有通知投递器里与 IM **双发**：两路互不影响，App 这一路不进 IM 的受理 / 补发记账。APNs 返回
 410 或 `BadDeviceToken` / `Unregistered` 时清掉这台设备的登记。安静时段攒下的汇总目前只走 IM。
-配置见 [环境变量](ENVIRONMENT.md) 的 `VORTOCODE_APNS_*`。
+配置见 [环境变量](ENVIRONMENT.md) 的 `VORTOONE_APNS_*`。

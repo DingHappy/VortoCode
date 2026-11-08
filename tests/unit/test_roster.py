@@ -20,11 +20,11 @@ SECRET = "SUPER-SECRET-CLIENT-ID-do-not-print"
 
 def _env(path: Path, *, client_id="cid", secret="sec", owner="owner1", allow=None,
          mode=0o600) -> Path:
-    lines = [f"VORTOCODE_DD_CLIENT_ID={client_id}",
-             f"VORTOCODE_DD_CLIENT_SECRET={secret}",
-             f"VORTOCODE_DD_OWNER_ID={owner}"]
+    lines = [f"VORTOONE_DD_CLIENT_ID={client_id}",
+             f"VORTOONE_DD_CLIENT_SECRET={secret}",
+             f"VORTOONE_DD_OWNER_ID={owner}"]
     if allow is not None:
-        lines.append(f"VORTOCODE_DD_ALLOW_FROM={allow}")
+        lines.append(f"VORTOONE_DD_ALLOW_FROM={allow}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(mode)
     return path
@@ -142,7 +142,7 @@ assistants:
 def test_missing_credential_keys_are_named(tmp_path):
     """缺哪个键要说出来（桥会 fail-closed 拒启，光说"配错了"没用）。"""
     (tmp_path / "ws").mkdir()
-    (tmp_path / "a.env").write_text("VORTOCODE_DD_CLIENT_ID=x\n", encoding="utf-8")
+    (tmp_path / "a.env").write_text("VORTOONE_DD_CLIENT_ID=x\n", encoding="utf-8")
     r = _roster(tmp_path, f"""
 assistants:
   - name: alice
@@ -152,7 +152,7 @@ assistants:
 """)
     bad = _levels(R.check_roster(r), "fail")
     joined = " ".join(f.detail for f in bad)
-    assert "VORTOCODE_DD_CLIENT_SECRET" in joined and "VORTOCODE_DD_OWNER_ID" in joined
+    assert "VORTOONE_DD_CLIENT_SECRET" in joined and "VORTOONE_DD_OWNER_ID" in joined
 
 
 def test_owner_missing_from_allowlist_is_a_hard_fail(tmp_path):

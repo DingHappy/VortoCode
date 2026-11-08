@@ -43,12 +43,12 @@ def browser_control_enabled(kind: str) -> bool:
     IM / CLI / 无人值守一律不给：IM 入口不可信，无人值守问不到人，而这组工具的意义就在
     "每一步由坐在电脑前的人确认"。
     """
-    return (kind == "web" and os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1"
-            and os.getenv("VORTOCODE_ENABLE_BROWSER_CONTROL") == "1")
+    return (kind == "web" and os.getenv("VORTOONE_DESKTOP_SIDECAR") == "1"
+            and os.getenv("VORTOONE_ENABLE_BROWSER_CONTROL") == "1")
 
 
 def _blocked_domains() -> tuple[str, ...]:
-    extra = [d.strip().lower().lstrip(".") for d in (os.getenv("VORTOCODE_BROWSER_BLOCKED_DOMAINS") or "").split(",")]
+    extra = [d.strip().lower().lstrip(".") for d in (os.getenv("VORTOONE_BROWSER_BLOCKED_DOMAINS") or "").split(",")]
     return BLOCKED_DOMAINS + tuple(d for d in extra if d)
 
 

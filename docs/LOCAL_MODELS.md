@@ -28,9 +28,9 @@ Desktop主模型设置/自定义供应商增加独立“oMLX”预设；官方�
 原角色路由示例（仅适用于已核验模型清单的8100，完整推理仍待验收）：
 
 ```dotenv
-VORTOCODE_PROVIDER_OMLX_BASE=http://127.0.0.1:8100/v1
-VORTOCODE_PROVIDER_OMLX_KEY=
-VORTOCODE_MODEL_ROLES=review=omlx:Qwen3.6-35B-A3B-4bit
+VORTOONE_PROVIDER_OMLX_BASE=http://127.0.0.1:8100/v1
+VORTOONE_PROVIDER_OMLX_KEY=
+VORTOONE_MODEL_ROLES=review=omlx:Qwen3.6-35B-A3B-4bit
 ```
 
 角色文件可用 `model: omlx:Qwen3.6-35B-A3B-4bit`，沿用read工具面及原协议设置。
@@ -51,9 +51,9 @@ ID 使用 `local`，地址填本机服务的 `/v1`。“本机模型”泛用预
 CLI/常驻端不需要看板；同一模型路由可用以下环境配置（先换成实际模型 ID）：
 
 ```dotenv
-VORTOCODE_PROVIDER_LOCAL_BASE=http://127.0.0.1:11434/v1
-VORTOCODE_PROVIDER_LOCAL_KEY=
-VORTOCODE_MODEL_ROLES=review=local:model-id:tag
+VORTOONE_PROVIDER_LOCAL_BASE=http://127.0.0.1:11434/v1
+VORTOONE_PROVIDER_LOCAL_KEY=
+VORTOONE_MODEL_ROLES=review=local:model-id:tag
 ```
 
 角色文件例子，`model-id:tag` 必须替换为本机实际模型 ID：
@@ -98,6 +98,6 @@ max_steps: 8
 
 第40节已在独立临时依赖目录用真实 OpenAI SDK 3.14.1 验证工具请求、SSE正文/推理/
 参数分片、usage省略与流式中断，并跑通原角色文件→原Agent→只读工具→结果回传。
-`VORTOCODE_NATIVE_TOOLS` 在自定义角色装配中沿用原全局设置，0仍明确关闭原生协议。
+`VORTOONE_NATIVE_TOOLS` 在自定义角色装配中沿用原全局设置，0仍明确关闭原生协议。
 这些合成服务合同测试不证明实际模型工具质量，用户真实 runtime 的依赖未安装或改动。
 测试、本机构建、隔离 HTTP 和未验收层见 DESKTOP_ACCEPTANCE 第39/40节。

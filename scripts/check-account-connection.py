@@ -170,9 +170,9 @@ def run(args):
             sys.path.insert(0, str(ROOT))
             admin = secrets.token_urlsafe(32)
             os.environ.update(
-                VORTOCODE_API_TOKEN=admin,
-                VORTOCODE_WORKSPACE_SCOPE="general",
-                VORTOCODE_ACCOUNT_URL=f"http://127.0.0.1:{metadata['port']}",
+                VORTOONE_API_TOKEN=admin,
+                VORTOONE_WORKSPACE_SCOPE="general",
+                VORTOONE_ACCOUNT_URL=f"http://127.0.0.1:{metadata['port']}",
             )
             from src.web.server import app
             from src.memory.assistant_profile import save_profile
@@ -198,7 +198,7 @@ def run(args):
                     admin,
                     {
                         "access_token": metadata["desktop"],
-                        "issuer": os.environ["VORTOCODE_ACCOUNT_URL"],
+                        "issuer": os.environ["VORTOONE_ACCOUNT_URL"],
                         "name": "Account assistant",
                         "revision": 0,
                     },
@@ -206,7 +206,7 @@ def run(args):
                 resource = "vcm_" + secrets.token_urlsafe(32)
                 body = {
                     "access_token": metadata["phone"],
-                    "issuer": os.environ["VORTOCODE_ACCOUNT_URL"],
+                    "issuer": os.environ["VORTOONE_ACCOUNT_URL"],
                     "name": "Account phone",
                     "request_id": uuid.uuid4().hex,
                     "device_token": resource,

@@ -21,7 +21,7 @@
   绑定只清自己的任务/订阅/路由，真正收尾后才释放账号占用。重复停止不重复打断清理。
   迟到清理核对精确实例/路由代次；释放失败保留该绑定，不能当作已经关闭再启一个。
 
-旧 `VORTOCODE_IM` 单入口路径保留，包括原任务 worker 与审批。新托管器不为只读 bot 注册
+旧 `VORTOONE_IM` 单入口路径保留，包括原任务 worker 与审批。新托管器不为只读 bot 注册
 开发 worker，也不会让它们覆盖原 worker。没有改变旧任务归属或为跑通联动重建预算根。
 
 ## 显式宿主配置
@@ -74,14 +74,14 @@
 在明确选定的项目中启动（凭据预先由自己的宿主环境提供）：
 
 ```bash
-VORTOCODE_WORKSPACE_SCOPE=project \
-VORTOCODE_IM= \
-VORTOCODE_IM_ROLE=interactive \
-VORTOCODE_IM_BINDINGS_FILE=/absolute/host-config/im-bindings.json \
+VORTOONE_WORKSPACE_SCOPE=project \
+VORTOONE_IM= \
+VORTOONE_IM_ROLE=interactive \
+VORTOONE_IM_BINDINGS_FILE=/absolute/host-config/im-bindings.json \
 vc server
 ```
 
-不能与 `--im`/非空 `VORTOCODE_IM` 同用；General/Scratch、旧 notify 模式和无效配置拒绝
+不能与 `--im`/非空 `VORTOONE_IM` 同用；General/Scratch、旧 notify 模式和无效配置拒绝
 启动，不以普通高权限助手回落。配置在启动时读取，尚无热更新/管理界面或新增 HTTP 路由。
 现有 `/api/im/status` 保留主入口字段并增加 `bindings`，列出逻辑 ID、状态与非秘密活性；
 registered/ready 不表示供应商已认证或网络已连接，需分别看通道活性。
@@ -102,7 +102,7 @@ bot、绑定 ID 和启动代次无关。因此同账号换绑或移动到另一�
 同身份的正文摘要冲突会暂停新输入，不能猜哪条是真的。
 
 记录沿用原 SessionStore 格式和原子保存路径，不建立另一个任务库。账号记录位于原
-`VORTOCODE_IM_LOCK_DIR`（默认 `~/.vortocode/channel-locks`）下的 `inputs/<账号摘要>`，
+`VORTOONE_IM_LOCK_DIR`（默认 `~/.vortocode/channel-locks`）下的 `inputs/<账号摘要>`，
 内部仍是 `.vortocode/web_sessions/im-inputs.json`。该状态目录必须位于 Project 之外，
 由同一宿主长期保留；先取得原账号 polling lease 才打开记录，收尾结束后才释放 lease。
 部署时应把此目录作为宿主持久状态备份，不能随临时工作区清理。

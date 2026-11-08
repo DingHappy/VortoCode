@@ -52,7 +52,7 @@ def channel_lease(channel: str, identity: str) -> ProcessLease:
     import hashlib
     if channel not in {"telegram", "dingtalk"}:
         raise ValueError("Unknown IM channel")
-    directory = Path(os.getenv("VORTOCODE_IM_LOCK_DIR") or
+    directory = Path(os.getenv("VORTOONE_IM_LOCK_DIR") or
                      Path.home() / ".vortocode" / "channel-locks")
     digest = hashlib.sha256(str(identity).encode()).hexdigest()
     return ProcessLease(directory / f"{channel}-{digest}.lock")

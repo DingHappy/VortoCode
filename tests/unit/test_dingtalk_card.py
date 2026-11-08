@@ -31,7 +31,7 @@ def _forbid_network(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_template_by_default(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_DD_CARD_TEMPLATE_ID", raising=False)
+    monkeypatch.delenv("VORTOONE_DD_CARD_TEMPLATE_ID", raising=False)
 
 
 class _FakeCard:
@@ -75,7 +75,7 @@ def test_without_template_subscription_is_byte_identical():
 
 
 def test_with_template_adds_exactly_one_topic(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_DD_CARD_TEMPLATE_ID", "TPL-1")
+    monkeypatch.setenv("VORTOONE_DD_CARD_TEMPLATE_ID", "TPL-1")
     a = DingTalkAdapter("c", "s", "o")
     topics = [x["topic"] for x in a._subscriptions()]
     assert topics == [BOT_TOPIC, C.CARD_CALLBACK_TOPIC]

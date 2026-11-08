@@ -110,9 +110,9 @@ async def test_quiet_hours_and_switch(world, monkeypatch):
     root, _proposed, _sent, notify = world
     PersonalGoals(root).create(contract(), origin="owner")
     llm = ScriptedLLM()
-    monkeypatch.setenv("VORTOCODE_GOAL_ADVANCE", "0")
+    monkeypatch.setenv("VORTOONE_GOAL_ADVANCE", "0")
     assert await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=[]) == []
-    monkeypatch.delenv("VORTOCODE_GOAL_ADVANCE")
+    monkeypatch.delenv("VORTOONE_GOAL_ADVANCE")
     monkeypatch.setattr("src.scheduling.notices.in_quiet_hours", lambda now=None: True)
     assert await goal_advancer.advance_once(root, NOW, state={}, notify=notify, llm=llm, projects=[]) == []
     assert llm.calls == []

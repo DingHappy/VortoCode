@@ -3,16 +3,16 @@
 只跑最便宜的 no_gitignore 一个场景（单次 dev_isolated）。真机非确定，故只断言"端到端跑通、
 产出结构完整的 Score"，不对具体通过与否下断言（那属于基线分析，不进 CI）。
 
-开跑：`VORTOCODE_LIVE_TESTS=1 OPENAI_API_KEY=... python -m pytest tests/live/test_live_evals.py`
+开跑：`VORTOONE_LIVE_TESTS=1 OPENAI_API_KEY=... python -m pytest tests/live/test_live_evals.py`
 """
 
 import os
 
 import pytest
 
-_LIVE = os.getenv("VORTOCODE_LIVE_TESTS") == "1" and bool(os.getenv("OPENAI_API_KEY"))
+_LIVE = os.getenv("VORTOONE_LIVE_TESTS") == "1" and bool(os.getenv("OPENAI_API_KEY"))
 
-pytestmark = pytest.mark.skipif(not _LIVE, reason="live 评测冒烟需 VORTOCODE_LIVE_TESTS=1 + OPENAI_API_KEY")
+pytestmark = pytest.mark.skipif(not _LIVE, reason="live 评测冒烟需 VORTOONE_LIVE_TESTS=1 + OPENAI_API_KEY")
 
 
 @pytest.mark.asyncio

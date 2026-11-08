@@ -77,8 +77,8 @@ def test_expired_pause_disappears_and_resume_clears_it(world):
 def test_desktop_routes(world, monkeypatch):
     root, goal = world
     monkeypatch.chdir(root)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     # 路由按真实当前时间判断暂停是否过期，暂停期限要相对真实时间给，测试才不随日期失效
     goal_advancer._save_paused(root, {goal["id"]: (datetime.now(timezone.utc) + timedelta(hours=10)).isoformat()})
     from src.web.server import app
@@ -179,9 +179,9 @@ def test_review_bad_rows_and_unavailable_pause_storage(world):
 def test_new_routes_keep_admin_and_loopback_relay_boundaries(world, monkeypatch):
     root, _ = world
     monkeypatch.chdir(root)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-test-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-test-token")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-test-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-test-token")
     from src.web.server import app
     client = TestClient(app)
     assert client.get("/api/assistant/timeline").status_code == 401
@@ -201,8 +201,8 @@ def test_phone_timeline_and_signed_resume_use_the_resident_relay(owner, monkeypa
     _, device, _ = bind(client, headers)
     goal_id = "personal-test-resume"
     goal_advancer.pause_goal(root, goal_id, (NOW + timedelta(hours=1)).isoformat())
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_URL", "http://127.0.0.1:8081")
-    monkeypatch.setenv("VORTOCODE_APP_RELAY_TOKEN", "relay-test-token")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_URL", "http://127.0.0.1:8081")
+    monkeypatch.setenv("VORTOONE_APP_RELAY_TOKEN", "relay-test-token")
     calls = []
 
     async def relay(path, body, **kwargs):

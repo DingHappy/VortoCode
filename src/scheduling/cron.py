@@ -346,7 +346,7 @@ class CronState:
 #    自然语言、人能真读懂。要排 shell 就写成 prompt 让无人值守 agent 去跑，边界不变而可审。
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _SCAFFOLD = ("# VortoOne cron 作业表。schedule: 'at HH:MM' / 'every Nm|Nh|Nd' / 5 段 cron。\n"
-             "# 调度循环默认关；起服务时带 VORTOCODE_CRON=1 才跑。\n\njobs:\n")
+             "# 调度循环默认关；起服务时带 VORTOONE_CRON=1 才跑。\n\njobs:\n")
 
 
 class CronEditError(ValueError):
@@ -708,7 +708,7 @@ def check_trigger(repo_root: str, name: str) -> tuple[Optional[str], Optional[st
     if job.kind == "command":
         from src.sandbox.policy import shell_enabled
         if not shell_enabled():
-            return ("宿主机命令执行已默认禁用（VORTOCODE_ENABLE_SHELL=1 才开）；"
+            return ("宿主机命令执行已默认禁用（VORTOONE_ENABLE_SHELL=1 才开）；"
                     f"{name} 是 command 作业，拒绝触发", "shell_disabled", job)
     running = _TRIGGER_INFLIGHT.get(name)
     if running is not None and not getattr(running, "done", lambda: True)():
@@ -744,7 +744,7 @@ async def run_command_job(repo_root: str, job: CronJob) -> tuple[int, str, dict]
     **必须走 shell.run_command 这个统一执行入口**，而不是自己 create_subprocess_shell：
     cron 是**无人值守**路径（没人在旁边看着），所以传 require_isolation=True——沙箱不可用时
     fail-closed 拒绝执行，而不是偷偷在宿主机上裸跑。自己起 subprocess 会绕过整条沙箱边界，
-    连 VORTOCODE_SANDBOX=required 都拦不住它（codex 审出的真问题）。
+    连 VORTOONE_SANDBOX=required 都拦不住它（codex 审出的真问题）。
     run_command 内部用 subprocess.run(timeout=...)，超时会连同其进程组一起收掉。
     """
     import asyncio as _aio
@@ -846,9 +846,9 @@ def _escalate_streak(repo_root: str, job: CronJob, streak: int) -> str:
     """连败达到阈值 → 返回要拼进通报/错误里的升级标记，并单独落一条通知台账。
 
     单次失败已各自进决策队列；这里补的是**模式**信号——同一作业连着坏了 N 次还没人管，
-    说明它不是偶发抖动，得有人看。阈值 env `VORTOCODE_CRON_FAIL_ESCALATE`（默认 3，0=关）。
+    说明它不是偶发抖动，得有人看。阈值 env `VORTOONE_CRON_FAIL_ESCALATE`（默认 3，0=关）。
     """
-    threshold = _env_int("VORTOCODE_CRON_FAIL_ESCALATE", 3)
+    threshold = _env_int("VORTOONE_CRON_FAIL_ESCALATE", 3)
     if threshold <= 0 or streak < threshold:
         return ""
     marker = f"🔺 cron [{job.name}] 已连续失败 {streak} 次（阈值 {threshold}）——不是偶发抖动，需要人工介入"
@@ -910,10 +910,10 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         if run_session is None:
             from src.gateway.session import run_isolated_session
             run_session = run_isolated_session
-        # 预算封顶（B8-②）：作业级 budget（yaml）> env 默认 VORTOCODE_CRON_TOKEN_BUDGET > 不封顶。
+        # 预算封顶（B8-②）：作业级 budget（yaml）> env 默认 VORTOONE_CRON_TOKEN_BUDGET > 不封顶。
         # 只在配了预算时才注入 llm 代理（不改 run_session 既有签名面；测试注入的假 run_session
         # 只要不配预算就完全不受影响）。
-        budget = job.budget or _env_int("VORTOCODE_CRON_TOKEN_BUDGET", 0)
+        budget = job.budget or _env_int("VORTOONE_CRON_TOKEN_BUDGET", 0)
         guard = None
         extra_kwargs = {}
         if budget > 0:

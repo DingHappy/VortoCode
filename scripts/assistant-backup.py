@@ -10,7 +10,7 @@
 - SQLite 用在线备份接口拷一致的快照，不直接复制正在写的数据库文件。
 - 本地暂存目录只留最近 ``--keep`` 份；``--target`` 用 rsync 镜像过去（远端同样只留这些）。
 - 成功 / 失败都报到常驻助理的运维心跳（``source=assistant-backup``，30 小时没报就推送主人）：
-  需要 ``VORTOCODE_OPS_TOKEN``；没配就跳过报到。
+  需要 ``VORTOONE_OPS_TOKEN``；没配就跳过报到。
 """
 from __future__ import annotations
 
@@ -118,11 +118,17 @@ def archive(sources: list[Path]) -> bytes:
     return buffer.getvalue()
 
 
+def _env(name: str, default: str = "") -> str:
+    """先读 VORTOONE_*，没有再读改名前的 VORTOCODE_*（ADR-018 批次 B；本脚本不导入 src）。"""
+    value = os.getenv("VORTOONE_" + name)
+    return value if value is not None else os.getenv("VORTOCODE_" + name, default)
+
+
 def heartbeat(ok: bool, text: str) -> None:
-    token = os.getenv("VORTOCODE_OPS_TOKEN", "").strip()
+    token = _env("OPS_TOKEN").strip()
     if not token:
         return
-    url = os.getenv("VORTOCODE_OPS_URL", "http://127.0.0.1:8081").rstrip("/") + "/api/ops/heartbeat"
+    url = _env("OPS_URL", "http://127.0.0.1:8081").rstrip("/") + "/api/ops/heartbeat"
     request = urllib.request.Request(url, method="POST", headers={"Authorization": "Bearer " + token,
                                                                    "Content-Type": "application/json"},
                                      data=json.dumps({"source": "assistant-backup", "ok": ok, "text": text[:200],

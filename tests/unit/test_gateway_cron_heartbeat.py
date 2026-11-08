@@ -188,11 +188,11 @@ def test_active_hours_and_ok():
 
 
 def test_heartbeat_every_seconds(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT_EVERY", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT_EVERY", raising=False)
     assert heartbeat.heartbeat_every_seconds() == 1800
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT_EVERY", "2h")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT_EVERY", "2h")
     assert heartbeat.heartbeat_every_seconds() == 7200
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT_EVERY", "45")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT_EVERY", "45")
     assert heartbeat.heartbeat_every_seconds() == 45 * 60          # 裸数字当分钟
 
 
@@ -287,9 +287,9 @@ async def test_scheduler_loop_wires_notify_to_cron_and_heartbeat(tmp_path, monke
     from src.web.routers import tasks as tm
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_CRON", "1")
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")
-    monkeypatch.setenv("VORTOCODE_HEARTBEAT_EVERY", "1s")
+    monkeypatch.setenv("VORTOONE_CRON", "1")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT", "1")
+    monkeypatch.setenv("VORTOONE_HEARTBEAT_EVERY", "1s")
     captured = {}
 
     async def fake_run_due(cwd, now, notify=None):

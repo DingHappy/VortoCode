@@ -38,8 +38,8 @@ class BrowserError(RuntimeError):
 
 
 def find_browser() -> Optional[str]:
-    """本机可用的 Chromium 系浏览器路径；``VORTOCODE_BROWSER_PATH`` 优先。"""
-    override = (os.getenv("VORTOCODE_BROWSER_PATH") or "").strip()
+    """本机可用的 Chromium 系浏览器路径；``VORTOONE_BROWSER_PATH`` 优先。"""
+    override = (os.getenv("VORTOONE_BROWSER_PATH") or "").strip()
     if override:
         return override if os.access(override, os.X_OK) else None
     for path in _CANDIDATES:

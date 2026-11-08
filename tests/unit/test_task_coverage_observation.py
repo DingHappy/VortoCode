@@ -205,8 +205,8 @@ async def test_http_auth_strict_contract_and_unchanged_automatic_boundaries(tmp_
     service, source, _, _ = fixture(tmp_path, children=0)
     finish(service, source)
     monkeypatch.setattr("src.web.routers.delegations.get_dispatch_service", lambda: service)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "observation-local")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "observation-local")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     body = {"session": "owner", **contract(service, source)}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:
         url = f"/api/delegations/{source.id}/coverage-observations"
@@ -221,5 +221,5 @@ async def test_http_auth_strict_contract_and_unchanged_automatic_boundaries(tmp_
         caps = (await client.get("/api/delegations/capabilities")).json()
         assert caps["dependencies"]["paged_coverage"]["external_observation"]["explicit"]
         assert not caps["automatic_check"]["available"] and not caps["dependencies"]["automatic_release"]
-        monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+        monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
         assert (await client.post(url, json=body)).status_code == 409

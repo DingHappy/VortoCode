@@ -47,7 +47,7 @@ def _patch_html(monkeypatch, html: str):
 def _reset_backend_state(monkeypatch):
     """每测归零粘性降级标志（模块全局），并清掉 env 钉死——测试间互不污染。"""
     monkeypatch.setattr(ws, "_ddg_down", False)
-    monkeypatch.delenv("VORTOCODE_SEARCH_BACKEND", raising=False)
+    monkeypatch.delenv("VORTOONE_SEARCH_BACKEND", raising=False)
 
 
 # 仿 Bing RSS（format=rss）：稳定 XML、直链无跳转包装（国内兜底后端）。
@@ -139,14 +139,14 @@ def test_ddg_refused_falls_back_to_bing(monkeypatch):
 
 
 def test_env_pins_single_backend(monkeypatch):
-    """VORTOCODE_SEARCH_BACKEND=bing 钉死单后端：只请求 Bing，不碰 DDG。"""
+    """VORTOONE_SEARCH_BACKEND=bing 钉死单后端：只请求 Bing，不碰 DDG。"""
     hit = []
 
     def _urlopen(req, timeout):
         hit.append(req.full_url)
         return _FakeResp(BING_RSS.encode("utf-8"))
 
-    monkeypatch.setenv("VORTOCODE_SEARCH_BACKEND", "bing")
+    monkeypatch.setenv("VORTOONE_SEARCH_BACKEND", "bing")
     monkeypatch.setattr(web_fetch, "_host_is_safe", lambda host: True)
     monkeypatch.setattr(web_fetch, "_urlopen", _urlopen)
     out = ws.web_search("anything")

@@ -167,8 +167,8 @@ PERSPECTIVES = {
 
 
 def dev_review_perspectives() -> List[str]:
-    """审查视角集：VORTOCODE_DEV_REVIEW_PERSPECTIVES=逗号分隔视角名（默认全部；未知名忽略，全无效回落全部）。"""
-    raw = os.getenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "")
+    """审查视角集：VORTOONE_DEV_REVIEW_PERSPECTIVES=逗号分隔视角名（默认全部；未知名忽略，全无效回落全部）。"""
+    raw = os.getenv("VORTOONE_DEV_REVIEW_PERSPECTIVES", "")
     names = [n.strip().lower() for n in raw.split(",") if n.strip()]
     picked = [n for n in names if n in PERSPECTIVES]
     return picked or list(PERSPECTIVES)

@@ -274,8 +274,8 @@ async def test_http_budget_strict_contract_and_exhaustion_are_visible_without_ex
     from src.web.routers import delegations
     service, runner, calls = fixture(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "local-chain-test")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "local-chain-test")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     monkeypatch.setattr(delegations, "get_dispatch_service", lambda: service)
     headers = {"Authorization": "Bearer local-chain-test"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local", headers=headers) as client:
@@ -321,7 +321,7 @@ async def test_actual_read_agent_question_answer_keeps_one_chain_and_original_st
         agents.append(agent)
         return agent
     monkeypatch.setattr(adapter, "MainAgent", factory)
-    monkeypatch.setenv("VORTOCODE_MAX_STEPS", "99")
+    monkeypatch.setenv("VORTOONE_MAX_STEPS", "99")
     service, runner, _ = fixture(tmp_path, lambda task, collaboration: adapter.execute_dispatch(str(tmp_path), task, collaboration))
     task, _ = submit(service, limits={**LIMITS, "rounds": 2})
     await runner.join(task.id)

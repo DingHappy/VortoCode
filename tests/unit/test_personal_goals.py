@@ -181,8 +181,8 @@ def test_routes_available_in_general_without_development_authority(tmp_path, mon
     from fastapi.testclient import TestClient
     from src.web.server import app
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     client = TestClient(app)
     created = client.post("/api/assistant/goals", json=contract())
     assert created.status_code == 200
@@ -194,7 +194,7 @@ def test_routes_available_in_general_without_development_authority(tmp_path, mon
     assert client.patch(f'/api/assistant/goals/{goal["id"]}', json={"revision": 0, "blocker": "x"}).status_code == 409
     assert client.post(f'/api/assistant/goals/{goal["id"]}/criteria/criterion-1/evidence', json={
         "revision": 1, "summary": "核对完成", "passed": True, "confirmed": True}).status_code == 200
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     assert client.post(f'/api/goals/{goal["id"]}/run').status_code == 404
     from src.workflow.workbench import personal_goals
     monkeypatch.setattr(personal_goals.PersonalGoals, "update", lambda *a: (_ for _ in ()).throw(OSError("private path")))
@@ -254,7 +254,7 @@ async def test_goal_tool_is_bounded_and_does_not_create_missing_storage(tmp_path
 
 def test_goal_tool_taints_memory_proposals_only_in_its_own_turn(tmp_path, monkeypatch):
     from src.web.routers.realtime import _propose_turn_memories
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     captured = []
     monkeypatch.setattr("src.memory.assistant_profile.propose_memories", lambda *a, **k: captured.append(k))
     session = {"repo_root": str(tmp_path), "activities": [

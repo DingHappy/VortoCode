@@ -32,8 +32,8 @@ def _setup(tmp_path, probe_body):
     (old / "web" / "mobile").mkdir(parents=True)
     (old / "web" / "mobile" / "index.html").write_text("<html></html>")
     env = tmp_path / "environment"
-    env.write_text(f"VORTOCODE_MOBILE_PUBLIC_ORIGIN=https://example.test:18443\n"
-                   f"PYTHONPATH={old}\nVORTOCODE_MOBILE_RELEASE={old.name}\n")
+    env.write_text(f"VORTOONE_MOBILE_PUBLIC_ORIGIN=https://example.test:18443\n"
+                   f"PYTHONPATH={old}\nVORTOONE_MOBILE_RELEASE={old.name}\n")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -59,9 +59,9 @@ def _setup(tmp_path, probe_body):
         "sys.stdout.write(code)\n")
     for stub in bin_dir.iterdir():
         stub.chmod(0o755)
-    environ = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "VORTOCODE_DEPLOY_DIR": str(deploy),
-               "VORTOCODE_MOBILE_ENV_FILE": str(env), "VORTOCODE_MOBILE_RELEASES": str(releases),
-               "VORTOCODE_MOBILE_SETTLE_SECONDS": "0", "VORTOCODE_MOBILE_CADDYFILE": str(tmp_path / "no-caddy") }
+    environ = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "VORTOONE_DEPLOY_DIR": str(deploy),
+               "VORTOONE_MOBILE_ENV_FILE": str(env), "VORTOONE_MOBILE_RELEASES": str(releases),
+               "VORTOONE_MOBILE_SETTLE_SECONDS": "0", "VORTOONE_MOBILE_CADDYFILE": str(tmp_path / "no-caddy") }
     return deploy, releases, old, env, environ
 
 
@@ -74,7 +74,7 @@ def test_new_snapshot_is_built_switched_and_verified(tmp_path):
     result = _run(environ)
     assert result.returncode == 0, result.stderr
     release = next(line.split("=", 1)[1] for line in env.read_text().splitlines()
-                   if line.startswith("VORTOCODE_MOBILE_RELEASE="))
+                   if line.startswith("VORTOONE_MOBILE_RELEASE="))
     assert release != old.name and f"PYTHONPATH={releases / release}" in env.read_text()
     snapshot = releases / release
     assert (snapshot / "src" / "web" / "auth.py").exists() and (snapshot / "web" / "mobile" / "index.html").exists()
@@ -122,7 +122,7 @@ def test_missing_caddy_path_fails_before_switch_or_restart(tmp_path):
     caddy = tmp_path / "Caddyfile"
     caddy.write_text("@mobile_get {\n method GET\n path /api/mobile/native/timeline\n}\n"
                      "@mobile_post {\n method POST\n path /api/mobile/native/keys\n}\n")
-    environ["VORTOCODE_MOBILE_CADDYFILE"] = str(caddy)
+    environ["VORTOONE_MOBILE_CADDYFILE"] = str(caddy)
     result = _run(environ)
     assert result.returncode == 1 and "goal-advance/resume" in result.stderr
     assert env.read_text() == original
@@ -158,3 +158,18 @@ def test_failed_restart_restores_old_environment_and_restarts_it(tmp_path, failu
     result = _run(environ)
     assert result.returncode == 1 and env.read_text() == original
     assert (tmp_path / "systemctl.log").read_text().count("restart") == 2
+
+
+def test_environment_written_before_the_rename_keeps_its_legacy_keys(tmp_path):
+    """97 上的环境文件是改名前写的（VORTOCODE_*，ADR-018 批次 B）：照样能发，切换后键名不变。"""
+    _, releases, old, env, environ = _setup(tmp_path, '{"detail":"登录或设备授权已失效，请重新登录"}')
+    env.write_text(env.read_text().replace("VORTOONE_", "VORTOCODE_"))
+    for key in [k for k in environ if k.startswith("VORTOONE_")]:       # 调用方也还在用旧名字
+        environ["VORTOCODE_" + key[len("VORTOONE_"):]] = environ.pop(key)
+    result = _run(environ)
+    assert result.returncode == 0, result.stderr
+    text = env.read_text()
+    release = next(line.split("=", 1)[1] for line in text.splitlines()
+                   if line.startswith("VORTOCODE_MOBILE_RELEASE="))
+    assert release != old.name and f"PYTHONPATH={releases / release}" in text
+    assert "VORTOONE_" not in text

@@ -33,7 +33,7 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-# 鉴权中间件：仅当设置了 VORTOCODE_API_TOKEN 时强制（不破坏本地无 token 使用）
+# 鉴权中间件：仅当设置了 VORTOONE_API_TOKEN 时强制（不破坏本地无 token 使用）
 app.middleware("http")(auth_middleware)
 
 
@@ -125,20 +125,20 @@ def _insecure_bind_reason(host: str) -> str:
 
     fail-closed（2026-07 审计 P0#5）：此前只打印警告，忘设 token 就把所有 API
     （含驱动主 agent 读写文件、跑命令的 /ws）无鉴权暴露到公网。确需开放（如自建
-    反代已鉴权）设 VORTOCODE_ALLOW_INSECURE_BIND=1 显式放行。
+    反代已鉴权）设 VORTOONE_ALLOW_INSECURE_BIND=1 显式放行。
     """
     from src.env_compat import env_compat
     if host in _LOCAL_HOSTS:
         return ""
     if get_api_token():
         return ""
-    if env_compat("VORTOCODE_ALLOW_INSECURE_BIND", "AUTODEV_ALLOW_INSECURE_BIND", "") \
+    if env_compat("VORTOONE_ALLOW_INSECURE_BIND", "AUTODEV_ALLOW_INSECURE_BIND", "") \
             .strip().lower() in ("1", "true", "yes", "on"):
         return ""
-    return (f"拒绝启动：绑定到非本地地址 {host} 但未设置 VORTOCODE_API_TOKEN，"
+    return (f"拒绝启动：绑定到非本地地址 {host} 但未设置 VORTOONE_API_TOKEN，"
             f"会把所有 API（含 /ws 主 agent、可读写文件/跑命令）无鉴权暴露到网络。\n"
-            f"      请先设置一个强随机 token：export VORTOCODE_API_TOKEN=<随机串>\n"
-            f"      或（确知风险、已有外层鉴权时）：export VORTOCODE_ALLOW_INSECURE_BIND=1")
+            f"      请先设置一个强随机 token：export VORTOONE_API_TOKEN=<随机串>\n"
+            f"      或（确知风险、已有外层鉴权时）：export VORTOONE_ALLOW_INSECURE_BIND=1")
 
 
 def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = ""):
@@ -155,7 +155,7 @@ def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = ""):
     reason = _insecure_bind_reason(host)
     if reason:
         raise SystemExit(f"  ⛔ {reason}")
-    im = (im or os.getenv("VORTOCODE_IM", "")).strip().lower()
+    im = (im or os.getenv("VORTOONE_IM", "")).strip().lower()
     if im:                                    # 凭证前置检查：启动前就 fail-closed，不等 lifespan 半路炸
         from src.gateway.im_service import IMConfigError, build_adapter
         try:
@@ -163,7 +163,7 @@ def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = ""):
         except IMConfigError as e:
             raise SystemExit(f"  ⛔ {e}")
         del adapter                            # 只验配置；真正的 adapter 由 lifespan 构造并管生命周期
-        os.environ["VORTOCODE_IM"] = im        # lifespan 从 env 读（uvicorn.run 不传自定义参数）
+        os.environ["VORTOONE_IM"] = im        # lifespan 从 env 读（uvicorn.run 不传自定义参数）
     print(f"\n{'='*50}")
     print(f"  VortoOne 服务器启动")
     print(f"  访问: http://{host}:{port}")

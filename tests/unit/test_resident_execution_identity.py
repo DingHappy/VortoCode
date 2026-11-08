@@ -26,9 +26,9 @@ def world(tmp_path, monkeypatch):
     registry = tmp_path / "resident.json"
     entry = {"name": "Demo", "repo_root": str(project), "port": 8082, "instance_id": instance}
     registry.write_text(json.dumps({"projects": [entry]})); registry.chmod(0o600)
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(registry))
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "synthetic-admin-token")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(registry))
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "synthetic-admin-token")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     monkeypatch.chdir(project)
     async def worker(task, progress):
         return "synthetic completed work"
@@ -60,7 +60,7 @@ def test_unknown_or_malformed_identity_fails_closed(identity):
 
 
 async def test_generation_changes_on_restart_but_existing_instance_is_preserved(tmp_path, monkeypatch):
-    for key in ("VORTOCODE_IM", "VORTOCODE_IM_BINDINGS_FILE", "VORTOCODE_CRON", "VORTOCODE_HEARTBEAT", "VORTOCODE_SUPERVISOR_PID"):
+    for key in ("VORTOONE_IM", "VORTOONE_IM_BINDINGS_FILE", "VORTOONE_CRON", "VORTOONE_HEARTBEAT", "VORTOONE_SUPERVISOR_PID"):
         monkeypatch.delenv(key, raising=False)
     async def shutdown():
         pass
@@ -207,7 +207,7 @@ async def test_default_http_omits_admin_on_public_identity_probe_and_sends_heade
     try:
         await site.start()
         base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
-        monkeypatch.setenv("VORTOCODE_API_TOKEN", "synthetic-admin")
+        monkeypatch.setenv("VORTOONE_API_TOKEN", "synthetic-admin")
         stamp = {"version": 1, "instance_id": "a" * 32, "generation": "b" * 32}
         await dispatch._http("GET", base + "/api/health/quick")
         await dispatch._http("GET", base + "/api/tasks", expected_identity=stamp)

@@ -13,9 +13,9 @@
 #         ~/.config/systemd/user/vortocode-assistant.service    （按实际路径改代码目录/代理）
 #   3. systemctl --user daemon-reload && systemctl --user enable --now vortocode-assistant
 #      （用户单元要随开机启动，需 `sudo loginctl enable-linger <用户>`）
-#   4. Desktop → 助理 → 右侧「连接常驻电脑」：填 http://<服务器>:8081 和 VORTOCODE_API_TOKEN。
+#   4. Desktop → 助理 → 右侧「连接常驻电脑」：填 http://<服务器>:8081 和 VORTOONE_API_TOKEN。
 #
-# 对外监听 0.0.0.0，**必须**设 VORTOCODE_API_TOKEN（代码目录的 .env 里那份会被读到；
+# 对外监听 0.0.0.0，**必须**设 VORTOONE_API_TOKEN（代码目录的 .env 里那份会被读到；
 # 设了则所有 /api/* 与 /ws 强制鉴权）。
 
 [Unit]
@@ -27,11 +27,11 @@ Wants=network-online.target
 Type=simple
 # 助理的会话、动态和制品都存在这个目录（与 8080 的项目服务分开）
 WorkingDirectory=%h/assistant
-Environment=VORTOCODE_WORKSPACE_SCOPE=general
+Environment=VORTOONE_WORKSPACE_SCOPE=general
 # 通知渠道与定时任务归项目服务；这里固定关掉，免得 .env 把它们读回来
-Environment=VORTOCODE_IM=
-Environment=VORTOCODE_CRON=0
-Environment=VORTOCODE_HEARTBEAT=0
+Environment=VORTOONE_IM=
+Environment=VORTOONE_CRON=0
+Environment=VORTOONE_HEARTBEAT=0
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # 代理出网的机器：systemd 不继承 shell 环境，这里写死
 # Environment=HTTP_PROXY=http://<代理>:7890

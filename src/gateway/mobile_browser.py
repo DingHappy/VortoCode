@@ -75,10 +75,10 @@ class BrowserConfig:
 def browser_config(root: str) -> BrowserConfig:
     from src.env_compat import env_compat
 
-    raw = os.getenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", "").strip()
+    raw = os.getenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", "").strip()
     if not raw:
         raise BrowserNotReady("此助手尚未启用手机账号登录")
-    if not env_compat("VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip():
+    if not env_compat("VORTOONE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip():
         raise BrowserNotReady("请先为助手服务配置管理员身份")
     try:
         origin, issuer = account_origin(raw), configured_account_origin()

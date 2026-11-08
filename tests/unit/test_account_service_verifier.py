@@ -45,7 +45,7 @@ def transport(monkeypatch, response):
             return response
 
     monkeypatch.setattr(account_service.aiohttp, "ClientSession", Client)
-    monkeypatch.setenv("VORTOCODE_ACCOUNT_URL", "https://account.test")
+    monkeypatch.setenv("VORTOONE_ACCOUNT_URL", "https://account.test")
     return calls
 
 

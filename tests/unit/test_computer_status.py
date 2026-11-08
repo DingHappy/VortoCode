@@ -25,7 +25,7 @@ def helper(tmp_path, monkeypatch, code):
 
 
 def test_installed_helper_is_local_and_does_not_inherit_credentials_or_target(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_DESKTOP_TARGET", "ssh:other-machine")
+    monkeypatch.setenv("VORTOONE_DESKTOP_TARGET", "ssh:other-machine")
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-credential")
     observed = tmp_path / "observed.json"
     code = ("import json,os,sys\n"
@@ -38,7 +38,7 @@ def test_installed_helper_is_local_and_does_not_inherit_credentials_or_target(tm
     assert result["resident_worker"] == {"connected": False, "unattended": False}
     seen = json.loads(observed.read_text())
     assert seen["args"] == ["status"]
-    assert "OPENAI_API_KEY" not in seen["env"] and "VORTOCODE_DESKTOP_TARGET" not in seen["env"]
+    assert "OPENAI_API_KEY" not in seen["env"] and "VORTOONE_DESKTOP_TARGET" not in seen["env"]
 
 
 @pytest.mark.parametrize("changes", [

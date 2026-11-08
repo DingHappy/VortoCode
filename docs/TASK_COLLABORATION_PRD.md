@@ -1119,7 +1119,7 @@ Python、实际 profile/.env 或模型服务。第39节原始 skip/失败记录�
 - 原SDK非流式响应省略usage会在返回结果前抛异常。现保留正文/工具结果，usage为空对象；
   原记账继续估算，不伪造provider精确token用量或满足硬预算。
 - 自定义角色装配遗漏既有工具协议设置。现传入原native_default()，只沿用
-  VORTOCODE_NATIVE_TOOLS，0时仍提示式；工具面、owner、任务并发池与审批不变。
+  VORTOONE_NATIVE_TOOLS，0时仍提示式；工具面、owner、任务并发池与审批不变。
 
 ### 验收与下一阶段
 
@@ -1331,7 +1331,7 @@ IAB不可用，ego-browser页面DOM可读；Page.captureScreenshot超时，没�
 关键词变化又绕开同参数提醒。回合最终发出模型工具格式错误并agent_done，不是任务验收通过。
 拟按原Gateway停止时复核发现已经终态，没有发送取消；未停止任何原生或模型进程。
 
-单个MainAgent的人类run_turn增加联网派发额度：默认12，环境VORTOCODE_MAX_WEB_TOOL_CALLS
+单个MainAgent的人类run_turn增加联网派发额度：默认12，环境VORTOONE_MAX_WEB_TOOL_CALLS
 限1–64，非法值回退12。web_search/web_fetch合计计数，失败、重复或换参数均消费已准入额度。
 计数只在新run_turn清零，自动Build单段继续、plan升级不清零。达到额度截断整个批次后缀，
 包括后续写工具；只记录已准入前缀的历史，保留真实结果，经原无工具收尾给出已知与未核实内容。
@@ -1387,7 +1387,7 @@ use_skill提供仓库相对来源及Skill目录基准，引用文件仍需通过
 当前HTTP客户端仍是旧自定义REST /health、/tools、/tools/call，**不是标准Streamable HTTP兼容证明**。
 标准合同参见[官方MCP传输规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)；
 Skill路径及渐进读取参见[Agent Skills规范](https://agentskills.io/specification)。
-当前仅消费config/mcp.yaml，不声称支持Claude配置导入。Web接入仍需显式VORTOCODE_WEB_MCP=1；
+当前仅消费config/mcp.yaml，不声称支持Claude配置导入。Web接入仍需显式VORTOONE_WEB_MCP=1；
 只允许原external/unattended边界内无凭据HTTP配置，stdio/凭据权限没有放宽。
 Desktop项目/Scratch为local权限，不能加载外部MCP；General无仓库Skill。这两个入口不能互相冒充能力。
 没有新增Desktop连接、状态或重试设置；外部Skill修改仍需后续显式重载合同，多服务器同名工具的
@@ -1501,7 +1501,7 @@ Desktop插件页新增原Gatewayclient连接卡，展示受限/未连接/接入/
 实际冻结验收首次被General REST范围门拒绝，保留409证据。仅为GET /api/extensions/mcp和
 POST /api/extensions/mcp/connect添加精确范围例外；其它extensions检查及子路径继续要求项目。
 会话profile、无凭据HTTP、配置工作区/256KiB、16服务、连接总体30秒门不变或收紧；
-按钮是显式opt-in，不需要为此全局打开VORTOCODE_WEB_MCP。原自动入口仍需环境开关，互斥连接中跳过。
+按钮是显式opt-in，不需要为此全局打开VORTOONE_WEB_MCP。原自动入口仍需环境开关，互斥连接中跳过。
 
 263项后端回归、384项前端原测试及tsc通过；浏览器原组件验证失败/重试/会话切换/受限按钮，
 冻结包和安装结果见DESKTOP_ACCEPTANCE第51节。浏览器夹具无实际配置写入或模型调用。

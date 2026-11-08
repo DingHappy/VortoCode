@@ -40,7 +40,7 @@ def scheduling_scope_error() -> str:
     """
     from src.gateway.workspace_scope import GENERAL, PROJECT, current_workspace_scope
     scope = current_workspace_scope()
-    heartbeat_on = os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
+    heartbeat_on = os.getenv("VORTOONE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
     if scope == PROJECT or (scope == GENERAL and not heartbeat_on):
         return ""
     return "Autonomous scheduling requires a Project workspace" + (
@@ -87,7 +87,7 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
             print("  （依赖启动核对未覆盖全部记录，请核对扫描上限或损坏/存储错误；不自动执行）")
         # cron / heartbeat 调度循环：**opt-in**（任一开关开才起，默认全关——不擅自跑自主 LLM 作业）
         if any(os.getenv(k, "").strip().lower() in ("1", "true", "yes", "on")
-               for k in ("VORTOCODE_CRON", "VORTOCODE_HEARTBEAT")):
+               for k in ("VORTOONE_CRON", "VORTOONE_HEARTBEAT")):
             refusal = scheduling_scope_error()
             if refusal:
                 raise RuntimeError(refusal)
@@ -98,8 +98,8 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         if recovered_runs:
             print(f"  ↻ 恢复 {len(recovered_runs)} 个中断的 Desktop 运行记录")
         terminal_manager = make_terminal_manager()
-        im_channel = os.getenv("VORTOCODE_IM", "").strip().lower()
-        if os.getenv("VORTOCODE_IM_BINDINGS_FILE", "").strip():
+        im_channel = os.getenv("VORTOONE_IM", "").strip().lower()
+        if os.getenv("VORTOONE_IM_BINDINGS_FILE", "").strip():
             from src.gateway.im_host import start_host
             im_host = await start_host(root, runner=runner, register_worker=register_im_worker, actors=session_actors)
         elif im_channel:

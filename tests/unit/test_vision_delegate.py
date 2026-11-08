@@ -180,7 +180,7 @@ async def test_no_vision_model_configured_says_so(monkeypatch):
     await c.chat(_msgs())
 
     final_text = str(fake.calls[-1]["messages"])
-    assert "VORTOCODE_VISION_MODEL" in final_text
+    assert "VORTOONE_VISION_MODEL" in final_text
     mod._NO_VISION_MODELS.discard("blind-m")
 
 

@@ -160,12 +160,12 @@ jobs:
         if: needs.changes.outputs.python == 'true'
         # 刻意不提供任何 API key / token：
         # 无 OPENAI_API_KEY → 角色 Agent 不会自动启用真实 LLM（保持离线）
-        # 无 VORTOCODE_API_TOKEN / VORTOCODE_ENABLE_SHELL → 安全默认值生效
+        # 无 VORTOONE_API_TOKEN / VORTOONE_ENABLE_SHELL → 安全默认值生效
         env:
           OPENAI_API_KEY: ""
-          VORTOCODE_API_TOKEN: ""
-          VORTOCODE_ENABLE_SHELL: ""
-          VORTOCODE_ENABLE_BROWSER: ""
+          VORTOONE_API_TOKEN: ""
+          VORTOONE_ENABLE_SHELL: ""
+          VORTOONE_ENABLE_BROWSER: ""
           PYTHONUNBUFFERED: "1"
           SUITE: ${{ matrix.suite }}
         run: |

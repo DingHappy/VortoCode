@@ -4,7 +4,7 @@
 先写盘再干活/干完再落地。进程启动时扫描：仍是 running 的（上次崩在半路）改标 interrupted，
 其 plan_id 可交给 C1 的 dev_resume 续跑。
 
-`TaskRunner`：进程内 asyncio 任务池，并发上限 `VORTOCODE_BG_TASKS`（默认 2）。业务逻辑经**注入的
+`TaskRunner`：进程内 asyncio 任务池，并发上限 `VORTOONE_BG_TASKS`（默认 2）。业务逻辑经**注入的
 worker**（async(task, on_progress)->result_text）解耦——本模块不依赖 MainAgent，可用假 worker 确定性测试；
 server / IM 各自注入"建 agent + 跑一回合"的 worker。状态变更经 on_update 回调推给订阅者（WS/IM）。
 
@@ -48,9 +48,9 @@ def _now() -> str:
 
 
 def bg_concurrency() -> int:
-    """后台任务并发上限（env VORTOCODE_BG_TASKS，默认 2，下限 1）。"""
+    """后台任务并发上限（env VORTOONE_BG_TASKS，默认 2，下限 1）。"""
     try:
-        return max(1, int(os.getenv("VORTOCODE_BG_TASKS", "2")))
+        return max(1, int(os.getenv("VORTOONE_BG_TASKS", "2")))
     except (TypeError, ValueError):
         return 2
 
@@ -367,7 +367,7 @@ Worker = Callable[[BackgroundTask, Callable[[str], None]], Awaitable[str]]
 
 
 class TaskRunner:
-    """进程内后台任务池：submit 即排队 + 后台跑；并发受 VORTOCODE_BG_TASKS 上限约束；可取消、可订阅。
+    """进程内后台任务池：submit 即排队 + 后台跑；并发受 VORTOONE_BG_TASKS 上限约束；可取消、可订阅。
 
     worker(task, on_progress)->result_text：业务逻辑（建 agent + 跑一回合），可在其中设 task.plan_id/branch。
     on_update(task)：每次状态/进度变更回调（推 WS/IM）；出错不影响任务本身。

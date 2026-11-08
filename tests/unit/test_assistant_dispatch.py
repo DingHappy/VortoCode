@@ -12,8 +12,8 @@ from src.workflow.tasks import assistant_dispatch as dispatch
 def registry(tmp_path, monkeypatch):
     path = tmp_path / "resident_projects.json"
     path.write_text(json.dumps({"projects": [{"name": "VortoCode", "repo_root": "/srv/VortoCode", "port": 8082}]}))
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "t0ken")
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(path))
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "t0ken")
     return path
 
 
@@ -162,7 +162,7 @@ async def test_tools_only_propose_and_say_it_is_not_running_yet(tmp_path):
 
 
 def test_no_tools_without_registered_projects(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(tmp_path / "absent.json"))
+    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(tmp_path / "absent.json"))
     assert dispatch.build_dispatch_tools(str(tmp_path)) == []
 
 
@@ -181,7 +181,7 @@ def test_approve_and_cancel_routes_are_audited(tmp_path, monkeypatch):
     from src.gateway.audit import list_audit
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
     from src.web.server import app
 
     entry = dispatch.propose(str(tmp_path), project="VortoCode", title="不做了", goal="g")

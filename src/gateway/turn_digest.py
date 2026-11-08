@@ -39,7 +39,7 @@ MAX_REMEMBER = 3
 
 
 def digest_enabled() -> bool:
-    return os.getenv("VORTOCODE_TURN_DIGEST", "1").strip().lower() not in ("0", "false", "no", "off")
+    return os.getenv("VORTOONE_TURN_DIGEST", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _clip(text: str, limit: int) -> str:

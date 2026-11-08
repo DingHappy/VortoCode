@@ -1,3 +1,4 @@
+import "./env-names.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
@@ -22,7 +23,7 @@ async function freePort() {
   return port;
 }
 
-const runtime = process.env.VORTOCODE_RUNTIME_BIN || join(
+const runtime = process.env.VORTOONE_RUNTIME_BIN || join(
   desktopRoot,
   "src-tauri",
   "binaries",
@@ -43,15 +44,15 @@ console.log(`Bundled model client verified: openai=${modelClient.openai}, httpx=
 const port = await freePort();
 const startedAt = Date.now();
 const runtimeEnv = { ...process.env };
-delete runtimeEnv.VORTOCODE_API_TOKEN;
+delete runtimeEnv.VORTOONE_API_TOKEN;
 delete runtimeEnv.AUTODEV_API_TOKEN;
 Object.assign(runtimeEnv, {
-  VORTOCODE_CRON: "0",
-  VORTOCODE_DESKTOP_SMOKE: "1",
-  VORTOCODE_ENABLE_BROWSER: "0",
-  VORTOCODE_ENABLE_SHELL: "0",
-  VORTOCODE_HEARTBEAT: "0",
-  VORTOCODE_IM: "",
+  VORTOONE_CRON: "0",
+  VORTOONE_DESKTOP_SMOKE: "1",
+  VORTOONE_ENABLE_BROWSER: "0",
+  VORTOONE_ENABLE_SHELL: "0",
+  VORTOONE_HEARTBEAT: "0",
+  VORTOONE_IM: "",
 });
 
 const child = spawn(runtime, ["server", "--host", "127.0.0.1", "--port", String(port)], {
@@ -71,7 +72,7 @@ child.once("exit", (code, signal) => {
 });
 
 const sleep = (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
-const deadline = Date.now() + Number(process.env.VORTOCODE_SIDECAR_SMOKE_TIMEOUT_MS || 90_000);
+const deadline = Date.now() + Number(process.env.VORTOONE_SIDECAR_SMOKE_TIMEOUT_MS || 90_000);
 let health = null;
 try {
   while (Date.now() < deadline && !exit) {

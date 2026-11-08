@@ -1,17 +1,17 @@
 """桌面操作工具（实验功能，默认关闭）：Agent 看 Linux X11 桌面、经确认后点击、输入、按键、开应用。
 
 安全边界（改动前读完）：
-- **默认关闭**：只有设了 ``VORTOCODE_ENABLE_DESKTOP_CONTROL=1``、且是**有人值守的 Web/Desktop 会话、local 档位**
+- **默认关闭**：只有设了 ``VORTOONE_ENABLE_DESKTOP_CONTROL=1``、且是**有人值守的 Web/Desktop 会话、local 档位**
   才装配。IM 入口不可信、CLI 无头与无人值守问不到人——这组工具的意义就在「每一步由人确认」。
 - **点击 / 输入 / 按键 / 开应用每次都问**：申报为 ``interact`` 类，任何授权档位都不免（同浏览器操控）。
   确认文案写明目标桌面、当前窗口和具体动作。
 - **截屏与窗口列表是不可信外部内容**：屏幕上的字可能来自网页、邮件、文档，摄入即给本回合打污点。
 - 看起来像密码 / 密钥的文字一律不输入（登录请人在桌面上自己操作）；按键名做白名单式校验；
-  开应用只认 ``VORTOCODE_DESKTOP_APPS`` 里的名字。
+  开应用只认 ``VORTOONE_DESKTOP_APPS`` 里的名字。
 - 命令一律按参数数组执行，不拼 shell；要输入的文字走 stdin，不进命令行。
 
-目标桌面由 ``VORTOCODE_DESKTOP_TARGET`` 指定：``local``（默认，本机 X11）或 ``ssh:用户@主机``（经 SSH
-操作那台机器的桌面，如专用的桌面虚拟机）。显示号 ``VORTOCODE_DESKTOP_DISPLAY``（默认 ``:0``）。
+目标桌面由 ``VORTOONE_DESKTOP_TARGET`` 指定：``local``（默认，本机 X11）或 ``ssh:用户@主机``（经 SSH
+操作那台机器的桌面，如专用的桌面虚拟机）。显示号 ``VORTOONE_DESKTOP_DISPLAY``（默认 ``:0``）。
 远端需要 xdotool 与 scrot。
 """
 from __future__ import annotations
@@ -30,10 +30,10 @@ from src.agents.gate import request
 from src.agents.tool import Tool
 from src.agents.trust import INTERACT
 
-ENABLE_ENV = "VORTOCODE_ENABLE_DESKTOP_CONTROL"
-TARGET_ENV = "VORTOCODE_DESKTOP_TARGET"
-DISPLAY_ENV = "VORTOCODE_DESKTOP_DISPLAY"
-APPS_ENV = "VORTOCODE_DESKTOP_APPS"
+ENABLE_ENV = "VORTOONE_ENABLE_DESKTOP_CONTROL"
+TARGET_ENV = "VORTOONE_DESKTOP_TARGET"
+DISPLAY_ENV = "VORTOONE_DESKTOP_DISPLAY"
+APPS_ENV = "VORTOONE_DESKTOP_APPS"
 _TIMEOUT = 20.0
 _MAX_TYPE = 2000
 _KEY = re.compile(r"^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$")       # Return / ctrl+l / alt+F4 / super

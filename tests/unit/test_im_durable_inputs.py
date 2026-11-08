@@ -315,7 +315,7 @@ def test_account_and_native_conversation_identity_are_separate_and_capacity_neve
 
 
 def test_account_receipts_cannot_live_in_project(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_IM_LOCK_DIR", str(tmp_path / ".vortocode" / "locks"))
+    monkeypatch.setenv("VORTOONE_IM_LOCK_DIR", str(tmp_path / ".vortocode" / "locks"))
     with pytest.raises(InputStoreError, match="outside"):
         InputStore("telegram", "account", project_root=tmp_path)
     assert not (tmp_path / ".vortocode").exists()

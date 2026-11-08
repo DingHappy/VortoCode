@@ -48,7 +48,7 @@ def test_launchd_example_is_valid_plist_xml():
     assert data["ProgramArguments"][-2:] == ["--port", "8080"]
     # 自主作业开关模板必须默认关（与 OPS 手册"零自主消耗"承诺一致）
     env = data["EnvironmentVariables"]
-    assert env["VORTOCODE_CRON"] == "0" and env["VORTOCODE_HEARTBEAT"] == "0"
+    assert env["VORTOONE_CRON"] == "0" and env["VORTOONE_HEARTBEAT"] == "0"
 
 
 def test_ops_doc_references_exist():

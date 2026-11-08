@@ -12,8 +12,8 @@ from src.web.server import app
 @pytest.fixture
 def client(monkeypatch):
     # 每个测试默认无 token、shell 关闭；各用例按需覆盖
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.delenv("VORTOCODE_ENABLE_SHELL", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_ENABLE_SHELL", raising=False)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -24,7 +24,7 @@ def test_no_token_allows_local(client):
 
 
 def test_token_enforced_when_set(client, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     assert client.get("/api/status").status_code == 401
     assert client.get(
         "/api/status", headers={"Authorization": "Bearer secret"}
@@ -39,13 +39,13 @@ def test_token_enforced_when_set(client, monkeypatch):
 
 def test_query_token_rejected(client, monkeypatch):
     """审计 P0#4：?token= 查询参数不再被接受（token 已彻底移出 URL）。"""
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     assert client.get("/api/status", params={"token": "secret"}).status_code == 401
 
 
 
 def test_login_sets_httponly_cookie_and_authorizes(client, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     assert client.get("/api/status").status_code == 401          # 未登录
     bad = client.post("/api/auth/login", json={"token": "wrong"})
     assert bad.status_code == 401 and "vortocode_session" not in bad.headers.get("set-cookie", "")
@@ -57,7 +57,7 @@ def test_login_sets_httponly_cookie_and_authorizes(client, monkeypatch):
 
 
 def test_logout_clears_cookie(client, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     client.post("/api/auth/login", json={"token": "secret"})
     assert client.get("/api/status").status_code == 200
     client.post("/api/auth/logout")
@@ -68,7 +68,7 @@ def test_auth_status_endpoint(client, monkeypatch):
     # 无 token：不需鉴权、视为已授权
     assert client.get("/api/auth/status").json() == {"auth_required": False, "authed": True}
     # 设 token 未登录：需鉴权、未授权
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     st = client.get("/api/auth/status").json()
     assert st["auth_required"] is True and st["authed"] is False
     # 登录后：已授权
@@ -79,7 +79,7 @@ def test_auth_status_endpoint(client, monkeypatch):
 def test_ws_auth_via_cookie(client, monkeypatch):
     """WS 握手鉴权走同源自带的 Cookie（不再收 ?token=）：未登录被拒、登录后放行。"""
     from starlette.websockets import WebSocketDisconnect
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     with pytest.raises(WebSocketDisconnect):                 # 未登录 → close(1008)
         with client.websocket_connect("/ws?sid=t") as ws:
             ws.receive_json()
@@ -91,7 +91,7 @@ def test_ws_auth_via_cookie(client, monkeypatch):
 # ------------------------------------------------------- 危险执行端点闸
 # 原 /api/terminal/execute 已在 b4 PR-B3 退役删除。Desktop 波次（b6）重新引入了两条宿主机
 # 命令执行面——POST /api/runs（结构化运行）与 POST /api/terminals（交互式 PTY）——二者
-# **必须**同 sandbox 路由一样走 require_shell() 闸：VORTOCODE_ENABLE_SHELL 未设即默认拒绝
+# **必须**同 sandbox 路由一样走 require_shell() 闸：VORTOONE_ENABLE_SHELL 未设即默认拒绝
 # （fail-closed）。下面钉死这一不变量，防「加一端漏一端」回潮。
 
 def test_terminal_endpoint_retired(client):
@@ -134,7 +134,7 @@ def test_terminals_are_single_user_by_design(client, monkeypatch):
     """
     from src.web.routers import terminals as terminals_router
 
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOONE_ENABLE_SHELL", "1")
     written = []
 
     class _FakeManager:
@@ -177,7 +177,7 @@ def test_exempt_pages_load_but_their_data_apis_do_not(client, monkeypatch):
     豁免清单容易让人读成"这页不用登录"，实际含义只是"外壳不用登录，否则没法渲染登录框"。
     这条把两半都钉住：外壳 200、数据 401。任何新加进豁免清单的页面都要自带登录门。
     """
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     for page in ("/review", "/"):
         assert client.get(page).status_code == 200, page
     assert client.get("/api/pipelines").status_code == 401
@@ -189,7 +189,7 @@ def test_login_is_exempt_from_middleware_but_still_checks_the_token(client, monk
     它因此是全站唯一一个免鉴权、可被任意次数敲打的 token 校验点——校验本身一步都不能省。
     （常时比较是统计侧信道，单测断不了；这里断的是语义：错的进不来、对的能进来。）
     """
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "secret")
     assert client.post("/api/auth/login", json={"token": "wrong"}).status_code == 401
     assert client.post("/api/auth/login", json={"token": "secre"}).status_code == 401   # 前缀
     assert client.post("/api/auth/login", json={"token": "秘密"}).status_code == 401     # 非 ASCII 不炸

@@ -26,10 +26,10 @@ Include:
 - Do not commit `.env`, API keys, webhook URLs with secrets, tokens, private
   certificates, or production configuration.
 - Keep `vc server` bound to `127.0.0.1` unless it is behind trusted network
-  controls and `VORTOCODE_API_TOKEN` is set to a strong random value.
+  controls and `VORTOONE_API_TOKEN` is set to a strong random value.
 - Do not pass API tokens in URLs. Use login cookies, `Authorization: Bearer`, or
   `X-API-Token`.
-- Leave `VORTOCODE_ENABLE_SHELL` and `VORTOCODE_ENABLE_BROWSER` disabled unless
+- Leave `VORTOONE_ENABLE_SHELL` and `VORTOONE_ENABLE_BROWSER` disabled unless
   the workspace and requested task are trusted.
 - Do not run untrusted public pull requests on a self-hosted runner that has
   private network access, local credentials, or long-lived secrets.

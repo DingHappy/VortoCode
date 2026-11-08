@@ -212,9 +212,9 @@ async def test_real_development_loop_cleans_partial_work_answers_and_finishes(tm
     runner.ledger.save(source)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(tasks, "_RUNNER", runner)
-    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
-    monkeypatch.setenv("VORTOCODE_BUILD_MAX_STEPS", "999")
-    monkeypatch.setenv("VORTOCODE_BUILD_AUTO_CONTINUES", "999")
+    monkeypatch.setenv("VORTOONE_SANDBOX", "off")
+    monkeypatch.setenv("VORTOONE_BUILD_MAX_STEPS", "999")
+    monkeypatch.setenv("VORTOONE_BUILD_AUTO_CONTINUES", "999")
     prompts, agents, events = [], [], []
 
     class LLM:
@@ -271,8 +271,8 @@ async def test_http_answer_auth_replay_owner_and_cancel(tmp_path, monkeypatch):
     runner, service, task, plan, qid = blocked(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(tasks, "_RUNNER", runner)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "dev-question-test")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "dev-question-test")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     body = {"session": "owner", "round": 1, "question_id": qid, "answer": "测试"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:
         path = f"/api/tasks/{task.id}/answer"

@@ -35,9 +35,9 @@ def set_budget(agent: str, amount: float) -> None:
 
 
 def _check_total_budget() -> None:
-    """总预算（env VORTOCODE_COST_BUDGET）超限告警（去重）。"""
+    """总预算（env VORTOONE_COST_BUDGET）超限告警（去重）。"""
     from src.env_compat import env_compat
-    raw = (env_compat("VORTOCODE_COST_BUDGET", "AUTODEV_COST_BUDGET", "") or "").strip()
+    raw = (env_compat("VORTOONE_COST_BUDGET", "AUTODEV_COST_BUDGET", "") or "").strip()
     if not raw:
         return
     try:

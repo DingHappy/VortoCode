@@ -243,29 +243,29 @@ def test_http_requires_general_notification_config_and_explicit_confirmation(tmp
     from fastapi.testclient import TestClient
     from src.web.server import app
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.delenv("VORTOCODE_IM", raising=False)
-    monkeypatch.delenv("VORTOCODE_OWNER_NOTIFY_URL", raising=False)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_IM", raising=False)
+    monkeypatch.delenv("VORTOONE_OWNER_NOTIFY_URL", raising=False)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     _, goal = new_goal(tmp_path)
     client = TestClient(app)
     path = f'/api/assistant/goals/{goal["id"]}/follow-up'
     body = {"revision": 1, "enabled": True, "confirmed": True}
     assert client.put(path, json=body).status_code == 409
     assert not client.get(f'/api/assistant/goals/{goal["id"]}').json()["follow_up_runtime_configured"]
-    monkeypatch.setenv("VORTOCODE_IM", "telegram")
+    monkeypatch.setenv("VORTOONE_IM", "telegram")
     assert client.put(path, json={**body, "confirmed": False}).status_code == 409
     assert client.put(path, json=body).json()["follow_up"]["status"] == "scheduled"
     receipt_path = path + "/acknowledge"
     assert client.post(receipt_path, json={"revision": 2, "confirmed": True}).status_code == 409
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     assert client.put(path, json={**body, "revision": 2}).status_code == 409
 
 
 async def test_approved_goals_are_visible_in_shared_schedule_overview_and_status_tool(tmp_path, monkeypatch):
     from src.scheduling.assistant_watch import schedule_overview, build_status_tools
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
-    monkeypatch.setenv("VORTOCODE_IM", "telegram")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_IM", "telegram")
     service, goal = approved(tmp_path)
     rows = [item for item in schedule_overview(str(tmp_path)) if item["kind"] == "goal"]
     assert rows[0]["id"] == goal["id"] and rows[0]["scheduler_enabled"]
@@ -277,7 +277,7 @@ async def test_approved_goals_are_visible_in_shared_schedule_overview_and_status
 
 def test_schedule_goal_text_taints_memory_proposals_in_the_same_turn(tmp_path, monkeypatch):
     from src.web.routers.realtime import _propose_turn_memories
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     captured = []
     monkeypatch.setattr("src.memory.assistant_profile.propose_memories", lambda *a, **k: captured.append(k))
     session = {"repo_root": str(tmp_path), "activities": [

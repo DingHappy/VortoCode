@@ -19,11 +19,11 @@ from src.web.auth import auth_middleware, get_api_token
 def create_app() -> FastAPI:
     if not get_api_token():
         raise RuntimeError("手机网关需要独立的管理员身份")
-    account_origin(os.getenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", ""))
-    root = os.getenv("VORTOCODE_MOBILE_STATE_ROOT", "").strip()
+    account_origin(os.getenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", ""))
+    root = os.getenv("VORTOONE_MOBILE_STATE_ROOT", "").strip()
     if not root or not Path(root).is_absolute() or Path(root).resolve() != Path.cwd().resolve():
         raise RuntimeError("手机网关工作目录必须匹配已登记的助手状态目录")
-    release = os.getenv("VORTOCODE_MOBILE_RELEASE", "dev")
+    release = os.getenv("VORTOONE_MOBILE_RELEASE", "dev")
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,95}", release):
         raise RuntimeError("手机网关发布标识无效")
 

@@ -39,14 +39,9 @@ def _setup_logging() -> int:
 
     # LOG_LEVEL 写在 .env 里，而 .env 要等 src.llm.client 被导入才加载——这里显式再读一次。
     # （load_dotenv 默认不覆盖已存在的环境变量，重复调用无害。）
-    try:
-        from dotenv import load_dotenv
+    from src.env_compat import load_env_file
 
-        env_path = Path(__file__).parent.parent / ".env"
-        if env_path.exists():
-            load_dotenv(env_path)
-    except ImportError:
-        pass
+    load_env_file(Path(__file__).parent.parent / ".env")
 
     level = _resolve_log_level(os.getenv("LOG_LEVEL"))
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -126,7 +121,7 @@ def main():
                    help="会话能力：local=开发/凭据且禁 Web/MCP；external=外部内容且无宿主凭据（默认 local）")
     p.add_argument("--attach", nargs="?", const="", metavar="URL",
                    help="把回合交给常驻 serve 跑（协议客户端模式）：连 URL 的 /ws"
-                        "（缺省 $VORTOCODE_SERVE_URL 或 http://127.0.0.1:8080）；"
+                        "（缺省 $VORTOONE_SERVE_URL 或 http://127.0.0.1:8080）；"
                         "serve 不在则自动回退进程内执行")
 
     p = sub.add_parser("server", help="启动 FastAPI Web 控制台")
@@ -194,7 +189,7 @@ def main():
     p = sub.add_parser("workers", help="外部执行者（Codex / Claude Code CLI）：查看模式与状态，或在常驻电脑上登录专用账号")
     workers_sub = p.add_subparsers(dest="workers_command")
     workers_sub.add_parser("status", help="当前模式（本机 / 常驻）、角色分工、各 CLI 是否已装已登录、用哪个模型")
-    wl = workers_sub.add_parser("login", help="登录外部 CLI；常驻模式下登录进 VORTOCODE_WORKER_HOME 的专用目录")
+    wl = workers_sub.add_parser("login", help="登录外部 CLI；常驻模式下登录进 VORTOONE_WORKER_HOME 的专用目录")
     wl.add_argument("worker", choices=["codex", "claude"])
 
     sub.add_parser("canary", help="端到端交付验收：一句话进来→确认→结果送到出站面，六条链路逐条验"
@@ -261,12 +256,12 @@ def main():
         print(json.dumps(report, ensure_ascii=True))
         sys.exit(0)  # Deliberately before env/log/provider setup, including configured log-file writes.
 
-    # 结构化日志（opt-in）：VORTOCODE_JSON_LOGS=1 控制台 JSON；VORTOCODE_LOG_FILE=路径 落盘（ELK-ready）
+    # 结构化日志（opt-in）：VORTOONE_JSON_LOGS=1 控制台 JSON；VORTOONE_LOG_FILE=路径 落盘（ELK-ready）
     from src.env_compat import env_compat
-    if env_compat("VORTOCODE_JSON_LOGS", "AUTODEV_JSON_LOGS") \
-            or env_compat("VORTOCODE_LOG_FILE", "AUTODEV_LOG_FILE"):
+    if env_compat("VORTOONE_JSON_LOGS", "AUTODEV_JSON_LOGS") \
+            or env_compat("VORTOONE_LOG_FILE", "AUTODEV_LOG_FILE"):
         from src.core.tracing import setup_structured_logging
-        setup_structured_logging(log_file=env_compat("VORTOCODE_LOG_FILE", "AUTODEV_LOG_FILE") or None)
+        setup_structured_logging(log_file=env_compat("VORTOONE_LOG_FILE", "AUTODEV_LOG_FILE") or None)
     else:
         _setup_logging()      # 没开结构化日志时的兜底配置（否则整个进程只剩 WARNING，见其 docstring）
 
@@ -364,16 +359,13 @@ def main():
             else:
                 if not args.assistant_url or not args.code_url or not args.output:
                     raise ValueError("Sampling requires assistant/code targets and output")
-                try:
-                    from dotenv import load_dotenv
-                    load_dotenv(Path(__file__).parent.parent / ".env")
-                except ImportError:
-                    pass
+                from src.env_compat import load_env_file
+                load_env_file(Path(__file__).parent.parent / ".env")
                 targets = [Target("assistant", args.assistant_url, assistant=True), Target("code", args.code_url)]
                 if args.relay_url:
                     targets.append(Target("relay", args.relay_url))
                 result = monitor(targets, args.output, duration=args.duration, interval=args.interval,
-                                 token=env_compat("VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip(),
+                                 token=env_compat("VORTOONE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip(),
                                  require_im=args.require_im)
                 code = 0 if result["completed"] and result["coverage_complete"] and not result["unhealthy_samples"] else 1
         except (ValueError, OSError) as error:
@@ -479,9 +471,9 @@ async def run_im(channel: str, *, mode: str = "plan"):
 async def run_im_pair(channel: str) -> int:
     import os
     from src.im.telegram_pairing import PairingError, pair_telegram
-    token = os.getenv("VORTOCODE_TG_TOKEN", "").strip()
+    token = os.getenv("VORTOONE_TG_TOKEN", "").strip()
     if not token:
-        print("✗ 先在私密环境配置 VORTOCODE_TG_TOKEN", file=sys.stderr)
+        print("✗ 先在私密环境配置 VORTOONE_TG_TOKEN", file=sys.stderr)
         return 2
     try:
         owner = await pair_telegram(token)
@@ -891,7 +883,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     profile = normalize_profile(capability_profile or "local")
 
     if attach is not None:                        # --attach：先试 serve，够不着再进程内
-        url = attach or os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080"
+        url = attach or os.getenv("VORTOONE_SERVE_URL") or "http://127.0.0.1:8080"
         ignored = [n for n, v in (("--model", model), ("--max-steps", max_steps),
                                   ("--mcp", use_mcp), ("--capabilities", capability_profile)) if v]
         if ignored and not quiet:
@@ -1074,10 +1066,10 @@ def run_workers_cli(command, worker=""):
         return 1 if check.level == "fail" else 0
     if home is None:
         print(f"本机模式下按平时的方式登录即可（{' '.join(ew.login_argv(worker)[1:])}）；"
-              "这里不替你改个人配置。常驻电脑请先在服务环境设 VORTOCODE_WORKER_HOME。")
+              "这里不替你改个人配置。常驻电脑请先在服务环境设 VORTOONE_WORKER_HOME。")
         return 2
     if not ew.worker_binary(worker):
-        print(f"找不到 {worker} 命令：先安装，或设 VORTOCODE_{worker.upper()}_BIN")
+        print(f"找不到 {worker} 命令：先安装，或设 VORTOONE_{worker.upper()}_BIN")
         return 1
     target = ew.codex_home() if worker == "codex" else ew.claude_config_dir()
     print(f"登录到 {target}（需要在真终端里交互完成）…")
@@ -1212,7 +1204,7 @@ def run_demo():
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
-    # 自动启动服务器（默认仅绑本地；对外暴露请显式传 --host 并设置 VORTOCODE_API_TOKEN）
+    # 自动启动服务器（默认仅绑本地；对外暴露请显式传 --host 并设置 VORTOONE_API_TOKEN）
     run_server("127.0.0.1", 8000)
 
 

@@ -1,10 +1,10 @@
 """Web 层鉴权与执行开关（安全默认值）。
 
 设计原则：本地开发不被打扰，但默认不裸奔危险能力。
-- 鉴权：仅当设置了环境变量 VORTOCODE_API_TOKEN 时强制校验
+- 鉴权：仅当设置了环境变量 VORTOONE_API_TOKEN 时强制校验
   （Bearer 或 X-API-Token）；未设则放行（配合默认仅绑 127.0.0.1）。
   这样既不破坏本地 UI，又能在对外暴露时一键加固。
-- 危险的宿主机命令执行端点默认禁用，需显式 VORTOCODE_ENABLE_SHELL=1。
+- 危险的宿主机命令执行端点默认禁用，需显式 VORTOONE_ENABLE_SHELL=1。
 """
 
 import hmac
@@ -30,7 +30,7 @@ def resolve_within(base, rel) -> Optional[Path]:
 
 def get_api_token() -> str:
     from src.env_compat import env_compat
-    return env_compat("VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip()
+    return env_compat("VORTOONE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip()
 
 
 # 登录后种下的 httpOnly Cookie 名——token 走 Cookie（浏览器）/ Authorization 头（程序化），
@@ -129,7 +129,7 @@ def is_authed(request) -> bool:
 
 
 async def auth_middleware(request, call_next):
-    """仅当配置了 VORTOCODE_API_TOKEN 时，对非豁免路径强制校验。"""
+    """仅当配置了 VORTOONE_API_TOKEN 时，对非豁免路径强制校验。"""
     path = request.url.path
     exempt = (path in _EXEMPT_EXACT or path.startswith(_EXEMPT_PREFIXES)
               or (request.method, path) in MOBILE_SELF_AUTHENTICATED)
@@ -151,7 +151,7 @@ def require_shell() -> None:
         raise HTTPException(
             status_code=403,
             detail=("宿主机命令执行已默认禁用。如确需启用，请在可信环境中"
-                    "设置环境变量 VORTOCODE_ENABLE_SHELL=1。"),
+                    "设置环境变量 VORTOONE_ENABLE_SHELL=1。"),
         )
 
 

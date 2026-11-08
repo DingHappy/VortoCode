@@ -50,8 +50,8 @@ def test_desktop_routes_start_and_dismiss(tmp_path, monkeypatch):
     import src.web.routers.tasks as task_routes
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.delenv("VORTOCODE_WORKSPACE_SCOPE", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_WORKSPACE_SCOPE", raising=False)
     submitted = []
 
     class Runner:

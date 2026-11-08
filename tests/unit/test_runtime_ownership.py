@@ -21,7 +21,7 @@ class Adapter:
 @pytest.mark.parametrize("scope", ["general", "scratch"])
 @pytest.mark.asyncio
 async def test_im_inherits_scope_and_rejects_direct_project_commands(tmp_path, monkeypatch, scope):
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", scope)
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", scope)
     adapter = Adapter()
     bridge = IMBridge(tmp_path, adapter, "42")
     assert bridge.workspace_scope == scope
@@ -73,10 +73,10 @@ async def test_bot_ownership_is_shared_across_token_rotations(tmp_path):
 
 @pytest.mark.asyncio
 async def test_startup_failure_releases_workspace_before_retry(tmp_path, monkeypatch):
-    monkeypatch.delenv("VORTOCODE_IM", raising=False)
-    monkeypatch.delenv("VORTOCODE_SUPERVISOR_PID", raising=False)
-    monkeypatch.delenv("VORTOCODE_CRON", raising=False)
-    monkeypatch.delenv("VORTOCODE_HEARTBEAT", raising=False)
+    monkeypatch.delenv("VORTOONE_IM", raising=False)
+    monkeypatch.delenv("VORTOONE_SUPERVISOR_PID", raising=False)
+    monkeypatch.delenv("VORTOONE_CRON", raising=False)
+    monkeypatch.delenv("VORTOONE_HEARTBEAT", raising=False)
     calls = []
     async def shutdown():
         calls.append("shutdown")
@@ -136,9 +136,9 @@ except RuntimeError:
 
 @pytest.mark.asyncio
 async def test_failed_im_startup_cleans_managers_and_workspace(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_IM", "telegram")
-    for key in ("VORTOCODE_SUPERVISOR_PID", "VORTOCODE_CRON", "VORTOCODE_HEARTBEAT",
-                "VORTOCODE_TG_TOKEN", "VORTOCODE_TG_OWNER_ID"):
+    monkeypatch.setenv("VORTOONE_IM", "telegram")
+    for key in ("VORTOONE_SUPERVISOR_PID", "VORTOONE_CRON", "VORTOONE_HEARTBEAT",
+                "VORTOONE_TG_TOKEN", "VORTOONE_TG_OWNER_ID"):
         monkeypatch.delenv(key, raising=False)
     calls = []
     async def shutdown():
@@ -200,7 +200,7 @@ async def test_stopped_runner_cannot_accept_or_schedule_more_work(tmp_path):
 
 @pytest.mark.asyncio
 async def test_cleanup_failure_still_closes_other_managers_and_releases_lock(tmp_path, monkeypatch):
-    for key in ("VORTOCODE_IM", "VORTOCODE_SUPERVISOR_PID", "VORTOCODE_CRON", "VORTOCODE_HEARTBEAT"):
+    for key in ("VORTOONE_IM", "VORTOONE_SUPERVISOR_PID", "VORTOONE_CRON", "VORTOONE_HEARTBEAT"):
         monkeypatch.delenv(key, raising=False)
     calls = []
     async def shutdown():
@@ -225,9 +225,9 @@ def test_desktop_pinned_switches_survive_dotenv_loading(tmp_path, monkeypatch):
     pytest.importorskip("dotenv")
     import src.cli as cli
     (tmp_path / ".env").write_text(
-        "VORTOCODE_IM=dingtalk\nVORTOCODE_CRON=1\nVORTOCODE_HEARTBEAT=1\n")
+        "VORTOONE_IM=dingtalk\nVORTOONE_CRON=1\nVORTOONE_HEARTBEAT=1\n")
     monkeypatch.setattr(cli, "__file__", str(tmp_path / "src" / "cli.py"))
-    pinned = {"VORTOCODE_IM": "", "VORTOCODE_CRON": "0", "VORTOCODE_HEARTBEAT": "0"}
+    pinned = {"VORTOONE_IM": "", "VORTOONE_CRON": "0", "VORTOONE_HEARTBEAT": "0"}
     for key, value in pinned.items():
         monkeypatch.setenv(key, value)
     cli._setup_logging()

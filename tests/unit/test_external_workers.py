@@ -64,7 +64,7 @@ def _fold(worker, events):
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path_factory):
     taint.reset_taint()
-    for name in (ew.ROLE_ENV, ew.TIMEOUT_ENV, ew.WORKER_HOME_ENV, "VORTOCODE_CODEX_BIN", "VORTOCODE_CLAUDE_BIN"):
+    for name in (ew.ROLE_ENV, ew.TIMEOUT_ENV, ew.WORKER_HOME_ENV, "VORTOONE_CODEX_BIN", "VORTOONE_CLAUDE_BIN"):
         monkeypatch.delenv(name, raising=False)
     ew._SUMMARY_CACHE.clear()
     ew._COOLDOWN_UNTIL.clear()
@@ -239,7 +239,7 @@ def fake_cli(tmp_path, monkeypatch):
         path = bindir / f"{worker}-fake"
         path.write_text(_FAKE.format(python=sys.executable))
         path.chmod(path.stat().st_mode | stat.S_IEXEC)
-        monkeypatch.setenv(f"VORTOCODE_{worker.upper()}_BIN", str(path))
+        monkeypatch.setenv(f"VORTOONE_{worker.upper()}_BIN", str(path))
     return bindir
 
 
@@ -347,7 +347,7 @@ async def test_dev_isolated_routes_implementer_to_configured_worker(fake_cli, tm
     from src.agents.main_agent import build_dev_tools
 
     monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
     built = []
 
     async def fake_run_isolated_task(_repo_root, _wid, desc, build_agent, test_cmd=None, **_kw):
@@ -551,9 +551,9 @@ def test_doctor_fails_when_logged_out_or_missing(fake_cli, tmp_path, monkeypatch
     monkeypatch.setenv("FAKE_LOGGED_OUT", "1")
     check = _check_external_workers()
     assert check.level == "fail" and "codex login" in check.detail
-    monkeypatch.setenv("VORTOCODE_CODEX_BIN", str(tmp_path / "nope"))
+    monkeypatch.setenv("VORTOONE_CODEX_BIN", str(tmp_path / "nope"))
     monkeypatch.setenv("PATH", str(tmp_path))
-    monkeypatch.delenv("VORTOCODE_CODEX_BIN")
+    monkeypatch.delenv("VORTOONE_CODEX_BIN")
     check = _check_external_workers()
     assert check.level == "fail" and "找不到命令" in check.detail
 
@@ -735,7 +735,7 @@ async def test_dev_isolated_external_implementer_falls_back_to_the_internal_writ
     from src.agents.main_agent import build_dev_tools
 
     monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
     built = []
 
     async def fake_run_isolated_task(_repo_root, _wid, desc, build_agent, test_cmd=None, **_kw):
@@ -783,7 +783,7 @@ async def test_dev_isolated_uses_internal_writer_when_experiment_is_off(monkeypa
 
     monkeypatch.delenv(ew.EXPERIMENTAL_ENV)
     monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
-    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
     built = []
 
     async def fake_run_isolated_task(_repo_root, _wid, desc, build_agent, test_cmd=None, **_kw):

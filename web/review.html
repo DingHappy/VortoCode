@@ -183,7 +183,7 @@ $("#refresh").onclick = () => cur ? loadDetail(cur.run_id) : loadList();
 
 // ── 登录门 ────────────────────────────────────────────────────────────────
 // 页面外壳在鉴权豁免清单里（否则没法登录），但它读的 /api/pipelines 不豁免。设了
-// VORTOCODE_API_TOKEN 的机器上，直接 loadList() 的下场是整页只剩一行"读不到：
+// VORTOONE_API_TOKEN 的机器上，直接 loadList() 的下场是整页只剩一行"读不到：
 // Unauthorized"——真机 2026-09-11：钉钉通知里的 /review 链接点开就是这个样子，而那条
 // 链接是整条运营链唯一的人工入口。
 //

@@ -92,9 +92,9 @@ def test_concurrent_issuance_never_loses_existing_grants(tmp_path):
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "admin-test-only")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "admin-test-only")
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     from src.web.server import app
 
     client = TestClient(app, base_url="https://gateway.test")
@@ -178,7 +178,7 @@ def test_revocation_applies_to_next_request(api):
 def test_no_admin_configuration_disables_mobile_even_when_grants_exist(api, monkeypatch):
     client, _ = api
     grant = _grant(client)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN")
+    monkeypatch.delenv("VORTOONE_API_TOKEN")
     assert client.post("/api/mobile/devices", json={"name": "A"}).status_code == 403
     assert (
         client.get(

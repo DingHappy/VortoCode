@@ -47,7 +47,7 @@ class AccountSession:
 def configured_account_origin() -> str:
     try:
         return account_origin(
-            os.getenv("VORTOCODE_ACCOUNT_URL", "").strip() or DEFAULT_ACCOUNT_ORIGIN
+            os.getenv("VORTOONE_ACCOUNT_URL", "").strip() or DEFAULT_ACCOUNT_ORIGIN
         )
     except ValueError:
         raise AccountUnavailable("账号服务配置不可用") from None

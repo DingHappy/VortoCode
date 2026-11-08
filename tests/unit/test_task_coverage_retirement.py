@@ -314,7 +314,7 @@ def test_cli_is_before_env_logs_and_has_explicit_expected_binding(tmp_path, monk
     view = release(service, source, archive)["retirement"]
     path = retirement_path(service.runner.ledger, archive["scan_id"])
     from src.cli import main
-    monkeypatch.setenv("VORTOCODE_LOG_FILE", str(tmp_path / "must-not-exist.log"))
+    monkeypatch.setenv("VORTOONE_LOG_FILE", str(tmp_path / "must-not-exist.log"))
     monkeypatch.setattr("sys.argv", ["vc", "coverage-retirement-verify", str(path), "--scan-id", archive["scan_id"],
                                     "--retirement-digest", view["retirement_digest"]])
     with pytest.raises(SystemExit) as result: main()
@@ -332,7 +332,7 @@ async def test_http_read_retirement_auth_scope_and_absent_archive(tmp_path, monk
     service, source, archive, _ = retained(tmp_path)
     view = release(service, source, archive)["retirement"]
     archive_path(service.runner.ledger, archive["archive_id"]).rename(tmp_path / "kept.json")
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "retirement-local-only")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "retirement-local-only")
     monkeypatch.setattr("src.web.routers.delegations.get_dispatch_service", lambda: service)
     path = f'/api/delegations/{source.id}/dependency-scans/{archive["scan_id"]}/retirement'
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

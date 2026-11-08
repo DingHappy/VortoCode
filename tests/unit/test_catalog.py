@@ -48,15 +48,15 @@ def test_install_marks_installed_and_goes_through_the_normal_path(tmp_path):
 def test_routes_and_general_scope(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.delenv("VORTOCODE_WORKSPACE_SCOPE", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_WORKSPACE_SCOPE", raising=False)
     from src.web.server import app
     client = TestClient(app)
     assert {item["id"] for item in client.get("/api/extensions/catalog").json()["mcp"]} >= {"deepwiki", "context7"}
     assert client.post("/api/extensions/catalog/mcp/context7/install").json()["status"] == "available"
     assert client.post("/api/extensions/catalog/mcp/context7/install").status_code == 409
     assert client.post("/api/extensions/catalog/skills/write-tests/install", json={"scope": "shared"}).json()["scope"] == "shared"
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     blocked = client.post("/api/extensions/catalog/skills/release-notes/install", json={"scope": "local"})
     assert blocked.status_code == 409 and "个人技能" in blocked.json()["detail"]
     assert client.post("/api/extensions/catalog/mcp/microsoft-learn/install").status_code == 200   # MCP 在助理里照样能装

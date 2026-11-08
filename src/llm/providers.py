@@ -83,7 +83,7 @@ def providers() -> Dict[str, ProviderSpec]:
 
     另外两种登记方式：
       · `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` → 自动登记成 `anthropic`（沿用既有变量名）；
-      · `VORTOCODE_PROVIDER_<NAME>_BASE` + `_KEY` → 登记成 `<name>`（小写），想加几家加几家。
+      · `VORTOONE_PROVIDER_<NAME>_BASE` + `_KEY` → 登记成 `<name>`（小写），想加几家加几家。
     """
     from src.llm.client import DEFAULT_LLM_BASE_URL
 
@@ -98,7 +98,7 @@ def providers() -> Dict[str, ProviderSpec]:
     anthropic_base, anthropic_key = _env("ANTHROPIC_BASE_URL"), _env("ANTHROPIC_AUTH_TOKEN")
     if anthropic_base and anthropic_key:
         out["anthropic"] = ProviderSpec("anthropic", anthropic_base, anthropic_key)
-    prefix, suffix = "VORTOCODE_PROVIDER_", "_BASE"
+    prefix, suffix = "VORTOONE_PROVIDER_", "_BASE"
     for key in os.environ:
         if not (key.startswith(prefix) and key.endswith(suffix)):
             continue
@@ -137,8 +137,8 @@ def parse_role_models(raw: str) -> Dict[str, Tuple[Optional[str], str]]:
 
 
 def role_models() -> Dict[str, Tuple[Optional[str], str]]:
-    """env `VORTOCODE_MODEL_ROLES` 里声明的角色表。没配 = 空表 = 全走默认。"""
-    return parse_role_models(_env("VORTOCODE_MODEL_ROLES"))
+    """env `VORTOONE_MODEL_ROLES` 里声明的角色表。没配 = 空表 = 全走默认。"""
+    return parse_role_models(_env("VORTOONE_MODEL_ROLES"))
 
 
 def resolve(role: str) -> Optional[RoleTarget]:

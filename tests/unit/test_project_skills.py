@@ -89,8 +89,8 @@ def test_symlinked_skill_dir_is_refused(root, tmp_path):
 def test_routes(root, monkeypatch):
     from fastapi.testclient import TestClient
     monkeypatch.chdir(root)
-    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
-    monkeypatch.delenv("VORTOCODE_WORKSPACE_SCOPE", raising=False)
+    monkeypatch.delenv("VORTOONE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOONE_WORKSPACE_SCOPE", raising=False)
     from src.web.server import app
     client = TestClient(app)
     assert [item["id"] for item in client.get("/api/extensions/skills").json()["items"]] == ["code-review"]

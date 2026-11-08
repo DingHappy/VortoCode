@@ -291,8 +291,8 @@ async def test_cancelling_cleanup_leaves_calls_disabled_and_observation_unconfir
 async def test_web_optin_uses_same_attachment_and_revocation(setup, monkeypatch):
     from src.web.routers import realtime
     c = setup
-    monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WEB_MCP", "1")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     agent = MainAgent([])
     agent._capabilities = SimpleNamespace(profile="external")
     c.agents.append(agent); c.sessions["opt-in"] = {"agent": agent}

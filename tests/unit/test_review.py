@@ -270,24 +270,24 @@ async def test_gate_multi_fixed_then_passes(tmp_path):
 
 def test_dev_review_perspectives_env(monkeypatch):
     """视角集：默认全部；逗号取子集（大小写不敏感）；全是未知名回落全部。"""
-    monkeypatch.delenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", raising=False)
+    monkeypatch.delenv("VORTOONE_DEV_REVIEW_PERSPECTIVES", raising=False)
     assert review.dev_review_perspectives() == list(review.PERSPECTIVES)
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "security")
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW_PERSPECTIVES", "security")
     assert review.dev_review_perspectives() == ["security"]
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "Security, correctness")
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW_PERSPECTIVES", "Security, correctness")
     assert review.dev_review_perspectives() == ["security", "correctness"]
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "bogus,nope")
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW_PERSPECTIVES", "bogus,nope")
     assert review.dev_review_perspectives() == list(review.PERSPECTIVES)
 
 
 # ------------------------------------------------------------ 开关
 def test_dev_review_enabled_default_on(monkeypatch):
-    monkeypatch.delenv("VORTOCODE_DEV_REVIEW", raising=False)
+    monkeypatch.delenv("VORTOONE_DEV_REVIEW", raising=False)
     assert _dev_review_enabled() is True
     for v in ("0", "false", "no", "off"):
-        monkeypatch.setenv("VORTOCODE_DEV_REVIEW", v)
+        monkeypatch.setenv("VORTOONE_DEV_REVIEW", v)
         assert _dev_review_enabled() is False
-    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")
+    monkeypatch.setenv("VORTOONE_DEV_REVIEW", "1")
     assert _dev_review_enabled() is True
 
 

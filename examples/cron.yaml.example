@@ -1,8 +1,8 @@
 # VortoOne cron 作业表示例——放到目标仓库的 `.vortocode/cron.yaml` 才生效。
 #
 # 调度循环默认**关**：仅当以 opt-in 方式起服务才跑（不擅自跑自主 LLM 作业）——
-#   VORTOCODE_CRON=1 vortocode server      # 起 cron
-#   VORTOCODE_HEARTBEAT=1 vortocode server # 起 heartbeat
+#   VORTOONE_CRON=1 vortocode server      # 起 cron
+#   VORTOONE_HEARTBEAT=1 vortocode server # 起 heartbeat
 # 也可手动触发单个作业（不起常驻）：vortocode cron run <name>
 #
 # schedule 支持三种：

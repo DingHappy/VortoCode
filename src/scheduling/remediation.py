@@ -51,7 +51,7 @@ _COOLDOWN = 6 * 3600
 
 # 自动处置的总开关。默认**开**：这些动作都够窄（可逆、幂等、限本仓），而它们要救的场景恰恰是
 # "没人盯着"。置 0/false/no/off 关掉——关掉后仍然会诊断并给出人工处置指引，只是不动手。
-_ENABLED_ENV = "VORTOCODE_SELF_HEAL"
+_ENABLED_ENV = "VORTOONE_SELF_HEAL"
 
 # 自动处置时用的提交身份。**刻意不冒充主人**：自动落的提交要一眼看得出是机器落的。
 _BOT_NAME = "VortoOne Agent"

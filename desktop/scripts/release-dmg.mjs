@@ -5,7 +5,8 @@
 // 坑（2026-10-25，v0.2.20）：hdiutil create 有时把刚做好的 DMG 留在挂载状态，diskimages-helper 持着文件锁，
 // notarytool 打开它会一直卡在 open()——没有网络连接，Apple 那边也没有这次提交，看着像网络问题，等了 50 分钟。
 // 所以做完立刻卸掉残留挂载，仍被占用就直接报错；公证也设了超时。
-// 用法：node scripts/release-dmg.mjs     （公证 profile：VORTOCODE_NOTARY_PROFILE，默认 vortocode-notary）
+// 用法：node scripts/release-dmg.mjs     （公证 profile：VORTOONE_NOTARY_PROFILE，默认 vortocode-notary）
+import "./env-names.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
@@ -72,7 +73,7 @@ function main() {
   const version = JSON.parse(readFileSync(join(desktop, "src-tauri", "tauri.conf.json"), "utf8")).version;
   const bundle = join(desktop, "src-tauri", "target", "release", "bundle");
   const app = join(bundle, "macos", "VortoOne.app");
-  const profile = process.env.VORTOCODE_NOTARY_PROFILE || "vortocode-notary";
+  const profile = process.env.VORTOONE_NOTARY_PROFILE || "vortocode-notary";
   if (!existsSync(app)) throw new Error(`没有找到构建好的 App：${app}（先 npm run bundle:dev-signed）`);
   const built = run("plutil", ["-extract", "CFBundleShortVersionString", "raw", join(app, "Contents", "Info.plist")]).trim();
   if (built !== version) throw new Error(`App 是 ${built}，配置是 ${version}：先重新构建`);

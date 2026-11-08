@@ -134,7 +134,7 @@ async def test_tool_batch_cannot_expand_limit_and_swallowed_error_is_not_success
 
 @pytest.mark.asyncio
 async def test_readonly_check_is_real_agent_execution_with_unsupported_provider_closed(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_AGENT_MAX_STEPS", "100")
+    monkeypatch.setenv("VORTOONE_AGENT_MAX_STEPS", "100")
     result = await run_bounded_check(str(tmp_path), "核对交接", Adapter())
     assert result["result"] == "已检查证据并说明边界"
     assert result["budget"]["requests"] == 1

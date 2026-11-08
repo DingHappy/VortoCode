@@ -324,7 +324,7 @@ async def test_stream_chat_streams_content_and_no_tools(monkeypatch):
 @pytest.mark.asyncio
 async def test_custom_relay_stream_does_not_probe_stream_usage_twice(monkeypatch):
     """兼容中转默认不发 stream_options，避免不兼容请求超时后整次生成重发。"""
-    monkeypatch.delenv("VORTOCODE_STREAM_USAGE", raising=False)
+    monkeypatch.delenv("VORTOONE_STREAM_USAGE", raising=False)
     chunks = [_chunk(_delta(content="好"))]
     calls = []
 

@@ -132,7 +132,7 @@ def test_optional_mobile_entry_reports_unready_without_build_or_account(client, 
     from src.web.routers import mobile_pages
 
     monkeypatch.setattr(mobile_pages, "_DIRECTORY", tmp_path)
-    monkeypatch.delenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", raising=False)
+    monkeypatch.delenv("VORTOONE_MOBILE_PUBLIC_ORIGIN", raising=False)
     for path in ("/mobile", "/mobile/", "/mobile/manage"):
         response = client.get(path)
         assert response.status_code == 503

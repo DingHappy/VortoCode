@@ -213,7 +213,7 @@ def test_examples_parse_with_real_parser():
 
 @pytest.mark.parametrize("setting, expected", [("1", True), ("0", False)])
 def test_custom_role_inherits_existing_native_protocol_setting(tmp_path, monkeypatch, setting, expected):
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", setting)
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", setting)
     _write_agent(tmp_path, "pm.md", _PM)
     sub = build_subagent(str(tmp_path), registry_for(str(tmp_path)).get("product-manager"))
     assert sub._native is expected

@@ -1,7 +1,7 @@
 """手机网关 → 常驻助理的本机转发（ADR-012 阶段 A）。网关自己不执行回合，只转。
 
-``VORTOCODE_APP_RELAY_URL`` 只接受回环地址（``http://127.0.0.1:<端口>`` / ``http://localhost:<端口>``），
-专用令牌 ``VORTOCODE_APP_RELAY_TOKEN`` 因此不会被配置错发到别的机器。两项都没配 = 对话未开通。
+``VORTOONE_APP_RELAY_URL`` 只接受回环地址（``http://127.0.0.1:<端口>`` / ``http://localhost:<端口>``），
+专用令牌 ``VORTOONE_APP_RELAY_TOKEN`` 因此不会被配置错发到别的机器。两项都没配 = 对话未开通。
 """
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ class RelayUnavailable(RuntimeError):
 
 
 def _target() -> tuple[str, str]:
-    url = os.getenv("VORTOCODE_APP_RELAY_URL", "").strip().rstrip("/")
-    token = os.getenv("VORTOCODE_APP_RELAY_TOKEN", "").strip()
+    url = os.getenv("VORTOONE_APP_RELAY_URL", "").strip().rstrip("/")
+    token = os.getenv("VORTOONE_APP_RELAY_TOKEN", "").strip()
     parts = urlsplit(url)
     if (not url or not token or parts.scheme != "http" or parts.hostname not in ("127.0.0.1", "localhost", "::1")
             or parts.path or parts.query or parts.username):
@@ -25,7 +25,7 @@ def _target() -> tuple[str, str]:
 
 def configured() -> bool:
     """配了转发地址和令牌（地址不合法也算配了，由 relay 报错，不悄悄退回本地执行）。"""
-    return bool(os.getenv("VORTOCODE_APP_RELAY_URL", "").strip() and os.getenv("VORTOCODE_APP_RELAY_TOKEN", "").strip())
+    return bool(os.getenv("VORTOONE_APP_RELAY_URL", "").strip() and os.getenv("VORTOONE_APP_RELAY_TOKEN", "").strip())
 
 
 async def relay(path: str, body: dict, *, client=None) -> tuple[int, dict]:

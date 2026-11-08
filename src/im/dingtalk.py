@@ -56,10 +56,10 @@ def _ws_heartbeat_kw() -> dict:
 
     真机上万一钉钉对客户端 ping 反应不佳，最坏情况是反复重连——比 bot 死好，但仍是活的
     生产 bot。所以锁在配置门后（同卡片模板/深链的老规矩）：
-    ``VORTOCODE_DD_WS_HEARTBEAT=30`` 开启，不设则一切照旧。
+    ``VORTOONE_DD_WS_HEARTBEAT=30`` 开启，不设则一切照旧。
     """
     try:
-        seconds = float(os.getenv("VORTOCODE_DD_WS_HEARTBEAT", "") or 0)
+        seconds = float(os.getenv("VORTOONE_DD_WS_HEARTBEAT", "") or 0)
     except ValueError:
         return {}
     return {"heartbeat": seconds} if seconds > 0 else {}

@@ -111,7 +111,7 @@ async def test_tainted_goal_never_reaches_the_reviewer(world):
 
 async def test_daily_cap(world, monkeypatch):
     root, calls, sent, notify = world
-    monkeypatch.setenv("VORTOCODE_AUTO_DISPATCH_PER_DAY", "1")
+    monkeypatch.setenv("VORTOONE_AUTO_DISPATCH_PER_DAY", "1")
     for i in range(2):
         PersonalGoals(root).create(contract(f"目标 {i}"), origin="owner")
     llm = LLM(DISPATCH, {"verdict": "approve", "reason": "ok"}, DISPATCH, {"verdict": "approve", "reason": "ok"})
@@ -143,7 +143,7 @@ async def test_approved_next_step_is_written_and_undoable(world):
 
 async def test_switch_off_means_everything_waits(world, monkeypatch):
     root, calls, _sent, notify = world
-    monkeypatch.setenv("VORTOCODE_AUTO_REVIEW", "0")
+    monkeypatch.setenv("VORTOONE_AUTO_REVIEW", "0")
     PersonalGoals(root).create(contract(), origin="owner")
     llm = LLM(DISPATCH)
     await _advance(root, notify, llm)

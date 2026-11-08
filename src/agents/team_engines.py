@@ -14,7 +14,7 @@
 - **工作目录**是这条子任务专用的空目录，结束即删。不给项目、记忆、目标或任何私人资料。
 - **模型走中转站**：端点与令牌取自默认模型配置，只放进子进程环境，不写进任何文件。OpenCode 以 OpenAI 兼容
   服务商接入；DeepSeek Harness 走 Messages 兼容端点（中转站同一根地址）。
-- **可执行文件**先找 ``$VORTOCODE_WORKER_HOME/bin``（常驻电脑上放框架和它要的 node），再找 PATH。
+- **可执行文件**先找 ``$VORTOONE_WORKER_HOME/bin``（常驻电脑上放框架和它要的 node），再找 PATH。
 - 研究员一律记为污点；其它角色只要框架请求过非本地类别的权限（不论放没放）也记为污点。
 """
 from __future__ import annotations
@@ -101,7 +101,7 @@ def opencode_config(model: str) -> Dict[str, Any]:
         "small_model": f"{_PROVIDER}/{model}",
         "provider": {_PROVIDER: {
             "npm": "@ai-sdk/openai-compatible", "name": "VortoOne relay",
-            "options": {"baseURL": "{env:VORTOCODE_RELAY_BASE}", "apiKey": "{env:VORTOCODE_RELAY_KEY}"},
+            "options": {"baseURL": "{env:VORTOONE_RELAY_BASE}", "apiKey": "{env:VORTOONE_RELAY_KEY}"},
             "models": {model: {"name": model}},
         }},
         "permission": {
@@ -122,7 +122,7 @@ def engine_env(engine: str, model: str) -> Dict[str, str]:
         directory = str(Path(binary).parent)          # 框架是 `#!/usr/bin/env node`：同目录的 node 要排在前面
         env["PATH"] = directory + (os.pathsep + env["PATH"] if env.get("PATH") else "")
     if engine == "opencode":
-        env.update(VORTOCODE_RELAY_BASE=base, VORTOCODE_RELAY_KEY=key,
+        env.update(VORTOONE_RELAY_BASE=base, VORTOONE_RELAY_KEY=key,
                    OPENCODE_CONFIG_CONTENT=json.dumps(opencode_config(model or DEFAULT_MODEL), ensure_ascii=False),
                    OPENCODE_DISABLE_AUTOUPDATE="1")
     else:

@@ -381,8 +381,8 @@ async def test_http_discovery_and_batch_reconcile_use_the_same_strict_contract(t
     change_source(runner, parent)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(tasks, "_RUNNER", runner)
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "local-dependents-fixture")
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "project")
+    monkeypatch.setenv("VORTOONE_API_TOKEN", "local-dependents-fixture")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "project")
     path = f"/api/delegations/{parent.id}"
     headers = {"Authorization": "Bearer local-dependents-fixture"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as client:

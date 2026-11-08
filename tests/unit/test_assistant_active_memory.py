@@ -19,8 +19,8 @@ class RecordingLLM:
 
 @pytest.fixture(autouse=True)
 def offline_config(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
-    monkeypatch.setenv("VORTOCODE_AUTO_RECALL", "1")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "0")
+    monkeypatch.setenv("VORTOONE_AUTO_RECALL", "1")
 
 
 def remember(root, content):
@@ -77,7 +77,7 @@ async def test_automatic_recall_retaints_and_emits_existing_tool_events(tmp_path
 
 
 async def test_opt_out_does_not_leak_frozen_memories(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_AUTO_RECALL", "0")
+    monkeypatch.setenv("VORTOONE_AUTO_RECALL", "0")
     remember(tmp_path, "synthetic 火车出差偏好")
     llm = RecordingLLM()
     agent = build_session(str(tmp_path), kind="web", workspace_scope="general", llm=llm)
@@ -163,7 +163,7 @@ async def test_relevant_older_fact_is_preferred_to_recent_unrelated_facts(tmp_pa
 
 
 async def test_native_protocol_keeps_recall_out_of_persistent_history(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", "1")
     remember(tmp_path, "synthetic 火车出差偏好")
     llm = RecordingLLM()
     agent = build_session(str(tmp_path), kind="web", workspace_scope="general", llm=llm)
@@ -185,7 +185,7 @@ def test_automatic_read_does_not_modify_the_database(tmp_path):
 async def test_unattended_online_job_does_not_gain_personal_memory(tmp_path, monkeypatch):
     from src.gateway.session import run_isolated_session
 
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     remember(tmp_path, "synthetic 火车出差偏好")
     llm = RecordingLLM()
     await run_isolated_session(str(tmp_path), "帮我安排火车出差", allow_web=True, llm=llm)
@@ -194,7 +194,7 @@ async def test_unattended_online_job_does_not_gain_personal_memory(tmp_path, mon
 
 @pytest.mark.parametrize("native", ["0", "1"])
 async def test_mixed_language_recall_reaches_the_model_without_leaking_unrelated_facts(tmp_path, monkeypatch, native):
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", native)
+    monkeypatch.setenv("VORTOONE_NATIVE_TOOLS", native)
     remember(tmp_path, "VortoOne 更新需要稳定签名包")
     remember(tmp_path, "The user maintains a Django website")
     llm = RecordingLLM()
@@ -217,7 +217,7 @@ def test_memory_proposals_only_inherit_actual_recall_data(tmp_path, monkeypatch,
     from src.web.routers.realtime import _propose_turn_memories
 
     captured = []
-    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     monkeypatch.setattr("src.memory.assistant_profile.propose_memories",
                         lambda *args, **kwargs: captured.append(kwargs))
     rid = "current" if same_turn else "previous"

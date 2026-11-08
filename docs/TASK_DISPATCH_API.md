@@ -11,7 +11,7 @@
 - 本接口不接受 cwd、模型、权限、工具清单、回调 URL 或任意对外发送目标。
 - 服务面运行在 Gateway 当前 Scratch/Project 范围内；General 返回 workspace_required。
 
-鉴权沿用 Gateway 的 `Authorization: Bearer <VORTOCODE_API_TOKEN>`。
+鉴权沿用 Gateway 的 `Authorization: Bearer <VORTOONE_API_TOKEN>`。
 本地无 token 的兼容模式保持不变，非本机监听仍受已有启动限制。
 目前是同一个 runtime 的受信控制方入口：session 用于归属和路由，不是用户身份认证。
 持有同一管理员 token 的调用方可以选择任意合法 session；不可把此接口直接当成多租户隔离服务。
@@ -89,7 +89,7 @@ LLMClient 缺少可靠输入计量与严格适配声明，不会因普通下派�
 
 ```bash
 curl -X POST "$GATEWAY_URL/api/delegations" \
-  -H "Authorization: Bearer $VORTOCODE_API_TOKEN" \
+  -H "Authorization: Bearer $VORTOONE_API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"session":"service-a","request_id":"analysis-001","prompt":"分析认证流程","acceptance":["说明入口与证据"]}'
 ```
@@ -133,7 +133,7 @@ accepted 不得扩展工作；新工作使用新的 request_id 创建新任务�
 
 ## 恢复与并发
 
-开发任务和下派任务共用 TaskRunner 的 semaphore，默认并发数取既有 `VORTOCODE_BG_TASKS`。
+开发任务和下派任务共用 TaskRunner 的 semaphore，默认并发数取既有 `VORTOONE_BG_TASKS`。
 下派入口在后台活跃/排队任务达到 100 项时返回 429。
 不另建任务数据库、角色队列或第二个模型执行框架。
 
@@ -938,7 +938,7 @@ review、handling、validity、round/revision、column/label、recovered_by 分�
 ### 本机角色模型（PRD 第39节）
 
 原 `.vortocode/agents/*.md` 的 `model: local:<完整模型ID>` 使用已登记的
-`VORTOCODE_PROVIDER_LOCAL_BASE`/`_KEY`，复用原 role 客户端与执行池。
+`VORTOONE_PROVIDER_LOCAL_BASE`/`_KEY`，复用原 role 客户端与执行池。
 精确回环地址可以空 Key，用固定非秘密占位符；本机要求鉴权时必须使用本机 token。
 不增加请求字段或客户端自授模型/provider权限，不把本机供应商视为硬预算 provider。
 格式与 Desktop/CLI 配置步骤见 [本机模型接入](./LOCAL_MODELS.md)。
@@ -946,7 +946,7 @@ review、handling、validity、round/revision、column/label、recovered_by 分�
 
 ### 原生工具依赖及本机兼容响应（PRD第40节）
 
-原角色文件装配沿用 `VORTOCODE_NATIVE_TOOLS`，不扩大角色工具权限。
+原角色文件装配沿用 `VORTOONE_NATIVE_TOOLS`，不扩大角色工具权限。
 请求原生tools但缺OpenAI SDK时明确失败，不能静默按普通chat处理。
 原SDK响应无usage时返回结果且usage为空对象，不能作为精确provider用量或硬预算证据。
 临时真实SDK验证只读角色与流式合同，不新增任务API、模型选择授权或自动推进。
@@ -954,7 +954,7 @@ review、handling、validity、round/revision、column/label、recovered_by 分�
 
 ### oMLX配置入口（PRD第41节）
 
-沿用已有OpenAI兼容供应商登记：`VORTOCODE_PROVIDER_OMLX_BASE` / `_KEY`与
+沿用已有OpenAI兼容供应商登记：`VORTOONE_PROVIDER_OMLX_BASE` / `_KEY`与
 `model: omlx:<完整模型ID>`；原HTTP任务入口不新增模型选择或自授权字段。
 Desktop独立oMLX预设官方默认8000，可按实例实际端口修改；服务鉴权需要自己的Key。
 模型清单成功不等于实际推理/工具能力或硬预算，当前实例发现记录见LOCAL_MODELS。

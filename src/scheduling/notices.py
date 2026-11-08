@@ -217,8 +217,8 @@ async def _flush_undelivered(repo_root: str, send, *, now: datetime = None) -> D
 
 
 # ── 安静时段与重复合并（只管「推不推手机」，台账与 Desktop 实时广播照旧）──────────────
-QUIET_ENV = "VORTOCODE_QUIET_HOURS"          # 例：23:00-08:00（本机时区，可跨夜）；不设 = 不启用
-DEDUP_ENV = "VORTOCODE_NOTICE_DEDUP_MIN"     # 同一来源、同样内容多少分钟内只推一次；默认 60，0 = 关
+QUIET_ENV = "VORTOONE_QUIET_HOURS"          # 例：23:00-08:00（本机时区，可跨夜）；不设 = 不启用
+DEDUP_ENV = "VORTOONE_NOTICE_DEDUP_MIN"     # 同一来源、同样内容多少分钟内只推一次；默认 60，0 = 关
 MAX_HELD = 100
 
 
