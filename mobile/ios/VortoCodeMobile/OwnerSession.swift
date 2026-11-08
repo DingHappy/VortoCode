@@ -49,6 +49,7 @@ final class OwnerSession {
         if chatApprovalWork != nil { working = false; chatApprovalWork = nil }
         turn = nil
         chat = []
+        queue = ChatQueue()
         chatNeedsReview = false
         chatRequest = Self.newRequestId()
         timelineEpoch = UUID()
@@ -73,6 +74,8 @@ final class OwnerSession {
     var captureOnly = false
     private var chatRequest = OwnerSession.newRequestId()
     var chatNeedsReview = false
+    /// 回合进行中写下的消息，这一轮结束后再发（ADR-017 M2）
+    var queue = ChatQueue()
     private var polling: Task<Void, Never>?
 
     private static func newRequestId() -> String { UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
@@ -242,47 +245,95 @@ final class OwnerSession {
         }
     }
 
-    /// 发一句话给助理；打开「只记下来」时改为随手记。重试复用同一个请求 id，服务端只起一个回合。
+    /// 这一轮还没结束（在跑或有卡等你）：新消息先排队
+    var turnInProgress: Bool { !(turn?.isFinished ?? true) }
+
+    /// 发一句话给助理；打开「只记下来」时改为随手记。这一轮没结束就先排队。
+    /// 重试复用同一个请求 id，服务端只起一个回合。
     func send(_ entry: AssistantEntry, _ credential: NativeCredential) async {
         if captureOnly { await capture(entry, credential); await loadChat(entry, credential); return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let device = bootstrap?.device.id, !sending, !chatNeedsReview, !text.isEmpty, turn?.isFinished ?? true else { return }
+        guard !text.isEmpty else { return }
+        // 这一轮没结束，或前面还有排着的：排到最后，保持先后顺序
+        if turnInProgress || !queue.items.isEmpty {
+            if queue.enqueue(String(text.prefix(4000)), requestId: chatRequest) {
+                draft = ""
+                chatRequest = Self.newRequestId()
+                note = ""
+                if !turnInProgress { await drainQueue(entry, credential) }
+            } else { note = "最多排 \(ChatQueue.limit) 条，先等这一轮结束。" }
+            return
+        }
+        guard !chatNeedsReview else { return }
+        if await start(entry, credential, text: text, requestId: chatRequest) {
+            draft = ""
+            chatRequest = Self.newRequestId()
+        }
+    }
+
+    /// 主人点「发出」：解除停住，发排在最前的一条。
+    func sendQueuedNow(_ entry: AssistantEntry, _ credential: NativeCredential) async {
+        guard !turnInProgress, !chatNeedsReview, let item = queue.release() else { return }
+        if await start(entry, credential, text: item.text, requestId: item.id) { queue.sent(item.id) }
+    }
+
+    /// 回合结束（或核对完旧请求）后，按队列的规则决定发不发下一条。
+    func drainQueue(_ entry: AssistantEntry, _ credential: NativeCredential) async {
+        switch queue.next(after: turn, needsReview: chatNeedsReview) {
+        case .none: return
+        case .hold(let reason): note = reason
+        case .send(let item):
+            if await start(entry, credential, text: item.text, requestId: item.id) { queue.sent(item.id) }
+            else { queue.hold("排队的消息没发出去；核对后点「发出」重试。") }
+        }
+    }
+
+    /// 起一个回合；成功返回 true。
+    private func start(_ entry: AssistantEntry, _ credential: NativeCredential, text: String, requestId: String) async -> Bool {
+        guard let device = bootstrap?.device.id, !sending, !chatNeedsReview, !text.isEmpty, !turnInProgress else { return false }
         let epoch = timelineEpoch
         sending = true; defer { sending = false }
         do {
             let started = try await api(entry).chatSend(credential, signer: signer, deviceId: device,
-                                                        text: String(text.prefix(4000)), requestId: chatRequest)
-            guard epoch == timelineEpoch, !Task.isCancelled else { return }
+                                                        text: String(text.prefix(4000)), requestId: requestId)
+            guard epoch == timelineEpoch, !Task.isCancelled else { return false }
             chat.append(ChatItem(role: "user", text: text, rid: started.rid, source: "app"))
             turn = started
-            draft = ""
-            chatRequest = Self.newRequestId()
             note = ""
             follow(entry, credential)
+            return true
         } catch {
-            guard epoch == timelineEpoch, !Task.isCancelled else { return }
+            guard epoch == timelineEpoch, !Task.isCancelled else { return false }
             if case OwnerWriteError.requestNeedsReview = error { chatNeedsReview = true }
             say(error)
+            return false
         }
     }
 
-    /// 回合没结束就每 2 秒看一次；结束后重读对话（回复已写进主要聊天）。App 退到后台时停。
+    /// 回合没结束就一直看：在跑时每秒一次（回复逐字长出来），有卡等你时每 2 秒一次；
+    /// 结束后重读对话（回复已写进主要聊天），再看排队的消息发不发。App 退到后台时停。
     func follow(_ entry: AssistantEntry, _ credential: NativeCredential) {
         polling?.cancel()
         guard let rid = turn?.rid, !(turn?.isFinished ?? true) else { return }
         let epoch = timelineEpoch
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                let waitingOnCard = !(self?.turn?.pendingCards.isEmpty ?? true)
+                try? await Task.sleep(for: .seconds(waitingOnCard ? 2 : 1))
                 guard let self, !Task.isCancelled else { return }
                 do {
                     let latest = try await self.api(entry).chatTurn(credential, rid: rid)
                     guard !Task.isCancelled, epoch == self.timelineEpoch, self.turn?.rid == rid else { return }
+                    if latest.isFinished {
+                        // 先读到写进主要聊天的完整回复，再收起进行中的那一段，免得回复闪一下没了
+                        await self.loadChat(entry, credential)
+                        guard !Task.isCancelled, epoch == self.timelineEpoch, self.turn?.rid == rid else { return }
+                    }
                     self.turn = latest
                     self.chatApproval.observe(latest)
                     if latest.isFinished {
                         if latest.state != "done", !latest.error.isEmpty { self.note = latest.error }
-                        await self.loadChat(entry, credential)
+                        await self.drainQueue(entry, credential)
                         return
                     }
                 } catch {

@@ -121,7 +121,7 @@ Desktop 同一段对话可见。回合中途要确认的动作变成待批准卡
 | 方法与路径 | 身份 | 效果 |
 | --- | --- | --- |
 | `POST /api/mobile/native/chat/send` | 会话 + 日常钥匙签名 | `{request_id, text}`（≤4000 字）：起一个回合，同一 `request_id` 重试只起一次；返回 `rid` |
-| `GET /api/mobile/native/chat/turn?rid=` | 会话 + 钥匙已信任 | 回合状态：`running / waiting / done / failed / busy`、回复、待批准卡 |
+| `GET /api/mobile/native/chat/turn?rid=` | 会话 + 钥匙已信任 | 回合状态：`running / waiting / done / failed / busy`、回复、待批准卡；进行中还有 `partial`（到目前为止的回复）和 `steps`（每步一句摘要与状态，不含参数和结果） |
 | `GET /api/mobile/native/chat` | 会话 + 钥匙已信任 | 主要聊天最近 50 条（各入口都有，标来源），只给正文 |
 | `POST /api/mobile/native/chat/card` | 会话 + 签名（`key_kind` 声明用哪把钥匙并一起签进去） | `{rid, card_id, approve, digest, key_kind}`；级别不够的卡由助理拒绝 |
 

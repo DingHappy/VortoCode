@@ -396,3 +396,66 @@ def test_chat_is_unavailable_until_the_relay_is_configured(owner, monkeypatch): 
 
 
 _ = turns_module   # 保持模块导入（被 monkeypatch 的对象）
+
+
+# —— 回合进行中的回复和执行步骤（ADR-017 M2）：App 轮询时看得到，只是展示 ——
+
+
+class StreamingAgent:
+    """边生成边回显，中间调一次工具，然后停住等测试放行。"""
+
+    def __init__(self, manager_ref, gate):
+        self.history, self.manager_ref, self.gate = [], manager_ref, gate
+
+    async def run_turn(self, text, mode="plan", stream_cb=None, **_kwargs):
+        manager = self.manager_ref[0]
+        stream_cb("正在")
+        manager.tool_event("start", {"id": "t1", "name": "write_file",
+                                     "args": {"path": "notes/周报.md", "content": "不该出现的正文"}})
+        manager.tool_event("finish", {"id": "t1", "name": "write_file", "status": "succeeded",
+                                      "args": {"path": "notes/周报.md"}, "result": "不该出现的结果"})
+        stream_cb("正在整理周报")
+        await self.gate.wait()
+        return "周报整理好了"
+
+
+async def test_turn_reports_partial_reply_and_steps_while_running(tmp_path, shared_chat):
+    import json
+
+    gate, ref = asyncio.Event(), []
+    turns = AppTurns(str(tmp_path), lambda confirm: StreamingAgent(ref, gate))
+    ref.append(turns)
+    turn = await turns.start("req-00000010", "整理周报")
+    for _ in range(200):
+        if turn.partial == "正在整理周报":
+            break
+        await asyncio.sleep(0.01)
+    view = turn.public()
+    assert view["state"] == "running" and view["partial"] == "正在整理周报"
+    assert view["steps"] == [{"id": "t1", "summary": view["steps"][0]["summary"], "status": "succeeded"}]
+    assert "周报.md" in view["steps"][0]["summary"]
+    dumped = json.dumps(view, ensure_ascii=False)
+    assert "不该出现的正文" not in dumped and "不该出现的结果" not in dumped   # 不带参数正文和结果
+    gate.set()
+    await _settle(turn, ("done",))
+    assert turn.reply == "周报整理好了"
+    turn.stream("回合结束后的回显")                                   # 结束后不再改
+    turn.step("start", {"id": "late", "name": "read_file", "args": {}})
+    assert turn.partial == "正在整理周报" and [step["id"] for step in turn.steps] == ["t1"]
+
+
+def test_steps_and_partial_are_bounded_and_tolerate_odd_events(tmp_path):
+    turn = turns_module.AppTurn("app-0000000000000001", "req-00000011", "x")
+    turn.stream("字" * (turns_module.MAX_PARTIAL + 50))
+    assert len(turn.partial) == turns_module.MAX_PARTIAL
+    for index in range(turns_module.MAX_STEPS + 5):
+        turn.step("start", {"id": f"s{index}", "name": "read_file", "args": {"path": "a" * 500}})
+    assert len(turn.steps) == turns_module.MAX_STEPS and turn.steps[0]["id"] == "s5"
+    assert all(len(step["summary"]) <= 120 for step in turn.steps)
+    turn.step("finish", {"id": "s6", "status": "weird"})
+    assert next(step for step in turn.steps if step["id"] == "s6")["status"] == "unknown"
+    turn.step("hook_start", {"id": "h", "name": "x"})                 # Hook 事件不算步骤
+    turn.step("start", "not a dict")
+    assert len(turn.steps) == turns_module.MAX_STEPS
+    turns, _ = _turns(tmp_path)
+    turns.tool_event("start", {"id": "orphan", "name": "read_file"})  # 没有进行中的回合：丢掉

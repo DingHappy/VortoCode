@@ -246,6 +246,9 @@ struct ChatView: View {
                         }
                         ForEach(Array(owner.chat.enumerated()), id: \.offset) { _, item in message(item) }
                         if let turn = owner.turn, !turn.isFinished { progress(turn) }
+                        ForEach(Array(owner.queue.items.enumerated()), id: \.element.id) { index, item in
+                            queued(item, first: index == 0)
+                        }
                         Color.clear.frame(height: 1).id("bottom")
                     }.padding(.horizontal, VCSpace.space4).padding(.top, VCSpace.space2)
                 }
@@ -255,6 +258,8 @@ struct ChatView: View {
                 .onTapGesture { typing = false }
                 .onChange(of: owner.chat.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
                 .onChange(of: owner.turn?.cards.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
+                .onChange(of: owner.turn?.steps?.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
+                .onChange(of: owner.queue.items.count) { _, _ in withAnimation { proxy.scrollTo("bottom") } }
                 .refreshable { if let credential = session.credential { await owner.loadChat(entry, credential) } }
                 if !owner.note.isEmpty {
                     Text(owner.note).font(.footnote).foregroundStyle(Palette.muted)
@@ -302,8 +307,12 @@ struct ChatView: View {
         }
     }
 
+    /// 进行中的一轮：执行过程 → 到目前为止的回复（逐字长出来）→ 等你处理的卡。
     @ViewBuilder private func progress(_ turn: ChatTurn) -> some View {
-        if turn.pendingCards.isEmpty {
+        if let steps = turn.steps, !steps.isEmpty { StepsView(steps: steps) }
+        if let partial = turn.partial, !partial.isEmpty {
+            StreamingText(text: partial)
+        } else if turn.pendingCards.isEmpty {
             HStack(spacing: VCSpace.space2) {
                 ProgressView().controlSize(.small)
                 Text("\(VCCopy.Status.running)：助理正在处理…").foregroundStyle(Palette.muted)
@@ -317,7 +326,7 @@ struct ChatView: View {
                 tainted: card.tainted == true ? "读过外部内容后拟的，请核对是否符合你的本意。" : nil,
                 text: card.text
             ) {
-                Text("你处理之前，新的消息先不发出；10 分钟没处理按不同意。").font(.footnote).foregroundStyle(Palette.muted)
+                Text("你处理之前，新消息会排队，这一轮结束后再发；10 分钟没处理按不同意。").font(.footnote).foregroundStyle(Palette.muted)
                 if owner.chatApproval.active?.cardId == card.id {
                     Text(owner.chatApproval.message).font(.footnote).foregroundStyle(Palette.secondary)
                         .accessibilityIdentifier("native-chat-approval-status")
@@ -351,11 +360,40 @@ struct ChatView: View {
     }
 
     private var waitingForCard: Bool { !(owner.turn?.pendingCards.isEmpty ?? true) }
+    /// 现在点发送会排队（这一轮没结束，或前面还有排着的）
+    private var willQueue: Bool { !owner.captureOnly && (owner.turnInProgress || !owner.queue.items.isEmpty) }
+
+    /// 排着的消息：浅色虚线气泡；停住时第一条可以手动「发出」。
+    private func queued(_ item: ChatQueue.Item, first: Bool) -> some View {
+        HStack {
+            Spacer(minLength: VCSpace.space10)
+            VStack(alignment: .trailing, spacing: VCSpace.space1) {
+                Text(item.text).font(.body).foregroundStyle(Palette.secondary)
+                    .padding(.horizontal, VCSpace.space4).padding(.vertical, VCSpace.space2 + 2)
+                    .overlay(RoundedRectangle(cornerRadius: VCRadius.bubble, style: .continuous)
+                        .strokeBorder(Palette.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                HStack(spacing: VCSpace.space3) {
+                    Text(first && owner.queue.held != nil ? "没有自动发出" : "排队中，这一轮结束后发出")
+                        .font(.caption).foregroundStyle(first && owner.queue.held != nil ? Palette.waitText : Palette.muted)
+                    if first && owner.queue.held != nil && !owner.turnInProgress {
+                        Button("发出") { sendQueued() }.font(.caption.weight(.medium)).foregroundStyle(Palette.text)
+                            .disabled(owner.sending || owner.chatNeedsReview || session.credential == nil)
+                            .accessibilityIdentifier("native-queue-send")
+                    }
+                    Button("删除") { owner.queue.remove(item.id) }.font(.caption).foregroundStyle(Palette.muted)
+                        .accessibilityLabel("删除排队的消息")
+                }.frame(minHeight: 32)
+            }
+        }.accessibilityElement(children: .contain)
+    }
 
     /// 胶囊输入框（Muse / Desktop 同款）：左边切换「只记下来」，右边发送。
     private var composer: some View {
         VStack(alignment: .leading, spacing: VCSpace.space1) {
-            if waitingForCard { Text("先处理上面那张卡，再发新消息。").font(.caption).foregroundStyle(Palette.waitText) }
+            if willQueue {
+                Text(waitingForCard ? "有卡等你处理；现在发的消息会排队，这一轮结束后发出。" : "这一轮还没结束；现在发的消息会排队（最多 \(ChatQueue.limit) 条）。")
+                    .font(.caption).foregroundStyle(waitingForCard ? Palette.waitText : Palette.muted)
+            }
             if owner.captureOnly { Text("只记下来：记成你的一个目标，不让助理去做").font(.caption).foregroundStyle(Palette.muted) }
             HStack(alignment: .bottom, spacing: VCSpace.space1) {
                 Button { owner.captureOnly.toggle() } label: {
@@ -377,7 +415,7 @@ struct ChatView: View {
                         .foregroundStyle(Palette.onInk)
                         .background(canSend ? Palette.ink : Palette.muted.opacity(0.4), in: Circle())
                 }.frame(width: 44, height: 44)
-                    .disabled(!canSend).accessibilityLabel(owner.captureOnly ? "记下" : "发送")
+                    .disabled(!canSend).accessibilityLabel(owner.captureOnly ? "记下" : willQueue ? "排队" : "发送")
                     .accessibilityIdentifier("native-send")
             }
             .padding(.horizontal, VCSpace.space1)
@@ -389,16 +427,22 @@ struct ChatView: View {
     }
 
     private var canSend: Bool {
-        owner.canWrite && !owner.sending && !owner.working && !waitingForCard
-            && (owner.captureOnly || !owner.chatNeedsReview)
-            && (owner.captureOnly || (owner.turn?.isFinished ?? true))
-            && !owner.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard owner.canWrite, !owner.sending,
+              !owner.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if owner.captureOnly { return !owner.working }
+        if willQueue { return !owner.queue.isFull }        // 排队不发请求，有卡等你时也能写
+        return !owner.working && !owner.chatNeedsReview
     }
 
     private func send() {
         guard let credential = session.credential else { return }
         typing = false
         Task { await owner.send(entry, credential) }
+    }
+
+    private func sendQueued() {
+        guard let credential = session.credential else { return }
+        Task { await owner.sendQueuedNow(entry, credential) }
     }
 
     private func decide(_ card: ChatCard, approve: Bool, scope: String = "once") {
@@ -414,6 +458,76 @@ struct ChatView: View {
         Task {
             await owner.checkCardDecision(entry, credential,
                 sessionCurrent: { session.credential?.token == credential.token && session.credential?.instanceId == credential.instanceId })
+        }
+    }
+}
+
+/// 回合中途的回复：轮询每秒拿到一次「到目前为止的全文」，两次之间把新长出来的字逐步显示。
+/// 打开「减弱动态效果」时直接显示全文。
+struct StreamingText: View {
+    let text: String
+    @State private var shown = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        Text(String(text.prefix(shown))).font(.body).foregroundStyle(Palette.text).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading).lineSpacing(3)
+            .accessibilityLabel(text)
+            .task(id: text) {
+                let target = text.count
+                if reduceMotion || shown > target { shown = target; return }
+                let frames = 30
+                let stride = max(1, (target - shown + frames - 1) / frames)
+                while shown < target && !Task.isCancelled {
+                    shown = min(target, shown + stride)
+                    try? await Task.sleep(for: .milliseconds(25))
+                }
+            }
+            .accessibilityIdentifier("native-streaming-reply")
+    }
+}
+
+/// 执行过程（和 Desktop 同名的折叠块）：默认收起，只显示正在做的那一步；展开看每一步和状态。
+struct StepsView: View {
+    let steps: [ChatStep]
+    @State private var expanded = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: VCSpace.space1) {
+            Button { withAnimation(.snappy) { expanded.toggle() } } label: {
+                HStack(spacing: VCSpace.space2) {
+                    Image(systemName: "chevron.right").font(.caption2).rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text("执行过程 · \(steps.count) 步").fixedSize()
+                    if !expanded, let current = steps.last(where: \.isRunning) ?? steps.last {
+                        Text(current.summary).lineLimit(1).truncationMode(.tail)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.footnote).foregroundStyle(Palette.muted).frame(minHeight: 32).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("执行过程，\(steps.count) 步，\(expanded ? "收起" : "展开")")
+            .accessibilityIdentifier("native-turn-steps")
+            if expanded {
+                ForEach(steps) { step in
+                    HStack(alignment: .firstTextBaseline, spacing: VCSpace.space2) {
+                        icon(step).frame(width: 16)
+                        Text(step.summary).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: VCSpace.space2)
+                        Text(step.statusLabel).foregroundStyle(Palette.muted)
+                    }
+                    .font(.footnote)
+                    .accessibilityElement(children: .combine)
+                }
+                .padding(.leading, VCSpace.space4)
+            }
+        }
+    }
+
+    @ViewBuilder private func icon(_ step: ChatStep) -> some View {
+        switch step.status {
+        case "running": ProgressView().controlSize(.mini)
+        case "succeeded": Image(systemName: "checkmark").foregroundStyle(Palette.doneText)
+        case "failed", "blocked", "timed_out": Image(systemName: "xmark").foregroundStyle(Palette.dangerText)
+        default: Image(systemName: "circle").foregroundStyle(Palette.muted)
         }
     }
 }
