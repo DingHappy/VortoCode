@@ -720,7 +720,7 @@
 .vc-identity-avatar-actions button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--vc-space-1);
   height: 28px;
   padding: 0;
   border: 0;
@@ -990,7 +990,7 @@
 .vc-mode-assistant .composer textarea,
 .vc-mode-assistant .empty-state .composer textarea {
   min-height: 56px;
-  padding: 14px 18px 4px;
+  padding: 14px 18px var(--vc-space-1);
   font-family: var(--vc-font-sans);
   font-size: var(--vc-size-chat);
   color: var(--vc-text);
@@ -2356,12 +2356,12 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
 }
 
 /* Task-derived skill proposals reuse the existing personal skill editor. */
-.skill-learning { min-width: 0; display: grid; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--vc-divider, var(--border)); }
+.skill-learning { min-width: 0; display: grid; gap: var(--vc-space-3); margin-top: var(--vc-space-5); padding-top: var(--vc-space-4); border-top: 1px solid var(--vc-divider, var(--border)); }
 .skill-learning h3, .skill-learning h4 { margin: 0; color: var(--vc-text, var(--text)); }
 .skill-learning .personal-skill-editor { display: grid; gap: 10px; min-width: 0; }
 .skill-learning label { display: grid; gap: 6px; min-width: 0; }
-.skill-learning input, .skill-learning select, .skill-learning textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; font: inherit; color: inherit; background: var(--vc-surface, var(--bg)); border: 1px solid var(--vc-border, var(--border)); border-radius: var(--vc-radius-control); }
+.skill-learning input, .skill-learning select, .skill-learning textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: var(--vc-space-2); font: inherit; color: inherit; background: var(--vc-surface, var(--bg)); border: 1px solid var(--vc-border, var(--border)); border-radius: var(--vc-radius-control); }
 .skill-learning small { display: block; overflow-wrap: anywhere; }
 .skill-learning .personal-skill-review { display: grid; gap: 10px; min-width: 0; }
-.skill-learning pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border-radius: var(--vc-radius-inner); background: var(--vc-bg); font-size: var(--vc-size-caption); }
+.skill-learning pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: var(--vc-space-3); border-radius: var(--vc-radius-inner); background: var(--vc-bg); font-size: var(--vc-size-caption); }
 .skill-learning button { max-width: 100%; height: auto !important; min-height: 32px; white-space: normal; overflow-wrap: anywhere; }
