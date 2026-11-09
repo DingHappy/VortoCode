@@ -5584,7 +5584,7 @@ button.worktree-live:not(:disabled):hover {
 
 .settings-modal label em {
   color: #646d7d;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
   font-weight: 400;
 }
@@ -5599,7 +5599,7 @@ button.worktree-live:not(:disabled):hover {
   color: #d9dee6;
   background: #0f1218;
   font-family: "DM Mono", monospace;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .settings-modal input:focus {
@@ -5619,7 +5619,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 7px;
   color: #b5bdc8;
   background: #202530;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -5641,13 +5641,13 @@ button.worktree-live:not(:disabled):hover {
 
 .process-card strong {
   color: #c4cad3;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .process-card p {
   margin: 2px 0 0;
   color: #687181;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .recovery-card {
@@ -5674,7 +5674,7 @@ button.worktree-live:not(:disabled):hover {
 
 .recovery-heading strong {
   color: #d6bc86;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .recovery-card.crashed .recovery-heading strong {
@@ -5684,7 +5684,7 @@ button.worktree-live:not(:disabled):hover {
 .recovery-heading time,
 .recovery-card p {
   color: #798395;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .recovery-card p {
@@ -5695,7 +5695,7 @@ button.worktree-live:not(:disabled):hover {
 .recovery-card code {
   overflow: hidden;
   color: #aab2bf;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5713,7 +5713,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 6px;
   color: #aeb7c4;
   background: #202530;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -6082,7 +6082,7 @@ button.worktree-live:not(:disabled):hover {
   border-left: 2px solid #43506b;
   color: #798395;
   background: rgba(76, 94, 129, 0.06);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.6;
 }
 
@@ -6096,7 +6096,7 @@ button.worktree-live:not(:disabled):hover {
 
 .advanced-settings summary {
   color: #929baa;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   font-weight: 650;
   cursor: pointer;
   user-select: none;
@@ -6110,7 +6110,7 @@ button.worktree-live:not(:disabled):hover {
 .advanced-settings > p {
   margin: 0 0 11px;
   color: #737d8d;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.6;
 }
 
@@ -6132,7 +6132,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 6px;
   color: #aeb7c4;
   background: #202530;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -6519,7 +6519,7 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-metrics span {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .runtime-inbox-list {
@@ -6622,7 +6622,7 @@ button.worktree-live:not(:disabled):hover {
 .runtime-inbox-title small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6632,7 +6632,7 @@ button.worktree-live:not(:disabled):hover {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .runtime-inbox-card-meta b {
@@ -6673,7 +6673,7 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-error small {
   color: var(--amber);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-weight: 400;
 }
 
@@ -6718,14 +6718,14 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-item small {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .runtime-inbox-item em {
   max-width: 90px;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8069,7 +8069,7 @@ input::placeholder {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .devplan-dag-facts code {
@@ -8235,7 +8235,7 @@ input::placeholder {
 
 .trust-head span {
   color: var(--n9);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .trust-head strong {
@@ -8249,7 +8249,7 @@ input::placeholder {
   border-radius: 10px;
   color: var(--n9);
   background: var(--n4);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
 }
 
@@ -8266,7 +8266,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n10);
   background: var(--n0);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -8285,7 +8285,7 @@ input::placeholder {
 .trust-note {
   margin: 0;
   color: var(--n9);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.5;
 }
 
@@ -8554,7 +8554,7 @@ input::placeholder {
 .settings-nav-group > span {
   margin: 6px 10px 4px;
   color: var(--quiet);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .settings-nav-group button {
@@ -8563,7 +8563,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n12);
   background: transparent;
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
   text-align: left;
   cursor: pointer;
 }
@@ -8581,7 +8581,7 @@ input::placeholder {
 .settings-nav-empty {
   margin: 8px 10px;
   color: var(--quiet);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .settings-pane {
@@ -8622,7 +8622,7 @@ input::placeholder {
 
 .appearance-row span {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .segmented {
@@ -8639,7 +8639,7 @@ input::placeholder {
   border-radius: 7px;
   color: var(--muted);
   background: transparent;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -8691,7 +8691,7 @@ input::placeholder {
   border-radius: 9px;
   color: var(--n12);
   background: transparent;
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
   text-align: left;
   cursor: pointer;
 }
@@ -8804,7 +8804,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n12);
   background: var(--surface-2);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -8882,7 +8882,7 @@ input::placeholder {
 
 .config-file-row strong {
   color: var(--n13);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
 }
 
 .config-file-row span {
@@ -8892,7 +8892,7 @@ input::placeholder {
 
 .config-file-row code {
   color: var(--n11);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   overflow-wrap: anywhere;
 }
 
@@ -9093,7 +9093,7 @@ input::placeholder {
   padding: 7px 8px;
   border-radius: 8px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 18px;
 }
 
@@ -9308,7 +9308,7 @@ input::placeholder {
   margin: 0;
   padding-left: 18px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 19px;
 }
 
@@ -9338,7 +9338,7 @@ input::placeholder {
 .custom-providers-note {
   margin: 4px 0 0;
   color: var(--n9);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   line-height: 17px;
 }
 
@@ -9418,7 +9418,7 @@ input::placeholder {
 
 .custom-provider-list strong {
   color: var(--n12);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .custom-provider-list span {
@@ -9514,7 +9514,7 @@ input::placeholder {
 .custom-provider-form > label > span:first-child,
 .custom-provider-test > span {
   color: var(--n12);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .custom-provider-form input,
@@ -9608,7 +9608,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n12);
   background: var(--n0);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -9637,7 +9637,7 @@ input::placeholder {
 
 .main-page-empty p {
   margin: 0 0 6px;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .plugin-builtins {
@@ -9671,7 +9671,7 @@ input::placeholder {
 
 .plugin-builtins strong {
   color: var(--n13);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
 }
 
 .plugin-builtins small {
@@ -9760,7 +9760,7 @@ input::placeholder {
   display: grid;
   grid-template-columns: 72px 1fr;
   gap: 12px;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .account-facts dt {
@@ -9783,7 +9783,7 @@ input::placeholder {
   align-items: center;
   gap: 12px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .account-form input {
@@ -9812,7 +9812,7 @@ input::placeholder {
 .account-plan-choice p {
   margin: 0;
   color: var(--n12);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 19px;
 }
 
@@ -9827,7 +9827,7 @@ input::placeholder {
   border: 0;
   color: var(--n10);
   background: none;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -10005,7 +10005,7 @@ input::placeholder {
   border: 1px solid transparent;
   border-radius: 999px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .composer-chip:hover {
@@ -10018,7 +10018,7 @@ input::placeholder {
   border: 0;
   color: inherit;
   background: transparent;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   outline: none;
   cursor: pointer;
 }
@@ -10133,12 +10133,12 @@ input::placeholder {
   margin: 0;
   padding: 8px 10px;
   color: var(--n9);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .project-picker-menu .project-picker-more {
   color: var(--n10);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 /* 顶栏只剩窗口按钮和拖拽区：压到刚好容纳红绿灯的高度，把空间还给内容。 */
@@ -10208,7 +10208,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n10);
   background: transparent;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -10587,7 +10587,7 @@ ul.trust-note {
 .model-service-copy span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -10610,7 +10610,7 @@ ul.trust-note {
   border-radius: 8px;
   color: var(--n12);
   background: var(--surface-2);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -10654,13 +10654,13 @@ ul.trust-note {
 
 .model-service-kind strong {
   color: var(--n13);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
 }
 
 .model-service-kind span {
   grid-column: 1;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .model-service-kind > button,
@@ -10680,7 +10680,7 @@ ul.trust-note {
 
 .model-service-kind > em {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
 }
 
@@ -10733,7 +10733,7 @@ ul.trust-note {
 .mode-caption {
   margin: -6px 18px 12px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.5;
 }
 
@@ -10774,7 +10774,7 @@ ul.trust-note {
   border-radius: 10px;
   color: var(--n13);
   background: var(--surface-2);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -10828,7 +10828,7 @@ ul.trust-note {
   border-radius: 7px;
   color: var(--n12);
   background: var(--surface-2);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
