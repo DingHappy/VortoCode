@@ -1,3 +1,4 @@
+@import "./styles/tokens.css";   /* 旧样式里的变量取自设计变量：任何只载入 App.css 的页面也要先有它们 */
 :root {
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #e9edf4;
@@ -1023,15 +1024,16 @@ textarea:focus-visible,
 }
 
 .confirm-copy strong {
-  color: #dedfe2;
-  font-size: 11px;
+  color: var(--vc-text);
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-medium);
 }
 
 .confirm-copy p {
-  margin: 5px 0 10px;
-  color: #aeb3bb;
-  font-size: 11px;
-  line-height: 18px;
+  margin: var(--vc-space-1) 0 var(--vc-space-3);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 
@@ -1040,24 +1042,42 @@ textarea:focus-visible,
   gap: 7px;
 }
 
+/* 确认卡与任务按钮的底样式（工作台等非助理模式也走这里）：和助理模式一致，用设计变量；原来是旧深蓝主题，
+   浅色下变成黑块、9px 字（2026-11 整体优化截图） */
 .confirm-copy button,
 .task-actions button {
-  padding: 5px 9px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #181c24;
-  font-size: 9px;
+  min-height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text-secondary);
+  font: inherit;
+  font-size: var(--vc-size-small);
   cursor: pointer;
 }
 
+.confirm-copy button:hover:not(:disabled),
+.task-actions button:hover:not(:disabled) {
+  background: var(--vc-hover);
+  color: var(--vc-text);
+}
+
 .confirm-copy button.deny {
-  color: #b5bdc9;
+  color: var(--vc-text-secondary);
 }
 
 .confirm-copy button.allow {
-  color: #172019;
-  border-color: #6bdda4;
-  background: #70d9a6;
+  color: var(--vc-on-ink);
+  border-color: var(--vc-ink);
+  background: var(--vc-ink);
+  font-weight: var(--vc-weight-medium);
+}
+
+.confirm-copy button.allow:hover:not(:disabled) {
+  color: var(--vc-on-ink);
+  background: var(--vc-ink);
+  opacity: .88;
 }
 
 .composer-wrap {
@@ -5564,7 +5584,7 @@ button.worktree-live:not(:disabled):hover {
 
 .settings-modal label em {
   color: #646d7d;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
   font-weight: 400;
 }
@@ -5579,7 +5599,7 @@ button.worktree-live:not(:disabled):hover {
   color: #d9dee6;
   background: #0f1218;
   font-family: "DM Mono", monospace;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .settings-modal input:focus {
@@ -5599,7 +5619,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 7px;
   color: #b5bdc8;
   background: #202530;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -5621,13 +5641,13 @@ button.worktree-live:not(:disabled):hover {
 
 .process-card strong {
   color: #c4cad3;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .process-card p {
   margin: 2px 0 0;
   color: #687181;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .recovery-card {
@@ -5654,7 +5674,7 @@ button.worktree-live:not(:disabled):hover {
 
 .recovery-heading strong {
   color: #d6bc86;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .recovery-card.crashed .recovery-heading strong {
@@ -5664,7 +5684,7 @@ button.worktree-live:not(:disabled):hover {
 .recovery-heading time,
 .recovery-card p {
   color: #798395;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .recovery-card p {
@@ -5675,7 +5695,7 @@ button.worktree-live:not(:disabled):hover {
 .recovery-card code {
   overflow: hidden;
   color: #aab2bf;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5693,7 +5713,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 6px;
   color: #aeb7c4;
   background: #202530;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -6062,7 +6082,7 @@ button.worktree-live:not(:disabled):hover {
   border-left: 2px solid #43506b;
   color: #798395;
   background: rgba(76, 94, 129, 0.06);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.6;
 }
 
@@ -6076,7 +6096,7 @@ button.worktree-live:not(:disabled):hover {
 
 .advanced-settings summary {
   color: #929baa;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   font-weight: 650;
   cursor: pointer;
   user-select: none;
@@ -6090,7 +6110,7 @@ button.worktree-live:not(:disabled):hover {
 .advanced-settings > p {
   margin: 0 0 11px;
   color: #737d8d;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.6;
 }
 
@@ -6112,7 +6132,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 6px;
   color: #aeb7c4;
   background: #202530;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -6499,7 +6519,7 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-metrics span {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .runtime-inbox-list {
@@ -6602,7 +6622,7 @@ button.worktree-live:not(:disabled):hover {
 .runtime-inbox-title small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6612,7 +6632,7 @@ button.worktree-live:not(:disabled):hover {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .runtime-inbox-card-meta b {
@@ -6653,7 +6673,7 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-error small {
   color: var(--amber);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-weight: 400;
 }
 
@@ -6698,14 +6718,14 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-item small {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .runtime-inbox-item em {
   max-width: 90px;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7078,23 +7098,26 @@ button.worktree-live:not(:disabled):hover {
   }
 }
 
+/* 旧变量对接设计变量（docs/DESIGN_SYSTEM.md 第 8 节）：浅色块里有对应用途的旧变量（--n*、--surface-*、--line、
+   --muted、状态色）直接取 --vc-* 的值，深色块里删掉同名项——设计变量自己按深浅色换值，旧变量跟着走。
+   没有对应用途的（--n7 强边框、--n8 停用/占位、绿黄的 -line、--quiet、*-rgb）保持原值。逐页迁移时把旧变量换成 --vc-* 再删。 */
 /* Codex-aligned desktop shell: quiet navigation, document-like thread, one clear composer. */
 :root {
-  color: #242421;
-  background: #f7f7f5;
-  --surface-0: #f7f7f5;
-  --surface-1: #f1f1ee;
-  --surface-2: #ffffff;
-  --surface-3: #e9e9e5;
-  --line: #deded9;
-  --line-soft: #e9e9e5;
-  --muted: #747470;
+  color: var(--vc-text);
+  background: var(--vc-bg);
+  --surface-0: var(--vc-bg);
+  --surface-1: var(--vc-sidebar);
+  --surface-2: var(--vc-surface);
+  --surface-3: var(--vc-hover);
+  --line: var(--vc-border);
+  --line-soft: var(--vc-divider);
+  --muted: var(--vc-muted);
   --quiet: #9a9a95;
-  --accent: #20201e;
+  --accent: var(--vc-ink);
   --accent-soft: rgba(32, 32, 30, 0.08);
-  --green: #27835a;
-  --amber: #a36716;
-  --red: #b84949;
+  --green: var(--vc-done-text);
+  --amber: var(--vc-wait-text);
+  --red: var(--vc-danger-text);
 }
 
 /* ── 主题变量 ─────────────────────────────────────────────────────────────
@@ -7102,30 +7125,30 @@ button.worktree-live:not(:disabled):hover {
    --n0（最白）…--n14（最深）是中性灰梯度，深色时整条反转；深色取值对齐 MiMo Desktop 截图像素（只取色，
    不取其代码/素材）。下方生效层里的写死颜色已统一换成这些变量。 */
 :root {
-  --n0: #ffffff;
-  --n1: #fafaf8;
-  --n2: #f7f7f5;
-  --n3: #f1f1ee;
-  --n4: #ececea;
-  --n5: #e5e5e1;
-  --n6: #dfdfda;
+  --n0: var(--vc-surface);
+  --n1: var(--vc-bg);
+  --n2: var(--vc-bg);
+  --n3: var(--vc-sidebar);
+  --n4: var(--vc-hover);
+  --n5: var(--vc-selected);
+  --n6: var(--vc-border);
   --n7: #cfcfc9;
   --n8: #b5b5b0;
-  --n9: #909090;
-  --n10: #787873;
-  --n11: #5e5e5a;
-  --n12: #363633;
-  --n13: #242421;
-  --n14: #080808;
-  --red-bg: #f4e5e1;
-  --red-line: #e5c7c1;
-  --red-text: #9d4d42;
-  --green-bg: #e2eee7;
+  --n9: var(--vc-muted);
+  --n10: var(--vc-muted);
+  --n11: var(--vc-text-secondary);
+  --n12: var(--vc-text-secondary);
+  --n13: var(--vc-text);
+  --n14: var(--vc-ink);
+  --red-bg: var(--vc-danger-bg);
+  --red-line: var(--vc-danger-border);
+  --red-text: var(--vc-danger-text);
+  --green-bg: var(--vc-done-bg);
   --green-line: #c7ddd0;
-  --green-text: #39735a;
-  --amber-bg: #fff8ed;
+  --green-text: var(--vc-done-text);
+  --amber-bg: var(--vc-wait-bg);
   --amber-line: #e4d2ab;
-  --amber-text: #8a641f;
+  --amber-text: var(--vc-wait-text);
   --ink-rgb: 32, 32, 30;
   --glass-rgb: 248, 248, 246;
   --amber-rgb: 163, 103, 22;
@@ -7136,100 +7159,34 @@ button.worktree-live:not(:disabled):hover {
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --n0: #222222;
-    --n1: #1f1f1f;
-    --n2: #181818;
-    --n3: #141414;
-    --n4: #2a2a2a;
-    --n5: #2f2f2f;
-    --n6: #383838;
     --n7: #454545;
     --n8: #6b6b6b;
-    --n9: #8a8a8a;
-    --n10: #a0a0a0;
-    --n11: #bababa;
-    --n12: #d4d4d4;
-    --n13: #ececec;
-    --n14: #f7f7f7;
-    --red-bg: #3a2321;
-    --red-line: #6b3a35;
-    --red-text: #f19a8f;
-    --green-bg: #1f3328;
     --green-line: #2f5a43;
-    --green-text: #7fd3a6;
-    --amber-bg: #3a2f1d;
     --amber-line: #6b5530;
-    --amber-text: #f0c47a;
     --ink-rgb: 236, 236, 236;
     --glass-rgb: 24, 24, 24;
     --amber-rgb: 243, 190, 101;
     --red-rgb: 241, 120, 120;
     --green-rgb: 86, 209, 148;
     color-scheme: dark;
-    color: #ececec;
-    background: #181818;
-    --surface-0: #181818;
-    --surface-1: #141414;
-    --surface-2: #222222;
-    --surface-3: #2a2a2a;
-    --line: #383838;
-    --line-soft: #2a2a2a;
-    --muted: #9a9a9a;
     --quiet: #6f6f6f;
-    --accent: #ececec;
     --accent-soft: rgba(236, 236, 236, 0.10);
-    --green: #56d194;
-    --amber: #f3be65;
-    --red: #f17878;
   }
 }
 
 :root[data-theme="dark"] {
-  --n0: #222222;
-  --n1: #1f1f1f;
-  --n2: #181818;
-  --n3: #141414;
-  --n4: #2a2a2a;
-  --n5: #2f2f2f;
-  --n6: #383838;
   --n7: #454545;
   --n8: #6b6b6b;
-  --n9: #8a8a8a;
-  --n10: #a0a0a0;
-  --n11: #bababa;
-  --n12: #d4d4d4;
-  --n13: #ececec;
-  --n14: #f7f7f7;
-  --red-bg: #3a2321;
-  --red-line: #6b3a35;
-  --red-text: #f19a8f;
-  --green-bg: #1f3328;
   --green-line: #2f5a43;
-  --green-text: #7fd3a6;
-  --amber-bg: #3a2f1d;
   --amber-line: #6b5530;
-  --amber-text: #f0c47a;
   --ink-rgb: 236, 236, 236;
   --glass-rgb: 24, 24, 24;
   --amber-rgb: 243, 190, 101;
   --red-rgb: 241, 120, 120;
   --green-rgb: 86, 209, 148;
   color-scheme: dark;
-  color: #ececec;
-  background: #181818;
-  --surface-0: #181818;
-  --surface-1: #141414;
-  --surface-2: #222222;
-  --surface-3: #2a2a2a;
-  --line: #383838;
-  --line-soft: #2a2a2a;
-  --muted: #9a9a9a;
   --quiet: #6f6f6f;
-  --accent: #ececec;
   --accent-soft: rgba(236, 236, 236, 0.10);
-  --green: #56d194;
-  --amber: #f3be65;
-  --red: #f17878;
 }
 
 
@@ -8112,7 +8069,7 @@ input::placeholder {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .devplan-dag-facts code {
@@ -8278,7 +8235,7 @@ input::placeholder {
 
 .trust-head span {
   color: var(--n9);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .trust-head strong {
@@ -8292,7 +8249,7 @@ input::placeholder {
   border-radius: 10px;
   color: var(--n9);
   background: var(--n4);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
 }
 
@@ -8309,7 +8266,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n10);
   background: var(--n0);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -8328,7 +8285,7 @@ input::placeholder {
 .trust-note {
   margin: 0;
   color: var(--n9);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.5;
 }
 
@@ -8597,7 +8554,7 @@ input::placeholder {
 .settings-nav-group > span {
   margin: 6px 10px 4px;
   color: var(--quiet);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .settings-nav-group button {
@@ -8606,7 +8563,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n12);
   background: transparent;
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
   text-align: left;
   cursor: pointer;
 }
@@ -8624,7 +8581,7 @@ input::placeholder {
 .settings-nav-empty {
   margin: 8px 10px;
   color: var(--quiet);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .settings-pane {
@@ -8665,7 +8622,7 @@ input::placeholder {
 
 .appearance-row span {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .segmented {
@@ -8682,7 +8639,7 @@ input::placeholder {
   border-radius: 7px;
   color: var(--muted);
   background: transparent;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -8734,7 +8691,7 @@ input::placeholder {
   border-radius: 9px;
   color: var(--n12);
   background: transparent;
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
   text-align: left;
   cursor: pointer;
 }
@@ -8847,7 +8804,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n12);
   background: var(--surface-2);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -8925,7 +8882,7 @@ input::placeholder {
 
 .config-file-row strong {
   color: var(--n13);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
 }
 
 .config-file-row span {
@@ -8935,7 +8892,7 @@ input::placeholder {
 
 .config-file-row code {
   color: var(--n11);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   overflow-wrap: anywhere;
 }
 
@@ -9136,7 +9093,7 @@ input::placeholder {
   padding: 7px 8px;
   border-radius: 8px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 18px;
 }
 
@@ -9351,7 +9308,7 @@ input::placeholder {
   margin: 0;
   padding-left: 18px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 19px;
 }
 
@@ -9381,7 +9338,7 @@ input::placeholder {
 .custom-providers-note {
   margin: 4px 0 0;
   color: var(--n9);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   line-height: 17px;
 }
 
@@ -9461,7 +9418,7 @@ input::placeholder {
 
 .custom-provider-list strong {
   color: var(--n12);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .custom-provider-list span {
@@ -9557,7 +9514,7 @@ input::placeholder {
 .custom-provider-form > label > span:first-child,
 .custom-provider-test > span {
   color: var(--n12);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .custom-provider-form input,
@@ -9651,7 +9608,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n12);
   background: var(--n0);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -9680,7 +9637,7 @@ input::placeholder {
 
 .main-page-empty p {
   margin: 0 0 6px;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .plugin-builtins {
@@ -9714,7 +9671,7 @@ input::placeholder {
 
 .plugin-builtins strong {
   color: var(--n13);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
 }
 
 .plugin-builtins small {
@@ -9803,7 +9760,7 @@ input::placeholder {
   display: grid;
   grid-template-columns: 72px 1fr;
   gap: 12px;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .account-facts dt {
@@ -9826,7 +9783,7 @@ input::placeholder {
   align-items: center;
   gap: 12px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .account-form input {
@@ -9855,7 +9812,7 @@ input::placeholder {
 .account-plan-choice p {
   margin: 0;
   color: var(--n12);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   line-height: 19px;
 }
 
@@ -9870,7 +9827,7 @@ input::placeholder {
   border: 0;
   color: var(--n10);
   background: none;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -10048,7 +10005,7 @@ input::placeholder {
   border: 1px solid transparent;
   border-radius: 999px;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .composer-chip:hover {
@@ -10061,7 +10018,7 @@ input::placeholder {
   border: 0;
   color: inherit;
   background: transparent;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   outline: none;
   cursor: pointer;
 }
@@ -10176,12 +10133,12 @@ input::placeholder {
   margin: 0;
   padding: 8px 10px;
   color: var(--n9);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .project-picker-menu .project-picker-more {
   color: var(--n10);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 /* 顶栏只剩窗口按钮和拖拽区：压到刚好容纳红绿灯的高度，把空间还给内容。 */
@@ -10251,7 +10208,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n10);
   background: transparent;
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -10286,10 +10243,10 @@ input::placeholder {
 .task-board-column { background: var(--n3); border: 1px solid var(--n5); border-radius: 12px; padding: 10px; min-width: 0; }
 .task-board-column h3 { display: flex; align-items: center; gap: 7px; margin: 2px 0 12px; color: var(--n12); font-size: 12px; }
 .task-board-column h3 span { margin-left: auto; color: var(--n10); font-size: 11px; font-weight: 400; }
-.task-board-column h3 i { width: 7px; height: 7px; background: #8b9098; border-radius: 50%; }
-.task-board-column.working h3 i { background: #497bdd; }
-.task-board-column.attention h3 i { background: #d88b35; }
-.task-board-column.completed h3 i { background: #47a36c; }
+.task-board-column h3 i { width: 7px; height: 7px; background: var(--vc-unknown-text); border-radius: 50%; }
+.task-board-column.working h3 i { background: var(--vc-accent); }
+.task-board-column.attention h3 i { background: var(--vc-wait-dot); }
+.task-board-column.completed h3 i { background: var(--vc-done-text); }
 .task-board-card { background: var(--n2); border: 1px solid var(--n6); border-radius: 9px; padding: 11px; margin-top: 9px; overflow-wrap: anywhere; }
 .task-board-card small { display: block; color: var(--n10); font-size: 10px; margin-bottom: 6px; }
 .task-board-card h4 { margin: 6px 0; color: var(--n12); font-size: 13px; line-height: 1.5; }
@@ -10630,7 +10587,7 @@ ul.trust-note {
 .model-service-copy span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -10653,7 +10610,7 @@ ul.trust-note {
   border-radius: 8px;
   color: var(--n12);
   background: var(--surface-2);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -10697,13 +10654,13 @@ ul.trust-note {
 
 .model-service-kind strong {
   color: var(--n13);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
 }
 
 .model-service-kind span {
   grid-column: 1;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
 }
 
 .model-service-kind > button,
@@ -10723,7 +10680,7 @@ ul.trust-note {
 
 .model-service-kind > em {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   font-style: normal;
 }
 
@@ -10776,7 +10733,7 @@ ul.trust-note {
 .mode-caption {
   margin: -6px 18px 12px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--vc-size-caption);
   line-height: 1.5;
 }
 
@@ -10817,7 +10774,7 @@ ul.trust-note {
   border-radius: 10px;
   color: var(--n13);
   background: var(--surface-2);
-  font-size: 13.5px;
+  font-size: var(--vc-size-small);
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -10871,7 +10828,7 @@ ul.trust-note {
   border-radius: 7px;
   color: var(--n12);
   background: var(--surface-2);
-  font-size: 12.5px;
+  font-size: var(--vc-size-caption);
   cursor: pointer;
 }
 
@@ -10903,3 +10860,9 @@ ul.trust-note {
   padding-left: 0;
   list-style: none;
 }
+
+/* 「会话详情」折叠：去掉浏览器自带三角，只留图标（原来三角和箭头同时出现） */
+.session-info-details > summary { list-style: none; cursor: pointer; }
+.session-info-details > summary::-webkit-details-marker { display: none; }
+.session-info-details > summary svg { transition: transform .15s ease; }
+.session-info-details[open] > summary svg { transform: rotate(90deg); }
