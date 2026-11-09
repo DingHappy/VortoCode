@@ -54,7 +54,7 @@ export function progressText(progress: UpdateProgress | null): string {
   return `正在下载 ${(downloaded / 1048576).toFixed(1)} MB${retry}`;
 }
 
-/** 下载、验签、安装新版并重启。用户在原生对话框里点「稍后」或安装失败时抛错（带原因），App 不会重启。
+/** 下载、验签、安装新版，装好后由 Rust 侧直接重启。用户在原生对话框里点「稍后」或安装失败时抛错（带原因），App 不会重启。
  * 网络失败 Rust 侧会自动重试；每次失败的原因写进诊断日志（设置 → 高级 → 诊断日志）。 */
 export async function installUpdate(onProgress?: (progress: UpdateProgress) => void): Promise<string> {
   let unlisten: (() => void) | undefined;
@@ -63,9 +63,8 @@ export async function installUpdate(onProgress?: (progress: UpdateProgress) => v
     catch { /* 拿不到进度也照常更新 */ }
   }
   try {
-    const version = await invoke<string>("install_update");
-    await invoke("restart_after_update");
-    return version;
+    // 装好后 Rust 侧直接重启，不再由网页请求：替换 App 时网页进程可能已经没了
+    return await invoke<string>("install_update");
   } finally {
     unlisten?.();
   }

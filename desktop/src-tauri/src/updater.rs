@@ -170,6 +170,9 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
         format!("下载好了，但替换 App 失败：{text}")
     })?;
     diag("info", "update.installed", &version);
+    // 装好就在这里重启，不等网页回调：新版替换磁盘上的 .app 后，旧进程的网页进程可能随之退出、窗口变空白，
+    // 网页侧的「装完再请求重启」就永远发不出来（真机 2026-11-09，0.2.54 → 0.2.55 停在空白窗口）。
+    relaunch(app);
     Ok(version)
 }
 
@@ -220,12 +223,6 @@ async fn download_with_retry(app: &AppHandle, update: &tauri_plugin_updater::Upd
             }
         }
     }
-}
-
-/// 装好更新后重启：走 RunEvent::Exit，托管的引擎进程照常回收。
-#[tauri::command]
-pub(crate) fn restart_after_update(app: AppHandle) {
-    relaunch(app);
 }
 
 /// 连不上常驻电脑、原因是 macOS「本地网络」拦截时，提示条上的「重新打开 VortoOne」。
