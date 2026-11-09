@@ -28,6 +28,6 @@
 		<string>$(PRODUCT_MODULE_NAME).NotificationService</string>
 	</dict>
 	<key>VCKeychainGroup</key>
-	<string>$(AppIdentifierPrefix)com.vortocode.mobile.shared</string>
+	<string>$(AppIdentifierPrefix)com.vortoone.mobile.shared</string>
 </dict>
 </plist>

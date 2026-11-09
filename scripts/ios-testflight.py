@@ -12,7 +12,7 @@ API 钥匙让 Xcode 自动建发布证书和描述文件，并上传。
 - App Store Connect API 钥匙：环境变量 ASC_KEY_ID、ASC_ISSUER_ID；钥匙文件放在
   ~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8，权限 600，不能在仓库里。
   脚本不打印、不记录钥匙内容和这两个 id。
-- 团队：取本机 com.vortocode.mobile 开发描述文件里的团队（唯一），或用 IOS_TEAM_ID 指定。仓库是公开的，团队 id 不进提交。
+- 团队：取本机 com.vortoone.mobile 开发描述文件里的团队（唯一），或用 IOS_TEAM_ID 指定。仓库是公开的，团队 id 不进提交。
 
 ipa 上传前必须满足：推送是 production、不可调试（无 get-task-allow）、带 TestFlight 标记（beta-reports-active）、
 主 App 和通知扩展的 bundle id 与团队对得上、描述文件不是开发 / Ad Hoc 的、声明了标准加密豁免。
@@ -37,8 +37,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "mobile/ios/VortoCodeMobile.xcodeproj"
 ICON = ROOT / "mobile/ios/VortoCodeMobile/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
-BUNDLE_ID = "com.vortocode.mobile"
-EXTENSION_ID = "com.vortocode.mobile.notification"
+BUNDLE_ID = "com.vortoone.mobile"
+EXTENSION_ID = "com.vortoone.mobile.notification"
 APP = "Payload/VortoCodeMobile.app"
 EXTENSION = APP + "/PlugIns/VortoCodeNotification.appex"
 KEY_DIR = Path.home() / ".appstoreconnect/private_keys"
@@ -72,14 +72,14 @@ def credentials(env=os.environ, key_dir: Path = KEY_DIR) -> dict:
 
 
 def team_from_profiles(profiles) -> str:
-    """profiles：解码后的描述文件。只认 application-identifier 精确是 <团队>.com.vortocode.mobile 的。"""
+    """profiles：解码后的描述文件。只认 application-identifier 精确是 <团队>.com.vortoone.mobile 的。"""
     teams = set()
     for data in profiles:
         team = (data.get("TeamIdentifier") or [None])[0]
         if team and data.get("Entitlements", {}).get("application-identifier") == f"{team}.{BUNDLE_ID}":
             teams.add(team)
     if len(teams) != 1:
-        raise Refused("本机没有唯一的 com.vortocode.mobile 描述文件可取团队；用 IOS_TEAM_ID 指定")
+        raise Refused("本机没有唯一的 com.vortoone.mobile 描述文件可取团队；用 IOS_TEAM_ID 指定")
     return teams.pop()
 
 
@@ -161,7 +161,7 @@ def check_signed(app_info: dict, app_entitlements: dict, ext_entitlements: dict,
         need(not entitlements.get("get-task-allow"), f"{name}是可调试的开发签名")
         need(entitlements.get("beta-reports-active") is True, f"{name}没有 TestFlight 标记")
         groups = entitlements.get("keychain-access-groups") or []
-        need(f"{team}.com.vortocode.mobile.shared" in groups, f"{name}缺少共享钥匙串分组（推送解密要用）")
+        need(f"{team}.com.vortoone.mobile.shared" in groups, f"{name}缺少共享钥匙串分组（推送解密要用）")
     need(not profile.get("ProvisionedDevices") and not profile.get("ProvisionsAllDevices"), "描述文件是开发 / Ad Hoc 的，不是 App Store 的")
     need(profile.get("Entitlements", {}).get("aps-environment") == "production", "描述文件的推送不是 production")
     return {"bundle_id": BUNDLE_ID, "version": app_info["CFBundleShortVersionString"], "build": app_info["CFBundleVersion"],

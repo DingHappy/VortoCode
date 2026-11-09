@@ -4,7 +4,7 @@ import MobileCore
 
 struct SavedSession: Codable { let origin: String; let credential: NativeCredential }
 enum SessionVault {
-    static let service = "com.vortocode.mobile.session"
+    static let service = "com.vortoone.mobile.session"
     private static var query: [String: Any] {
         [kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:service, kSecAttrAccount as String:"native-session"]
     }

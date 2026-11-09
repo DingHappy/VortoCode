@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE_ID = "com.vortocode.mobile"
+BUNDLE_ID = "com.vortoone.mobile"
 APP_PATH = Path("VortoCodeMobile.xcarchive/Products/Applications/VortoCodeMobile.app")
 
 

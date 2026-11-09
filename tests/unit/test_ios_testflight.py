@@ -53,13 +53,13 @@ def test_credentials_are_validated_and_never_from_the_repo(tmp_path):
 
 def test_team_comes_from_one_exact_profile():
     tf = _module()
-    exact = {"TeamIdentifier": [TEAM], "Entitlements": {"application-identifier": f"{TEAM}.com.vortocode.mobile"}}
+    exact = {"TeamIdentifier": [TEAM], "Entitlements": {"application-identifier": f"{TEAM}.com.vortoone.mobile"}}
     wildcard = {"TeamIdentifier": ["ZZZZZ99999"], "Entitlements": {"application-identifier": "ZZZZZ99999.*"}}
     assert tf.team_from_profiles([exact, wildcard, exact]) == TEAM
     with pytest.raises(tf.Refused):
         tf.team_from_profiles([wildcard])
     with pytest.raises(tf.Refused):
-        other = {"TeamIdentifier": ["OTHER00000"], "Entitlements": {"application-identifier": "OTHER00000.com.vortocode.mobile"}}
+        other = {"TeamIdentifier": ["OTHER00000"], "Entitlements": {"application-identifier": "OTHER00000.com.vortoone.mobile"}}
         tf.team_from_profiles([exact, other])
     assert tf.team_id({"IOS_TEAM_ID": TEAM}) == TEAM
 
@@ -84,12 +84,12 @@ def test_build_numbers_increase_and_export_is_for_app_store():
 
 
 def _signed():
-    shared = [f"{TEAM}.com.vortocode.mobile.shared"]
-    info = {"CFBundleIdentifier": "com.vortocode.mobile", "CFBundleShortVersionString": "0.3.0",
+    shared = [f"{TEAM}.com.vortoone.mobile.shared"]
+    info = {"CFBundleIdentifier": "com.vortoone.mobile", "CFBundleShortVersionString": "0.3.0",
             "CFBundleVersion": "202611080905", "ITSAppUsesNonExemptEncryption": False}
-    app = {"application-identifier": f"{TEAM}.com.vortocode.mobile", "aps-environment": "production",
+    app = {"application-identifier": f"{TEAM}.com.vortoone.mobile", "aps-environment": "production",
            "beta-reports-active": True, "keychain-access-groups": shared}
-    ext = {"application-identifier": f"{TEAM}.com.vortocode.mobile.notification", "beta-reports-active": True,
+    ext = {"application-identifier": f"{TEAM}.com.vortoone.mobile.notification", "beta-reports-active": True,
            "keychain-access-groups": shared}
     profile = {"Entitlements": {"aps-environment": "production"}}
     return info, app, ext, profile
@@ -99,7 +99,7 @@ def test_upload_requires_production_push_and_a_store_signature():
     tf = _module()
     info, app, ext, profile = _signed()
     summary = tf.check_signed(info, app, ext, profile, TEAM)
-    assert summary == {"bundle_id": "com.vortocode.mobile", "version": "0.3.0", "build": "202611080905",
+    assert summary == {"bundle_id": "com.vortoone.mobile", "version": "0.3.0", "build": "202611080905",
                        "aps_environment": "production", "debuggable": False, "testflight": True}
     broken = [
         ({**info, "ITSAppUsesNonExemptEncryption": None}, app, ext, profile),
@@ -108,7 +108,7 @@ def test_upload_requires_production_push_and_a_store_signature():
         (info, app, {**ext, "get-task-allow": True}, profile),
         (info, {**app, "beta-reports-active": False}, ext, profile),
         (info, app, {**ext, "application-identifier": f"{TEAM}.com.other"}, profile),
-        (info, {**app, "application-identifier": "ZZZZZ99999.com.vortocode.mobile"}, ext, profile),
+        (info, {**app, "application-identifier": "ZZZZZ99999.com.vortoone.mobile"}, ext, profile),
         (info, app, {**ext, "keychain-access-groups": []}, profile),
         (info, app, ext, {**profile, "ProvisionedDevices": ["00008110-0001"]}),
         (info, app, ext, {"Entitlements": {"aps-environment": "development"}}),

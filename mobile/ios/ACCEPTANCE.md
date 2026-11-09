@@ -105,11 +105,19 @@ XcodeBuildMCP 的独立状态查询有时将刚启动的设备报告为 Shutdown
 
 ## M4：TestFlight 与真机验收（ADR-017，2026-11-08 起）
 
+### 从旧 bundle id 换过来（ADR-018 批次 D，只做一次）
+
+App 的 bundle id 从 `com.vortocode.mobile` 改成了 `com.vortoone.mobile`。对 iOS 来说这是另一个 App：钥匙串、设置都不通用，要重新登录、重新绑定这台手机。
+
+1. 装新 App（开发安装或 TestFlight），登录，在 Desktop 批准这台新手机。
+2. 让 Claude 把 97 上的推送 topic 改成 `com.vortoone.mobile`（改前会问主人）。改之前新 App 收不到推送，服务端只记一条「topic 与 bundle id 不符」，不会删掉登记。
+3. 在 Desktop 的「手机与设备」里撤销旧手机，再删掉旧 App。
+
 ### 发 TestFlight
 
 一次性准备（主人在 Apple 后台做）：
 
-1. App Store Connect →「App」→ 新建 iOS App：bundle id 选 `com.vortocode.mobile`，名称（商店里要唯一）、主要语言简体中文、SKU 随意。
+1. App Store Connect →「App」→ 新建 iOS App：bundle id 选 `com.vortoone.mobile`，名称（商店里要唯一）、主要语言简体中文、SKU 随意。
 2. App Store Connect →「用户和访问」→「集成」→「团队密钥」：新建一把 API 钥匙，角色选「管理」（Admin，Xcode 要用它自动建发布证书和描述文件）。`.p8` 只能下载一次，放到 `~/.appstoreconnect/private_keys/AuthKey_<钥匙 ID>.p8`，`chmod 600`。
 3. 在「TestFlight」→「内部测试」里建一个组，把自己加进去；手机装 TestFlight。
 
