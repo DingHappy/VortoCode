@@ -15,7 +15,7 @@
   --muted: #8992a3;
   --quiet: #626b7c;
   --accent: #ff7347;
-  --accent-soft: rgba(255, 115, 71, 0.12);
+  --accent-soft: color-mix(in srgb, var(--vc-accent) 12%, transparent);
   --green: #56d194;
   --amber: #f3be65;
   --red: #f17878;
@@ -54,7 +54,7 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 [role="button"]:focus-visible {
-  outline: 2px solid rgba(255, 115, 71, 0.72);
+  outline: 2px solid color-mix(in srgb, var(--vc-accent) 72%, transparent);
   outline-offset: 1px;
 }
 
@@ -64,7 +64,7 @@ textarea:focus-visible,
   width: 100%;
   height: 100%;
   background:
-    radial-gradient(circle at 45% -10%, rgba(95, 78, 151, 0.08), transparent 30%),
+    radial-gradient(circle at 45% -10%, color-mix(in srgb, var(--vc-accent) 8%, transparent), transparent 30%),
     var(--surface-0);
 }
 
@@ -74,7 +74,7 @@ textarea:focus-visible,
   gap: 11px;
   padding: 0 14px 0 17px;
   border-bottom: 1px solid var(--line);
-  background: rgba(14, 16, 22, 0.95);
+  background: color-mix(in srgb, var(--vc-bg) 95%, transparent);
   user-select: none;
 }
 
@@ -150,7 +150,7 @@ textarea:focus-visible,
 
 .project-row.attention .project-status {
   background: var(--amber);
-  box-shadow: 0 0 0 3px rgba(243, 190, 101, 0.14);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-wait-dot) 14%, transparent);
 }
 
 .project-row-copy {
@@ -220,13 +220,13 @@ textarea:focus-visible,
 
 .connection-pill.connected {
   color: var(--vc-done-text);
-  border-color: rgba(86, 209, 148, 0.24);
-  background: rgba(86, 209, 148, 0.08);
+  border-color: color-mix(in srgb, var(--vc-done-text) 24%, transparent);
+  background: color-mix(in srgb, var(--vc-done-text) 8%, transparent);
 }
 
 .connection-pill.connected .connection-dot {
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(86, 209, 148, 0.1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-done-text) 10%, transparent);
 }
 
 .connection-pill.connecting .connection-dot {
@@ -246,7 +246,7 @@ textarea:focus-visible,
   min-height: 36px;
   padding: 7px 16px;
   color: var(--vc-accent);
-  border-bottom: 1px solid rgba(255, 115, 71, 0.25);
+  border-bottom: 1px solid color-mix(in srgb, var(--vc-accent) 25%, transparent);
   background: var(--vc-danger-bg);
   font-size: var(--vc-size-caption);
 }
@@ -285,7 +285,7 @@ textarea:focus-visible,
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
-  background: rgba(16, 19, 26, 0.88);
+  background: color-mix(in srgb, var(--vc-bg) 88%, transparent);
 }
 
 .session-copy strong {
@@ -381,19 +381,19 @@ textarea:focus-visible,
 
 .session-row.busy .session-status {
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(86, 209, 148, 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-done-text) 12%, transparent);
   animation: pulse 1.2s infinite;
 }
 
 .session-row.status-needs_input .session-status {
   background: var(--amber);
-  box-shadow: 0 0 0 3px rgba(243, 190, 101, 0.14);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-wait-dot) 14%, transparent);
   animation: pulse 1.35s infinite;
 }
 
 .session-row.status-working .session-status {
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(86, 209, 148, 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-done-text) 12%, transparent);
   animation: pulse 1.2s infinite;
 }
 
@@ -572,7 +572,7 @@ textarea:focus-visible,
 .conversation {
   display: grid;
   grid-template-rows: 56px minmax(0, 1fr) auto;
-  background: rgba(11, 13, 17, 0.72);
+  background: color-mix(in srgb, var(--vc-bg) 72%, transparent);
 }
 
 .conversation-header {
@@ -656,8 +656,8 @@ textarea:focus-visible,
 
 .stop-button {
   color: var(--vc-danger-text);
-  border: 1px solid rgba(241, 120, 120, 0.25);
-  background: rgba(241, 120, 120, 0.08);
+  border: 1px solid color-mix(in srgb, var(--vc-danger-text) 25%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
 }
 
 .conversation-scroll {
@@ -671,7 +671,7 @@ textarea:focus-visible,
   margin-bottom: 17px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(21, 25, 34, 0.8);
+  background: color-mix(in srgb, var(--vc-bg) 80%, transparent);
 }
 
 .message {
@@ -717,7 +717,7 @@ textarea:focus-visible,
   padding: 8px 10px;
   border-left: 2px solid var(--amber);
   color: var(--vc-wait-text);
-  background: rgba(243, 190, 101, 0.05);
+  background: color-mix(in srgb, var(--vc-wait-dot) 5%, transparent);
 }
 
 .streaming .message-body {
@@ -738,13 +738,13 @@ textarea:focus-visible,
   display: flex;
   gap: 11px;
   padding: 13px;
-  border-color: rgba(243, 190, 101, 0.32);
-  background: rgba(243, 190, 101, 0.07);
+  border-color: color-mix(in srgb, var(--vc-wait-dot) 32%, transparent);
+  background: color-mix(in srgb, var(--vc-wait-dot) 7%, transparent);
 }
 
 .confirm-card.tainted {
-  border-color: rgba(241, 120, 120, 0.34);
-  background: rgba(241, 120, 120, 0.07);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 34%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 7%, transparent);
 }
 
 .confirm-icon {
@@ -753,7 +753,7 @@ textarea:focus-visible,
   flex: 0 0 auto;
   width: 25px;
   height: 25px;
-  border: 1px solid rgba(243, 190, 101, 0.4);
+  border: 1px solid color-mix(in srgb, var(--vc-wait-dot) 40%, transparent);
   border-radius: 50%;
   color: var(--amber);
   font-size: var(--vc-size-caption);
@@ -762,7 +762,7 @@ textarea:focus-visible,
 
 .tainted .confirm-icon {
   color: var(--red);
-  border-color: rgba(241, 120, 120, 0.4);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 40%, transparent);
 }
 
 .confirm-copy {
@@ -828,7 +828,7 @@ textarea:focus-visible,
 
 .composer-wrap {
   padding: 10px max(24px, calc((100% - 690px) / 2)) 16px;
-  background: linear-gradient(transparent, rgba(11, 13, 17, 0.96) 24%);
+  background: linear-gradient(transparent, color-mix(in srgb, var(--vc-bg) 96%, transparent) 24%);
 }
 
 .composer {
@@ -842,11 +842,11 @@ textarea:focus-visible,
 
 .composer:focus-within {
   border-color: var(--vc-border);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24), 0 0 0 2px rgba(255, 115, 71, 0.05);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24), 0 0 0 2px color-mix(in srgb, var(--vc-accent) 5%, transparent);
 }
 
 .composer.preparing {
-  border-color: rgba(221, 171, 86, 0.35);
+  border-color: color-mix(in srgb, var(--vc-wait-dot) 35%, transparent);
 }
 
 .composer textarea {
@@ -880,10 +880,10 @@ textarea:focus-visible,
   gap: 5px;
   padding: 4px 5px 4px 7px;
   overflow: hidden;
-  border: 1px solid rgba(255, 115, 71, 0.2);
+  border: 1px solid color-mix(in srgb, var(--vc-accent) 20%, transparent);
   border-radius: 6px;
   color: var(--vc-text-secondary);
-  background: rgba(255, 115, 71, 0.07);
+  background: color-mix(in srgb, var(--vc-accent) 7%, transparent);
   font-family: "DM Mono", monospace;
   font-size: var(--vc-size-caption);
   text-overflow: ellipsis;
@@ -908,7 +908,7 @@ textarea:focus-visible,
 
 .context-chips button:hover {
   color: var(--vc-text);
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--vc-text) 8%, transparent);
 }
 
 textarea::placeholder,
@@ -953,7 +953,7 @@ input::placeholder {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--line);
-  background: rgba(16, 19, 26, 0.87);
+  background: color-mix(in srgb, var(--vc-bg) 87%, transparent);
 }
 
 .inspector-context-head {
@@ -1527,10 +1527,10 @@ input::placeholder {
 .file-error {
   margin: 10px;
   padding: 10px;
-  border: 1px solid rgba(241, 120, 120, 0.24);
+  border: 1px solid color-mix(in srgb, var(--vc-danger-text) 24%, transparent);
   border-radius: 7px;
   color: var(--vc-danger-text);
-  background: rgba(241, 120, 120, 0.06);
+  background: color-mix(in srgb, var(--vc-danger-text) 6%, transparent);
 }
 
 .file-error strong {
@@ -1599,14 +1599,14 @@ input::placeholder {
 
 .file-preview-actions button.primary {
   color: var(--vc-accent);
-  border-color: rgba(255, 115, 71, 0.3);
-  background: rgba(255, 115, 71, 0.09);
+  border-color: color-mix(in srgb, var(--vc-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--vc-accent) 9%, transparent);
 }
 
 .file-preview-actions button.attached {
   color: var(--vc-done-text);
-  border-color: rgba(86, 209, 148, 0.25);
-  background: rgba(86, 209, 148, 0.08);
+  border-color: color-mix(in srgb, var(--vc-done-text) 25%, transparent);
+  background: color-mix(in srgb, var(--vc-done-text) 8%, transparent);
 }
 
 .file-preview-actions button:disabled {
@@ -1623,10 +1623,10 @@ input::placeholder {
 
 .file-preview-meta button {
   padding: 2px 6px;
-  border: 1px solid rgba(255, 115, 71, 0.25);
+  border: 1px solid color-mix(in srgb, var(--vc-accent) 25%, transparent);
   border-radius: 999px;
   color: var(--vc-accent);
-  background: rgba(255, 115, 71, 0.08);
+  background: color-mix(in srgb, var(--vc-accent) 8%, transparent);
   font: inherit;
   cursor: pointer;
 }
@@ -1656,7 +1656,7 @@ input::placeholder {
 }
 
 .monaco-editor-shell.dirty {
-  box-shadow: inset 3px 0 0 rgba(255, 115, 71, 0.72);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--vc-accent) 72%, transparent);
 }
 
 .source-line {
@@ -1666,12 +1666,12 @@ input::placeholder {
 }
 
 .source-line:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--vc-text) 2.5%, transparent);
 }
 
 .source-line.selected {
   color: var(--vc-accent);
-  background: rgba(255, 115, 71, 0.09);
+  background: color-mix(in srgb, var(--vc-accent) 9%, transparent);
 }
 
 .source-line > button {
@@ -1811,7 +1811,7 @@ input::placeholder {
   padding: 7px;
   color: var(--vc-danger-text);
   border-radius: 6px;
-  background: rgba(241, 120, 120, 0.08);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
   font-size: var(--vc-size-caption);
   line-height: 14px;
 }
@@ -1825,10 +1825,10 @@ input::placeholder {
   gap: 8px;
   margin-bottom: 8px;
   padding: 8px;
-  border: 1px solid rgba(224, 164, 81, 0.3);
+  border: 1px solid color-mix(in srgb, var(--vc-wait-dot) 30%, transparent);
   border-radius: 7px;
   color: var(--vc-wait-text);
-  background: rgba(224, 164, 81, 0.08);
+  background: color-mix(in srgb, var(--vc-wait-dot) 8%, transparent);
 }
 
 .task-review-warning > div,
@@ -1871,15 +1871,15 @@ input::placeholder {
 }
 
 .task-review-policy.passed {
-  border-color: rgba(86, 209, 148, 0.25);
+  border-color: color-mix(in srgb, var(--vc-done-text) 25%, transparent);
   color: var(--vc-done-text);
-  background: rgba(86, 209, 148, 0.06);
+  background: color-mix(in srgb, var(--vc-done-text) 6%, transparent);
 }
 
 .task-review-policy.failed {
-  border-color: rgba(241, 120, 120, 0.25);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 25%, transparent);
   color: var(--vc-danger-text);
-  background: rgba(241, 120, 120, 0.06);
+  background: color-mix(in srgb, var(--vc-danger-text) 6%, transparent);
 }
 
 .task-review-warning button {
@@ -1899,19 +1899,19 @@ input::placeholder {
 }
 
 .task-review-verification.passed {
-  border-color: rgba(86, 209, 148, 0.25);
+  border-color: color-mix(in srgb, var(--vc-done-text) 25%, transparent);
   color: var(--vc-done-text);
-  background: rgba(86, 209, 148, 0.06);
+  background: color-mix(in srgb, var(--vc-done-text) 6%, transparent);
 }
 
 .task-review-verification.failed {
-  border-color: rgba(241, 120, 120, 0.25);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 25%, transparent);
   color: var(--vc-danger-text);
-  background: rgba(241, 120, 120, 0.06);
+  background: color-mix(in srgb, var(--vc-danger-text) 6%, transparent);
 }
 
 .task-review-verification details {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid color-mix(in srgb, var(--vc-text) 6%, transparent);
   padding-top: 6px;
 }
 
@@ -2069,8 +2069,8 @@ input::placeholder {
 .git-file-actions button.danger,
 .git-hunk-head button.danger {
   color: var(--vc-danger-text);
-  border-color: rgba(241, 120, 120, 0.28);
-  background: rgba(241, 120, 120, 0.07);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 28%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 7%, transparent);
 }
 
 .git-file-actions button:disabled,
@@ -2098,8 +2098,8 @@ input::placeholder {
 }
 
 .git-hunk.accepted {
-  border-color: rgba(86, 209, 148, 0.35);
-  box-shadow: inset 2px 0 rgba(86, 209, 148, 0.65);
+  border-color: color-mix(in srgb, var(--vc-done-text) 35%, transparent);
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--vc-done-text) 65%, transparent);
 }
 
 .hunk-accepted {
@@ -2152,26 +2152,26 @@ input::placeholder {
 
 .git-hunk-head .git-source.agent {
   color: var(--vc-done-text);
-  border-color: rgba(104, 185, 126, 0.34);
-  background: rgba(104, 185, 126, 0.09);
+  border-color: color-mix(in srgb, var(--vc-done-text) 34%, transparent);
+  background: color-mix(in srgb, var(--vc-done-text) 9%, transparent);
 }
 
 .git-hunk-head .git-source.user {
   color: var(--vc-accent);
-  border-color: rgba(112, 150, 210, 0.34);
-  background: rgba(112, 150, 210, 0.09);
+  border-color: color-mix(in srgb, var(--vc-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--vc-accent) 9%, transparent);
 }
 
 .git-hunk-head .git-source.hook {
   color: var(--vc-accent);
-  border-color: rgba(174, 121, 219, 0.34);
-  background: rgba(174, 121, 219, 0.09);
+  border-color: color-mix(in srgb, var(--vc-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--vc-accent) 9%, transparent);
 }
 
 .git-hunk-head .git-source.mixed {
   color: var(--vc-wait-text);
-  border-color: rgba(216, 180, 122, 0.34);
-  background: rgba(216, 180, 122, 0.09);
+  border-color: color-mix(in srgb, var(--vc-wait-dot) 34%, transparent);
+  background: color-mix(in srgb, var(--vc-wait-dot) 9%, transparent);
 }
 
 .git-hunk-head span {
@@ -2200,7 +2200,7 @@ input::placeholder {
 
 .git-review-line > span {
   color: var(--vc-muted);
-  border-right: 1px solid rgba(255, 255, 255, 0.035);
+  border-right: 1px solid color-mix(in srgb, var(--vc-text) 3.5%, transparent);
   text-align: right;
   padding-right: 5px;
   user-select: none;
@@ -2215,17 +2215,17 @@ input::placeholder {
 
 .git-review-line.add {
   color: var(--vc-done-text);
-  background: rgba(56, 139, 86, 0.1);
+  background: color-mix(in srgb, var(--vc-done-text) 10%, transparent);
 }
 
 .git-review-line.remove {
   color: var(--vc-danger-text);
-  background: rgba(201, 73, 73, 0.09);
+  background: color-mix(in srgb, var(--vc-danger-text) 9%, transparent);
 }
 
 .git-review-line.header {
   color: var(--vc-accent);
-  background: rgba(73, 105, 157, 0.11);
+  background: color-mix(in srgb, var(--vc-accent) 11%, transparent);
 }
 
 .git-review-line.selected {
@@ -2294,9 +2294,9 @@ input::placeholder {
 .git-review-comments {
   margin-top: 10px;
   padding: 9px;
-  border: 1px solid rgba(255, 115, 71, 0.24);
+  border: 1px solid color-mix(in srgb, var(--vc-accent) 24%, transparent);
   border-radius: 7px;
-  background: rgba(255, 115, 71, 0.055);
+  background: color-mix(in srgb, var(--vc-accent) 5.5%, transparent);
 }
 
 .git-review-comments-head {
@@ -2311,7 +2311,7 @@ input::placeholder {
 
 .git-review-comment {
   padding: 7px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid color-mix(in srgb, var(--vc-text) 6%, transparent);
 }
 
 .git-review-comment.resolved {
@@ -2331,19 +2331,19 @@ input::placeholder {
   padding: 2px 5px;
   border-radius: 999px;
   color: var(--vc-accent);
-  background: rgba(255, 115, 71, 0.12);
+  background: color-mix(in srgb, var(--vc-accent) 12%, transparent);
   font-size: var(--vc-size-caption);
   font-style: normal;
 }
 
 .git-review-comment.sent .git-review-comment-meta em {
   color: var(--vc-accent);
-  background: rgba(113, 147, 202, 0.14);
+  background: color-mix(in srgb, var(--vc-accent) 14%, transparent);
 }
 
 .git-review-comment.resolved .git-review-comment-meta em {
   color: var(--vc-done-text);
-  background: rgba(94, 171, 114, 0.13);
+  background: color-mix(in srgb, var(--vc-done-text) 13%, transparent);
 }
 
 .git-review-comments span {
@@ -2454,25 +2454,25 @@ input::placeholder {
 
 .pr-delivery-summary span.failed {
   color: var(--vc-danger-text);
-  background: rgba(241, 120, 120, 0.1);
+  background: color-mix(in srgb, var(--vc-danger-text) 10%, transparent);
 }
 
 .pr-delivery-summary span.pending {
   color: var(--vc-wait-text);
-  background: rgba(243, 190, 101, 0.1);
+  background: color-mix(in srgb, var(--vc-wait-dot) 10%, transparent);
 }
 
 .pr-delivery-summary span.passed {
   color: var(--vc-done-text);
-  background: rgba(86, 209, 148, 0.09);
+  background: color-mix(in srgb, var(--vc-done-text) 9%, transparent);
 }
 
 .pr-review-feedback {
   margin-top: 8px;
   padding: 7px;
-  border: 1px solid rgba(243, 190, 101, 0.2);
+  border: 1px solid color-mix(in srgb, var(--vc-wait-dot) 20%, transparent);
   border-radius: 6px;
-  background: rgba(243, 190, 101, 0.04);
+  background: color-mix(in srgb, var(--vc-wait-dot) 4%, transparent);
 }
 
 .pr-review-feedback > div {
@@ -2523,19 +2523,19 @@ input::placeholder {
   place-items: center;
   border-radius: 50%;
   color: var(--vc-done-text);
-  background: rgba(86, 209, 148, 0.1);
+  background: color-mix(in srgb, var(--vc-done-text) 10%, transparent);
   font-size: var(--vc-size-caption);
   font-style: normal;
 }
 
 .pr-check.failed .pr-check-title > i {
   color: var(--vc-danger-text);
-  background: rgba(241, 120, 120, 0.1);
+  background: color-mix(in srgb, var(--vc-danger-text) 10%, transparent);
 }
 
 .pr-check.pending .pr-check-title > i {
   color: var(--vc-wait-text);
-  background: rgba(243, 190, 101, 0.1);
+  background: color-mix(in srgb, var(--vc-wait-dot) 10%, transparent);
 }
 
 .pr-check-title > div {
@@ -2564,8 +2564,8 @@ input::placeholder {
 
 .pr-check-actions button.primary {
   color: var(--vc-danger-text);
-  border-color: rgba(241, 120, 120, 0.3);
-  background: rgba(241, 120, 120, 0.08);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 30%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
 }
 
 .pr-check-log {
@@ -2795,17 +2795,17 @@ input::placeholder {
 
 .diff-line.add {
   color: var(--vc-done-text);
-  background: rgba(61, 183, 118, 0.08);
+  background: color-mix(in srgb, var(--vc-done-text) 8%, transparent);
 }
 
 .diff-line.remove {
   color: var(--vc-danger-text);
-  background: rgba(210, 77, 77, 0.08);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
 }
 
 .diff-line.hunk {
   color: var(--vc-accent);
-  background: rgba(74, 111, 188, 0.08);
+  background: color-mix(in srgb, var(--vc-accent) 8%, transparent);
 }
 
 .diff-line.meta {
@@ -2835,7 +2835,7 @@ input::placeholder {
   padding: 11px;
   border: 1px solid var(--vc-border);
   border-radius: 10px;
-  background: linear-gradient(145deg, rgba(33, 40, 52, 0.92), rgba(18, 22, 30, 0.96));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--vc-bg) 92%, transparent), color-mix(in srgb, var(--vc-bg) 96%, transparent));
 }
 
 .journal-head,
@@ -2927,7 +2927,7 @@ input::placeholder {
 .journal-range-toggle button.active,
 .decision-toolbar button.active {
   color: var(--vc-accent);
-  background: rgba(82, 132, 205, 0.16);
+  background: color-mix(in srgb, var(--vc-accent) 16%, transparent);
 }
 
 .journal-headline {
@@ -2957,7 +2957,7 @@ input::placeholder {
   padding: 6px;
   border: 1px solid var(--vc-border);
   border-radius: 6px;
-  background: rgba(10, 14, 20, 0.34);
+  background: color-mix(in srgb, var(--vc-bg) 34%, transparent);
 }
 
 .journal-metrics b {
@@ -2978,16 +2978,16 @@ input::placeholder {
 .journal-next-actions {
   margin-top: 10px;
   padding: 8px;
-  border: 1px solid rgba(243, 190, 101, 0.18);
+  border: 1px solid color-mix(in srgb, var(--vc-wait-dot) 18%, transparent);
   border-radius: 7px;
-  background: rgba(243, 190, 101, 0.035);
+  background: color-mix(in srgb, var(--vc-wait-dot) 3.5%, transparent);
 }
 
 .journal-continuation-meta {
   margin-top: 9px;
   padding: 7px 8px;
   border-left: 2px solid var(--vc-accent);
-  background: rgba(76, 116, 174, 0.06);
+  background: color-mix(in srgb, var(--vc-accent) 6%, transparent);
 }
 
 .journal-continuation-meta span {
@@ -3016,7 +3016,7 @@ input::placeholder {
   padding: 6px 3px;
   border: 1px solid var(--vc-border);
   border-radius: 6px;
-  background: rgba(10, 14, 20, 0.32);
+  background: color-mix(in srgb, var(--vc-bg) 32%, transparent);
   flex-direction: column;
   align-items: center;
 }
@@ -3058,7 +3058,7 @@ input::placeholder {
 .journal-next-actions > div {
   gap: 6px;
   padding: 6px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid color-mix(in srgb, var(--vc-text) 4%, transparent);
 }
 
 .journal-next-actions > div > span {
@@ -3193,7 +3193,7 @@ input::placeholder {
   margin: 5px 0;
   padding: 7px;
   border-radius: 6px;
-  background: rgba(10, 14, 20, 0.32);
+  background: color-mix(in srgb, var(--vc-bg) 32%, transparent);
 }
 
 .journal-handoff > div {
@@ -3315,8 +3315,8 @@ input::placeholder {
 }
 
 .decision-card.tainted {
-  border-color: rgba(239, 120, 120, 0.38);
-  background: rgba(83, 29, 32, 0.13);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 38%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 13%, transparent);
 }
 
 .decision-card-head {
@@ -3364,7 +3364,7 @@ input::placeholder {
   padding: 6px;
   color: var(--vc-danger-text);
   border-radius: 5px;
-  background: rgba(239, 120, 120, 0.08);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
   font-size: var(--vc-size-caption);
   line-height: 12px;
 }
@@ -3383,7 +3383,7 @@ input::placeholder {
 
 .decision-actions button.danger {
   color: var(--vc-danger-text);
-  border-color: rgba(239, 120, 120, 0.3);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 30%, transparent);
 }
 
 .audit-filters {
@@ -3400,8 +3400,8 @@ input::placeholder {
 
 .audit-filters button.active {
   color: var(--vc-accent);
-  border-color: rgba(255, 142, 93, 0.3);
-  background: rgba(255, 142, 93, 0.08);
+  border-color: color-mix(in srgb, var(--vc-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--vc-accent) 8%, transparent);
 }
 
 .audit-empty {
@@ -3580,7 +3580,7 @@ input::placeholder {
 
 .terminal-tabs i.running {
   background: var(--vc-done-text);
-  box-shadow: 0 0 7px rgba(86, 209, 148, 0.5);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--vc-done-text) 50%, transparent);
 }
 
 .terminal-actions {
@@ -3618,8 +3618,8 @@ input::placeholder {
 .terminal-error {
   padding: 7px 9px;
   color: var(--vc-danger-text);
-  border-bottom: 1px solid rgba(241, 120, 120, 0.2);
-  background: rgba(241, 120, 120, 0.08);
+  border-bottom: 1px solid color-mix(in srgb, var(--vc-danger-text) 20%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
   font-size: var(--vc-size-caption);
 }
 
@@ -3728,7 +3728,7 @@ input::placeholder {
 
 .preview-address i.running {
   background: var(--vc-done-text);
-  box-shadow: 0 0 7px rgba(86, 209, 148, 0.5);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--vc-done-text) 50%, transparent);
 }
 
 .preview-toolbar button {
@@ -3744,8 +3744,8 @@ input::placeholder {
 
 .preview-toolbar button.danger {
   color: var(--vc-danger-text);
-  border-color: rgba(241, 120, 120, 0.26);
-  background: rgba(241, 120, 120, 0.07);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 26%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 7%, transparent);
 }
 
 .preview-workbench > iframe {
@@ -3930,11 +3930,11 @@ input::placeholder {
 }
 
 .run-card.running {
-  border-color: rgba(243, 190, 101, 0.26);
+  border-color: color-mix(in srgb, var(--vc-wait-dot) 26%, transparent);
 }
 
 .run-card.failed {
-  border-color: rgba(241, 120, 120, 0.25);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 25%, transparent);
 }
 
 .run-card-head {
@@ -3981,7 +3981,7 @@ input::placeholder {
   padding: 6px 7px;
   color: var(--vc-wait-text);
   border-radius: 5px;
-  background: rgba(243, 190, 101, 0.08);
+  background: color-mix(in srgb, var(--vc-wait-dot) 8%, transparent);
   font-size: var(--vc-size-caption);
   line-height: 13px;
 }
@@ -3995,11 +3995,11 @@ input::placeholder {
 }
 
 .test-results.passed {
-  border-color: rgba(86, 209, 148, 0.24);
+  border-color: color-mix(in srgb, var(--vc-done-text) 24%, transparent);
 }
 
 .test-results.failed {
-  border-color: rgba(241, 120, 120, 0.26);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 26%, transparent);
 }
 
 .test-results-head,
@@ -4217,8 +4217,8 @@ input::placeholder {
 .run-evidence button {
   padding: 5px 7px;
   color: var(--vc-done-text);
-  border-color: rgba(86, 209, 148, 0.28);
-  background: rgba(86, 209, 148, 0.08);
+  border-color: color-mix(in srgb, var(--vc-done-text) 28%, transparent);
+  background: color-mix(in srgb, var(--vc-done-text) 8%, transparent);
 }
 
 .run-actions {
@@ -4234,8 +4234,8 @@ input::placeholder {
 
 .run-actions button.danger {
   color: var(--vc-danger-text);
-  border-color: rgba(241, 120, 120, 0.3);
-  background: rgba(241, 120, 120, 0.08);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 30%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
 }
 
 .goal-form {
@@ -4356,11 +4356,11 @@ input::placeholder {
 }
 
 .goal-card.blocked {
-  border-color: rgba(241, 120, 120, 0.28);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 28%, transparent);
 }
 
 .goal-card.achieved {
-  border-color: rgba(86, 209, 148, 0.28);
+  border-color: color-mix(in srgb, var(--vc-done-text) 28%, transparent);
 }
 
 .goal-card-head,
@@ -4406,7 +4406,7 @@ input::placeholder {
   padding: 7px 8px;
   color: var(--vc-danger-text);
   border-radius: 6px;
-  background: rgba(241, 120, 120, 0.08);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
   font-size: var(--vc-size-caption);
   line-height: 14px;
 }
@@ -4488,9 +4488,9 @@ input::placeholder {
 .goal-criterion-title em {
   padding: 2px 5px;
   color: var(--vc-accent);
-  border: 1px solid rgba(105, 143, 201, 0.3);
+  border: 1px solid color-mix(in srgb, var(--vc-accent) 30%, transparent);
   border-radius: 99px;
-  background: rgba(73, 105, 157, 0.1);
+  background: color-mix(in srgb, var(--vc-accent) 10%, transparent);
   font-size: var(--vc-size-caption);
   font-style: normal;
   white-space: nowrap;
@@ -4528,10 +4528,10 @@ input::placeholder {
 
 .goal-verifier-editor button {
   padding: 5px 7px;
-  border: 1px solid rgba(105, 143, 201, 0.34);
+  border: 1px solid color-mix(in srgb, var(--vc-accent) 34%, transparent);
   border-radius: 5px;
   color: var(--vc-accent);
-  background: rgba(73, 105, 157, 0.13);
+  background: color-mix(in srgb, var(--vc-accent) 13%, transparent);
   font-size: var(--vc-size-caption);
   cursor: pointer;
 }
@@ -4585,8 +4585,8 @@ input::placeholder {
   grid-column: 1 / -1;
   justify-self: end;
   color: var(--vc-accent);
-  border-color: rgba(105, 143, 201, 0.34);
-  background: rgba(73, 105, 157, 0.12);
+  border-color: color-mix(in srgb, var(--vc-accent) 34%, transparent);
+  background: color-mix(in srgb, var(--vc-accent) 12%, transparent);
 }
 
 .goal-evidence-log {
@@ -4837,7 +4837,7 @@ button.worktree-live:not(:disabled) {
 }
 
 button.worktree-live:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--vc-text) 2.5%, transparent);
 }
 
 .worktree-live > i {
@@ -4845,7 +4845,7 @@ button.worktree-live:not(:disabled):hover {
   height: 7px;
   border-radius: 50%;
   background: var(--vc-done-text);
-  box-shadow: 0 0 8px rgba(86, 209, 148, 0.5);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--vc-done-text) 50%, transparent);
 }
 
 .worktree-live > div,
@@ -4894,7 +4894,7 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .worktree-plan-row.linked:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--vc-text) 2.5%, transparent);
 }
 
 .task-card,
@@ -4907,8 +4907,8 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .task-card.focused {
-  border-color: rgba(255, 115, 71, 0.72);
-  box-shadow: 0 0 0 2px rgba(255, 115, 71, 0.12);
+  border-color: color-mix(in srgb, var(--vc-accent) 72%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vc-accent) 12%, transparent);
 }
 
 .task-card {
@@ -4945,10 +4945,10 @@ button.worktree-live:not(:disabled):hover {
   gap: 3px 6px;
   margin: 7px 0;
   padding: 6px 7px;
-  border: 1px solid rgba(86, 209, 148, 0.2);
+  border: 1px solid color-mix(in srgb, var(--vc-done-text) 20%, transparent);
   border-radius: 6px;
   color: var(--vc-done-text);
-  background: rgba(86, 209, 148, 0.05);
+  background: color-mix(in srgb, var(--vc-done-text) 5%, transparent);
   font-size: var(--vc-size-caption);
 }
 
@@ -4957,7 +4957,7 @@ button.worktree-live:not(:disabled):hover {
   height: 6px;
   border-radius: 50%;
   background: var(--vc-done-text);
-  box-shadow: 0 0 7px rgba(86, 209, 148, 0.45);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--vc-done-text) 45%, transparent);
 }
 
 .task-live-worktrees small {
@@ -4974,17 +4974,17 @@ button.worktree-live:not(:disabled):hover {
   gap: 8px;
   margin: 7px 0;
   padding: 6px 7px;
-  border: 1px solid rgba(86, 209, 148, 0.2);
+  border: 1px solid color-mix(in srgb, var(--vc-done-text) 20%, transparent);
   border-radius: 6px;
   color: var(--vc-done-text);
-  background: rgba(86, 209, 148, 0.05);
+  background: color-mix(in srgb, var(--vc-done-text) 5%, transparent);
   font-size: var(--vc-size-caption);
 }
 
 .task-review-state.stale {
-  border-color: rgba(224, 164, 81, 0.28);
+  border-color: color-mix(in srgb, var(--vc-wait-dot) 28%, transparent);
   color: var(--vc-wait-text);
-  background: rgba(224, 164, 81, 0.07);
+  background: color-mix(in srgb, var(--vc-wait-dot) 7%, transparent);
 }
 
 .task-review-state b {
@@ -5011,27 +5011,27 @@ button.worktree-live:not(:disabled):hover {
 .task-status.in_progress,
 .task-status.active {
   color: var(--vc-wait-text);
-  background: rgba(243, 190, 101, 0.12);
+  background: color-mix(in srgb, var(--vc-wait-dot) 12%, transparent);
 }
 
 .task-status.done,
 .task-status.completed,
 .task-status.achieved {
   color: var(--vc-done-text);
-  background: rgba(86, 209, 148, 0.1);
+  background: color-mix(in srgb, var(--vc-done-text) 10%, transparent);
 }
 
 .task-status.failed,
 .task-status.cancelled,
 .task-status.blocked {
   color: var(--vc-danger-text);
-  background: rgba(241, 120, 120, 0.1);
+  background: color-mix(in srgb, var(--vc-danger-text) 10%, transparent);
 }
 
 .task-status.paused,
 .task-status.interrupted {
   color: var(--vc-wait-text);
-  background: rgba(210, 167, 96, 0.12);
+  background: color-mix(in srgb, var(--vc-wait-dot) 12%, transparent);
 }
 
 .task-model-comparison { margin: 12px 0; }
@@ -5198,7 +5198,7 @@ button.worktree-live:not(:disabled):hover {
   display: grid;
   place-items: center;
   padding: 28px;
-  background: rgba(3, 5, 8, 0.74);
+  background: color-mix(in srgb, var(--vc-bg) 74%, transparent);
   backdrop-filter: blur(7px);
 }
 
@@ -5333,7 +5333,7 @@ button.worktree-live:not(:disabled):hover {
 
 .process-card.running .process-indicator {
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(86, 209, 148, 0.1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-done-text) 10%, transparent);
 }
 
 .process-card strong {
@@ -5352,14 +5352,14 @@ button.worktree-live:not(:disabled):hover {
   gap: 7px;
   margin: 0 0 10px;
   padding: 11px;
-  border: 1px solid rgba(221, 171, 86, 0.22);
+  border: 1px solid color-mix(in srgb, var(--vc-wait-dot) 22%, transparent);
   border-radius: 8px;
-  background: rgba(221, 171, 86, 0.055);
+  background: color-mix(in srgb, var(--vc-wait-dot) 5.5%, transparent);
 }
 
 .recovery-card.crashed {
-  border-color: rgba(241, 120, 120, 0.22);
-  background: rgba(241, 120, 120, 0.045);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 22%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 4.5%, transparent);
 }
 
 .recovery-heading {
@@ -5545,14 +5545,14 @@ button.worktree-live:not(:disabled):hover {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 7px 10px;
   padding: 9px;
-  border: 1px solid rgba(221, 171, 86, 0.24);
+  border: 1px solid color-mix(in srgb, var(--vc-wait-dot) 24%, transparent);
   border-radius: 7px;
-  background: rgba(221, 171, 86, 0.055);
+  background: color-mix(in srgb, var(--vc-wait-dot) 5.5%, transparent);
 }
 
 .extensions-hook-trust.trusted {
-  border-color: rgba(86, 209, 148, 0.2);
-  background: rgba(86, 209, 148, 0.04);
+  border-color: color-mix(in srgb, var(--vc-done-text) 20%, transparent);
+  background: color-mix(in srgb, var(--vc-done-text) 4%, transparent);
 }
 
 .extensions-hook-trust strong { color: var(--vc-wait-text); font-size: var(--vc-size-caption); }
@@ -5560,7 +5560,7 @@ button.worktree-live:not(:disabled):hover {
 .extensions-hook-trust span { color: var(--vc-muted); font-family: "DM Mono", monospace; font-size: var(--vc-size-caption); }
 .extensions-hook-trust p { grid-column: 1 / -1; margin: 0; color: var(--vc-muted); font-size: var(--vc-size-caption); line-height: 13px; }
 .extensions-hook-trust button.primary { color: var(--vc-on-ink); border-color: var(--accent); background: var(--accent); font-weight: 700; }
-.extensions-hook-trust button.danger { color: var(--vc-danger-text); border-color: rgba(241, 120, 120, 0.25); }
+.extensions-hook-trust button.danger { color: var(--vc-danger-text); border-color: color-mix(in srgb, var(--vc-danger-text) 25%, transparent); }
 
 .extensions-inspect-list {
   display: grid;
@@ -5580,7 +5580,7 @@ button.worktree-live:not(:disabled):hover {
 
 .extensions-inspect-item.needs_trust,
 .extensions-inspect-item.blocked,
-.extensions-inspect-item.error { border-color: rgba(221, 171, 86, 0.22); }
+.extensions-inspect-item.error { border-color: color-mix(in srgb, var(--vc-wait-dot) 22%, transparent); }
 
 .extensions-inspect-item-head {
   display: grid;
@@ -5666,7 +5666,7 @@ button.worktree-live:not(:disabled):hover {
   padding: 9px 10px;
   border-left: 2px solid var(--vc-border);
   color: var(--vc-muted);
-  background: rgba(76, 94, 129, 0.06);
+  background: color-mix(in srgb, var(--vc-accent) 6%, transparent);
   font-size: var(--vc-size-caption);
   line-height: 1.6;
 }
@@ -5676,7 +5676,7 @@ button.worktree-live:not(:disabled):hover {
   padding: 10px;
   border: 1px solid var(--vc-border);
   border-radius: 8px;
-  background: rgba(10, 13, 18, 0.32);
+  background: color-mix(in srgb, var(--vc-bg) 32%, transparent);
 }
 
 .advanced-settings summary {
@@ -5723,8 +5723,8 @@ button.worktree-live:not(:disabled):hover {
 
 .advanced-actions button.danger {
   color: var(--vc-danger-text);
-  border-color: rgba(241, 120, 120, 0.25);
-  background: rgba(241, 120, 120, 0.08);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 25%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
 }
 
 .advanced-actions button:disabled {
@@ -5752,8 +5752,8 @@ button.worktree-live:not(:disabled):hover {
 
 .settings-actions button.danger {
   color: var(--vc-danger-text);
-  border-color: rgba(241, 120, 120, 0.25);
-  background: rgba(241, 120, 120, 0.08);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 25%, transparent);
+  background: color-mix(in srgb, var(--vc-danger-text) 8%, transparent);
 }
 
 .settings-actions button:disabled {
@@ -5985,7 +5985,7 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .runtime-inbox-metrics > div.attention {
-  border-color: rgba(184, 73, 73, 0.28);
+  border-color: color-mix(in srgb, var(--vc-danger-text) 28%, transparent);
   background: var(--n3);
 }
 
@@ -6023,7 +6023,7 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .runtime-inbox-card.degraded {
-  border-color: rgba(163, 103, 22, 0.32);
+  border-color: color-mix(in srgb, var(--vc-wait-dot) 32%, transparent);
 }
 
 .runtime-inbox-card-head {
@@ -6066,7 +6066,7 @@ button.worktree-live:not(:disabled):hover {
 .runtime-inbox-item-dot.status-active,
 .runtime-inbox-item-dot.status-in_progress {
   background: var(--vc-accent-bg);
-  box-shadow: 0 0 0 3px rgba(75, 114, 187, 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vc-accent) 12%, transparent);
 }
 
 .runtime-inbox-runtime-dot.attention,
@@ -6135,7 +6135,7 @@ button.worktree-live:not(:disabled):hover {
   padding: 8px 9px;
   border-radius: 7px;
   color: var(--amber);
-  background: rgba(221, 171, 86, 0.08);
+  background: color-mix(in srgb, var(--vc-wait-dot) 8%, transparent);
 }
 
 .runtime-inbox-error > span {
