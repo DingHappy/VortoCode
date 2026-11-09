@@ -120,6 +120,29 @@ def tool_summary(name: str, args: Dict[str, Any]) -> str:
         "send_file": _with("发送文件", path),
         "send_image": _with("发送图片", path),
         "send_document": _with("发送文档", path),
+        # —— 常驻助理：在办事项、定时、通知 ——
+        "work_status": "查看现在在办的事",
+        "today_activity": "查看今天聊过的事",
+        "recent_notices": "查看最近推送的通知",
+        "schedule_list": "查看定时事项",
+        "schedule_history": _with("查看定时事项的运行记录", title or job),
+        # —— 个人目标 ——
+        "personal_goal_create": _with("新建个人目标：", str(args.get("goal") or args.get("objective") or title), 50),
+        "personal_goal_update": "更新个人目标进展",
+        # —— 任务小组（小组 ID 是内部编号，不进标题） ——
+        "team_propose": _with("拟定任务小组：", str(args.get("objective") or ""), 50),
+        "team_list": "查看任务小组",
+        "team_open": "查看任务小组详情",
+        "team_reply": "回复任务小组",
+        "team_decide": "验收任务小组交付" if args.get("accept") in (True, "true") else
+        "退回任务小组交付" if args.get("accept") in (False, "false") else "处理任务小组交付",
+        "team_stop": "停止任务小组",
+        # —— Codex（Mac 上的会话） ——
+        "codex_status": "查看 Codex 在做什么",
+        "codex_handover": "交接或收回 Codex 会话",
+        "codex_supervision": "查看或调整 Codex 监管节奏",
+        "propose_codex_message": "拟一句话给 Codex（等你批准）",
+        "propose_codex_interrupt": "建议叫停 Codex 这一轮（等你批准）",
         # —— 会话控制 ——
         "update_plan": "更新执行计划",
         "request_build": "请求切换到 Build",

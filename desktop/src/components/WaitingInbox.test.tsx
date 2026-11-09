@@ -41,7 +41,7 @@ it("读过外部内容的小组不显示等你的原因；没有事、来源齐�
 
 it("异常有独立入口；来源不全时照实说，不当成没有", () => {
   const html = render({ items: [], teams: [], exceptions: 2 });
-  expect(html).toContain("2 项需核对 · 查看动态"); expect(html).not.toContain("等你处理 ·");
+  expect(html).toContain("2 项失败或中断 · 查看动态"); expect(html).not.toContain("等你处理 ·");
   expect(render({ items: [], teams: [], uncertain: true })).toContain("部分来源还没读到");
   expect(render({ uncertain: true })).toContain("等你处理 · 2+");
 });

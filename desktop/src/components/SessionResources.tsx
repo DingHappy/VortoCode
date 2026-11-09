@@ -1,5 +1,7 @@
 import type { ResourceView, SessionResource } from "../lib/sessionResources";
 import { useState } from "react";
+import { ChevronRight } from "lucide-react";
+import "./SessionResources.css";
 
 const labels: Record<SessionResource["state"], string> = {
   idle: "已装配，尚未打开", active: "会话已打开", needs_human: "等待人工处理", cleanup_pending: "清理待核对",
@@ -16,6 +18,22 @@ export function residentHostLabel(name: string | undefined, remote: boolean, res
   return `${base}（远端）`;
 }
 
+const ATTENTION: SessionResource["state"][] = ["needs_human", "needs_reconciliation", "cleanup_pending", "error"];
+
+/** 折叠行右侧那几个字：要核对时直接写是哪一项、什么情况，不只写「需要核对」。 */
+export function resourceSummary(view: ResourceView, connected: boolean): { text: string; attention: boolean } {
+  if (!connected) return { text: "连接中断", attention: true };
+  if (view.error) return { text: "状态没读到", attention: true };
+  const flagged = view.snapshot?.items.filter(item => ATTENTION.includes(item.state)) ?? [];
+  if (flagged.length) {
+    const first = `${flagged[0].title}${labels[flagged[0].state]}`;
+    return { text: flagged.length > 1 ? `${first}，另有 ${flagged.length - 1} 项` : first, attention: true };
+  }
+  if (view.busy) return { text: "读取中", attention: false };
+  if (!view.snapshot) return { text: "按需查看", attention: false };
+  return { text: view.stale ? "记录待核对" : "查看详情", attention: false };
+}
+
 /** One disclosure in the current conversation; it never installs, connects or approves.
  * quietWhenOk（助理模式，ADR-016）：一切正常时不占位置，只在需要核对或连接中断时出现；常驻电脑的状态平时看侧栏底部。 */
 export function SessionResources({ view, connected, hostLabel, pendingId, onRefresh, onFocusConfirmation, onManage, onBrowserSettings, quietWhenOk = false }: {
@@ -24,13 +42,12 @@ export function SessionResources({ view, connected, hostLabel, pendingId, onRefr
   onBrowserSettings?: () => void; quietWhenOk?: boolean;
 }) {
   const snapshot = view.snapshot;
-  const stale = view.stale || !connected;
   const [open, setOpen] = useState(false);
-  const attention = Boolean(view.error || snapshot?.items.some(item =>
-    ["needs_human", "needs_reconciliation", "cleanup_pending", "error"].includes(item.state)));
-  if (quietWhenOk && connected && !attention && !open) return null;
+  const summary = resourceSummary(view, connected);
+  if (quietWhenOk && connected && !summary.attention && !open) return null;
   return <details className="session-resources" onToggle={event => { setOpen(event.currentTarget.open); if (event.currentTarget.open) onRefresh(); }}>
-    <summary>{hostLabel} · 连接与能力 <small>{!connected ? "连接中断" : attention ? "需要核对" : view.busy ? "读取中" : !snapshot ? "按需查看" : stale ? "记录待核对" : "查看详情"}</small></summary>
+    <summary><ChevronRight aria-hidden="true" /><span>{hostLabel} · 连接与能力</span>
+      <small className={summary.attention ? "attention" : undefined}>{summary.text}</small></summary>
     <div className="session-resource-actions">
       <button disabled={!connected || view.busy} onClick={onRefresh}>{view.busy ? "读取中…" : "刷新状态"}</button>
       {pendingId && snapshot?.attention_id === pendingId && <button onClick={onFocusConfirmation}>查看当前确认</button>}

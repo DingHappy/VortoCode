@@ -59,8 +59,11 @@ export function WaitingInbox({ items, teams, exceptions, uncertain = false, conn
         <span>等你处理</span><span className="waiting-inbox-count">{total}{uncertain ? "+" : ""}</span>
         <ChevronDown aria-hidden="true" />
       </button>}
-      {(exceptions > 0 || (uncertain && total === 0)) && <button type="button" className="waiting-inbox-check" onClick={onShowActivity}>
-        {exceptions > 0 ? `${exceptions} 项需核对` : "部分来源还没读到，等你处理的可能不止这些"} · 查看动态
+      {/* 失败或中断的事和「等你拍板」的分开写：同一行两个数字，名字要说清不是同一回事 */}
+      {(exceptions > 0 || (uncertain && total === 0)) && <button type="button"
+        className={`waiting-inbox-check${exceptions > 0 ? " failed" : ""}`} onClick={onShowActivity}
+        title={exceptions > 0 ? "任务失败、中途停下或来源失联，在动态里看原因" : undefined}>
+        {exceptions > 0 ? `${exceptions} 项失败或中断` : "部分来源还没读到，等你处理的可能不止这些"} · 查看动态
       </button>}
     </div>
       {total > 0 && open && <ul id={listId}>
