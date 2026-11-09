@@ -14,6 +14,8 @@ test("latest.json points at this release's archive on this repo", () => {
     signature: "dW50cnVzdGVk\n" });
   assert.deepEqual(manifest, {
     version: "0.2.14", notes: "修了几处", pub_date: "2026-10-22T08:00:00.000Z",
+    mirrors: [`${MIRROR_BASE}/v0.2.14/${updaterAssetName("0.2.14")}`,
+      `https://github.com/${REPO}/releases/download/v0.2.14/${updaterAssetName("0.2.14")}`],
     platforms: { [PLATFORM]: { signature: "dW50cnVzdGVk",
       url: `https://github.com/${REPO}/releases/download/v0.2.14/${updaterAssetName("0.2.14")}` } },
   });
@@ -28,6 +30,8 @@ test("the mirror manifest is the same release but downloads from OSS", () => {
   assert.equal(MIRROR_LATEST, `${MIRROR_BASE}/latest.json`);
   assert.equal(mirror.platforms[PLATFORM].signature, github.platforms[PLATFORM].signature);
   assert.deepEqual({ ...mirror, platforms: null }, { ...github, platforms: null });
+  // 两份清单都列出两个来源，App 自己挑快的
+  assert.deepEqual(mirror.mirrors, [mirror.platforms[PLATFORM].url, github.platforms[PLATFORM].url]);
 });
 
 test("refuses a manifest that the updater could not verify", () => {
