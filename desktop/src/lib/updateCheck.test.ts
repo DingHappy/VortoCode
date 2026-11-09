@@ -16,7 +16,7 @@ describe("autoCheckDue", () => {
 });
 
 describe("installUpdate", () => {
-  it("restarts only after the update installed", async () => {
+  it("leaves the restart to the native side once the update installed", async () => {
     const calls: string[] = [];
     vi.resetModules();
     vi.doMock("@tauri-apps/api/core", () => ({
@@ -28,7 +28,8 @@ describe("installUpdate", () => {
     }));
     const { installUpdate } = await import("./updateCheck");
     await expect(installUpdate()).resolves.toBe("0.2.14");
-    expect(calls).toEqual(["install_update", "restart_after_update"]);
+    // 网页进程可能在替换 App 时已经退出，重启不能靠网页再发一次请求
+    expect(calls).toEqual(["install_update"]);
   });
 
   it("never restarts when the owner declines or the signature check fails", async () => {

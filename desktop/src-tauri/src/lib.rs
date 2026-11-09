@@ -1678,7 +1678,6 @@ pub fn run() {
             close_resident_desktop,
             check_for_update,
             install_update,
-            restart_after_update,
             relaunch_app,
             account::account_status,
             account_runtime::resident_account_status,
