@@ -62,6 +62,8 @@
   cursor: pointer;
 }
 .waiting-inbox-check:hover { color: var(--vc-text); }
+.waiting-inbox-check.failed { color: var(--vc-danger-text); }
+.waiting-inbox-check.failed:hover { color: var(--vc-danger-text); text-decoration: underline; }
 .waiting-inbox button:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: 2px; }
 
 /* 固定在对话顶部的一条：和对话栏同宽，不随消息滚动；事项多时自己滚动，最多占四成高度 */

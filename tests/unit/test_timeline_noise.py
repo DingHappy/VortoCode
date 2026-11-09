@@ -90,6 +90,28 @@ def test_every_builtin_tool_has_a_human_label(monkeypatch, tmp_path):
     assert not missing, f"这些内建工具还在用内部标识符当标题：{sorted(missing)}"
 
 
+def test_resident_assistant_tools_have_human_labels(monkeypatch, tmp_path):
+    """常驻助理（通用范围、开了调度、装配了任务小组）多出来的工具，上一条契约扫不到。
+
+    真机截图里时间线写着「team propose」「team list」，就是因为它们只在这种装配下出现。
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VORTOONE_CRON", "1")
+    from src.scheduling import team_runner
+    monkeypatch.setattr(team_runner, "_RUNNER", object())
+    from src.gateway.agent_session import build_session
+
+    tools = build_session(str(tmp_path), kind="web", workspace_scope="general").tools
+    assert {"team_propose", "team_list", "work_status", "codex_status"} <= set(tools), sorted(tools)
+    missing = [name for name in tools
+               if "_" in _summary(name) or _summary(name) == name.replace("_", " ")]
+    assert not missing, f"常驻助理的这些工具还在用内部标识符当标题：{sorted(missing)}"
+    assert _summary("team_propose", {"objective": "查今日股市"}) == "拟定任务小组：查今日股市"
+    assert _summary("team_open", {"team_id": "task-84810e1c84"}) == "查看任务小组详情"   # 内部编号不进标题
+    assert _summary("team_decide", {"accept": True}) == "验收任务小组交付"
+    assert _summary("team_decide", {"accept": False, "note": "缺来源"}) == "退回任务小组交付"
+
+
 def test_browser_tools_have_human_labels_when_enabled(monkeypatch, tmp_path):
     """浏览器操控默认不装配，上一条契约扫不到它们；打开开关再过一遍。"""
     monkeypatch.chdir(tmp_path)

@@ -19,11 +19,13 @@ export function contextLevel(context?: SessionContextUsage): { level: ContextLev
 }
 
 export function contextStatusText(context?: SessionContextUsage) {
-  if (!context) return { percent: "—", label: "上下文用量未知", detail: "尚未收到会话快照。", compression: "" };
+  if (!context) return { percent: "—", short: "上下文 —", label: "上下文用量未知", detail: "尚未收到会话快照。", compression: "" };
   const known = (context.context_window_tokens ?? 0) > 0;
   const presentation = sessionContextPresentation(context);
   return {
     percent: presentation.label.replace(/^(上下文|历史预算) /, ""),
+    // 按钮上直接写是什么的百分比：只有「1.4%」时看不出是上下文用量
+    short: presentation.label,
     label: known ? "上下文使用量（估算）" : "历史预算使用量（模型窗口未知）",
     detail: known ? `${context.used_tokens.toLocaleString()} / ${context.context_window_tokens!.toLocaleString()} tokens` : `${context.used_tokens.toLocaleString()} / ${context.max_tokens.toLocaleString()} tokens · 历史预算`,
     compression: context.compact_enabled === false ? "自动压缩已关闭" : context.compact_enabled == null ? "压缩状态未知" : context.will_compact ? "下一回合开始前尝试压缩" : "自动压缩已启用",
@@ -60,7 +62,7 @@ export function ContextStatus({ context }: { context?: SessionContextUsage }) {
   // 新对话还没有会话快照时不占位：一个孤零零的「—」按钮看不出是什么
   if (!context) return null;
   return <>
-    <button ref={button} type="button" className={`context-status level-${level}`} aria-label={`${text.label} ${text.percent}${reason ? `，${reason}` : ""}`} aria-haspopup="dialog" aria-expanded={open} title={reason || text.label} onClick={() => setOpen(value => !value)}>{text.percent}</button>
+    <button ref={button} type="button" className={`context-status level-${level}`} aria-label={`${text.label} ${text.percent}${reason ? `，${reason}` : ""}`} aria-haspopup="dialog" aria-expanded={open} title={reason || text.label} onClick={() => setOpen(value => !value)}>{text.short}</button>
     {open && createPortal(<div ref={popup} role="dialog" tabIndex={-1} aria-label="上下文用量" className="context-popover" style={position}>
       <div className="context-popover-head"><strong>{text.label}</strong><button type="button" aria-label="关闭上下文信息" onClick={() => { setOpen(false); button.current?.focus(); }}>×</button></div>
       {reason && <p className={`context-warning level-${level}`}>{reason}</p>}

@@ -5,9 +5,9 @@ import { contextLevel, contextStatusText } from "./ContextStatus";
 import { matchingCommands } from "./ComposerCommands";
 const context = { used_tokens: 6000, max_tokens: 8000, pct: 75, context_window_tokens: 1000000, context_window_pct: .6, history_messages: 24, policy: "preserve", will_compact: true, compact_enabled: true };
 const props = { busy: true, connected: true, plan: [], activities: [], queued: 2, model: "本地模型", onRefresh() {} };
-it("shows only the percentage and keeps details out of the sidebar until clicked", () => {
+it("labels the percentage as context usage and keeps details out of the sidebar until clicked", () => {
   const html = renderToStaticMarkup(<ContextStatus context={context} />);
-  expect(html).toContain('>0.6%</button>'); expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain('>上下文 0.6%</button>');   // 只有「0.6%」时看不出是什么的百分比 expect(html).toContain('aria-expanded="false"');
   expect(html).not.toContain("6,000"); expect(html).not.toContain("待压缩");
   const sidebar = renderToStaticMarkup(<SessionInfo {...props} context={context} />);
   expect(sidebar).not.toContain("6,000"); expect(sidebar).not.toContain("压缩触发依据");
@@ -15,8 +15,8 @@ it("shows only the percentage and keeps details out of the sidebar until clicked
   expect(sidebar).not.toContain("<select");
 });
 it("keeps model window and history budget distinct in popup details", () => {
-  expect(contextStatusText(context)).toMatchObject({ percent: "0.6%", detail: "6,000 / 1,000,000 tokens", compression: "下一回合开始前尝试压缩" });
-  expect(contextStatusText({ ...context, context_window_tokens: 0 })).toMatchObject({ percent: "75%", label: "历史预算使用量（模型窗口未知）", detail: "6,000 / 8,000 tokens · 历史预算" });
+  expect(contextStatusText(context)).toMatchObject({ percent: "0.6%", short: "上下文 0.6%", detail: "6,000 / 1,000,000 tokens", compression: "下一回合开始前尝试压缩" });
+  expect(contextStatusText({ ...context, context_window_tokens: 0 })).toMatchObject({ percent: "75%", short: "历史预算 75%", label: "历史预算使用量（模型窗口未知）", detail: "6,000 / 8,000 tokens · 历史预算" });
   expect(contextStatusText({ ...context, compact_enabled: false }).compression).toBe("自动压缩已关闭");
   expect(contextStatusText({ ...context, compact_enabled: null }).compression).toBe("压缩状态未知");
   expect(contextStatusText().percent).toBe("—");

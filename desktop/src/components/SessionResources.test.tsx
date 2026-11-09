@@ -38,7 +38,8 @@ it("keeps unopened inventory neutral and highlights actual handoff or uncertain 
   expect(empty).toContain("常驻运行端 · 连接与能力");
   expect(empty).toContain("按需查看");
   expect(empty).not.toContain("<small>待核对</small>");
-  expect(render({ stale: false })).toContain("<small>需要核对</small>");
+  // 要核对时直接写是哪一项、什么情况，并用「等你」的颜色
+  expect(render({ stale: false })).toContain('<small class="attention">网站浏览器等待人工处理</small>');
   expect(empty).not.toContain('<details class="session-resources" open');
 });
 
@@ -48,10 +49,24 @@ it("助理模式下一切正常时不占位置，需要核对或断线时才出�
   const quiet = (view: Partial<ResourceView>, connected = true) => renderToStaticMarkup(<SessionResources view={{ ...emptyResourceView(), ...view }}
     connected={connected} hostLabel="常驻电脑" onRefresh={() => {}} onFocusConfirmation={() => {}} onManage={() => {}} quietWhenOk />);
   expect(quiet({ snapshot: calm })).toBe("");
-  expect(quiet({ snapshot })).toContain("需要核对");
+  expect(quiet({ snapshot })).toContain("网站浏览器等待人工处理");
   expect(quiet({ snapshot: calm }, false)).toContain("连接中断");
   expect(residentHostLabel("常驻电脑", true, true)).toBe("常驻电脑");
   expect(residentHostLabel("家里的 NAS", true, true)).toBe("家里的 NAS（常驻）");
   expect(residentHostLabel("实验室", true, false)).toBe("实验室（远端）");
   expect(residentHostLabel(undefined, false, false)).toBe("本机运行端");
+});
+
+it("折叠行说清楚要核对的是哪一项，多项时写另有几项", async () => {
+  const { resourceSummary } = await import("./SessionResources");
+  const view = (patch: Partial<ResourceView>) => ({ ...emptyResourceView(), snapshot, stale: false, ...patch });
+  const second = { ...snapshot.items[0], id: "android", kind: "device" as const, title: "Android 手机", state: "needs_reconciliation" as const };
+  expect(resourceSummary(view({}), true)).toEqual({ text: "网站浏览器等待人工处理", attention: true });
+  expect(resourceSummary(view({ snapshot: { ...snapshot, items: [snapshot.items[0], second] } }), true).text)
+    .toBe("网站浏览器等待人工处理，另有 1 项");
+  expect(resourceSummary(view({}), false)).toEqual({ text: "连接中断", attention: true });
+  expect(resourceSummary(view({ error: "超时" }), true)).toEqual({ text: "状态没读到", attention: true });
+  const calm = { ...snapshot, items: [{ ...snapshot.items[0], state: "loaded" as const }] };
+  expect(resourceSummary(view({ snapshot: calm }), true)).toEqual({ text: "查看详情", attention: false });
+  expect(resourceSummary(view({ snapshot: null }), true)).toEqual({ text: "按需查看", attention: false });
 });

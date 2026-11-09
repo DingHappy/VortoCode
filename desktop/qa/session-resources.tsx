@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SessionResources } from "../src/components/SessionResources";
 import { createResourceReads, emptyResourceView, type ResourceClient, type ResourceView, type SessionResources as Snapshot } from "../src/lib/sessionResources";
+import "../src/styles/tokens.css";   // 组件样式改用设计变量（docs/DESIGN_SYSTEM.md），和 App 一样先载入变量
 import "../src/App.css";
 import "../src/daily.css";
 

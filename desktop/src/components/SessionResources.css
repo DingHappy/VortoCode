@@ -1,0 +1,46 @@
+/* 输入框上方「运行端 · 连接与能力」折叠行（docs/DESIGN_SYSTEM.md：只用变量，颜色只表达状态） */
+.session-resources { margin-bottom: var(--vc-space-2); font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.session-resources > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vc-space-1);
+  min-height: var(--vc-control-h);
+  list-style: none;
+  color: var(--vc-text-secondary);
+  cursor: pointer;
+}
+.session-resources > summary::-webkit-details-marker { display: none; }
+.session-resources > summary svg { width: var(--vc-icon); height: var(--vc-icon); color: var(--vc-muted); transition: transform 0.15s ease; }
+.session-resources[open] > summary svg { transform: rotate(90deg); }
+.session-resources > summary small { margin-left: var(--vc-space-2); font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.session-resources > summary small.attention { color: var(--vc-wait-text); }
+.session-resources > summary:hover span { color: var(--vc-text); }
+.session-resources > summary:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: 2px; border-radius: var(--vc-radius-inner); }
+.session-resources-body {
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  padding: var(--vc-space-3);
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--vc-surface);
+}
+.session-resources-body p { margin: var(--vc-space-1) 0 var(--vc-space-2); line-height: 1.6; overflow-wrap: anywhere; }
+.session-resources-body ul { list-style: none; margin: 0; padding: 0; }
+.session-resources-body li { border-top: 1px solid var(--vc-divider); padding: var(--vc-space-2) 0; }
+.session-resource-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--vc-space-1); }
+.session-resource-title strong { color: var(--vc-text); font-weight: var(--vc-weight-medium); }
+.session-resources-body dl { display: grid; grid-template-columns: 5em minmax(0, 1fr); gap: var(--vc-space-1) var(--vc-space-2); margin: var(--vc-space-2) 0; line-height: 1.5; }
+.session-resources-body dd { margin: 0; overflow-wrap: anywhere; color: var(--vc-text-secondary); }
+.session-resource-actions { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); margin: var(--vc-space-1) 0 var(--vc-space-2); }
+.session-resource-actions button {
+  min-height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.session-resource-actions button:hover:not(:disabled) { color: var(--vc-text); }
+.session-resource-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
