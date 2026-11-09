@@ -129,6 +129,11 @@ fn base_url() -> Result<String, String> {
     account_base_url(crate::env_names::var("VORTOONE_ACCOUNT_URL").as_deref())
 }
 
+/// 错误报告等也发到同一个账号服务（开发时同样可用 VORTOONE_ACCOUNT_URL 指到本机）。
+pub(crate) fn default_base_url() -> Result<String, String> {
+    base_url()
+}
+
 pub fn base64url(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);

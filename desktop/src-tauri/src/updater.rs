@@ -171,6 +171,7 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
     update.install(bytes).map_err(|error| {
         let text = update_error_text(&error);
         diag("error", "update.install_failed", &text);
+        telemetry::report_error("update.install_failed", &text, &version);
         format!("下载好了，但替换 App 失败：{text}")
     })?;
     diag("info", "update.installed", &version);
@@ -328,11 +329,13 @@ async fn download_with_retry(app: &AppHandle, update: &tauri_plugin_updater::Upd
                     "第 {attempt} 次，已收到 {downloaded} 字节，{:.1} 秒：{text}", started.elapsed().as_secs_f64()
                 ));
                 if !again {
-                    return Err(if retryable(&error) {
-                        format!("下载更新包失败（试了 {attempt} 次）：{text}")
+                    let (kind, message) = if retryable(&error) {
+                        ("update.download_failed", format!("下载更新包失败（试了 {attempt} 次）：{text}"))
                     } else {
-                        format!("更新包没通过校验，已拒绝安装：{text}")
-                    });
+                        ("update.rejected", format!("更新包没通过校验，已拒绝安装：{text}"))
+                    };
+                    telemetry::report_error(kind, &message, &update.version);
+                    return Err(message);
                 }
                 tokio::time::sleep(retry_delay(attempt)).await;
                 attempt += 1;

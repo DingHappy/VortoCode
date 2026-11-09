@@ -146,3 +146,12 @@ dialog.settings-redesign.settings-layout {
 .provider-editor-heading small { color: var(--muted); font-size: var(--vc-size-caption); }
 .settings-redesign .custom-provider-form label > small { grid-column: 2; color: var(--muted); font-size: var(--vc-size-caption); line-height: 1.7; }
 @media (max-width: 760px) { .settings-redesign .custom-provider-form label > small { grid-column: 1 / -1; } }
+
+/* 错误报告与使用统计两个开关（只用设计变量） */
+.settings-telemetry { display: grid; gap: var(--vc-space-3); }
+.settings-telemetry label { display: flex; align-items: flex-start; gap: var(--vc-space-2); cursor: pointer; }
+.settings-telemetry label input { margin-top: 3px; flex: none; }
+.settings-telemetry label span { display: grid; gap: 2px; }
+.settings-telemetry label strong { font-size: var(--vc-size-small); font-weight: var(--vc-weight-medium); color: var(--vc-text); }
+.settings-telemetry label small { font-size: var(--vc-size-caption); line-height: 1.6; color: var(--vc-muted); }
+.settings-telemetry button.link { justify-self: start; padding: 0; border: 0; background: none; color: var(--vc-accent); font: inherit; font-size: var(--vc-size-caption); cursor: pointer; }
