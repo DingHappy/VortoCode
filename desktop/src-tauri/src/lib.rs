@@ -4416,6 +4416,86 @@ mod tests {
     }
 
     #[test]
+    fn update_sources_list_the_manifest_url_first_then_https_mirrors_of_the_same_file() {
+        use crate::updater::download_sources;
+        let primary = tauri::Url::parse("https://vorto.oss-cn-hangzhou.aliyuncs.com/vortoone/desktop/v0.2.56/VortoOne_0.2.56_aarch64.app.tar.gz").unwrap();
+        let github = "https://github.com/DingHappy/VortoOne/releases/download/v0.2.56/VortoOne_0.2.56_aarch64.app.tar.gz";
+        let manifest = serde_json::json!({ "mirrors": [
+            primary.as_str(),                                                          // 重复的不再加
+            github,
+            "http://example.com/VortoOne_0.2.56_aarch64.app.tar.gz",                  // 不是 https
+            "https://example.com/v0.2.55/VortoOne_0.2.55_aarch64.app.tar.gz",         // 不是同一个文件
+            "不是地址", 42,
+        ]});
+        let sources = download_sources(&primary, &manifest);
+        assert_eq!(sources.iter().map(|url| url.as_str()).collect::<Vec<_>>(), vec![primary.as_str(), github]);
+        // 旧清单没有 mirrors：只有主地址
+        assert_eq!(download_sources(&primary, &serde_json::json!({ "version": "0.2.56" })), vec![primary.clone()]);
+    }
+
+    #[test]
+    fn update_race_keeps_the_source_with_more_bytes_and_prefers_the_manifest_url_on_a_tie() {
+        use crate::updater::race_leader;
+        assert_eq!(race_leader(&[120_000, 2_400_000]), 1);
+        assert_eq!(race_leader(&[2_400_000, 120_000]), 0);
+        assert_eq!(race_leader(&[0, 0]), 0);
+        assert_eq!(race_leader(&[500, 500]), 0);
+    }
+
+    #[test]
+    fn update_race_switches_to_the_faster_source_and_survives_one_failing() {
+        use crate::updater::{race_two, RaceChoice};
+        use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+        use std::sync::Arc;
+        use std::time::Duration;
+        type Download = std::pin::Pin<Box<dyn std::future::Future<Output = Result<&'static str, String>> + Send>>;
+        // 假下载：每 10ms 收 per_tick 字节，到 total 就完成；fail_after 毫秒后报错（带签名参数的链接）
+        fn fake(counter: Arc<AtomicU64>, per_tick: u64, total: u64, fail_after: Option<u64>, name: &'static str) -> Download {
+            Box::pin(async move {
+                let mut elapsed = 0;
+                loop {
+                    if fail_after.is_some_and(|limit| elapsed >= limit) {
+                        return Err("connect https://objects.example/a.tar.gz?X-Amz-Signature=secret timed out".into());
+                    }
+                    if counter.fetch_add(per_tick, Relaxed) + per_tick >= total { return Ok(name); }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    elapsed += 10;
+                }
+            })
+        }
+        let run = |a: (u64, u64, Option<u64>), b: (u64, u64, Option<u64>)| {
+            let counters = [Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))];
+            let (first, second) = (fake(counters[0].clone(), a.0, a.1, a.2, "oss"), fake(counters[1].clone(), b.0, b.1, b.2, "github"));
+            let mut picked = None;
+            let (result, index) = tauri::async_runtime::block_on(race_two(first, second, Duration::from_millis(80),
+                || counters.iter().map(|count| count.load(Relaxed)).collect(), |index, why| picked = Some((index, why))));
+            (result, index, picked.unwrap())
+        };
+        // 第二个快得多：窗口到了换成它，接着下完
+        let (result, index, (_, why)) = run((1, 10_000, None), (100, 2_000, None));
+        assert_eq!((result, index), (Ok("github"), 1));
+        assert!(matches!(why, RaceChoice::Leader(ref got) if got[1] > got[0]));
+        // 一样快：留清单里的主地址
+        let (result, index, _) = run((10, 300, None), (10, 300, None));
+        assert_eq!((result, index), (Ok("oss"), 0));
+        // 第一个先失败：只剩第二个，日志里的错误去掉了签名参数
+        let (result, index, (_, why)) = run((100, 100_000, Some(20)), (5, 300, None));
+        assert_eq!((result, index), (Ok("github"), 1));
+        match why {
+            RaceChoice::FailedOver(text) => assert!(text.contains("objects.example/a.tar.gz") && !text.contains("secret")),
+            _ => panic!("应当是失败切换"),
+        }
+        // 窗口内就下完：直接用
+        let (result, index, (_, why)) = run((1000, 2_000, None), (1, 10_000, None));
+        assert_eq!((result, index), (Ok("oss"), 0));
+        assert!(matches!(why, RaceChoice::FinishedEarly));
+        // 选中的那个后来也失败了：把它的错误交出去，由外层重试
+        let (result, index, _) = run((100, 1_000_000, Some(150)), (1, 1_000_000, None));
+        assert_eq!(index, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn update_failures_retry_only_network_errors_and_log_without_signed_links() {
         use tauri_plugin_updater::Error;
         assert!(retryable(&Error::Network("Download request failed with status: 502".into())));

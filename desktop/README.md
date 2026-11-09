@@ -142,6 +142,8 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoOne.app` 和
 **一键更新**：设置 → 高级 →「更新」和侧栏的「新版本」按钮会调 Rust 侧 `install_update`。它先弹原生确认框，
 然后按 `tauri.conf.json` 里 `plugins.updater` 的地址取 `latest.json`：先取阿里云 OSS 镜像
 （`vorto.oss-cn-hangzhou.aliyuncs.com/vortoone/desktop/`，国内连 GitHub 下载更新包只有几十 KB/s），取不到再取 GitHub 最新 Release 的。
+下载时不只认清单里的一个地址：清单的 `mirrors` 列出同一个包在 OSS 和 GitHub 的地址，App 开头 3 秒两边一起下，
+留下收到字节多的那个、断开另一个（海外用户 GitHub 快，国内 OSS 快）；一边先失败就只用另一边，每次重试都重新比。
 用固定在配置里的公钥核对更新包签名，通过后替换 App，装好就在 Rust 侧直接重启（不等网页回调，替换时网页进程可能已退出）。
 发版时在公证、staple 之后：
 1. `npm run release:updater -- <更新说明文件>`：生成更新包、`.sig`、`latest.json`（指向 GitHub）和 `oss/latest.json`（指向镜像）。签名私钥只放在发版机器上。

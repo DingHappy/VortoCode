@@ -49,6 +49,8 @@ export function updaterManifest({ version, notes = "", pubDate, signature, base 
     version,
     notes: String(notes).trim(),
     pub_date: pubDate,
+    // 同一个包的所有下载地址：App（0.2.56 起）开头同时从这些地址下，几秒后留下快的那个。旧版只认 platforms 里的 url。
+    mirrors: [mirrorAssetBase(version), githubAssetBase(version)].map((root) => `${root}/${updaterAssetName(version)}`),
     platforms: {
       [PLATFORM]: {
         signature: String(signature).trim(),

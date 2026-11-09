@@ -49,6 +49,8 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const CHECK_ATTEMPTS: u32 = 2;
 pub(crate) const DOWNLOAD_ATTEMPTS: u32 = 3;
 const PROGRESS_EVENT: &str = "update-progress";
+/// 有多个下载来源时，开头一起下这么久，然后留下收到字节最多的那个。
+const RACE_WINDOW: Duration = Duration::from_secs(3);
 
 fn updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -179,35 +181,147 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
 }
 
 /// 下载并验签，网络失败最多试 DOWNLOAD_ATTEMPTS 次；每次从头下（不续传），进度经 update-progress 事件给界面。
+/// 这一版能从哪些地址下载：清单里的主地址在前，再加清单 `mirrors` 里列出的其它地址（发版脚本写进去的 OSS 镜像和
+/// GitHub）。只收 https、且文件名和主地址相同的；去重。来源不影响安全：不管从哪下，都要过内置公钥验签。
+pub(crate) fn download_sources(primary: &tauri::Url, raw_json: &serde_json::Value) -> Vec<tauri::Url> {
+    let file = |url: &tauri::Url| url.path_segments().and_then(|mut segments| segments.next_back()).map(str::to_owned);
+    let mut sources = vec![primary.clone()];
+    for candidate in raw_json.get("mirrors").and_then(|value| value.as_array()).into_iter().flatten() {
+        let Some(url) = candidate.as_str().and_then(|text| tauri::Url::parse(text).ok()) else { continue };
+        if url.scheme() == "https" && file(&url) == file(primary) && !sources.contains(&url) {
+            sources.push(url);
+        }
+    }
+    sources
+}
+
+/// 赛跑时谁领先：收到字节最多的；一样多时取靠前的（清单主地址）。
+pub(crate) fn race_leader(received: &[u64]) -> usize {
+    received.iter().enumerate().fold(0, |best, (index, &bytes)| if bytes > received[best] { index } else { best })
+}
+
+/// 一次下载尝试。只有一个来源就直接下；两个来源时开头一起下，RACE_WINDOW 后留下收到字节最多的、断开另一个，
+/// 窗口内哪个先下完就用哪个、哪个先报错就只剩另一个。返回包和实际用的来源序号；失败时带上收到的最多字节数。
+async fn download_racing(
+    app: &AppHandle,
+    update: &tauri_plugin_updater::Update,
+    sources: &[tauri::Url],
+    attempt: u32,
+) -> Result<(Vec<u8>, usize), (tauri_plugin_updater::Error, u64)> {
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
+    use std::sync::Arc;
+    use tauri::Emitter;
+    const RACING: usize = usize::MAX;
+    let counters: Arc<Vec<AtomicU64>> = Arc::new(sources.iter().map(|_| AtomicU64::new(0)).collect());
+    let chosen = Arc::new(AtomicUsize::new(if sources.len() > 1 { RACING } else { 0 }));
+    let start = |index: usize| {
+        let mut source = update.clone();
+        source.download_url = sources[index].clone();
+        let (counters, chosen, app) = (counters.clone(), chosen.clone(), app.clone());
+        Box::pin(async move {
+            let mut last_step = None;
+            source
+                .download(
+                    move |chunk, total| {
+                        let mine = counters[index].fetch_add(chunk as u64, Relaxed) + chunk as u64;
+                        // 进度只报领先（或已选定）的那个来源，界面上的数字不会来回跳
+                        let leading = match chosen.load(Relaxed) {
+                            RACING => counters.iter().all(|other| other.load(Relaxed) <= mine),
+                            winner => winner == index,
+                        };
+                        let step = progress_step(mine, total);
+                        if leading && last_step != Some(step) {
+                            last_step = Some(step);
+                            let _ = app.emit(PROGRESS_EVENT, UpdateProgress { downloaded: mine, total, attempt });
+                        }
+                    },
+                    || {},
+                )
+                .await
+        })
+    };
+    let most = |counters: &[AtomicU64]| counters.iter().map(|count| count.load(Relaxed)).max().unwrap_or(0);
+    let host = |index: usize| sources[index].host_str().unwrap_or("?").to_owned();
+
+    let first = start(0);
+    if sources.len() == 1 {
+        return first.await.map(|bytes| (bytes, 0)).map_err(|error| (error, most(&counters)));
+    }
+    let received = || counters.iter().map(|count| count.load(Relaxed)).collect::<Vec<u64>>();
+    let (result, index) = race_two(first, start(1), RACE_WINDOW, received, |index, why| {
+        chosen.store(index, Relaxed);
+        diag(if matches!(why, RaceChoice::FailedOver(_)) { "warn" } else { "info" }, "update.source", &match why {
+            RaceChoice::FinishedEarly => format!("{} 在赛跑窗口内就下完了", host(index)),
+            RaceChoice::FailedOver(error) => format!("{} 失败，改用 {}：{error}", host(1 - index), host(index)),
+            RaceChoice::Leader(got) => format!(
+                "{RACE_WINDOW:?} 内 {} 收到 {} 字节、{} 收到 {} 字节，用 {}", host(0), got[0], host(1), got[1], host(index)
+            ),
+        });
+    })
+    .await;
+    result.map(|bytes| (bytes, index)).map_err(|error| (error, most(&counters)))
+}
+
+/// 赛跑怎么选出来的，记日志用。
+pub(crate) enum RaceChoice {
+    /// 窗口内就下完了
+    FinishedEarly,
+    /// 另一个先失败了（带它的错误，已去掉链接里的签名参数）
+    FailedOver(String),
+    /// 窗口到了，这个收到的字节最多（带两边各收到多少）
+    Leader(Vec<u64>),
+}
+
+/// 两个下载一起跑：窗口内谁先成功就用谁，谁先失败就只剩另一个；窗口到了留下 received() 里领先的、丢掉另一个
+/// （丢掉即断开连接），领先的接着跑完。选定时先调 choose（在等剩下那个之前，进度就只报它）。返回结果和用的是哪个。
+pub(crate) async fn race_two<T, E: std::fmt::Display, F: std::future::Future<Output = Result<T, E>> + ?Sized>(
+    mut first: std::pin::Pin<Box<F>>,
+    mut second: std::pin::Pin<Box<F>>,
+    window: Duration,
+    received: impl Fn() -> Vec<u64>,
+    choose: impl FnOnce(usize, RaceChoice),
+) -> (Result<T, E>, usize) {
+    use futures_util::future::{select, Either};
+    let mut timer = Box::pin(tokio::time::sleep(window));
+    let early = match select(select(&mut first, &mut second), &mut timer).await {
+        Either::Left((Either::Left((result, _)), _)) => Some((0, result)),
+        Either::Left((Either::Right((result, _)), _)) => Some((1, result)),
+        Either::Right(_) => None,
+    };
+    let (index, why) = match early {
+        Some((index, Ok(value))) => {
+            choose(index, RaceChoice::FinishedEarly);
+            return (Ok(value), index);
+        }
+        Some((failed, Err(error))) => (1 - failed, RaceChoice::FailedOver(update_error_text(&error))),
+        None => {
+            let got = received();
+            (race_leader(&got), RaceChoice::Leader(got))
+        }
+    };
+    choose(index, why);
+    // 落后或失败的那个直接丢掉；选中的接着跑，不用从头再来
+    let remaining = if index == 0 { drop(second); first } else { drop(first); second };
+    (remaining.await, index)
+}
+
 async fn download_with_retry(app: &AppHandle, update: &tauri_plugin_updater::Update) -> Result<Vec<u8>, String> {
     use tauri::Emitter;
+    let sources = download_sources(&update.download_url, &update.raw_json);
     let mut attempt = 1;
     loop {
         let started = std::time::Instant::now();
-        let mut downloaded = 0u64;
-        let mut last_step = None;
         let _ = app.emit(PROGRESS_EVENT, UpdateProgress { downloaded: 0, total: None, attempt });
-        let result = update
-            .download(
-                |chunk, total| {
-                    downloaded += chunk as u64;
-                    let step = progress_step(downloaded, total);
-                    if last_step != Some(step) {
-                        last_step = Some(step);
-                        let _ = app.emit(PROGRESS_EVENT, UpdateProgress { downloaded, total, attempt });
-                    }
-                },
-                || {},
-            )
-            .await;
-        match result {
-            Ok(bytes) => {
+        // 每次尝试都重新赛跑：上一次用的来源中途断了，这次可能换成另一个
+        match download_racing(app, update, &sources, attempt).await {
+            Ok((bytes, index)) => {
                 diag("info", "update.downloaded", &format!(
-                    "{} {} 字节，第 {attempt} 次，{:.1} 秒", update.version, bytes.len(), started.elapsed().as_secs_f64()
+                    "{} {} 字节，来自 {}，第 {attempt} 次，{:.1} 秒",
+                    update.version, bytes.len(), sources[index].host_str().unwrap_or("?"), started.elapsed().as_secs_f64()
                 ));
                 return Ok(bytes);
             }
-            Err(error) => {
+            Err((error, downloaded)) => {
                 let text = update_error_text(&error);
                 let again = attempt < DOWNLOAD_ATTEMPTS && retryable(&error);
                 diag(if again { "warn" } else { "error" }, "update.download_failed", &format!(
