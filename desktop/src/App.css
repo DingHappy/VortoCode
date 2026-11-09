@@ -1,3 +1,4 @@
+@import "./styles/tokens.css";   /* 旧样式里的变量取自设计变量：任何只载入 App.css 的页面也要先有它们 */
 :root {
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #e9edf4;
@@ -7078,23 +7079,26 @@ button.worktree-live:not(:disabled):hover {
   }
 }
 
+/* 旧变量对接设计变量（docs/DESIGN_SYSTEM.md 第 8 节）：浅色块里有对应用途的旧变量（--n*、--surface-*、--line、
+   --muted、状态色）直接取 --vc-* 的值，深色块里删掉同名项——设计变量自己按深浅色换值，旧变量跟着走。
+   没有对应用途的（--n7/8/9/11、--*-line 的绿黄、--quiet、*-rgb）保持原值。逐页迁移时把旧变量换成 --vc-* 再删。 */
 /* Codex-aligned desktop shell: quiet navigation, document-like thread, one clear composer. */
 :root {
-  color: #242421;
-  background: #f7f7f5;
-  --surface-0: #f7f7f5;
-  --surface-1: #f1f1ee;
-  --surface-2: #ffffff;
-  --surface-3: #e9e9e5;
-  --line: #deded9;
-  --line-soft: #e9e9e5;
-  --muted: #747470;
+  color: var(--vc-text);
+  background: var(--vc-bg);
+  --surface-0: var(--vc-bg);
+  --surface-1: var(--vc-sidebar);
+  --surface-2: var(--vc-surface);
+  --surface-3: var(--vc-hover);
+  --line: var(--vc-border);
+  --line-soft: var(--vc-divider);
+  --muted: var(--vc-muted);
   --quiet: #9a9a95;
-  --accent: #20201e;
+  --accent: var(--vc-ink);
   --accent-soft: rgba(32, 32, 30, 0.08);
-  --green: #27835a;
-  --amber: #a36716;
-  --red: #b84949;
+  --green: var(--vc-done-text);
+  --amber: var(--vc-wait-text);
+  --red: var(--vc-danger-text);
 }
 
 /* ── 主题变量 ─────────────────────────────────────────────────────────────
@@ -7102,30 +7106,30 @@ button.worktree-live:not(:disabled):hover {
    --n0（最白）…--n14（最深）是中性灰梯度，深色时整条反转；深色取值对齐 MiMo Desktop 截图像素（只取色，
    不取其代码/素材）。下方生效层里的写死颜色已统一换成这些变量。 */
 :root {
-  --n0: #ffffff;
-  --n1: #fafaf8;
-  --n2: #f7f7f5;
-  --n3: #f1f1ee;
-  --n4: #ececea;
-  --n5: #e5e5e1;
-  --n6: #dfdfda;
+  --n0: var(--vc-surface);
+  --n1: var(--vc-bg);
+  --n2: var(--vc-bg);
+  --n3: var(--vc-sidebar);
+  --n4: var(--vc-hover);
+  --n5: var(--vc-selected);
+  --n6: var(--vc-border);
   --n7: #cfcfc9;
   --n8: #b5b5b0;
   --n9: #909090;
-  --n10: #787873;
+  --n10: var(--vc-muted);
   --n11: #5e5e5a;
-  --n12: #363633;
-  --n13: #242421;
-  --n14: #080808;
-  --red-bg: #f4e5e1;
-  --red-line: #e5c7c1;
-  --red-text: #9d4d42;
-  --green-bg: #e2eee7;
+  --n12: var(--vc-text-secondary);
+  --n13: var(--vc-text);
+  --n14: var(--vc-ink);
+  --red-bg: var(--vc-danger-bg);
+  --red-line: var(--vc-danger-border);
+  --red-text: var(--vc-danger-text);
+  --green-bg: var(--vc-done-bg);
   --green-line: #c7ddd0;
-  --green-text: #39735a;
-  --amber-bg: #fff8ed;
+  --green-text: var(--vc-done-text);
+  --amber-bg: var(--vc-wait-bg);
   --amber-line: #e4d2ab;
-  --amber-text: #8a641f;
+  --amber-text: var(--vc-wait-text);
   --ink-rgb: 32, 32, 30;
   --glass-rgb: 248, 248, 246;
   --amber-rgb: 163, 103, 22;
@@ -7136,100 +7140,38 @@ button.worktree-live:not(:disabled):hover {
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --n0: #222222;
-    --n1: #1f1f1f;
-    --n2: #181818;
-    --n3: #141414;
-    --n4: #2a2a2a;
-    --n5: #2f2f2f;
-    --n6: #383838;
     --n7: #454545;
     --n8: #6b6b6b;
     --n9: #8a8a8a;
-    --n10: #a0a0a0;
     --n11: #bababa;
-    --n12: #d4d4d4;
-    --n13: #ececec;
-    --n14: #f7f7f7;
-    --red-bg: #3a2321;
-    --red-line: #6b3a35;
-    --red-text: #f19a8f;
-    --green-bg: #1f3328;
     --green-line: #2f5a43;
-    --green-text: #7fd3a6;
-    --amber-bg: #3a2f1d;
     --amber-line: #6b5530;
-    --amber-text: #f0c47a;
     --ink-rgb: 236, 236, 236;
     --glass-rgb: 24, 24, 24;
     --amber-rgb: 243, 190, 101;
     --red-rgb: 241, 120, 120;
     --green-rgb: 86, 209, 148;
     color-scheme: dark;
-    color: #ececec;
-    background: #181818;
-    --surface-0: #181818;
-    --surface-1: #141414;
-    --surface-2: #222222;
-    --surface-3: #2a2a2a;
-    --line: #383838;
-    --line-soft: #2a2a2a;
-    --muted: #9a9a9a;
     --quiet: #6f6f6f;
-    --accent: #ececec;
     --accent-soft: rgba(236, 236, 236, 0.10);
-    --green: #56d194;
-    --amber: #f3be65;
-    --red: #f17878;
   }
 }
 
 :root[data-theme="dark"] {
-  --n0: #222222;
-  --n1: #1f1f1f;
-  --n2: #181818;
-  --n3: #141414;
-  --n4: #2a2a2a;
-  --n5: #2f2f2f;
-  --n6: #383838;
   --n7: #454545;
   --n8: #6b6b6b;
   --n9: #8a8a8a;
-  --n10: #a0a0a0;
   --n11: #bababa;
-  --n12: #d4d4d4;
-  --n13: #ececec;
-  --n14: #f7f7f7;
-  --red-bg: #3a2321;
-  --red-line: #6b3a35;
-  --red-text: #f19a8f;
-  --green-bg: #1f3328;
   --green-line: #2f5a43;
-  --green-text: #7fd3a6;
-  --amber-bg: #3a2f1d;
   --amber-line: #6b5530;
-  --amber-text: #f0c47a;
   --ink-rgb: 236, 236, 236;
   --glass-rgb: 24, 24, 24;
   --amber-rgb: 243, 190, 101;
   --red-rgb: 241, 120, 120;
   --green-rgb: 86, 209, 148;
   color-scheme: dark;
-  color: #ececec;
-  background: #181818;
-  --surface-0: #181818;
-  --surface-1: #141414;
-  --surface-2: #222222;
-  --surface-3: #2a2a2a;
-  --line: #383838;
-  --line-soft: #2a2a2a;
-  --muted: #9a9a9a;
   --quiet: #6f6f6f;
-  --accent: #ececec;
   --accent-soft: rgba(236, 236, 236, 0.10);
-  --green: #56d194;
-  --amber: #f3be65;
-  --red: #f17878;
 }
 
 
