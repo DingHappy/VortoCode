@@ -1024,15 +1024,16 @@ textarea:focus-visible,
 }
 
 .confirm-copy strong {
-  color: #dedfe2;
-  font-size: 11px;
+  color: var(--vc-text);
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-medium);
 }
 
 .confirm-copy p {
-  margin: 5px 0 10px;
-  color: #aeb3bb;
-  font-size: 11px;
-  line-height: 18px;
+  margin: var(--vc-space-1) 0 var(--vc-space-3);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 
@@ -1041,24 +1042,42 @@ textarea:focus-visible,
   gap: 7px;
 }
 
+/* 确认卡与任务按钮的底样式（工作台等非助理模式也走这里）：和助理模式一致，用设计变量；原来是旧深蓝主题，
+   浅色下变成黑块、9px 字（2026-11 整体优化截图） */
 .confirm-copy button,
 .task-actions button {
-  padding: 5px 9px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #181c24;
-  font-size: 9px;
+  min-height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text-secondary);
+  font: inherit;
+  font-size: var(--vc-size-small);
   cursor: pointer;
 }
 
+.confirm-copy button:hover:not(:disabled),
+.task-actions button:hover:not(:disabled) {
+  background: var(--vc-hover);
+  color: var(--vc-text);
+}
+
 .confirm-copy button.deny {
-  color: #b5bdc9;
+  color: var(--vc-text-secondary);
 }
 
 .confirm-copy button.allow {
-  color: #172019;
-  border-color: #6bdda4;
-  background: #70d9a6;
+  color: var(--vc-on-ink);
+  border-color: var(--vc-ink);
+  background: var(--vc-ink);
+  font-weight: var(--vc-weight-medium);
+}
+
+.confirm-copy button.allow:hover:not(:disabled) {
+  color: var(--vc-on-ink);
+  background: var(--vc-ink);
+  opacity: .88;
 }
 
 .composer-wrap {
@@ -7081,7 +7100,7 @@ button.worktree-live:not(:disabled):hover {
 
 /* 旧变量对接设计变量（docs/DESIGN_SYSTEM.md 第 8 节）：浅色块里有对应用途的旧变量（--n*、--surface-*、--line、
    --muted、状态色）直接取 --vc-* 的值，深色块里删掉同名项——设计变量自己按深浅色换值，旧变量跟着走。
-   没有对应用途的（--n7/8/9/11、--*-line 的绿黄、--quiet、*-rgb）保持原值。逐页迁移时把旧变量换成 --vc-* 再删。 */
+   没有对应用途的（--n7 强边框、--n8 停用/占位、绿黄的 -line、--quiet、*-rgb）保持原值。逐页迁移时把旧变量换成 --vc-* 再删。 */
 /* Codex-aligned desktop shell: quiet navigation, document-like thread, one clear composer. */
 :root {
   color: var(--vc-text);
@@ -7115,9 +7134,9 @@ button.worktree-live:not(:disabled):hover {
   --n6: var(--vc-border);
   --n7: #cfcfc9;
   --n8: #b5b5b0;
-  --n9: #909090;
+  --n9: var(--vc-muted);
   --n10: var(--vc-muted);
-  --n11: #5e5e5a;
+  --n11: var(--vc-text-secondary);
   --n12: var(--vc-text-secondary);
   --n13: var(--vc-text);
   --n14: var(--vc-ink);
@@ -7142,8 +7161,6 @@ button.worktree-live:not(:disabled):hover {
   :root:not([data-theme="light"]) {
     --n7: #454545;
     --n8: #6b6b6b;
-    --n9: #8a8a8a;
-    --n11: #bababa;
     --green-line: #2f5a43;
     --amber-line: #6b5530;
     --ink-rgb: 236, 236, 236;
@@ -7160,8 +7177,6 @@ button.worktree-live:not(:disabled):hover {
 :root[data-theme="dark"] {
   --n7: #454545;
   --n8: #6b6b6b;
-  --n9: #8a8a8a;
-  --n11: #bababa;
   --green-line: #2f5a43;
   --amber-line: #6b5530;
   --ink-rgb: 236, 236, 236;
@@ -10228,10 +10243,10 @@ input::placeholder {
 .task-board-column { background: var(--n3); border: 1px solid var(--n5); border-radius: 12px; padding: 10px; min-width: 0; }
 .task-board-column h3 { display: flex; align-items: center; gap: 7px; margin: 2px 0 12px; color: var(--n12); font-size: 12px; }
 .task-board-column h3 span { margin-left: auto; color: var(--n10); font-size: 11px; font-weight: 400; }
-.task-board-column h3 i { width: 7px; height: 7px; background: #8b9098; border-radius: 50%; }
-.task-board-column.working h3 i { background: #497bdd; }
-.task-board-column.attention h3 i { background: #d88b35; }
-.task-board-column.completed h3 i { background: #47a36c; }
+.task-board-column h3 i { width: 7px; height: 7px; background: var(--vc-unknown-text); border-radius: 50%; }
+.task-board-column.working h3 i { background: var(--vc-accent); }
+.task-board-column.attention h3 i { background: var(--vc-wait-dot); }
+.task-board-column.completed h3 i { background: var(--vc-done-text); }
 .task-board-card { background: var(--n2); border: 1px solid var(--n6); border-radius: 9px; padding: 11px; margin-top: 9px; overflow-wrap: anywhere; }
 .task-board-card small { display: block; color: var(--n10); font-size: 10px; margin-bottom: 6px; }
 .task-board-card h4 { margin: 6px 0; color: var(--n12); font-size: 13px; line-height: 1.5; }
@@ -10845,3 +10860,9 @@ ul.trust-note {
   padding-left: 0;
   list-style: none;
 }
+
+/* 「会话详情」折叠：去掉浏览器自带三角，只留图标（原来三角和箭头同时出现） */
+.session-info-details > summary { list-style: none; cursor: pointer; }
+.session-info-details > summary::-webkit-details-marker { display: none; }
+.session-info-details > summary svg { transition: transform .15s ease; }
+.session-info-details[open] > summary svg { transform: rotate(90deg); }

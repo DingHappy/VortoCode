@@ -1,5 +1,7 @@
 /* Daily conversation surface. Uses existing theme tokens and domain components. */
-:root { --daily-accent: #4168c9; --daily-accent-soft: #4168c914; }
+/* 强调色的文字与浅底取设计变量（深色由 --vc-* 自己换值）。实心的 --daily-accent 上面压白字，
+   设计变量里没有深浅两色都能压白字的实心蓝，先保持原值。 */
+:root { --daily-accent: #4168c9; --daily-accent-soft: var(--vc-accent-bg); --daily-accent-text: var(--vc-accent); }
 html, body, #root { min-width: 720px; }
 .app-shell, .conversation, .conversation.empty-state { background: var(--n1); }
 .workbench { position: relative; grid-template-columns: 240px minmax(0, 1fr); }
@@ -66,9 +68,6 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 
 /* ── 任务步骤侧栏与相关按钮（2026-10-11 视觉整理）──────────────────────────────
    只用现有主题变量；深色下另给一档更亮的强调色，保证小字号文字可读。 */
-:root { --daily-accent-text: #3559b4; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --daily-accent-text: #93acec; --daily-accent-soft: #93acec1f; } }
-:root[data-theme="dark"] { --daily-accent-text: #93acec; --daily-accent-soft: #93acec1f; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
@@ -141,7 +140,7 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .session-info .session-info-button:hover:not(:disabled) { border-color: var(--n7); background: var(--n2); }
 .session-info .session-info-button:disabled { opacity: .5; cursor: not-allowed; }
 .session-info .session-info-button.primary { margin-top: 10px; color: #fff; border-color: transparent; background: var(--daily-accent); }
-.session-info .session-info-button.primary:hover { background: #3559b4; }
+.session-info .session-info-button.primary:hover { background: var(--daily-accent); filter: brightness(0.92); }
 
 /* 二轮微调：按钮文字跟随按钮配色；当前标签不重复显示「运行中」；等待类步骤用琥珀色；关注卡片紧凑对齐 */
 .session-info .session-info-steps li.warn .session-step-icon svg { color: var(--amber-text); }
