@@ -72,3 +72,9 @@ test("reports whether the data directory moved to the new bundle id", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("the install check asks the same update channels as the app, in the same order", async () => {
+  const { UPDATE_CHANNELS } = await import("./check-installed.mjs");
+  const { UPDATE_ENDPOINTS } = await import("./updater-release.mjs");
+  assert.deepEqual(UPDATE_CHANNELS.map(([, url]) => url), UPDATE_ENDPOINTS);
+});

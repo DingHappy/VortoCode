@@ -10,6 +10,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GITHUB_LATEST, MIRROR_LATEST } from "./updater-release.mjs";
 
 // 新装的是 VortoOne.app；从 0.2.52 及更早版本原地更新上来的仍在 VortoCode.app（更新器沿用原路径，ADR-018）
 export const APP = existsSync("/Applications/VortoOne.app") || !existsSync("/Applications/VortoCode.app")
@@ -30,7 +31,8 @@ export function bundleDirState(newPath = APP_SUPPORT, legacyPath = LEGACY_APP_SU
   return old === "dir" ? "legacy" : "none";
 }
 
-export const LATEST_URL = "https://github.com/DingHappy/VortoCode/releases/latest/download/latest.json";
+/** App 检查更新的两条通道，顺序与 tauri.conf.json 一致：先 OSS 镜像，再 GitHub。 */
+export const UPDATE_CHANNELS = [["OSS 镜像", MIRROR_LATEST], ["GitHub", GITHUB_LATEST]];
 
 export const MANUAL_CHECKS = [
   "打开就进「主要聊天」并停在最新一条；侧栏只有会话（主要聊天、任务小组、旁聊）；有事等你时主要聊天顶部出现「等你处理」，顶栏没有「N 件等你」胶囊",
@@ -185,11 +187,16 @@ async function main() {
       + "系统设置 → 隐私与安全性 → 本地网络 → VortoOne 打开（或关掉再打开），然后重开 App"
     : "最近 30 分钟没有被拦的记录", blocked.count > 0);
 
-  try {
-    const latest = await getJson(LATEST_URL);
-    add("更新通道", latest.version === expected, `GitHub 最新是 ${latest.version}`, latest.version !== expected);
-  } catch (error) {
-    add("更新通道", false, `取不到 latest.json（${error.message}）`, true);
+  // 镜像是 App 先问的那条：它落后时 App 会以为没有新版，所以镜像不对算失败；GitHub 只是后备，不对只提醒
+  for (const [name, url] of UPDATE_CHANNELS) {
+    const primary = url === UPDATE_CHANNELS[0][1];
+    try {
+      const latest = await getJson(url);
+      const ok = latest.version === expected;
+      add(`更新通道（${name}）`, ok, `最新是 ${latest.version}${ok ? "" : `，不是 ${expected}`}`, !primary);
+    } catch (error) {
+      add(`更新通道（${name}）`, false, `取不到 latest.json（${error.message}）`, !primary);
+    }
   }
 
   const summary = summarize(results);

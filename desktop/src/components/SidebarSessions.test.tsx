@@ -44,7 +44,7 @@ it("footer shows the account as a menu button, and the update button only when t
   expect(none).toContain('aria-haspopup="menu"'); expect(none).toContain('aria-expanded="false"');
   expect(none).not.toContain('role="menu"');                    // 点了才弹出
   expect(none).not.toContain("新版本");
-  const update = { current: "0.2.14", latest: "0.2.15", newer: true, url: "https://github.com/DingHappy/VortoCode/releases/tag/v0.2.15", publishedAt: "" };
+  const update = { current: "0.2.14", latest: "0.2.15", newer: true, url: "https://github.com/DingHappy/VortoOne/releases/tag/v0.2.15", publishedAt: "" };
   const html = renderToStaticMarkup(<SidebarFooter identity={identity} update={update} onOpenSettings={noop} />);
   expect(html).toContain("新版本 0.2.15"); expect(html).toContain("点击更新并重启");
 });

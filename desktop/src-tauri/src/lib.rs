@@ -4403,7 +4403,7 @@ mod tests {
             "platforms": { "darwin-aarch64": { "url": "https://evil.example/download" } } });
         let newer = update_from_manifest("0.2.0", &manifest("0.2.1")).unwrap();
         assert!(newer.newer && newer.latest == "0.2.1" && newer.published_at == "2026-10-20T00:00:00Z");
-        assert_eq!(newer.url, "https://github.com/DingHappy/VortoCode/releases/tag/v0.2.1");   // 不用清单里的链接
+        assert_eq!(newer.url, "https://github.com/DingHappy/VortoOne/releases/tag/v0.2.1");   // 不用清单里的链接
         assert!(!update_from_manifest("0.2.0", &manifest("0.2.0")).unwrap().newer);
         assert!(!update_from_manifest("0.10.0", &manifest("0.9.9")).unwrap().newer);   // 数字比较，不是字符串
         assert!(update_from_manifest("0.2.0", &manifest("v1.0")).unwrap().newer);
