@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vortocode"
-version = "0.2.56"
+version = "0.2.57"
 description = "本地优先、可常驻运行的个人 AI Agent"
 readme = "README.md"
 license = {text = "Apache-2.0"}
