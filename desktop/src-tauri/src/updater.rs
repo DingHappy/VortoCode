@@ -5,7 +5,9 @@ use super::*;
 // 不走 api.github.com：未登录每个出口 IP 每小时只有 60 次，代理出口共用时很快用完，用户看到 403。
 // latest.json 走 releases/latest/download/ 下载链接，不计 API 限额，「latest」同样排除了草稿和预发布；
 // 和「更新并重启」同一份清单、同一套平台匹配，不会出现「检查说有新版、点了却装不上」。
-pub(crate) const RELEASES_PAGE_PREFIX: &str = "https://github.com/DingHappy/VortoCode/releases/";
+// 清单地址按 tauri.conf.json 的顺序：先阿里云 OSS 镜像（国内连 GitHub 下载更新包只有几十 KB/s），
+// 取不到再 GitHub。镜像上的包同样要过内置公钥验签。
+pub(crate) const RELEASES_PAGE_PREFIX: &str = "https://github.com/DingHappy/VortoOne/releases/";
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -140,13 +140,20 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoOne.app` 和
 `smoke:bundle` 会启动真实 release bundle，并同时验证 React、Tauri IPC 以及安装包内 sidecar 的定位和启动。冻结完成后还会根据 PyInstaller 实际 Analysis 生成 `THIRD_PARTY_NOTICES.txt` 和结构化依赖清单，覆盖实际冻结的 Python distributions 与 standalone runtime 自带的全部许可证；许可证证据缺失会直接中止构建，notices 会随 app 一起打包。
 
 **一键更新**：设置 → 高级 →「更新」和侧栏的「新版本」按钮会调 Rust 侧 `install_update`。它先弹原生确认框，
-然后按 `tauri.conf.json` 里 `plugins.updater` 的地址取 GitHub 最新 Release 的 `latest.json`，用固定在配置里的公钥核对更新包签名，
-通过后替换 App，再经 `RunEvent::Exit` 正常退出（托管引擎照常回收）并重启。发版时在公证、staple 之后运行
-`npm run release:updater -- <更新说明文件>`，把生成的更新包、`.sig` 和 `latest.json` 一起传到 Release。签名私钥只放在发版机器上。
+然后按 `tauri.conf.json` 里 `plugins.updater` 的地址取 `latest.json`：先取阿里云 OSS 镜像
+（`vorto.oss-cn-hangzhou.aliyuncs.com/vortoone/desktop/`，国内连 GitHub 下载更新包只有几十 KB/s），取不到再取 GitHub 最新 Release 的。
+用固定在配置里的公钥核对更新包签名，通过后替换 App，装好就在 Rust 侧直接重启（不等网页回调，替换时网页进程可能已退出）。
+发版时在公证、staple 之后：
+1. `npm run release:updater -- <更新说明文件>`：生成更新包、`.sig`、`latest.json`（指向 GitHub）和 `oss/latest.json`（指向镜像）。签名私钥只放在发版机器上。
+2. `npm run release:oss`：把更新包和 DMG 传到 `vortoone/desktop/v<版本>/`，从公网取回核对 sha256，最后传 `vortoone/desktop/latest.json`。上传凭据在发版机器钥匙串的 `vortoone-oss-upload`
+   （只能读写 `vortoone/desktop/` 的 RAM 子账号）。镜像被改了也装不进去：App 只认内置公钥签过的包。
+3. 把 DMG、更新包、`.sig`、`latest.json` 传到 GitHub Release（后备通道）。
+
+镜像清单是 App 先问的那条：它落后时 App 会以为没有新版，所以两边都要传，`check:installed` 也把镜像不对算作失败。
 
 **装好后检查**：新版装到真机（一键更新或 DMG）、App 开着时运行 `npm run check:installed [-- 期望版本]`。
 只读、不另起实例：核对版本、签名、Gatekeeper、公证票据、App 和内置引擎进程、引擎 `/api/health/quick`、
-有没有别处残留的引擎、恢复记录、`latest.json` 是否指向这一版；最后列出四条要在 App 里看一眼的项目。任何一项不过就退出码 1。
+有没有别处残留的引擎、恢复记录、两条更新通道（OSS 镜像、GitHub）的 `latest.json` 是否指向这一版；最后列出四条要在 App 里看一眼的项目。任何一项不过就退出码 1。
 
 `release:verify` 检查 target architecture、sidecar/notices 哈希、DMG、Git provenance、代码签名、公证票据和 Gatekeeper，并写入 `src-tauri/target/release/release-evidence/`。`preview` 模式允许未签名但明确记录 warning；`--mode release` 对任一正式发布闸门 fail closed。
 

@@ -445,7 +445,7 @@ Harness、OpenCode、Pi 等），由主 agent 管理与协调；不要固定流�
 | B | 环境变量 `VORTOCODE_*` → `VORTOONE_*` | 进程启动时把旧名字换成新名字（两个都有以新名字为准，旧名字不再传给子进程），Python 引擎、Desktop、构建脚本、运维脚本同一规则；`vc doctor` 提醒还在用的旧名字。97 上的 drop-in、环境文件和 Caddy 占位符暂不动，之后改（改前问主人） |
 | C | 数据目录 `.vortocode`、`~/.vortocode`、`Application Support/VortoCode`、Linux 的 `~/.config/vortocode` 与 `~/.local/state/vortocode`、`Logs/VortoCode` 改名为 VortoOne 的对应名字 | 引擎第一次访问时整目录改名，原处留指向新目录的链接（数据里存的旧路径照样能打开）；git 仓库里有提交进去的 `.vortocode/` 文件就不搬；搬过后在本机 `info/exclude` 里藏起链接；敏感路径判断两个名字都认；Desktop 只读位置、不搬；备份脚本备真实目录。Desktop 日志直接写新位置，旧日志留在原处。97 上手机网关的 `ReadWritePaths` 要随之改（改前问主人） |
 | D | bundle id（Desktop `com.vorto.vortoone`、iPhone `com.vortoone.mobile`）、钥匙串服务名、推送 topic | Desktop 迁移设置与钥匙串，本地网络要重新放行；手机重装、重新登录和绑定钥匙；97 的推送 topic 改前问主人。已改：iPhone 的 bundle id、扩展、共享钥匙串分组、钥匙串服务名、本机设置键；Desktop 的 bundle id（启动时把 Application Support 与 WebKit 下按旧 id 命名的目录搬过来、旧位置留链接）和钥匙串服务名 `com.vortoone.desktop.*`（先读新名字，读不到再读旧名字并搬过去）。推送 topic 与 App 不符时只记日志、不删登记，换 App 期间不丢推送。登录回调的 URL scheme `vortocode-mobile-auth` 要服务端和 App 同时换，留到批次 E |
-| E | 仓库名 `DingHappy/VortoOne`、Python 包与命令（`vortoone`，保留 `vc`）、iPhone 工程与 target 名、仓库里的链接 | 仓库由主人在 GitHub 上改名，旧地址自动跳转；先实测 Desktop 的更新地址能跳转再发版 |
+| E | 仓库名 `DingHappy/VortoOne`、Python 包与命令（`vortoone`，保留 `vc`）、iPhone 工程与 target 名、仓库里的链接 | 仓库由主人在 GitHub 上改名，旧地址自动跳转；先实测 Desktop 的更新地址能跳转再发版。Desktop 的更新地址已改：先取阿里云 OSS 镜像 `vorto/vortoone/desktop/latest.json`，再取 `DingHappy/VortoOne` 的 Release（国内连 GitHub 下载更新包只有几十 KB/s，0.2.55 下了 9 分钟） |
 
 账号服务和中转站（独立仓库）的品牌另行更新。
 
