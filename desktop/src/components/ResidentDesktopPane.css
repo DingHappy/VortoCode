@@ -1,9 +1,9 @@
-.resident-desktop-pane { padding: 14px; border: 1px solid var(--line); border-radius: var(--vc-radius-control); margin: 12px 0; }
-.resident-desktop-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.resident-desktop-pane p { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
-.resident-desktop-pane form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }
+.resident-desktop-pane { padding: 14px; border: 1px solid var(--line); border-radius: var(--vc-radius-control); margin: var(--vc-space-3) 0; }
+.resident-desktop-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--vc-space-3); }
+.resident-desktop-pane p { margin: var(--vc-space-2) 0; font-size: 12px; overflow-wrap: anywhere; }
+.resident-desktop-pane form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--vc-space-2); margin: var(--vc-space-3) 0; }
 .resident-desktop-pane label { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 180px; font-size: 12px; }
-.resident-desktop-pane input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line); border-radius: var(--vc-radius-inner); background: var(--surface-1); color: inherit; }
-.resident-desktop-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.resident-desktop-pane input { width: 100%; box-sizing: border-box; padding: var(--vc-space-2); border: 1px solid var(--line); border-radius: var(--vc-radius-inner); background: var(--surface-1); color: inherit; }
+.resident-desktop-actions { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); }
 .resident-desktop-pane button { min-height: 32px; }
 .resident-desktop-note { color: var(--muted); line-height: 1.6; }
