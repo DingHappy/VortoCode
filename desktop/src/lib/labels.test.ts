@@ -136,7 +136,7 @@ describe("侧边栏 chip 的降噪", () => {
   it("托管工作区不出目录 chip", () => {
     // 真机冒烟：General 会话每一行都挂着 `workspaces/general`，同一句话说 N 遍，
     // 而且那是 Desktop 自己的脚手架路径，用户既没选过也管不着。
-    const base = "/Users/x/Library/Application Support/com.vorto.vortocode/workspaces";
+    const base = "/Users/x/Library/Application Support/com.vorto.vortoone/workspaces";
     expect(compactSessionCwd(`${base}/general`)).toBe("");
     expect(compactSessionCwd(`${base}/scratch/ab12`)).toBe("");
     expect(compactSessionCwd("C:\\Users\\x\\AppData\\vortocode\\workspaces\\general")).toBe("");

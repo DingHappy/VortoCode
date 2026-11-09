@@ -231,19 +231,86 @@ fn keychain_service_for(base: &str, debug_build: bool) -> String {
     }
 }
 
+/// 钥匙串服务名改名（ADR-018 批次 D）：读的时候先找新名字；没有再找旧名字，找到就写进新条目、删掉旧的。
+/// bundle id 也换了，读旧条目时 macOS 会问一次钥匙串授权；用户拒绝或读失败就当没有（显示未登录、
+/// 重新登录写进新条目），不让整个连接报错。搬过之后只读新条目，不再弹窗。
+pub(crate) fn read_migrating(
+    service: &str,
+    legacy: &str,
+    read: impl Fn(&str) -> Result<Option<String>, String>,
+    write: impl Fn(&str, &str) -> Result<(), String>,
+    delete: impl Fn(&str) -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    if let Some(value) = read(service)? {
+        return Ok(Some(value));
+    }
+    let value = match read(legacy) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            diag("warn", "keychain.legacy_read_failed", &format!("{legacy}：{error}"));
+            return Ok(None);
+        }
+    };
+    match write(service, &value) {
+        Ok(()) => {
+            if let Err(error) = delete(legacy) {
+                diag("warn", "keychain.legacy_delete_failed", &format!("{legacy}：{error}"));
+            }
+            diag("info", "keychain.migrated", &format!("{legacy} → {service}"));
+        }
+        Err(error) => diag("warn", "keychain.migrate_failed", &format!("{service}：{error}")),
+    }
+    Ok(Some(value))
+}
+
+/// 一组钥匙串条目：现在的服务名和改名前的服务名，调试构建两边都加 `.dev`。
+pub(crate) struct KeychainItem {
+    pub(crate) service: &'static str,
+    pub(crate) legacy: &'static str,
+}
+
+impl KeychainItem {
+    pub(crate) fn read(&self, account: &[u8]) -> Result<Option<String>, String> {
+        read_migrating(
+            &keychain_service(self.service),
+            &keychain_service(self.legacy),
+            |service| platform_keychain::read(service.as_bytes(), account),
+            |service, value| platform_keychain::write(service.as_bytes(), account, value),
+            |service| platform_keychain::delete(service.as_bytes(), account),
+        )
+    }
+
+    pub(crate) fn write(&self, account: &[u8], value: &str) -> Result<(), String> {
+        platform_keychain::write(keychain_service(self.service).as_bytes(), account, value)
+    }
+
+    /// 两个名字下的都删：退出或删远端时，没搬过的旧条目也不能留下。
+    pub(crate) fn delete(&self, account: &[u8]) -> Result<(), String> {
+        platform_keychain::delete(keychain_service(self.service).as_bytes(), account)?;
+        if let Err(error) = platform_keychain::delete(keychain_service(self.legacy).as_bytes(), account) {
+            diag("warn", "keychain.legacy_delete_failed", &format!("{}：{error}", self.legacy));
+        }
+        Ok(())
+    }
+}
+
 // 远程连接 token：与 LLM key 分开的 Keychain 服务，按项目 id 作 account 以支持多远端。
 // read 只在 Rust 侧的远程代理里用——token 原文不进 webview（spec §连接层安全 2）。
 mod remote_token_keychain {
-    use super::{keychain_service, platform_keychain};
-    const SERVICE: &str = "com.vortocode.desktop.remote";
+    use super::KeychainItem;
+    const ITEM: KeychainItem = KeychainItem {
+        service: "com.vortoone.desktop.remote",
+        legacy: "com.vortocode.desktop.remote",
+    };
     pub fn read(account: &str) -> Result<Option<String>, String> {
-        platform_keychain::read(keychain_service(SERVICE).as_bytes(), account.as_bytes())
+        ITEM.read(account.as_bytes())
     }
     pub fn write(account: &str, token: &str) -> Result<(), String> {
-        platform_keychain::write(keychain_service(SERVICE).as_bytes(), account.as_bytes(), token)
+        ITEM.write(account.as_bytes(), token)
     }
     pub fn delete(account: &str) -> Result<(), String> {
-        platform_keychain::delete(keychain_service(SERVICE).as_bytes(), account.as_bytes())
+        ITEM.delete(account.as_bytes())
     }
 }
 
@@ -1506,6 +1573,8 @@ fn present_main_window(app: &AppHandle, explicit: bool) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // bundle id 改名后第一次启动：窗口、插件读写之前先把旧 id 的目录搬过来
+    data_dirs::migrate_bundle_dirs_on_start();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             present_main_window(app, true);
@@ -1775,19 +1844,72 @@ fn reveal_desktop_config(app: AppHandle, kind: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod keychain_service_tests {
-    use super::keychain_service_for;
+    use super::{keychain_service_for, read_migrating};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
 
     #[test]
     fn release_builds_keep_the_existing_item_names() {
-        assert_eq!(keychain_service_for("com.vortocode.desktop.remote", false), "com.vortocode.desktop.remote");
-        assert_eq!(keychain_service_for("com.vortocode.desktop.account", false), "com.vortocode.desktop.account");
+        assert_eq!(keychain_service_for("com.vortoone.desktop.remote", false), "com.vortoone.desktop.remote");
+        assert_eq!(keychain_service_for("com.vortoone.desktop.account", false), "com.vortoone.desktop.account");
     }
 
     #[test]
     fn debug_builds_never_touch_the_release_items() {
-        let dev = keychain_service_for("com.vortocode.desktop.remote", true);
-        assert_eq!(dev, "com.vortocode.desktop.remote.dev");
-        assert_ne!(dev, keychain_service_for("com.vortocode.desktop.remote", false));
+        let dev = keychain_service_for("com.vortoone.desktop.remote", true);
+        assert_eq!(dev, "com.vortoone.desktop.remote.dev");
+        assert_ne!(dev, keychain_service_for("com.vortoone.desktop.remote", false));
+    }
+
+    fn run(store: &RefCell<HashMap<String, String>>, fail_legacy_read: bool, fail_write: bool) -> Result<Option<String>, String> {
+        read_migrating(
+            "new",
+            "old",
+            |service| {
+                if fail_legacy_read && service == "old" {
+                    return Err("用户拒绝".into());
+                }
+                Ok(store.borrow().get(service).cloned())
+            },
+            |service, value| {
+                if fail_write {
+                    return Err("写不进".into());
+                }
+                store.borrow_mut().insert(service.into(), value.into());
+                Ok(())
+            },
+            |service| {
+                store.borrow_mut().remove(service);
+                Ok(())
+            },
+        )
+    }
+
+    #[test]
+    fn legacy_items_move_to_the_new_name_once() {
+        let store = RefCell::new(HashMap::from([("old".to_string(), "token".to_string())]));
+        assert_eq!(run(&store, false, false).unwrap().as_deref(), Some("token"));
+        assert_eq!(store.borrow().get("new").map(String::as_str), Some("token"));
+        assert!(!store.borrow().contains_key("old"));                        // 搬完删掉旧的
+        assert_eq!(run(&store, true, false).unwrap().as_deref(), Some("token")); // 之后不再碰旧名字
+    }
+
+    #[test]
+    fn new_items_win_and_failures_never_lose_the_old_item() {
+        let both = RefCell::new(HashMap::from([("old".to_string(), "a".to_string()), ("new".to_string(), "b".to_string())]));
+        assert_eq!(run(&both, false, false).unwrap().as_deref(), Some("b"));
+        assert!(both.borrow().contains_key("old"));                          // 新的在就不动旧的
+
+        let unwritable = RefCell::new(HashMap::from([("old".to_string(), "a".to_string())]));
+        assert_eq!(run(&unwritable, false, true).unwrap().as_deref(), Some("a")); // 写不进新条目：照常用，旧的留着
+        assert!(unwritable.borrow().contains_key("old"));
+
+        let denied = RefCell::new(HashMap::from([("old".to_string(), "a".to_string())]));
+        assert_eq!(run(&denied, true, false).unwrap(), None);                // 拒绝授权：当作没有，不报错
+        assert!(denied.borrow().contains_key("old"));
+
+        let empty = RefCell::new(HashMap::new());
+        assert_eq!(run(&empty, false, false).unwrap(), None);
     }
 }
 

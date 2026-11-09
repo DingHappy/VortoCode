@@ -39,7 +39,7 @@ npm install
 npm run dev:app
 ```
 
-`dev:app` 用单独的应用标识 `com.vorto.vortocode.dev` 启动开发版，可以和已安装的正式版同时开着：
+`dev:app` 用单独的应用标识 `com.vorto.vortoone.dev` 启动开发版，可以和已安装的正式版同时开着：
 单实例锁、配置目录（`llm-profile.json`、项目登记、恢复记录、日志）和 WebView 存储都与正式版分开，
 开发版不会改到正式版的模型配置或项目列表。第一次启动是空白配置，需要在开发版里自己配模型服务、
 添加项目。直接 `npm run tauri dev` 仍沿用正式标识：正式版开着时它会被单实例保护直接退出，
@@ -72,7 +72,7 @@ npm run release:verify -- --mode preview
 
 **优先用 Apple 签发、带 Team ID 的证书**（`Developer ID Application: …`）。模型服务配置已改存本机
 `llm-profile.json`，不再经过钥匙串；登录钥匙串保存 VortoOne 账号的登录令牌
-（`com.vortocode.desktop.account`）和远程工作区 token（`com.vortocode.desktop.remote`）。调试构建
+（`com.vortoone.desktop.account`）和远程工作区 token（`com.vortoone.desktop.remote`）。调试构建
 （`tauri dev`、`cargo test`）用的是加了 `.dev` 后缀的另一组条目：dev 版读不到正式版的凭据，账号显示未登录、
 远端缺令牌，要测就在 dev 版里重新登录或登记；它也就不会为正式凭据弹钥匙串密码。macOS 除了受信任应用列表，
 还会校验钥匙串条目的分区列表（partition list）：Apple 签发的证书匹配稳定的 `teamid:<Team ID>`，点过一次
@@ -110,10 +110,23 @@ npm run verify:installed
 日常开发安装（`install:dev-signed`）不提交公证，免去每次几分钟的等待。
 
 切换签名身份（例如从 unsigned 或自签名换到 Developer ID）后，第一次读取已保存的远程工作区 token 会再要求一次
-钥匙串授权，点“始终允许”。之后只要用的是同一 Team ID 的证书、`com.vorto.vortocode` identifier 不变，重新打包
+钥匙串授权，点“始终允许”。之后只要用的是同一 Team ID 的证书、`com.vorto.vortoone` identifier 不变，重新打包
 安装都不会再问；用自签名证书则每次重装仍会问一次（见上文）。Desktop 原生层在单次进程生命周期只读取一次模型
 配置文件；General、Project、设置页和并发 runtime 复用同一内存缓存，保存/清除成功后同步更新缓存，读取失败不会
 被缓存。
+
+### bundle id 改名（ADR-018 批次 D，0.2.55 起）
+
+identifier 从 `com.vorto.vortocode` 改成了 `com.vorto.vortoone`，对 macOS 来说是换了一个 App：
+
+- **数据**：新版第一次启动、窗口和插件还没起来前，把 `~/Library/Application Support/<id>`（设置、项目登记、模型配置）
+  和 `~/Library/WebKit/<id>`（网页里的会话 id、主题等本机偏好）整个改名到新 id，旧位置留指向新目录的链接。
+  两个都在时用新的、旧的不动；结果写进 `desktop.log` 的 `data.bundle_dirs`。`npm run check:installed` 的「数据目录」一项核对。
+- **钥匙串**：服务名改为 `com.vortoone.desktop.*`。先读新条目，没有再读旧条目，读到就写进新条目并删掉旧的。
+  旧条目是旧 identifier 建的，读的时候 macOS 会问一次钥匙串授权，点「始终允许」；拒绝就当作未登录，重新登录即可。
+- **本地网络、辅助功能等系统授权**按 bundle id 记，新版要重新放行一次。
+- **打包**：`dev-signing.mjs` 发现已装 App 的签名要求变了会拒绝替换。这次是有意改的，打 0.2.55 时设
+  `VORTOONE_ALLOW_SIGNING_IDENTITY_CHANGE=1`，之后的版本不用。
 
 本机自签名证书只用于开发体验，不能替代公开分发所需的 Developer ID Application 签名与公证。
 
