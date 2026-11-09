@@ -70,7 +70,13 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         if ledger is not None and Path(ledger.repo_root).resolve() != Path(root).resolve():
             raise RuntimeError("Runtime runner belongs to a different workspace")
         lease.acquire()
-        owned = True
+        # 退出时要调用的清理函数现在就载入，别等到退出那一刻：App 更新会先替换磁盘上的打包文件、再让旧进程退出，
+        # 那时才 import 会读到新包、解压失败（zlib.error），之后登记的清理全部跳过（真机引擎日志连续 10 次）。
+        from src.agents.tools.website_browser import shutdown_browsers
+        from src.agents.tools.android import shutdown_android_sessions
+        from src.gateway.configuration_receipt import end_configuration_receipt
+        from src.gateway.execution_identity import end_execution_identity
+        owned = True   # 放在载入之后：载入失败就不去调没载入的清理函数，租约照样释放
         from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(str(root))
         from src.gateway.account_registration import AccountRegistration
@@ -115,19 +121,16 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         execution_identity = begin_execution_identity(root, instance_id)
         yield
     finally:
+        # 这里不再 import 任何新模块（见上面 lease.acquire 之后的说明）；owned 为真时清理函数都已载入
         if execution_identity is not None:
-            from src.gateway.execution_identity import end_execution_identity
             end_execution_identity(root, execution_identity)
-        from src.gateway.configuration_receipt import end_configuration_receipt
         if receipt_started:
             end_configuration_receipt()
         # Every cleanup runs even if another manager raises during shutdown.
         async with AsyncExitStack() as cleanup:
             cleanup.callback(lease.release)
             if owned:
-                from src.agents.tools.website_browser import shutdown_browsers
                 cleanup.push_async_callback(shutdown_browsers)
-                from src.agents.tools.android import shutdown_android_sessions
                 cleanup.push_async_callback(shutdown_android_sessions)
             if terminal_manager is not None:
                 cleanup.callback(terminal_manager.shutdown)
