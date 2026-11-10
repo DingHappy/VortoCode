@@ -31,6 +31,8 @@ pub(crate) fn process_status(inner: &mut GatewayProcessInner) -> GatewayProcessS
         },
         Some((_pid, Ok(Some(exit)))) => {
             inner.child = None;
+            // 正常停止会先收回子进程；走到这里就是意外退出（启动后没起来、运行中崩溃）
+            telemetry::report_engine_exit(&inner.runtime_id, &exit.to_string());
             GatewayProcessStatus {
                 launch_id: inner.configuration_launch_id.clone(),
                 running: false,
@@ -567,11 +569,15 @@ pub(crate) fn start_gateway(
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 last_not_found = Some(error);
             }
-            Err(error) => return Err(format!("启动 {label} 失败：{error}")),
+            Err(error) => {
+                let message = format!("启动 {label} 失败：{error}");
+                telemetry::report_error("engine.spawn_failed", &message, "");
+                return Err(message);
+            }
         }
     }
 
-    Err(format!(
+    let message = format!(
         "找不到 Desktop 内置 runtime 或已安装的 vc 命令，无法为该项目启动 runtime：{}{}",
         last_not_found
             .map(|error| error.to_string())
@@ -579,7 +585,9 @@ pub(crate) fn start_gateway(
         sidecar_setup_error
             .map(|error| format!("；{error}"))
             .unwrap_or_default(),
-    ))
+    );
+    telemetry::report_error("engine.missing", &message, "");
+    Err(message)
 }
 
 #[tauri::command]

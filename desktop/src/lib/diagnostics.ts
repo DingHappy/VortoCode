@@ -1,6 +1,7 @@
 // 本机诊断日志的前端入口：只传事件名和一句简短说明，写文件、脱敏、截断、轮转都在原生层
 // （src-tauri/src/diagnostics.rs）。不传对话内容和任何密钥；写失败一律忽略，不影响界面。
 import { invoke } from "@tauri-apps/api/core";
+import { reportUiError } from "./telemetry";
 
 export type DiagLevel = "info" | "warn" | "error";
 
@@ -18,9 +19,13 @@ function reasonText(reason: unknown): string {
 export function installGlobalErrorLogging(target: Pick<Window, "addEventListener"> = window): void {
   target.addEventListener("error", (event) => {
     const error = event as ErrorEvent;
-    diag("ui.error", `${error.message} @ ${error.filename}:${error.lineno}`, "error");
+    const text = `${error.message} @ ${error.filename}:${error.lineno}`;
+    diag("ui.error", text, "error");
+    reportUiError("ui.error", text);
   });
   target.addEventListener("unhandledrejection", (event) => {
-    diag("ui.unhandled_rejection", reasonText((event as PromiseRejectionEvent).reason), "error");
+    const text = reasonText((event as PromiseRejectionEvent).reason);
+    diag("ui.unhandled_rejection", text, "error");
+    reportUiError("ui.unhandled_rejection", text);
   });
 }

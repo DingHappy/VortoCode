@@ -272,6 +272,14 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // 首次告知错误报告的原生对话框里点了「去设置」：打开设置 → 高级 → 错误报告与使用统计
+  useEffect(() => {
+    let stop: (() => void) | undefined; let gone = false;
+    void import("@tauri-apps/api/event").then(({ listen }) => listen<string>("telemetry-notice", () => {
+      setSettingsSection("advanced"); setSettingsAnchor("telemetry"); setSettingsOpen(true);
+    })).then(unlisten => { if (gone) unlisten(); else stop = unlisten; }).catch(() => undefined);
+    return () => { gone = true; stop?.(); };
+  }, []);
   // 当前工作区的会话有变化（新开、发了消息）时，顺带刷新各项目下列出的最近会话。
   const sessionsSignature = sessions.map((item) => `${item.sid}:${item.messages}`).join("|");
   useEffect(() => {

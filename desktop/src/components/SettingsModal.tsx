@@ -12,6 +12,8 @@ import type { ReactNode } from "react";
 import { UserRound, Cpu, Monitor, ShieldCheck, Blocks, SlidersHorizontal, Info, Search, X, MapPin, ChevronRight, Check, CircleAlert, Circle, LoaderCircle } from "lucide-react";
 import { Eye, EyeOff } from "lucide-react";
 import { BuildVersion } from "./BuildVersion";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { loadTelemetrySettings, PRIVACY_URL, saveTelemetrySettings, type TelemetrySettings } from "../lib/telemetry";
 import { restartSavedSetting } from "../lib/settingsApply";
 import type { ModelSaveKind } from "../lib/modelProfileSave";
 import { applyModelPreset, modelSettingsState } from "../lib/modelSettings";
@@ -637,6 +639,7 @@ export function SettingsModal({
             <div id="setting-version" className={anchorClass("version")} tabIndex={-1}>
               <UpdateCard /><details className="advanced-settings settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
             </div><div id="setting-diagnostics" tabIndex={-1}><h3 className="settings-subhead">诊断日志</h3><DiagnosticsPane /></div>
+            <div id="setting-telemetry" tabIndex={-1}><h3 className="settings-subhead">错误报告与使用统计</h3><TelemetryPane /></div>
             <div id="setting-files" className={anchorClass("files")} tabIndex={-1}><h3 className="settings-subhead">配置文件</h3><ConfigPane llmProfilePath={llmProfile?.configPath} /></div>
           </div>}
         </div>
@@ -674,6 +677,29 @@ function UnsavedSettingsDialog({ labels, onStay, onDiscard }: { labels: string[]
     <div><button onClick={onDiscard}>放弃草稿并关闭</button><button className="primary" autoFocus onClick={onStay}>继续编辑</button></div>
   </dialog>;
   return typeof document === "undefined" ? content : createPortal(content, document.body);
+}
+
+/** 错误报告（默认开）与匿名使用统计（默认关）：改了立即保存，和隐私页同口径。 */
+export function TelemetryPane({ load = loadTelemetrySettings, save = saveTelemetrySettings }: {
+  load?: () => Promise<TelemetrySettings>; save?: (next: TelemetrySettings) => Promise<TelemetrySettings>;
+}) {
+  const [value, setValue] = useState<TelemetrySettings | null>(null);
+  const [note, setNote] = useState("");
+  useEffect(() => { void load().then(setValue).catch(() => setNote("读取设置失败")); }, [load]);
+  const change = (next: TelemetrySettings) => {
+    setValue(next); setNote("");
+    void save(next).then(setValue).catch((error) => { setNote(error instanceof Error ? error.message : String(error)); void load().then(setValue); });
+  };
+  return <div className="settings-telemetry">
+    <label><input type="checkbox" disabled={!value} checked={value?.errorsEnabled ?? true}
+      onChange={event => value && change({ ...value, errorsEnabled: event.target.checked })} />
+      <span><strong>自动发送错误报告</strong><small>崩溃、更新失败、内置引擎起不来时，把错误说明、App 和系统版本发给开发者。不含对话、文件内容和账号信息。</small></span></label>
+    <label><input type="checkbox" disabled={!value} checked={value?.usageEnabled ?? false}
+      onChange={event => value && change({ ...value, usageEnabled: event.target.checked })} />
+      <span><strong>发送匿名使用统计</strong><small>每天各功能用了几次和 App 版本，用随机编号区分，不关联账号、不含任何内容。</small></span></label>
+    <button type="button" className="link" onClick={() => void openUrl(PRIVACY_URL)}>隐私政策里怎么说</button>
+    {note && <small role="status">{note}</small>}
+  </div>;
 }
 
 /** 诊断日志：连接、切换、重连和界面报错记在本机，出问题时把文件发过来就能查。 */

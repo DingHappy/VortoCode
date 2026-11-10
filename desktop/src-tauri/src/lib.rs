@@ -27,6 +27,7 @@ mod llm_services;
 mod updater;
 mod data_dirs;
 mod diagnostics;
+mod telemetry;
 mod env_names;
 use llm_profile::*;
 use llm_services::*;
@@ -1609,6 +1610,8 @@ pub fn run() {
         // 窗口在配置里默认隐藏，等页面加载完才显示（否则启动时先闪一下白窗口，真机 2026-10-06）。
         // 兜底：页面万一没加载成功，几秒后也把窗口显示出来，绝不能让 App 看起来没打开。
         .setup(|app| {
+            // 错误报告：崩溃记录、补发上次没发出去的、首次告知（见 telemetry.rs）
+            telemetry::start(app.handle());
             // 冷启动时页面加载、读配置要一秒多，前端之后才会调 start_gateway。这段时间里先把
             // 通用会话的 runtime 拉起来：前端每次打开都从通用会话开始，到时 start_gateway 直接复用
             //（同一 runtime_id 已在运行就返回，监督锁保证不会起两份）。GUI smoke 不起 runtime。
@@ -1709,6 +1712,9 @@ pub fn run() {
             remote_ws_connect,
             remote_reachable,
             diag_log,
+            telemetry::telemetry_settings,
+            telemetry::set_telemetry_settings,
+            telemetry::report_ui_error,
             reveal_diagnostics_log,
             remote_ws_send,
             remote_ws_close,

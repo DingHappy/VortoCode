@@ -21,4 +21,7 @@ it("records uncaught UI errors and rejections", () => {
   listeners.get("unhandledrejection")!({ reason: new TypeError("bad") });
   expect(invoke).toHaveBeenCalledWith("diag_log", { level: "error", event: "ui.error", detail: "boom @ App.tsx:42" });
   expect(invoke).toHaveBeenCalledWith("diag_log", { level: "error", event: "ui.unhandled_rejection", detail: "TypeError: bad" });
+  // 同一条错误也交给原生层的错误报告（开没开、发不发由原生层按设置决定）
+  expect(invoke).toHaveBeenCalledWith("report_ui_error", { kind: "ui.error", message: "boom @ App.tsx:42" });
+  expect(invoke).toHaveBeenCalledWith("report_ui_error", { kind: "ui.unhandled_rejection", message: "TypeError: bad" });
 });
