@@ -58,3 +58,112 @@ assert 'src.llm.client' not in sys.modules
 """
     env = {**os.environ, "PYTHONPATH": root, "PYTHONDONTWRITEBYTECODE": "1"}
     subprocess.run([sys.executable, "-c", code], env=env, check=True, capture_output=True)
+
+
+@pytest.fixture
+def limited_gateway(mobile_env, monkeypatch):
+    from src.web import mobile_server
+
+    now = [1000.0]
+    monkeypatch.setattr(mobile_server, "monotonic", lambda: now[0], raising=False)
+    return create_app(), now
+
+
+def test_gateway_limits_requests_per_source(limited_gateway):
+    app, _ = limited_gateway
+    with TestClient(app) as client:
+        for _ in range(120):
+            assert client.get("/api/health/quick").status_code == 200
+        response = client.get("/api/health/quick")
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "60"
+
+
+def test_gateway_backs_off_after_authentication_failures(limited_gateway):
+    app, _ = limited_gateway
+    with TestClient(app) as client:
+        for _ in range(5):
+            assert client.get("/api/mobile/account/registration").status_code == 401
+        response = client.get("/api/health/quick")
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "30"
+
+
+def test_gateway_rate_window_recovers_and_ignores_untrusted_forwarding_headers(limited_gateway):
+    app, now = limited_gateway
+    with TestClient(app, client=("source-a", 1234)) as client:
+        for _ in range(120):
+            assert client.get("/api/health/quick").status_code == 200
+        now[0] += 59
+        response = client.get("/api/health/quick", headers={"X-Forwarded-For": "other-source",
+                                                           "Forwarded": "for=other-source"})
+        assert response.status_code == 429 and response.headers["Retry-After"] == "1"
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Pragma"] == "no-cache"
+        with TestClient(app, client=("source-b", 5678)) as other:
+            assert other.get("/api/health/quick").status_code == 200
+        now[0] += 1
+        assert client.get("/api/health/quick").status_code == 200
+
+
+def test_gateway_authentication_backoff_grows_caps_and_recovers(limited_gateway):
+    app, now = limited_gateway
+    with TestClient(app, client=("source-a", 1234)) as client:
+        for seconds in (30, 60, 120, 240, 480, 900, 900):
+            for _ in range(5):
+                assert client.get("/api/mobile/account/registration").status_code == 401
+            response = client.get("/api/health/quick")
+            assert response.status_code == 429
+            assert response.headers["Retry-After"] == str(seconds)
+            with TestClient(app, client=("source-b", 5678)) as other:
+                assert other.get("/api/health/quick").status_code == 200
+            now[0] += seconds - 1
+            assert client.get("/api/health/quick").status_code == 429
+            now[0] += 1
+            assert client.get("/api/health/quick").status_code == 200
+
+
+def test_gateway_failure_window_expires_and_success_does_not_erase_recent_failures(limited_gateway):
+    app, now = limited_gateway
+    with TestClient(app) as client:
+        for _ in range(4):
+            assert client.get("/api/mobile/account/registration").status_code == 401
+        now[0] += 60
+        for _ in range(4):
+            assert client.get("/api/mobile/account/registration").status_code == 401
+            assert client.get("/api/health/quick").status_code == 200
+        assert client.get("/api/mobile/account/registration").status_code == 401
+        assert client.get("/api/health/quick").status_code == 429
+
+
+def test_gateway_counts_authentication_failures_inside_self_authenticated_routes(limited_gateway):
+    app, _ = limited_gateway
+    with TestClient(app, base_url="https://assistant.example.com") as client:
+        for _ in range(5):
+            assert client.get("/api/mobile/native/snapshot").status_code == 401
+        assert client.get("/api/health/quick").status_code == 429
+
+
+def test_gateway_apps_have_independent_limits(limited_gateway):
+    app, _ = limited_gateway
+    with TestClient(app) as client:
+        for _ in range(120):
+            assert client.get("/api/health/quick").status_code == 200
+        assert client.get("/api/health/quick").status_code == 429
+    with TestClient(create_app()) as other:
+        assert other.get("/api/health/quick").status_code == 200
+
+
+def test_normal_polling_and_authenticated_refreshes_remain_available(limited_gateway):
+    app, now = limited_gateway
+    admin = {"Authorization": "Bearer private-mobile-administrator-token"}
+    with TestClient(app, base_url="https://assistant.example.com") as client:
+        # 覆盖连续读回合、定期刷新与小组查询的混合节奏，跨越多个窗口。
+        for second in range(180):
+            assert client.get("/api/health/quick").status_code == 200
+            if second % 5 == 0:
+                assert client.get("/api/health/quick").status_code == 200
+            if second % 30 == 0:
+                for _ in range(6):
+                    assert client.get("/api/mobile/account/registration", headers=admin).status_code == 200
+            now[0] += 1

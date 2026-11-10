@@ -45,8 +45,9 @@ def test_every_exemption_names_a_registered_route(app):
 def test_routes_outside_the_table_require_the_administrator(app):
     guarded = [(m, p) for m, p in sorted(_mobile_api_routes(app)) if (m, p) not in MOBILE_SELF_AUTHENTICATED]
     assert guarded, "设备管理、配对审批、账号登记等管理路由应当存在"
-    with TestClient(app, base_url="https://assistant.example.com") as client:
-        for method, path in guarded:
+    # 每项独立来源：本测试逐条核对管理员鉴权，不让前项的认证失败退避遮住后项。
+    for index, (method, path) in enumerate(guarded):
+        with TestClient(app, base_url="https://assistant.example.com", client=(f"source-{index}", 1234)) as client:
             response = client.request(method, _concrete(path))
             assert response.status_code == 401, (method, path, response.status_code)
             assert response.headers["cache-control"] == "no-store"
