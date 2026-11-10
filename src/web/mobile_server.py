@@ -9,11 +9,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import re
+from time import monotonic
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from src.gateway.account_access import account_origin
 from src.web.auth import auth_middleware, get_api_token
+from src.web.mobile_rate_limit import MobileRateLimiter
 
 
 def create_app() -> FastAPI:
@@ -31,6 +34,21 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="VortoOne Mobile", docs_url=None, redoc_url=None, openapi_url=None)
     app.middleware("http")(auth_middleware)
+    limiter = MobileRateLimiter(clock=monotonic)
+
+    @app.middleware("http")
+    async def limit_source(request, call_next):
+        # 只使用传输层确认的来源；转发头的信任仍由服务器配置负责。
+        source = request.client.host if request.client else "unknown"
+        retry_after = limiter.admit(source)
+        if retry_after:
+            return JSONResponse({"detail": "请求繁忙，请稍后重试"}, status_code=429,
+                                headers={"Retry-After": str(retry_after),
+                                         "Cache-Control": "no-store", "Pragma": "no-cache"})
+        response = await call_next(request)
+        if response.status_code == 401:
+            limiter.authentication_failed(source)
+        return response
 
     from src.web.routers.mobile import router as mobile
     from src.web.routers.mobile_pages import router as pages
