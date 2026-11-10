@@ -109,16 +109,18 @@ async def test_outbound_stage_without_a_confirm_channel_is_refused(repo, monkeyp
 
 @pytest.mark.asyncio
 async def test_outbound_stage_asks_and_respects_a_no(repo, monkeypatch):
+    from src.agents.gate import make_confirm_gate
     _reply(monkeypatch, "{}")
     asked = []
 
-    async def deny(msg):
-        asked.append(msg)
+    async def deny(msg, kind=None):
+        asked.append((msg, kind))
         return False
 
+    gate = make_confirm_gate(deny, auto_approve=True, can_ask_human=True)
     with pytest.raises(RuntimeError, match="未放行"):
-        await build_stage_executor(repo, confirm=deny)(_outbound_stage(repo), [])
-    assert asked and "对外动作" in asked[0]
+        await build_stage_executor(repo, confirm=gate)(_outbound_stage(repo), [])
+    assert len(asked) == 1 and "对外动作" in asked[0][0] and asked[0][1] == "deliver"
 
 
 @pytest.mark.asyncio

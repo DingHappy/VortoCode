@@ -151,10 +151,12 @@ def build_stage_executor(
             if confirm is None:
                 raise StageNotStarted(
                     f"工序「{stage_def.id}」有对外动作，当前入口没有确认通道——已拒绝"
-                    f"（fail-closed）。请在带确认的入口（TUI/Web/IM/--yes）推进。")
+                    f"（fail-closed）。请在可由主人确认的交互入口推进。")
             warning = f"\n⚠ 本工序的输入含外部摄入内容（{reasons or '来源见产出物血缘'}）" if inherited else ""
-            if not await confirm(f"流水线「{stage_def.id}」要执行对外动作"
-                                 f"（产出 {stage_def.produces or '未声明'}）。{warning}"):
+            from src.agents.gate import request
+            from src.agents.trust import DELIVER
+            if not await request(confirm, f"流水线「{stage_def.id}」要执行对外动作"
+                                 f"（产出 {stage_def.produces or '未声明'}）。{warning}", DELIVER):
                 raise StageNotStarted(f"已取消：用户未放行工序「{stage_def.id}」的对外动作。")
 
         shape = ("最终**只输出一个 JSON 对象**作为本工序的产出（可含 summary 字段作一句话摘要）；"

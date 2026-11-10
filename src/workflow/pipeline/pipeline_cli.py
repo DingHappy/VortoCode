@@ -123,13 +123,24 @@ async def run_pipeline_cli(
             return 1
         from src.agents.pipeline_exec import build_stage_executor
 
-        # 无 --yes 时不给确认通道：outbound 工序会被 fail-closed 拒绝，而不是在没人看着的
-        # 终端里静默发出去。这与 headless agent 的既定取向一致。
-        async def approve(_msg: str) -> bool:
-            return True
+        import asyncio
+        from src.agents.gate import make_confirm_gate
+
+        try:
+            can_ask = all(stream is not None and stream.isatty() for stream in (sys.stdin, sys.stderr))
+        except Exception:  # 关闭或异常的流不能充当真人确认通道
+            can_ask = False
+
+        async def ask(message: str) -> bool:
+            print(f"需要确认：{message}", file=sys.stderr, flush=True)
+            answer = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
+            return answer in ("y", "yes")
+
+        # --yes 同样只覆盖内核允许的类别；外发必须真人批准，无人可问则拒绝。
+        confirm = make_confirm_gate(ask if can_ask else None, auto_approve=yes, can_ask_human=can_ask)
 
         execute = build_stage_executor(
-            repo, confirm=approve if yes else None,
+            repo, confirm=confirm,
             on_progress=lambda m: print(m, file=sys.stderr))
         result = await advance(repo, name, execute=execute, max_stages=max_stages)
         print(f"{result.status}"

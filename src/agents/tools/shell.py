@@ -137,6 +137,9 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
 
 def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
     """UI 无关的 open_pr（给 Web 用，注入 async confirm 门）。外向操作：push + gh pr create，需确认。"""
+    from src.agents.gate import request
+    from src.agents.trust import DELIVER
+
     async def _open_pr(args: dict) -> str:
         import asyncio
         from src.agents.vcs import push_and_open_pr
@@ -145,8 +148,8 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
         body = str(args.get("body", "")).strip()
         if not branch or not title:
             return "open_pr 需要 branch 和 title。"
-        if not await confirm(
-                f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
+        if not await request(confirm,
+                f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。", DELIVER):
             return f"用户拒绝了为 {branch} 开 PR。"
         res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body)
         if res["ok"]:

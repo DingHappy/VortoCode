@@ -244,9 +244,7 @@ def build_artifact_tools(
 ) -> list:
     """构建 publish_artifact / list_artifacts / delete_artifact 工具（TUI 与 Web 共用）。
 
-    - confirm(preview, is_update) -> bool：发布前确认钩子（TUI 接 ConfirmScreen）。**何时调用由 _publish
-      统一决定**（不由回调自己判）：首次发布必问；之后更新静默（对齐 CC「批准后再发不再问」），
-      **但污点回合的更新仍要问**（防"先发无害、再诱导 update 成恶意页"绕过确认）。回调只管"问不问得到人"。
+    - confirm(preview, is_update) -> bool：发布前确认钩子；首次发布及每次更新都调用，由内核判定。
     - confirm_delete(preview) -> bool：删除前确认钩子（同理，TUI 接 ConfirmScreen）。
     - base_url：拼链接用（见 artifact_url）。
     - on_published(meta, url)：发布成功回调，供 UI 提示链接。
@@ -270,13 +268,8 @@ def build_artifact_tools(
         if not title and not artifact_id:
             return "publish_artifact 需要 title（页面标题）。"
         is_update = bool(artifact_id and store.exists(artifact_id))
-        # 确认门策略**统一在这里**（工具边界），不由各端的 confirm 回调各自实现——否则加一端漏一端。
-        # 既有约定：首次发布问一次，之后更新静默（对齐 CC「批准后再发不再问」）。
-        # **但污点回合下连更新也必须过门**：否则"先发一版无害的、再借外部内容诱导 update 成恶意页"
-        # 就完全绕过确认、静默覆盖已发布页面。此前 `not is_update` 把污点更新也一并跳过了——
-        # 内核适配器 _art_publish 里那句"污点更新要过门"因此是**够不到的死代码**（自审逮到的真洞）。
-        from src.agents.taint import is_tainted
-        if confirm is not None and (not is_update or is_tainted()):
+        # 发布和更新都会改变对外可访问的内容，每次都过确认门。
+        if confirm is not None:
             try:
                 ok = await confirm({"title": title, "id": artifact_id}, is_update)
             except Exception:  # noqa: BLE001

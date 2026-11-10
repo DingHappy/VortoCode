@@ -179,6 +179,7 @@ async def test_draft_pr_flag_propagates(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_pr_when_confirm_denied(tmp_path, monkeypatch):
+    from src.agents.gate import make_confirm_gate
     _init_repo_on_branch(tmp_path, "dev")
     _patch_pipeline(monkeypatch, integration_ok=True)
     import src.agents.vcs as vcs
@@ -186,11 +187,16 @@ async def test_no_pr_when_confirm_denied(tmp_path, monkeypatch):
     monkeypatch.setattr(vcs, "push_and_open_pr",
                         lambda *a, **k: called.__setitem__("n", called["n"] + 1) or {"ok": True})
 
-    async def deny(_msg):
+    asked = []
+
+    async def deny(_msg, kind=None):
+        asked.append(kind)
         return False
 
-    out = await _dev_auto(tmp_path, deny).handler({"task": "x", "open_pr": True})
+    gate = make_confirm_gate(deny, auto_approve=True, can_ask_human=True)
+    out = await _dev_auto(tmp_path, gate).handler({"task": "x", "open_pr": True})
     assert "已取消开 PR" in out and called["n"] == 0       # 拒绝 → 不 push/不开 PR
+    assert asked == ["deliver"]
 
 
 @pytest.mark.asyncio

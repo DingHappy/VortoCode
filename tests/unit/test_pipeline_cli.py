@@ -83,8 +83,8 @@ async def test_unknown_names_are_reported_not_silently_ignored(repo):
 
 # ------------------------------------------------------------------ 对外动作默认拒绝
 @pytest.mark.asyncio
-async def test_outbound_needs_an_explicit_yes(repo, monkeypatch, capsys):
-    """不给 --yes 就没有确认通道 → outbound 工序 fail-closed。
+async def test_headless_yes_does_not_authorize_outbound_stage(repo, monkeypatch, capsys):
+    """无人可问时，无论有无 --yes，outbound 工序都不得执行。
 
     终端里静默把东西发出去，是这套设计最不该发生的事。
     """
@@ -95,10 +95,10 @@ async def test_outbound_needs_an_explicit_yes(repo, monkeypatch, capsys):
     await run_pipeline_cli("review", run_id, verdict="approve", review_token=review_fingerprint(str(repo), PipelineStore(str(repo)).load(run_id)))
 
     assert await run_pipeline_cli("advance", run_id) == 1
-    assert "fail-closed" in capsys.readouterr().out
+    assert "未放行" in capsys.readouterr().out
 
-    assert await run_pipeline_cli("advance", run_id, yes=True) == 0
-    assert PipelineStore(str(repo)).load(run_id).status == "done"
+    assert await run_pipeline_cli("advance", run_id, yes=True) == 1
+    assert PipelineStore(str(repo)).load(run_id).status != "done"
 
 
 # ------------------------------------------------------------------ 人批三档
@@ -235,3 +235,39 @@ async def test_without_the_flag_start_still_always_starts(repo):
     await run_pipeline_cli("start", "content-ops")
     await run_pipeline_cli("start", "content-ops")
     assert len(PipelineStore(str(repo)).list()) == 2
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+@pytest.mark.parametrize("yes", [False, True])
+async def test_outbound_stage_uses_the_actual_terminal_approval(repo, monkeypatch, answer, yes):
+    import io
+    import sys
+    from src.agents import agent_loop
+
+    _reply(monkeypatch)
+    await run_pipeline_cli("start", "content-ops")
+    store = PipelineStore(str(repo))
+    run_id = store.list()[0].run_id
+    await run_pipeline_cli("advance", run_id)
+    await run_pipeline_cli("review", run_id, verdict="approve",
+                           review_token=review_fingerprint(str(repo), store.load(run_id)))
+
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(sys, "stdin", Terminal())
+    monkeypatch.setattr(sys, "stderr", Terminal())
+    asked, executed = [], []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or answer)
+
+    async def execute(self, *args, **kwargs):
+        executed.append(True)
+        return '{"summary": "已执行"}'
+
+    monkeypatch.setattr(agent_loop.MainAgent, "run_turn", execute)
+    result = await run_pipeline_cli("advance", run_id, yes=yes)
+    assert result == (0 if answer == "y" else 1)
+    assert len(asked) == 1
+    assert len(executed) == int(answer == "y")
+    assert (store.load(run_id).status == "done") is (answer == "y")

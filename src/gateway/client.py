@@ -153,8 +153,8 @@ class ProtocolClient:
         2. 同时透传 ``taint_known``（字段确实到了、且非 null 才为真）。端据此区分"确知有污点"与
            "对端报不了、我们兜底为真"——好给后者一句可执行的话（升级 serve / 交互确认），而不是撒谎
            说"本回合摄入过外部内容"。
-        3. 老 confirm 回调不收关键字会抛 TypeError → 兼容重试一次；**重试再抛也要 fail-closed**，
-           绝不能让异常冒出接收循环把整个回合带崩（外层 except 是 try 的兄弟，兜不住 handler 内的抛出）。
+        3. operation_kind 透传给支持它的回调，CLI 按类别决定 --yes 能否免确认。
+           调用前按签名选择兼容参数；回调内部异常一律拒绝，不重复调用。
         """
         if confirm is None:
             return False
@@ -165,15 +165,26 @@ class ProtocolClient:
         # 过外部内容"——那是撒谎，也让老 serve 下的 `--yes` 变成一句莫名其妙的全量拒绝。
         taint_known = "tainted" in evt and evt.get("tainted") is not None
         tainted = True if raw is None else bool(raw)
+        import inspect
+        candidates = (
+            {"tainted": tainted, "taint_known": taint_known, "operation_kind": evt.get("operation_kind")},
+            {"tainted": tainted, "taint_known": taint_known},
+            {},
+        )
         try:
-            return bool(await confirm(text, tainted=tainted, taint_known=taint_known))
-        except TypeError:
-            try:
-                return bool(await confirm(text))
-            except Exception:  # noqa: BLE001 —— 兼容重试仍失败：拒，别把接收循环带崩
-                return False
-        except Exception:  # noqa: BLE001
+            signature = inspect.signature(confirm)
+        except (TypeError, ValueError):
             return False
+        for kwargs in candidates:
+            try:
+                signature.bind(text, **kwargs)
+            except TypeError:
+                continue
+            try:
+                return bool(await confirm(text, **kwargs))
+            except Exception:  # noqa: BLE001
+                return False
+        return False
 
     async def run_turn(self, prompt: str, *, mode: str = "plan",
                        images: Optional[list] = None, audio: Optional[list] = None,

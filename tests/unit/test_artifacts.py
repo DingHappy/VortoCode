@@ -93,7 +93,7 @@ async def test_publish_tool_returns_url_and_updates(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_publish_tool_confirm_only_on_create(tmp_path):
+async def test_publish_tool_confirms_create_and_update(tmp_path):
     calls = []
 
     async def confirm(preview, is_update):
@@ -104,8 +104,8 @@ async def test_publish_tool_confirm_only_on_create(tmp_path):
     pub = tools["publish_artifact"]
     r1 = await pub.handler({"title": "P", "html": "<i>a</i>"})
     aid = r1.split("id=")[1].split(",")[0]
-    await pub.handler({"title": "P", "html": "<i>b</i>", "id": aid})   # 更新：不应再问
-    assert calls == [False]                                            # 仅首次确认
+    await pub.handler({"title": "P", "html": "<i>b</i>", "id": aid})
+    assert calls == [False, True]
 
 
 @pytest.mark.asyncio

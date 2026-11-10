@@ -288,10 +288,13 @@ async def test_tainted_artifact_update_must_pass_the_gate(tmp_path):
     from src.agents.main_agent import build_agent_tools, make_confirm_gate
     from src.agents.tools.artifacts import ArtifactStore
 
-    async def _yes(_m):
-        return True                                # 端一律说"人同意了"——不该由它说了算
+    asked = []
 
-    gate = make_confirm_gate(_yes, auto_approve=True, can_ask_human=False)   # = headless --yes
+    async def _yes(message):
+        asked.append(message)
+        return not taint.is_tainted()              # 主人批准干净发布，拒绝带污点的覆盖
+
+    gate = make_confirm_gate(_yes, auto_approve=True, can_ask_human=True)
     tools = {t.name: t for t in build_agent_tools(str(tmp_path), confirm=gate, with_artifacts=True)}
     pub = tools["publish_artifact"]
 
@@ -299,17 +302,18 @@ async def test_tainted_artifact_update_must_pass_the_gate(tmp_path):
     aid = r1.split("id=")[1].split(",")[0].strip()
     assert "v1" in r1
 
-    # 未污点更新：静默放行（对齐 CC「批准后再发不再问」）
+    # 更新同样属于外发，主人明确批准后才能覆盖。
     r2 = await pub.handler({"title": "报告", "html": "<b>良性 v2</b>", "id": aid})
     assert "v2" in r2
 
-    # 污点回合更新：必须过门 → headless 无人可问 → 拒；页面**不得**被覆盖
+    # 污点回合更新：必须过门，主人拒绝后页面不得被覆盖。
     taint.mark_tainted()
     blocked = await pub.handler({"title": "报告", "html": "<script>evil()</script>", "id": aid})
     assert "取消" in blocked or "拒绝" in blocked, f"污点更新绕过了确认门！实际：{blocked}"
 
     meta = next(m for m in ArtifactStore(str(tmp_path)).list() if m["id"] == aid)
     assert meta["version"] == 2, "污点更新竟然落盘了——已发布页面被静默覆盖"
+    assert len(asked) == 3 and "外部内容" in asked[-1]
 
 
 def test_repo_memory_redacts_secrets_but_keeps_facts(tmp_path):
@@ -410,23 +414,23 @@ async def test_attach_confirm_consults_the_kernel_decision(monkeypatch):
     said: list = []
     confirm = _make_attach_confirm(True, said.append)     # --yes
 
-    # 未污点 + --yes → 内核判 ALLOW
-    assert await confirm("写文件？", tainted=False, taint_known=True) is True
+    # 类别明确的写入在未污点 + --yes 时仍由内核放行。
+    assert await confirm("写文件？", tainted=False, taint_known=True, operation_kind="write") is True
 
     # 污点 → --yes 失效 → 拒，且说清是防注入（文案取自内核的单一真相源）
     said.clear()
-    assert await confirm("写文件？", tainted=True, taint_known=True) is False
+    assert await confirm("写文件？", tainted=True, taint_known=True, operation_kind="write") is False
     assert any(gate.TAINT_REFUSED_REASON in s for s in said)
 
     # 对端报不了污点状态（老 serve）→ 仍从严拒，但**不许谎称**"确知摄入过外部内容"
     said.clear()
-    assert await confirm("写文件？", tainted=True, taint_known=False) is False
+    assert await confirm("写文件？", tainted=True, taint_known=False, operation_kind="write") is False
     assert any("未上报" in s for s in said), "没如实说明是对端报不了，而非确知有污点"
     assert not any(gate.TAINT_REFUSED_REASON in s for s in said)
 
     # 换掉内核判定 → attach 必须跟随（证明它真在消费 decide，而不是自己判）
     monkeypatch.setattr(gate, "decide", lambda **_kw: gate.DENY)
-    assert await confirm("写文件？", tainted=False, taint_known=True) is False, \
+    assert await confirm("写文件？", tainted=False, taint_known=True, operation_kind="write") is False, \
         "attach 没跟随内核判定——它还在自己手搓排序"
 
 
@@ -447,16 +451,15 @@ async def test_attach_yes_survives_a_closed_stdin(monkeypatch):
     said: list = []
     confirm = _make_attach_confirm(True, said.append)
 
-    assert await confirm("写文件？", tainted=False, taint_known=True) is True, \
+    assert await confirm("写文件？", tainted=False, taint_known=True, operation_kind="write") is True, \
         "stdin 关闭时 --yes 不放行了（AttributeError 被吞成静默拒绝）"
     taint.mark_tainted()
-    assert await confirm("写文件？", tainted=True, taint_known=True) is False   # 污点仍从严
+    assert await confirm("写文件？", tainted=True, taint_known=True, operation_kind="write") is False   # 污点仍从严
 
 
 @pytest.mark.asyncio
 async def test_attach_client_confirm_fallback_fails_closed():
-    """**契约**：老 confirm 回调不收 tainted 关键字（抛 TypeError）→ 兼容重试一次；
-    但**重试再抛也要拒**，不能让异常冒出接收循环把整个回合带崩。"""
+    """老回调按签名兼容；内部 TypeError 同样拒绝，不重试执行。"""
     from src.gateway.client import ProtocolClient
 
     async def legacy_ok(_text):                    # 老签名：不收 tainted，正常返回
@@ -556,3 +559,105 @@ async def test_readonly_connector_never_expands_restricted_profile(profile, read
         assert manager.tool_executor.read_only_servers == frozenset()
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.parametrize("kind", ALL_ENDS + ["desktop", "phone", "unattended"])
+@pytest.mark.parametrize("can_ask", [True, False])
+async def test_outbound_requires_a_human_even_with_full_or_auto_approval(kind, can_ask, tmp_path):
+    from src.agents.trust import DELIVER, FULL
+    from src.gateway.agent_session import build_session
+
+    asked = []
+
+    async def human(message, operation_kind=None):
+        asked.append(operation_kind)
+        return True
+
+    profile = "owner_device" if kind == "phone" else "unattended" if kind == "unattended" else "local"
+    session = build_session(str(tmp_path), kind=kind if kind in ALL_ENDS else "web",
+                            confirm=human, trust_level=FULL, auto_approve=True,
+                            can_ask_human=can_ask, capability_profile=profile)
+    assert await session._confirm_gate("发送交付物", DELIVER) is can_ask
+    assert asked == ([DELIVER] if can_ask else [])
+
+
+@pytest.mark.parametrize("operation_kind", ["deliver", "irreversible", "interact", None, "unknown"])
+async def test_headless_attach_does_not_autoapprove_protected_or_unknown_operations(
+        operation_kind, monkeypatch):
+    import io
+    import sys
+    from src.cli import _make_attach_confirm
+    from src.gateway.client import ProtocolClient
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    confirm = _make_attach_confirm(True, lambda _: None)
+    event = {"text": "执行操作？", "tainted": False, "operation_kind": operation_kind}
+    assert await ProtocolClient._dispatch_confirm(event, confirm) is False
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+async def test_attach_outbound_needs_the_actual_human_reply(answer, monkeypatch):
+    from src import cli
+    from src.gateway.client import ProtocolClient
+
+    monkeypatch.setattr(cli, "_tty_can_ask_human", lambda: True)
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or answer)
+    confirm = cli._make_attach_confirm(True, lambda _: None)
+    result = await ProtocolClient._dispatch_confirm(
+        {"text": "发送交付物？", "tainted": False, "operation_kind": "deliver"}, confirm)
+    assert result is (answer == "y")
+    assert len(asked) == 1
+
+
+async def test_attach_callback_type_error_does_not_retry_confirmation():
+    from src.gateway.client import ProtocolClient
+
+    calls = []
+
+    async def broken(text, **kwargs):
+        calls.append(kwargs)
+        raise TypeError("callback failed")
+
+    assert await ProtocolClient._dispatch_confirm(
+        {"text": "操作？", "tainted": False, "operation_kind": "deliver"}, broken) is False
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+async def test_headless_yes_does_not_execute_delivery_or_deletion(tmp_path, monkeypatch, tainted):
+    from src.agents.main_agent import build_agent_tools
+    from src.agents.tools.artifacts import ArtifactStore
+    from src.agents import vcs
+
+    store = ArtifactStore(str(tmp_path))
+    original = store.publish("原稿", "<p>原稿</p>")
+    (tmp_path / "delivery.txt").write_text("交付物")
+    pushed, sent, asked = [], [], []
+    monkeypatch.setattr(vcs, "push_and_open_pr", lambda *a, **k: pushed.append(a) or {"ok": True, "url": "unused"})
+
+    async def sender(*args):
+        sent.append(args)
+        return True
+
+    async def human(message):
+        asked.append(message)
+        return True
+
+    monkeypatch.setattr("src.agents.tools.media._OWNER_MEDIA_SENDER", sender)
+    confirm = make_confirm_gate(human, auto_approve=True, can_ask_human=False)
+    tools = {tool.name: tool for tool in build_agent_tools(
+        str(tmp_path), confirm=confirm, with_artifacts=True)}
+    if tainted:
+        taint.mark_tainted()
+    for name, args in (
+        ("open_pr", {"branch": "codex/example", "title": "示例"}),
+        ("publish_artifact", {"title": "新稿", "html": "<p>新稿</p>"}),
+        ("publish_artifact", {"id": original["id"], "html": "<p>更新</p>"}),
+        ("delete_artifact", {"id": original["id"]}),
+        ("send_file", {"path": "delivery.txt"}),
+    ):
+        await tools[name].handler(args)
+    assert not pushed and not sent and not asked
+    assert len(store.list()) == 1
+    assert store.meta(original["id"])["version"] == 1
