@@ -693,6 +693,14 @@ async fn signed_in_access(
     Ok((base, session, model_access))
 }
 
+/// 登录了就给一个有效的访问令牌（反馈关联账号用）；没登录或刷新失败返回 None，调用方按匿名处理。
+pub(crate) async fn access_token_if_signed_in(app: &AppHandle, state: &State<'_, AccountState>) -> Option<String> {
+    let base = base_url().ok()?;
+    let mut slot = state.access.lock().await;
+    let mut session = load_session().ok().flatten().filter(|session| session.base_url == base)?;
+    ensure_access(app, &base, &mut slot, &mut session).await.ok()
+}
+
 fn member_key_in_use(app: &AppHandle, store: &State<'_, DesktopLlmProfileStore>) -> bool {
     crate::cached_desktop_llm_profile(app, store)
         .ok()

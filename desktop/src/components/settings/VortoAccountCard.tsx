@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { confirmAction } from "../../lib/confirm";
 import { restartSavedSetting } from "../../lib/settingsApply";
 import { errorText } from "../../lib/errorText";
-import { feedbackMailto } from "../../lib/feedback";
+import { FeedbackButton } from "../FeedbackDialog";
 import {
   accountHeadline, announceAccountChanged, applyMembership, cancelAccountLogin, getAccountStatus, getMembership, loginAccount, logoutAccount,
   membershipAction, membershipLine, type VortoAccountStatus, type VortoMembership,
@@ -127,7 +127,7 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
     </p>}
     <div className="settings-card-actions">
       {action && <button onClick={() => void openUrl(action.url)}>{action.label}</button>}
-      <button onClick={() => void openUrl(feedbackMailto())} title="用邮件告诉我们遇到的问题">问题反馈</button>
+      <FeedbackButton title="告诉我们遇到的问题" />
     </div>
     {note && <p role="alert">{note}</p>}
     <p className="settings-card-note">
