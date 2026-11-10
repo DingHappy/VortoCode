@@ -692,6 +692,11 @@ ADR-011 已经定了「执行者以插件接入」，这一块还没有按插件
 
 建议：验收通过改为申报不可撤回的类别（任何档位都问），或者只允许由界面上的按钮触发、不作为模型可调用的工具。这一条应当在 1.1（验收通过后推分支、开 PR）之前修，否则验收会直接带出对外动作。
 
+验证与修复（2026-11-10）：离线行为测试 `tests/unit/test_team_tools.py::test_team_accept_requires_owner_confirmation_at_every_trust_level`
+复现了干净回合在 READS、FULL 下不询问即完成验收；`test_team_accept_without_a_human_is_denied_even_with_auto_approve`
+另复现了无人可问时自动批准也能完成验收。验收通过现申报 `IRREVERSIBLE`，覆盖各档位下同意、拒绝及无人可问的状态保持。
+本项只修验收通过；退回与回话的类别和行为保持原样。
+
 ### 8.13 审计日志只追加不清理，写失败不报（P2，已核对）
 
 位置：`src/gateway/audit.py::append_audit`。
@@ -1025,7 +1030,7 @@ Android 没有提到，暂按不做记录。
 
 | 条目 | 状态 | PR |
 | --- | --- | --- |
-| 8.12 | 未开始 | |
+| 8.12 | 已修 | #824 |
 | 8.14 | 未开始 | |
 | 4.11 | 未开始 | |
 | 4.10 | 未开始 | |
