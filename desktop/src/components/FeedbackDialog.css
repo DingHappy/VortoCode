@@ -1,0 +1,49 @@
+/* 问题反馈弹窗（只用设计变量） */
+.feedback-dialog {
+  width: min(480px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: var(--vc-space-6);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+  box-shadow: var(--vc-shadow-pop);
+  font-size: var(--vc-size-small);
+}
+.feedback-dialog::backdrop { background: var(--vc-backdrop); }
+.feedback-dialog h2 { margin: 0 0 var(--vc-space-4); font-size: var(--vc-size-heading); font-weight: var(--vc-weight-strong); }
+.feedback-dialog p { margin: 0 0 var(--vc-space-4); line-height: 1.6; }
+.feedback-field { display: grid; gap: var(--vc-space-1); margin-bottom: var(--vc-space-3); }
+.feedback-field span { color: var(--vc-text-secondary); }
+.feedback-field textarea, .feedback-field input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--vc-space-2) var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-bg);
+  color: var(--vc-text);
+  font: inherit;
+  resize: vertical;
+}
+.feedback-field textarea:focus-visible, .feedback-field input:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: 1px; }
+.feedback-check { display: flex; gap: var(--vc-space-2); align-items: flex-start; margin-bottom: var(--vc-space-4); cursor: pointer; }
+.feedback-check input { margin-top: 3px; flex: none; }
+.feedback-check span { display: grid; gap: 2px; }
+.feedback-check small { color: var(--vc-muted); font-size: var(--vc-size-caption); line-height: 1.6; }
+.feedback-error { color: var(--vc-danger-text); }
+.feedback-actions { display: flex; align-items: center; gap: var(--vc-space-2); }
+.feedback-actions > span { flex: 1; }
+.feedback-actions button {
+  min-height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.feedback-actions button.primary { border-color: var(--vc-ink); background: var(--vc-ink); color: var(--vc-on-ink); font-weight: var(--vc-weight-medium); }
+.feedback-actions button.link { padding: 0; border: 0; background: none; color: var(--vc-accent); font-size: var(--vc-size-caption); }
+.feedback-actions button:disabled { opacity: .5; cursor: not-allowed; }

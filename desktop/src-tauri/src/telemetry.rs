@@ -347,6 +347,58 @@ pub(crate) fn report_ui_error(kind: String, message: String) {
     report_error(kind, &message, "");
 }
 
+/// 反馈附带的诊断日志：取文件最后 MAX_FEEDBACK_LOG 字节，从整行开始，再脱敏一遍（日志本来就脱敏过）。
+pub(crate) fn feedback_log_excerpt(bytes: &[u8]) -> String {
+    let start = bytes.len().saturating_sub(MAX_FEEDBACK_LOG);
+    let text = String::from_utf8_lossy(&bytes[start..]).to_string();
+    let text = if start > 0 { text.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or(text) } else { text };
+    text.lines().map(redact_secrets).collect::<Vec<_>>().join("\n")
+}
+
+const MAX_FEEDBACK_TEXT: usize = 4000;
+const MAX_FEEDBACK_LOG: usize = 60 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct FeedbackReply { #[serde(default)] id: Option<u64> }
+
+/// 「问题反馈」：用户写的话 + 可选联系方式 + 可选诊断日志，发到账号服务；登录了就带上令牌关联账号。
+#[tauri::command]
+pub(crate) async fn send_feedback(app: AppHandle, account_state: State<'_, account::AccountState>, text: String,
+                                  contact: String, attach_log: bool) -> Result<u64, String> {
+    let text: String = text.trim().chars().take(MAX_FEEDBACK_TEXT).collect();
+    if text.is_empty() {
+        return Err("先写一句遇到了什么问题".into());
+    }
+    let log = if attach_log {
+        diagnostics_log_path().and_then(|path| read(path).ok()).map(|bytes| feedback_log_excerpt(&bytes)).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let install_id = state_dir().map(|dir| load_state_from(&dir).install_id).unwrap_or_default();
+    let body = serde_json::json!({"install_id": install_id, "version": env!("CARGO_PKG_VERSION"), "os": os_label(),
+                                  "text": text, "contact": contact.trim().chars().take(200).collect::<String>(), "log": log});
+    let base = account::default_base_url()?;
+    let client = http_client()?;
+    let mut request = client.post(format!("{base}/api/telemetry/feedback")).json(&body);
+    if let Some(token) = account::access_token_if_signed_in(&app, &account_state).await {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.map_err(|error| {
+        diag("warn", "feedback.send_failed", &error.to_string());
+        "发送失败：连不上反馈服务，请检查网络后重试，或改用邮件发送".to_string()
+    })?;
+    let status = response.status();
+    diag(if status.is_success() { "info" } else { "warn" }, "feedback.sent", &format!("HTTP {}，{}", status.as_u16(),
+                                                                                       if attach_log { "附日志" } else { "不附日志" }));
+    match status.as_u16() {
+        200..=299 => Ok(response.json::<FeedbackReply>().await.ok().and_then(|reply| reply.id).unwrap_or(0)),
+        404 => Err("反馈服务还没开通，请先改用邮件发送".into()),
+        429 => Err("发得有点频繁，请过一会儿再发".into()),
+        400 | 413 | 422 => Err("内容太长或格式不对，删减一些再试".into()),
+        _ => Err(format!("发送失败（HTTP {}），请稍后重试或改用邮件发送", status.as_u16())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,6 +460,18 @@ mod tests {
         assert!(!detail.contains("周报") && !detail.contains("cron"));
         let long = "ValueError: boom\n".repeat(400);
         assert!(engine_error_lines(&long).len() <= 2048);
+    }
+
+    #[test]
+    fn feedback_log_starts_on_a_whole_line_and_hides_secrets_again() {
+        let mut log = String::new();
+        for index in 0..5000 { log.push_str(&format!("2026-11-09T00:00:00Z info  connect.ok 第 {index} 行\n")); }
+        log.push_str("2026-11-09T00:00:01Z warn  remote.http_failed Bearer abcdefghijklmnop\n");
+        let excerpt = feedback_log_excerpt(log.as_bytes());
+        assert!(excerpt.len() <= MAX_FEEDBACK_LOG);
+        assert!(excerpt.starts_with("2026-11-09T00:00:00Z info"));        // 不从半行开始
+        assert!(excerpt.contains("第 4999 行") && !excerpt.contains("abcdefghijklmnop"));
+        assert_eq!(feedback_log_excerpt(b"short\nlog"), "short\nlog");
     }
 
     #[test]

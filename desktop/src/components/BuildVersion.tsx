@@ -1,6 +1,5 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { desktopBuildInfo, type DesktopBuildInfo } from "../lib/buildInfo";
-import { feedbackMailto } from "../lib/feedback";
+import { FeedbackButton } from "./FeedbackDialog";
 
 export function BuildVersion({ details = false, info = desktopBuildInfo }: { details?: boolean; info?: DesktopBuildInfo }) {
   const label = `VortoOne ${info.version} · ${info.buildId}`;
@@ -10,6 +9,6 @@ export function BuildVersion({ details = false, info = desktopBuildInfo }: { det
     <p>构建标识：<code>{info.buildId}</code></p>
     <p>构建时间：{info.builtAt ? new Date(info.builtAt).toLocaleString() : "尚未生成"}</p>
     <small>显示当前窗口加载的版本；更新后需 ⌘Q 退出再打开。</small>
-    <p><button onClick={() => void openUrl(feedbackMailto(info))}>问题反馈</button></p>
+    <p><FeedbackButton /></p>
   </div>;
 }
