@@ -622,3 +622,42 @@ async def test_attach_callback_type_error_does_not_retry_confirmation():
     assert await ProtocolClient._dispatch_confirm(
         {"text": "操作？", "tainted": False, "operation_kind": "deliver"}, broken) is False
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("tainted", [False, True])
+async def test_headless_yes_does_not_execute_delivery_or_deletion(tmp_path, monkeypatch, tainted):
+    from src.agents.main_agent import build_agent_tools
+    from src.agents.tools.artifacts import ArtifactStore
+    from src.agents import vcs
+
+    store = ArtifactStore(str(tmp_path))
+    original = store.publish("原稿", "<p>原稿</p>")
+    (tmp_path / "delivery.txt").write_text("交付物")
+    pushed, sent, asked = [], [], []
+    monkeypatch.setattr(vcs, "push_and_open_pr", lambda *a, **k: pushed.append(a) or {"ok": True, "url": "unused"})
+
+    async def sender(*args):
+        sent.append(args)
+        return True
+
+    async def human(message):
+        asked.append(message)
+        return True
+
+    monkeypatch.setattr("src.agents.tools.media._OWNER_MEDIA_SENDER", sender)
+    confirm = make_confirm_gate(human, auto_approve=True, can_ask_human=False)
+    tools = {tool.name: tool for tool in build_agent_tools(
+        str(tmp_path), confirm=confirm, with_artifacts=True)}
+    if tainted:
+        taint.mark_tainted()
+    for name, args in (
+        ("open_pr", {"branch": "codex/example", "title": "示例"}),
+        ("publish_artifact", {"title": "新稿", "html": "<p>新稿</p>"}),
+        ("publish_artifact", {"id": original["id"], "html": "<p>更新</p>"}),
+        ("delete_artifact", {"id": original["id"]}),
+        ("send_file", {"path": "delivery.txt"}),
+    ):
+        await tools[name].handler(args)
+    assert not pushed and not sent and not asked
+    assert len(store.list()) == 1
+    assert store.meta(original["id"])["version"] == 1
