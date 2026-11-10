@@ -29,7 +29,7 @@ async def test_typed_builtin_fields_block_before_approvals_or_handlers(tmp_path,
         calls.append("handler")
         return "should not execute"
     tools = {tool.name: tool for tool in build_read_tools(str(tmp_path)) + build_command_tool(str(tmp_path), confirm)}
-    tools[name].handler = handler
+    tools[name]._implementation = handler
     runtime = ToolRuntime(lambda: tools, ToolExecutionContext(on_escalate=confirm))
     assert (await runtime.execute(name, args, "plan")).status == "blocked"
     assert calls == []

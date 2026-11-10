@@ -1,6 +1,8 @@
 """跟进建议：子 Agent 记范围外发现（不顺手改）、去重限量、Desktop 一键开始或忽略、不进「等你处理」。"""
 from __future__ import annotations
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.workflow.tasks import followups
@@ -30,7 +32,7 @@ def test_ledger_dedups_caps_per_source_and_tracks_state(tmp_path):
 async def test_sub_agent_tool_records_instead_of_fixing(tmp_path):
     from src.agents.dev_tools import build_followup_tool, followup_note
     recorded: list = []
-    tool = build_followup_tool(str(tmp_path), "修登录", recorded)
+    tool = authorized_tools(build_followup_tool(str(tmp_path), "修登录", recorded), human=False)
     assert not tool.read_only and "不要顺手去改" in tool.description
     reply = await tool.handler({"title": "README 的安装步骤过时了", "detail": "还写着 pip install -r"})
     assert "已记为跟进建议" in reply and recorded == ["README 的安装步骤过时了"]

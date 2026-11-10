@@ -7,6 +7,7 @@
 import json
 
 import pytest
+from src.agents.gate import make_confirm_gate
 
 from src.agents import main_agent as ma
 from src.agents import pr_doctor
@@ -214,6 +215,7 @@ def test_pr_doctor_report_blocks_non_vorto_autofix(tmp_path):
 
 # --------------------------------------------------------------------- pr_fix 工具
 def _pr_fix_tool(tmp_path, confirm=None):
+    confirm = confirm if confirm is not None else make_confirm_gate(auto_approve=True)
     return {t.name: t for t in ma.build_dev_tools(str(tmp_path), confirm=confirm)}["pr_fix"]
 
 

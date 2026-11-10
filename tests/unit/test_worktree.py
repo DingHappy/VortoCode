@@ -2,6 +2,8 @@
 
 用真实的临时 git 仓库验证：改动只落在一次性 worktree、产出 diff、无论成败都清理。
 """
+
+from tests.tool_authorization import authorized_tools
 import subprocess
 
 import pytest
@@ -142,7 +144,7 @@ async def test_run_isolated_task_with_injected_agent(tmp_path):
 @pytest.mark.asyncio
 async def test_build_write_tools_edit_write_and_escape_guard(tmp_path):
     (tmp_path / "f.py").write_text("a=1\n")
-    tools = {t.name: t for t in build_write_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_write_tools(str(tmp_path)), human=False)}
 
     await tools["edit_file"].handler({"path": "f.py", "old": "a=1", "new": "a=2"})
     assert (tmp_path / "f.py").read_text() == "a=2\n"
@@ -153,13 +155,13 @@ async def test_build_write_tools_edit_write_and_escape_guard(tmp_path):
     r = await tools["write_file"].handler({"path": "../escape.py", "content": "x"})
     assert "越界" in r and not (tmp_path.parent / "escape.py").exists()   # 不写出 root 之外
 
-    assert all(t.read_only is False for t in build_write_tools(str(tmp_path)))   # 是写工具
+    assert all(t.read_only is False for t in authorized_tools(build_write_tools(str(tmp_path)), human=False))   # 是写工具
 
 
 @pytest.mark.asyncio
 async def test_edit_file_replace_all_and_uniqueness(tmp_path):
     (tmp_path / "f.py").write_text("x = OLD\ny = OLD\nz = OLD\n", encoding="utf-8")
-    edit = {t.name: t for t in build_write_tools(str(tmp_path))}["edit_file"]
+    edit = {t.name: t for t in authorized_tools(build_write_tools(str(tmp_path)), human=False)}["edit_file"]
 
     # 默认（不唯一）→ 拒绝、提示可 replace_all，且不改文件
     r = await edit.handler({"path": "f.py", "old": "OLD", "new": "NEW"})
@@ -176,7 +178,7 @@ async def test_edit_file_replace_all_and_uniqueness(tmp_path):
 async def test_edit_file_replace_all_accepts_string_flag(tmp_path):
     # 提示式协议里 flag 是字符串 "true"（非原生 bool）也要认
     (tmp_path / "g.py").write_text("A\nA\n", encoding="utf-8")
-    edit = {t.name: t for t in build_write_tools(str(tmp_path))}["edit_file"]
+    edit = {t.name: t for t in authorized_tools(build_write_tools(str(tmp_path)), human=False)}["edit_file"]
     r = await edit.handler({"path": "g.py", "old": "A", "new": "B", "replace_all": "true"})
     assert "替换 2 处" in r and (tmp_path / "g.py").read_text(encoding="utf-8") == "B\nB\n"
 
@@ -185,7 +187,7 @@ async def test_edit_file_replace_all_accepts_string_flag(tmp_path):
 async def test_edit_file_unique_still_replaces_one(tmp_path):
     # 唯一时一切照旧：替 1 处（即便没传 replace_all）
     (tmp_path / "h.py").write_text("only=ONE\nkeep=1\n", encoding="utf-8")
-    edit = {t.name: t for t in build_write_tools(str(tmp_path))}["edit_file"]
+    edit = {t.name: t for t in authorized_tools(build_write_tools(str(tmp_path)), human=False)}["edit_file"]
     r = await edit.handler({"path": "h.py", "old": "ONE", "new": "TWO"})
     assert "替换 1 处" in r and (tmp_path / "h.py").read_text(encoding="utf-8") == "only=TWO\nkeep=1\n"
 
@@ -210,7 +212,7 @@ async def test_run_isolated_task_with_real_main_agent(monkeypatch, tmp_path):
     monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
 
     def _build(wt):
-        return MainAgent(build_read_tools(wt) + build_write_tools(wt), max_steps=6)
+        return MainAgent(build_read_tools(wt) + authorized_tools(build_write_tools(wt), human=False), max_steps=6)
 
     diff, conclusion, ver = await worktree.run_isolated_task(str(tmp_path), "wt-real", "加 hello.py", _build)
     assert "hello.py" in diff and "print(1)" in diff      # 子 agent 的写改动进了 diff
@@ -431,7 +433,7 @@ async def test_build_dev_tools_lands_green_on_branch(monkeypatch, tmp_path):
             return {"content": "加了 feat.py。"}
     monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_isolated"]
     out = await tool.handler({"description": "加 feat 模块", "test": "tests/test_pass.py"})
     assert "✅" in out and "vorto/" in out                      # 绿了、落到分支
     branches = subprocess.run(["git", "-C", str(tmp_path), "branch", "--list", "vorto/*"],
@@ -447,7 +449,7 @@ async def test_build_dev_tools_lands_green_on_branch(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_build_dev_tools_parallel_empty_guard(tmp_path):
     from src.agents.main_agent import build_dev_tools
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}
     assert "dev_parallel" in tools
     assert "需要 tasks" in await tools["dev_parallel"].handler({"tasks": []})   # 空输入有守卫
 
@@ -467,7 +469,7 @@ async def test_dev_parallel_reports_integration_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
     monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_parallel"]
     out = await tool.handler({"tasks": ["子任务甲", "子任务乙"]})
     assert "集成后全量测试未过" in out and "BOOM_integration_failed" in out
     assert "分支已保留待修" in out                                   # 红了保留分支供修
@@ -491,7 +493,7 @@ async def test_dev_parallel_reports_dropped_blocks(monkeypatch, tmp_path):
     monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
     monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_parallel"]
     out = await tool.handler({"tasks": ["子任务甲", "子任务乙"]})
     assert "未能干净落分支" in out                                   # 如实报告被丢的块（不再静默）
     assert "子任务乙" in out                                        # 点名是哪块被丢
@@ -529,7 +531,7 @@ async def test_dev_auto_reports_independent_block_dropped_on_apply(monkeypatch, 
         return {"ok": True, "output": "", "cmd": "pytest"}                 # 落地的那块集成绿
     monkeypatch.setattr(wt, "verify_branch", fake_verify)
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_auto"]
     out = await tool.handler({"task": "做两件相互冲突的事"})
     # 如实报告被丢的块，且带上**真实 git 报错**——2026-07-26 起不再一律硬写"文本冲突"：
     # 真机上撞到的是 `commit 失败: Author identity unknown`，猜成冲突会把人引向错的排查方向。
@@ -555,7 +557,7 @@ async def test_dev_parallel_reports_integration_pass_and_passes_test_cmd(monkeyp
     monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
     monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_parallel"]
     out = await tool.handler({"tasks": ["甲", "乙"]})
     assert "集成后全量测试通过" in out
     assert seen["test_cmd"] is not None                 # 集成验证用的 test_cmd 已传入
@@ -689,7 +691,7 @@ async def test_dev_auto_independent_then_dependent_topo_then_verify(monkeypatch,
     monkeypatch.setattr(wt, "verify_branch",
                         lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "pytest"})
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_auto"]
     out = await tool.handler({"task": "做个大功能"})
     assert "独立批" in out and "依赖接力" in out and "集成后全量测试通过" in out
     assert len(calls) == 2 and "B" in calls[0] and "C" in calls[1]   # 拓扑序：B 先于 C（虽输入是 c,b）
@@ -722,7 +724,7 @@ async def test_dev_auto_reports_final_integration_failure(monkeypatch, tmp_path)
     monkeypatch.setattr(wt, "verify_branch",
                         lambda repo, br, tc, wid, *a, **k: {"ok": False, "output": "FINAL_INTEG_RED", "cmd": "pytest"})
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_auto"]
     out = await tool.handler({"task": "做个功能"})
     assert "集成后全量测试未过" in out and "FINAL_INTEG_RED" in out and "分支保留待修" in out
 
@@ -758,7 +760,7 @@ async def test_dev_auto_bullet_uses_first_line_of_multiline_desc(monkeypatch, tm
     monkeypatch.setattr(wt, "verify_branch",
                         lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "pytest"})
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_auto"]
     out = await tool.handler({"task": "新增 short_hash"})
     assert "  · 新增 short_hash：✅" in out
     assert "只改两个文件：✅" not in out and "验收标准" not in out
@@ -784,7 +786,7 @@ async def test_dev_parallel_self_repairs_on_failure(monkeypatch, tmp_path):
                         lambda repo, br, items, tc=None: {"ok": True, "branch": br,
                                                           "applied": [m for _d, m in items], "failed": [],
                                                           "integration": {"ok": True, "output": "", "cmd": "p"}})
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_parallel"]
     out = await tool.handler({"tasks": ["实现X"]})
     assert state["n"] == 2                                   # 红 → 自动重试一次
     assert "FAILED_ONCE_XYZ" in state["descs"][1]           # 第二次把失败输出拼进了描述（定向修复）
@@ -801,7 +803,7 @@ async def test_dev_parallel_all_attempts_fail_reports_red(monkeypatch, tmp_path)
         state["n"] += 1
         return ("diff\n", "c", {"ok": False, "output": "STILL_RED"})
     monkeypatch.setattr(wt, "run_isolated_task", always_red)
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_parallel"]
     out = await tool.handler({"tasks": ["x"]})
     assert state["n"] == 2                                   # 默认尝试 2 次（1 初始 + 1 修复）后放弃
     assert "无通过测试的改动" in out and "试了 2 次" in out
@@ -818,7 +820,7 @@ async def test_dev_attempts_env_override(monkeypatch, tmp_path):
         state["n"] += 1
         return ("diff\n", "c", {"ok": False, "output": "R"})
     monkeypatch.setattr(wt, "run_isolated_task", always_red)
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_parallel"]
     await tool.handler({"tasks": ["x"]})
     assert state["n"] == 3                                   # env 把尝试次数调到 3
 
@@ -841,7 +843,7 @@ async def test_dev_isolated_retries_on_noop_then_lands(monkeypatch, tmp_path):
     monkeypatch.setattr(wt, "apply_diff_to_branch",
                         lambda repo, br, diff, msg: {"ok": True, "branch": br, "error": ""})
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_isolated"]
     out = await tool.handler({"description": "加个函数"})
     assert state["n"] == 2                                       # no-op → 自动重试一次
     assert "没有产生任何改动" in state["descs"][1]               # 第二次用了更命令式的 no-op 提示
@@ -860,7 +862,7 @@ async def test_dev_isolated_all_noop_reports_clearly(monkeypatch, tmp_path):
         return ("", "没干", {"ok": True, "output": ""})
     monkeypatch.setattr(wt, "run_isolated_task", always_noop)
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_isolated"]
     out = await tool.handler({"description": "做点啥"})
     assert state["n"] == 2                                       # 默认尝试 2 次后放弃
     assert out["ok"] is False                                    # 结构化失败：工具事件记 failed
@@ -902,7 +904,7 @@ async def test_dev_auto_dependent_self_repairs(monkeypatch, tmp_path):
     monkeypatch.setattr(wt, "run_dependent_on_branch", flaky_dep)
     monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_auto"]
     out = await tool.handler({"task": "big"})
     assert state["n"] == 2                                   # 依赖红 → 自修复重试
     assert "DEP_FAILED_ONCE" in state["descs"][1]           # 第二次带失败反馈
@@ -924,7 +926,7 @@ async def test_dev_parallel_emits_progress(monkeypatch, tmp_path):
                                                           "applied": [m for _d, m in items], "failed": [],
                                                           "integration": {"ok": True, "output": "", "cmd": "p"}})
     events = []
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=events.append)}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path), on_progress=events.append), human=False)}["dev_parallel"]
     await tool.handler({"tasks": ["甲", "乙"]})
     joined = "\n".join(events)
     assert "并行隔离实现 2 个子任务" in joined                # 开工进度
@@ -961,7 +963,7 @@ async def test_dev_auto_emits_progress_through_phases(monkeypatch, tmp_path):
     monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
     events = []
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=events.append)}["dev_auto"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path), on_progress=events.append), human=False)}["dev_auto"]
     await tool.handler({"task": "big"})
     joined = "\n".join(events)
     assert "分解任务" in joined                              # 分解阶段
@@ -985,7 +987,7 @@ async def test_progress_callback_errors_dont_break_pipeline(monkeypatch, tmp_pat
 
     def boom(_m):
         raise RuntimeError("progress sink down")
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=boom)}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path), on_progress=boom), human=False)}["dev_parallel"]
     out = await tool.handler({"tasks": ["x"]})              # 进度回调抛错 → best-effort 吞掉，不影响流水线
     assert "1 通过测试" in out
 
@@ -995,10 +997,10 @@ async def test_build_test_tool_lets_subagent_self_check(tmp_path):
     import sys
     from src.agents.main_agent import build_test_tool
     # 给隔离实现子 agent 的受限 run_tests：只跑测试、不是任意 shell
-    t = build_test_tool(str(tmp_path), [sys.executable, "-c", "import sys; sys.exit(0)"])
+    t = authorized_tools(build_test_tool(str(tmp_path), [sys.executable, "-c", "import sys; sys.exit(0)"]), human=False)
     assert t.name == "run_tests" and t.read_only is True
     assert "通过" in (await t.handler({})).text
-    t2 = build_test_tool(str(tmp_path), [sys.executable, "-c", "import sys; sys.stderr.write('BOOM'); sys.exit(1)"])
+    t2 = authorized_tools(build_test_tool(str(tmp_path), [sys.executable, "-c", "import sys; sys.stderr.write('BOOM'); sys.exit(1)"]), human=False)
     out = (await t2.handler({})).text
     assert "未过" in out and "BOOM" in out                     # 失败带输出，子 agent 据此改
 

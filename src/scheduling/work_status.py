@@ -135,4 +135,4 @@ def build_work_status_tool(root: str):
     return Tool("work_status",
                 "一次看清现在都有哪些事：等用户处理的、进行中的任务单 / 个人目标 / Codex 会话、出问题的定时。"
                 "用户问「现在都在忙什么」「进展怎么样」或你要汇报全局时先调它；某一项的细节再用专用工具查。",
-                {}, handler, untrusted_source=True)
+                {}, handler, untrusted_source=True, operation_kind='read')

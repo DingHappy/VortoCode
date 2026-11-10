@@ -1,6 +1,8 @@
 """共享 MCP 接入（src/agents/mcp_tools.py）—— 把 ToolManager 的 MCP 工具包成主 agent Tool，
 TUI/Web/CLI 同源。用假 manager 驱动，不起真 MCP 服务器。"""
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.mcp_tools import (
@@ -55,7 +57,7 @@ def test_wrap_names_and_gates():
 @pytest.mark.asyncio
 async def test_wrap_handler_dispatches_and_returns_output():
     mgr = _FakeManager([_FakeTool("search", "brave")], _FakeResult(True, "命中3条"))
-    tool = wrap_mcp_manager(mgr)[0]
+    tool = authorized_tools(wrap_mcp_manager(mgr))[0]
     out = await tool.handler({"q": "vorto"})
     assert out == "命中3条" and mgr.calls == [("search", {"q": "vorto"})]
 
@@ -63,7 +65,7 @@ async def test_wrap_handler_dispatches_and_returns_output():
 @pytest.mark.asyncio
 async def test_wrap_handler_reports_error():
     mgr = _FakeManager([_FakeTool("x", "s")], _FakeResult(False, error="boom"))
-    tool = wrap_mcp_manager(mgr)[0]
+    tool = authorized_tools(wrap_mcp_manager(mgr))[0]
     out = await tool.handler({})
     assert out["ok"] is False and "MCP 工具出错" in out["error"] and "boom" in out["error"]
 

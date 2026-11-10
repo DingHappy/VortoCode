@@ -89,7 +89,7 @@ async def test_real_agent_rejects_changes_during_request_or_tool(tmp_path, monke
         return MainAgent(*args, **{**kwargs, "llm": LLM(), "native": native})
 
     monkeypatch.setattr(adapter, "MainAgent", factory)
-    monkeypatch.setattr(delegation, "build_read_tools", lambda _: [Tool("read_probe", "read", {}, read)])
+    monkeypatch.setattr(delegation, "build_read_tools", lambda _: [Tool("read_probe", "read", {}, read, operation_kind='read')])
     service, runner, parent, child, _ = await setup(tmp_path, lambda task, collaboration: execute_dispatch(str(tmp_path), task, collaboration))
     service.release("owner", child.id, 1)
     await asyncio.wait_for(reached.wait(), 3)
@@ -428,7 +428,7 @@ async def test_tool_admission_rechecks_after_an_async_hook():
     agent._hook_system = object()
     agent._fire_hook = hook
     with pytest.raises(CollaborationConflict):
-        await agent._run_bound_tool(Tool("read", "read", {}, read), {}, "plan", lambda _: None)
+        await agent._run_bound_tool(Tool("read", "read", {}, read, operation_kind='read'), {}, "plan", lambda _: None)
     assert not calls
 
 

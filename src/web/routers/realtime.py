@@ -1245,7 +1245,7 @@ async def _run_workspace_edit(websocket, path: str, content: str, expected_sha25
     async def _run():
         outcome: Dict[str, Any] = {"ok": False, "path": path}
 
-        async def _save(args: dict) -> str:
+        async def _save(args: dict) -> object:
             try:
                 prepared = prepare_workspace_edit(
                     os.getcwd(), args["path"], args["content"], args["expected_sha256"])
@@ -1259,32 +1259,33 @@ async def _run_workspace_edit(websocket, path: str, content: str, expected_sha25
             q.put_nowait(P.make_event(
                 P.AGENT_DIFF, title=f"Desktop 保存前审查：{prepared.relative_path}",
                 diff=prepared.diff))
-            gate = getattr(agent, "confirm_gate", None)
-            if gate is None or not await gate(
-                    f"保存 Desktop 对 {prepared.relative_path} 的编辑？确认后会覆盖当前工作区文件。"):
-                outcome["message"] = "用户取消了源码保存"
+            async def apply():
+                try:
+                    before_text = prepared.path.read_text(encoding="utf-8")
+                    new_hash = apply_workspace_edit(prepared)
+                except WorkspaceEditError as error:
+                    outcome["message"] = str(error)
+                    return str(error)
+                outcome.update(ok=True, sha256=new_hash,
+                               message=f"已保存 {prepared.relative_path}（{len(prepared.content)} 字节）")
+                from src.workflow.review.change_sources import record_change_source
+                record_change_source(
+                    os.getcwd(), prepared.relative_path, before_text,
+                    prepared.content.decode("utf-8"), source="user",
+                    session=_session_key(websocket), turn=rid or "", tool="desktop_editor",
+                )
                 return outcome["message"]
-            try:
-                before_text = prepared.path.read_text(encoding="utf-8")
-                new_hash = apply_workspace_edit(prepared)
-            except WorkspaceEditError as error:
-                outcome["message"] = str(error)
-                return str(error)
-            outcome.update(ok=True, sha256=new_hash,
-                           message=f"已保存 {prepared.relative_path}（{len(prepared.content)} 字节）")
-            from src.workflow.review.change_sources import record_change_source
-            record_change_source(
-                os.getcwd(), prepared.relative_path, before_text,
-                prepared.content.decode("utf-8"), source="user",
-                session=_session_key(websocket), turn=rid or "", tool="desktop_editor",
-            )
-            return outcome["message"]
+            from src.agents.tool import PreparedToolCall
+            return PreparedToolCall(apply,
+                f"保存 Desktop 对 {prepared.relative_path} 的编辑？确认后会覆盖当前工作区文件。",
+                "write", denied_result="用户取消了源码保存",
+                on_denied=lambda: outcome.update(message="用户取消了源码保存"))
 
-        tool = Tool(
+        tool = Tool.prepared(
             "write_file", "Desktop 显式源码保存（不向模型暴露）",
             {"path": "相对路径", "content": "UTF-8 全文", "expected_sha256": "打开时版本"},
             _save, read_only=False,
-        )
+         operation_kind='write')
         try:
             result = await agent._run_bound_tool(
                 tool,

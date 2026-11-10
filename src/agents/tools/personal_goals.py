@@ -10,6 +10,9 @@ external 字段时给本回合打污点——外部内容经「写进台账」�
 """
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
+
 import asyncio
 import json
 import uuid
@@ -86,7 +89,7 @@ def build_personal_goal_tools(root: str, confirm=None) -> list[Tool]:
         return text
 
     tools = [Tool("personal_goals", "只读查看当前助理的个人目标、下一步、阻塞与验收状态；不传 ID 列出最近五个未达成目标，传 ID 查看逐条依据。",
-                  {"goal_id": "可选，personal- 开头的目标 ID"}, handler, read_only=True)]
+                  {"goal_id": "可选，personal- 开头的目标 ID"}, handler, read_only=True, operation_kind='read', confirm=confirm)]
     if confirm is None:
         return tools
     return tools + _write_tools(root, confirm)
@@ -104,11 +107,10 @@ def _field_origin(value) -> str:
 
 
 def _write_tools(root: str, confirm) -> list[Tool]:
-    from src.agents.gate import request
     from src.agents.taint import is_tainted
     from src.agents.trust import OWN_DATA
 
-    async def create(args: dict) -> str:
+    async def create(args: dict) -> object:
         criteria = args.get("acceptance_criteria")
         if isinstance(criteria, str):
             criteria = [line.strip("-· ").strip() for line in criteria.splitlines() if line.strip()]
@@ -119,19 +121,19 @@ def _write_tools(root: str, confirm) -> list[Tool]:
             return "需要 objective（目标）和 acceptance_criteria（达标条件，每行一条）。"
         preview = (f"新建个人目标：{body['objective'][:200]}\n下一步：{str(body['next_action'] or '')[:200]}\n达标条件："
                    + "；".join(str(item)[:100] for item in criteria[:20]))
-        if not await request(confirm, preview, OWN_DATA):
-            return "没有新建目标（未获同意）。"
-        try:
-            origins = {key: _field_origin(body.get(key)) for key in ("objective", "acceptance_criteria", "next_action")}
-            goal = await asyncio.to_thread(lambda: PersonalGoals(root).create(body, origins=origins))
-        except (OSError, ValueError) as error:
-            return f"目标没建成：{error}"
-        undo_log.record(root, action="personal_goal.create", summary=f"新建目标「{goal['objective'][:60]}」",
-                        payload={"goal_id": goal["id"], "revision": goal["revision"]},
-                        tainted=is_tainted(), source="assistant")
-        return f"已新建目标 {goal['id']}：{goal['objective'][:100]}。可在 Desktop「我替你做了什么」里撤销；提醒仍需主人在目标卡上批准。"
+        async def apply():
+            try:
+                origins = {key: _field_origin(body.get(key)) for key in ("objective", "acceptance_criteria", "next_action")}
+                goal = await asyncio.to_thread(lambda: PersonalGoals(root).create(body, origins=origins))
+            except (OSError, ValueError) as error:
+                return f"目标没建成：{error}"
+            undo_log.record(root, action="personal_goal.create", summary=f"新建目标「{goal['objective'][:60]}」",
+                            payload={"goal_id": goal["id"], "revision": goal["revision"]},
+                            tainted=is_tainted(), source="assistant")
+            return f"已新建目标 {goal['id']}：{goal['objective'][:100]}。可在 Desktop「我替你做了什么」里撤销；提醒仍需主人在目标卡上批准。"
+        return PreparedToolCall(apply, preview, OWN_DATA, denied_result='没有新建目标（未获同意）。')
 
-    async def update(args: dict) -> str:
+    async def update(args: dict) -> object:
         goal_id = args.get("goal_id")
         changes = {key: args[key] for key in _PROGRESS_FIELDS if key in args}
         if not isinstance(goal_id, str) or not changes:
@@ -144,34 +146,34 @@ def _write_tools(root: str, confirm) -> list[Tool]:
         lines = [f"修改目标「{before['objective'][:80]}」的进展："]
         lines += [f"{key}：{str(before.get(key) or '（空）')[:120]} → {str(value or '（空）')[:120]}"
                   for key, value in changes.items()]
-        if not await request(confirm, "\n".join(lines), OWN_DATA):
-            return "没有修改目标（未获同意）。"
-        try:
-            origins = {key: _field_origin(changes[key]) for key in ("next_action", "blocker") if key in changes}
-            after = await asyncio.to_thread(lambda: service.update(goal_id, {"revision": before["revision"], **changes},
-                                                                   origins=origins))
-        except (OSError, KeyError, ValueError) as error:
-            return f"目标没改成：{error}"
-        cancelled = (before.get("follow_up") or {}).get("status") == "scheduled"
-        undo_log.record(root, action="personal_goal.update", summary=f"改了目标「{before['objective'][:60]}」的进展",
-                        payload={"goal_id": goal_id, "revision": after["revision"],
-                                 "before": {key: before.get(key) or "" for key in changes},
-                                 "before_origins": {key: (before.get("origins") or {}).get(key, "owner") for key in changes},
-                                 "cancelled_follow_up": cancelled},
-                        tainted=is_tainted(), source="assistant")
-        note = "；原先批准的提醒已取消，需要主人重新批准" if cancelled else ""
-        return f"已更新目标 {goal_id}{note}。可在 Desktop「我替你做了什么」里撤销。"
+        async def apply():
+            try:
+                origins = {key: _field_origin(changes[key]) for key in ("next_action", "blocker") if key in changes}
+                after = await asyncio.to_thread(lambda: service.update(goal_id, {"revision": before["revision"], **changes},
+                                                                       origins=origins))
+            except (OSError, KeyError, ValueError) as error:
+                return f"目标没改成：{error}"
+            cancelled = (before.get("follow_up") or {}).get("status") == "scheduled"
+            undo_log.record(root, action="personal_goal.update", summary=f"改了目标「{before['objective'][:60]}」的进展",
+                            payload={"goal_id": goal_id, "revision": after["revision"],
+                                     "before": {key: before.get(key) or "" for key in changes},
+                                     "before_origins": {key: (before.get("origins") or {}).get(key, "owner") for key in changes},
+                                     "cancelled_follow_up": cancelled},
+                            tainted=is_tainted(), source="assistant")
+            note = "；原先批准的提醒已取消，需要主人重新批准" if cancelled else ""
+            return f"已更新目标 {goal_id}{note}。可在 Desktop「我替你做了什么」里撤销。"
+        return PreparedToolCall(apply, '\n'.join(lines), OWN_DATA, denied_result='没有修改目标（未获同意）。')
 
     return [
-        Tool("personal_goal_create",
+        Tool.prepared("personal_goal_create",
              "替主人新建一个个人目标（主人说「帮我记一下」「这件事周五前要做完」时用）。"
              "要写明目标、每行一条的达标条件和下一步；期限和跟进时间可选（带时区的 ISO 时间）。不会批准提醒。",
              {"objective": "目标，一句话", "acceptance_criteria": "达标条件，每行一条（1–20 条）",
               "next_action": "下一步", "due_at": "可选，期限", "follow_up_at": "可选，下次跟进时间"},
-             create, read_only=False),
-        Tool("personal_goal_update",
+             create, read_only=False, operation_kind='own_data', confirm=confirm),
+        Tool.prepared("personal_goal_update",
              "修改一个个人目标的进展：下一步、阻塞、期限或跟进时间（只传要改的）。不能改验收，也不能批准提醒。",
              {"goal_id": "personal- 开头的目标 ID", "next_action": "可选", "blocker": "可选，传空串表示清除",
               "due_at": "可选", "follow_up_at": "可选"},
-             update, read_only=False),
+             update, read_only=False, operation_kind='own_data', confirm=confirm),
     ]

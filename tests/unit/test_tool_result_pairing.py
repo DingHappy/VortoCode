@@ -107,7 +107,7 @@ async def test_real_dispatch_persistence_and_next_request_keep_the_result_mappin
                 return {"content": json.dumps(batch)}
             return {"content": "已读取两条原始结果。"}
 
-    agent = MainAgent([Tool("read", "Read", {"index": "Which"}, read, untrusted_source=True)],
+    agent = MainAgent([Tool("read", "Read", {"index": "Which"}, read, untrusted_source=True, operation_kind='read')],
                       llm=Script(), native=native, env_context=False)
     assert await agent.run_turn("读取两条结果") == "已读取两条原始结果。"
     assert executed == [0, 1] and has_external(agent.history)

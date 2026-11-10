@@ -6,6 +6,7 @@
 import subprocess
 
 import pytest
+from src.agents.gate import make_confirm_gate
 
 from src.agents import main_agent as ma
 
@@ -67,6 +68,7 @@ def _patch_pipeline(monkeypatch, *, integration_ok=True):
 
 
 def _dev_auto(tmp_path, confirm=None):
+    confirm = confirm if confirm is not None else make_confirm_gate(auto_approve=True)
     return {t.name: t for t in ma.build_dev_tools(str(tmp_path), confirm=confirm)}["dev_auto"]
 
 
@@ -204,7 +206,7 @@ async def test_no_pr_without_confirm_gate(tmp_path, monkeypatch):
     _init_repo_on_branch(tmp_path, "dev")   # 预检要求真仓库 + 提交身份（2026-07-26）
     _patch_pipeline(monkeypatch, integration_ok=True)
     out = await _dev_auto(tmp_path, confirm=None).handler({"task": "x", "open_pr": True})
-    assert "未接确认门" in out                              # 没接确认门 → 不开、给提示
+    assert "已取消开 PR" in out                              # 没接确认门 → 不开、给提示
 
 
 @pytest.mark.asyncio
@@ -297,8 +299,8 @@ async def test_open_pr_emits_diff_before_confirm(tmp_path, monkeypatch):
                         lambda root, base, branch, limit=8000: "+++ b/f.txt\n+x")
     order = []
 
-    async def confirm(msg):
-        order.append(("confirm", msg))
+    async def confirm(msg, kind=None):
+        order.append(("deliver_confirm" if kind == "deliver" else "execute_confirm", msg))
         return True
 
     tool = {t.name: t for t in ma.build_dev_tools(
@@ -307,7 +309,7 @@ async def test_open_pr_emits_diff_before_confirm(tmp_path, monkeypatch):
     out = await tool.handler({"task": "x", "open_pr": True})
     assert "已开 PR" in out
     kinds = [o[0] for o in order]
-    assert kinds.index("diff") < kinds.index("confirm")     # 先看 diff、再问确认
+    assert kinds.index("diff") < kinds.index("deliver_confirm")     # 先看 diff、再问确认
     d = next(o for o in order if o[0] == "diff")
     assert "vorto/auto-" in d[1] and "+x" in d[2]
 

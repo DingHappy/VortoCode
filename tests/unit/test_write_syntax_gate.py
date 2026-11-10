@@ -17,6 +17,10 @@
 改不动（那会堵死修复路径）。
 """
 
+from tests.tool_authorization import authorized_tools
+
+from src.agents.gate import make_confirm_gate
+
 import pytest
 
 from src.agents.tools.files import build_write_tools
@@ -45,7 +49,7 @@ REAL_BROKEN = '''class TodoList:
 
 
 def _tools(tmp_path):
-    return {t.name: t for t in build_write_tools(str(tmp_path))}
+    return {t.name: t for t in authorized_tools(build_write_tools(str(tmp_path)), human=False)}
 
 
 @pytest.mark.asyncio
@@ -147,7 +151,7 @@ async def test_direct_writes_without_any_verification_are_called_out(tmp_path, m
     """闸只拦语法；"改完从不验证"拦不住，但不能让它悄悄溜过去——说给人听。"""
     from src.agents.agent_loop import MainAgent
 
-    agent = MainAgent(build_write_tools(str(tmp_path)), max_steps=4)
+    agent = MainAgent(authorized_tools(build_write_tools(str(tmp_path)), human=False), max_steps=4)
     (tmp_path / "todo.py").write_text(GOOD, encoding="utf-8")
     lines: list[str] = []
 
@@ -174,7 +178,7 @@ async def test_no_note_when_something_was_actually_run(tmp_path, monkeypatch):
         return "2 passed"
 
     tools = build_write_tools(str(tmp_path)) + [
-        Tool("run_tests", "跑测试", {}, _run_tests, read_only=False)]
+        Tool("run_tests", "跑测试", {}, _run_tests, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
     agent = MainAgent(tools, max_steps=4)
     (tmp_path / "todo.py").write_text(GOOD, encoding="utf-8")
     lines: list[str] = []
@@ -221,7 +225,7 @@ async def test_failed_test_receipt_reaches_main_agent_without_marking_writes_ver
     async def failed(_args):
         return ToolResult("测试未过：assert expected == actual", "failed")
 
-    agent = MainAgent(build_write_tools(str(tmp_path)) + [Tool("run_tests", "自测", {}, failed)])
+    agent = MainAgent(authorized_tools(build_write_tools(str(tmp_path)), human=False) + [Tool("run_tests", "自测", {}, failed, operation_kind='read')])
     result = await agent._run_tool("write_file", {"path": "note.md", "content": "fixture"}, "build", lambda _: None)
     assert result.startswith("已")
     text = await agent._run_tool("run_tests", {}, "build", lambda _: None)
@@ -238,7 +242,7 @@ async def test_background_start_receipt_does_not_count_as_verification(tmp_path,
     async def launched(_args):
         return ToolResult("已后台启动：尚无退出回执")
 
-    agent = MainAgent(build_write_tools(str(tmp_path)) + [Tool("run_command", "执行", {}, launched, read_only=False)])
+    agent = MainAgent(authorized_tools(build_write_tools(str(tmp_path)), human=False) + [Tool("run_command", "执行", {}, launched, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))])
     await agent._run_tool("write_file", {"path": "note.md", "content": "fixture"}, "build", lambda _: None)
     await agent._run_tool("run_command", {"background": background}, "build", lambda _: None)
     assert "尚未收到测试/命令的成功回执" in agent._unverified_writes_note()

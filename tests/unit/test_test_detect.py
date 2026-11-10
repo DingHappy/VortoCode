@@ -1,5 +1,7 @@
 """测试命令自动探测（src/agents/test_detect.py）—— 让隔离 dev 流水线不再写死 pytest。"""
 
+from tests.tool_authorization import authorized_tools
+
 import sys
 
 import pytest
@@ -82,7 +84,7 @@ def test_is_pytest_cmd():
 async def test_build_test_tool_selector_ignored_for_nonpython(tmp_path):
     # build_test_tool：非 pytest 的 default_cmd，给了 selector 也忽略、跑整套
     from src.agents.main_agent import build_test_tool
-    tool = build_test_tool(str(tmp_path), default_cmd=["go", "test", "./..."])
+    tool = authorized_tools(build_test_tool(str(tmp_path), default_cmd=["go", "test", "./..."]), human=False)
     out = (await tool.handler({"test": "foo_test.go"})).text
     assert "go test ./..." in out and "pytest" not in out
 
@@ -90,7 +92,7 @@ async def test_build_test_tool_selector_ignored_for_nonpython(tmp_path):
 @pytest.mark.asyncio
 async def test_build_test_tool_selector_applies_for_pytest(tmp_path):
     from src.agents.main_agent import build_test_tool
-    tool = build_test_tool(str(tmp_path), default_cmd=[sys.executable, "-m", "pytest", "-q"])
+    tool = authorized_tools(build_test_tool(str(tmp_path), default_cmd=[sys.executable, "-m", "pytest", "-q"]), human=False)
     out = (await tool.handler({"test": "tests/test_x.py"})).text
     assert "tests/test_x.py" in out                          # pytest：selector 生效
 
@@ -107,6 +109,6 @@ async def test_dev_tools_use_detected_cmd_for_go(monkeypatch, tmp_path):
         seen["cmd"] = test_cmd
         return ("", "无改动", None)                            # 无 diff → 不落分支，快速返回
     monkeypatch.setattr(wt, "run_isolated_task", cap_isolated)
-    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_parallel"]
     await tool.handler({"tasks": ["实现点啥"]})
     assert seen["cmd"] == ["go", "test", "./..."]            # 不再写死 pytest

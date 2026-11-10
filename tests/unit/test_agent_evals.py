@@ -1,4 +1,6 @@
 """MainAgent harness wiring and independent acceptance, with actual scratch Git repositories."""
+
+from src.agents.gate import make_confirm_gate
 import json
 import subprocess
 from pathlib import Path
@@ -32,7 +34,7 @@ def _fake_delivery(monkeypatch, *, fix):
             _git(root, "commit", "-qm", "candidate")
             _git(root, "checkout", "-q", "-")
             return "✅ vorto/evaluated 测试通过"
-        return [Tool("dev_isolated", "修复", {"description": "任务"}, deliver, read_only=False)]
+        return [Tool("dev_isolated", "修复", {"description": "任务"}, deliver, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
 
     monkeypatch.setattr(runner, "build_dev_tools", build)
 
@@ -121,7 +123,7 @@ async def test_execution_error_cannot_pass_a_negative_scenario(tmp_path, monkeyp
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(runner, "build_dev_tools", lambda *args, **kwargs: [
-        Tool("dev_isolated", "broken", {}, broken)])
+        Tool("dev_isolated", "broken", {}, broken, operation_kind='read')])
     class BrokenLLM:
         async def chat(self, *args, **kwargs):
             raise RuntimeError("provider unavailable")

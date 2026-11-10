@@ -3,6 +3,8 @@
 不是 src/hooks 本身的单测（那是 test_hooks.py），而是验证 _run_tool 把事件正确触发、
 并尊重 pre should_stop；被动 post message 只能进入观察时间线，不能注入工具结果。
 """
+
+from src.agents.gate import make_confirm_gate
 import pytest
 
 from src.agents.main_agent import MainAgent, Tool
@@ -13,7 +15,7 @@ def _tool(ran):
     async def handler(args):
         ran.append(args)
         return "原结果"
-    return Tool("edit_file", "e", {}, handler, read_only=False)
+    return Tool("edit_file", "e", {}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
 
 
 class _StopHook(Hook):

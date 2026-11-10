@@ -7,6 +7,8 @@
 2. `run_isolated_task` 空 diff 短路：不再为"绿测试 + 空 diff"这种永不成功的组合烧全量测试。
 3. 死因透传：dev_isolated / 依赖接力把"LLM 通道故障"如实报出，而不是笼统的"无改动/出错"。
 """
+
+from tests.tool_authorization import authorized_tools
 import os
 import subprocess
 
@@ -113,7 +115,7 @@ async def test_dev_isolated_reports_channel_error(tmp_path, monkeypatch):
         raise TimeoutError("mock 502 Bad Gateway")
     monkeypatch.setattr(worktree, "run_isolated_task", _fail)
 
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}
     out = await tools["dev_isolated"].handler({"description": "在 README 加一行"})
     assert out["ok"] is False                # 结构化失败：工具事件记 failed，不是 succeeded
     assert "LLM 通道故障" in out["text"]

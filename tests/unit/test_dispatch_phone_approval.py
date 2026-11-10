@@ -1,6 +1,8 @@
 """手机上下发任务单：通知带「批准 / 拒绝」按钮，按钮由桥直接处理（只认 owner、不经过模型）。"""
 from __future__ import annotations
 
+from tests.tool_authorization import authorized_tools
+
 import json
 from datetime import datetime
 
@@ -122,7 +124,7 @@ async def test_plain_notifier_still_gets_text(tmp_path):
 @pytest.mark.asyncio
 async def test_proposals_remember_the_conversation_so_the_card_shows_inline(tmp_path):
     current = {"sid": "sid-main"}
-    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(str(tmp_path), session=lambda: current["sid"])}
+    tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(str(tmp_path), session=lambda: current["sid"]))}
     reply = await tools["propose_task"].handler({"project": "VortoOne", "title": "补单测", "goal": "给 safe_id 补边界单测"})
     assert "卡片会出现在这段对话里" in reply
     assert dispatch.list_dispatches(str(tmp_path))[0]["session"] == "sid-main"

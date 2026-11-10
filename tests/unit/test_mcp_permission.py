@@ -152,6 +152,7 @@ def _stub(ex):
     async def _local(tool, arguments, timeout):
         return ToolExecutionResult(success=True, tool_name=tool.name, output="ok")
 
+    ex._execute_via_mcp = _local
     ex._execute_locally = _local
 
 
@@ -182,7 +183,7 @@ async def test_readonly_connector_executor_requires_all_three_conditions(
     manager = ToolManager(confirm=confirm if human is not None else None,
                           read_only_servers=frozenset({'srv'}) if server_selected else frozenset())
     tool = Tool(name='mcp__srv__write', server_name='srv',
-                metadata={'annotations': {'readOnlyHint': hint}})
+                metadata={'annotations': {'readOnlyHint': hint}}, operation_kind='read')
     manager.tool_registry.register(tool)
     manager.permission_manager.rules = _pm_with(PermissionAction(action)).rules
     _stub(manager.tool_executor)

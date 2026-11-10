@@ -1,4 +1,6 @@
 """Real delegation wiring and durable review/feedback lifecycle, without network."""
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 import ast
 import json
@@ -23,7 +25,7 @@ class EchoLLM:
 
 def tools(repo, owner="sid-parent", **kwargs):
     service = CollaborationService(str(repo), owner)
-    built = build_research_tools(str(repo), llm=EchoLLM(), collaboration=service, **kwargs)
+    built = authorized_tools(build_research_tools(str(repo), llm=EchoLLM(), collaboration=service, **kwargs), human=False)
     return service, {tool.name: tool for tool in built}
 
 
@@ -74,8 +76,8 @@ async def test_feedback_rebuilds_child_from_persisted_history(tmp_path):
 
     # A new factory/service has no in-memory child history.
     restored = CollaborationService(str(tmp_path), "sid-parent")
-    by = {t.name: t for t in build_research_tools(
-        str(tmp_path), llm=CaptureLLM(), collaboration=restored)}
+    by = {t.name: t for t in authorized_tools(build_research_tools(
+        str(tmp_path), llm=CaptureLLM(), collaboration=restored), human=False)}
     second = json.loads(await by["task_followup"].handler({
         "task_id": first["task_id"], "round": 1, "message": "补充认证失败时的处理",
     }))
@@ -154,7 +156,7 @@ async def test_model_failure_and_cancellation_are_not_successful_submissions(tmp
             raise RuntimeError("model unavailable")
 
     service = CollaborationService(str(tmp_path), "sid-parent")
-    by = {t.name: t for t in build_research_tools(str(tmp_path), llm=BrokenLLM(), collaboration=service)}
+    by = {t.name: t for t in authorized_tools(build_research_tools(str(tmp_path), llm=BrokenLLM(), collaboration=service), human=False)}
     result = json.loads(await by["task"].handler({"description": "研究"}))
     assert result["status"] == "failed" and result["review"] == "not_submitted"
 
@@ -165,7 +167,7 @@ async def test_model_failure_and_cancellation_are_not_successful_submissions(tmp
             entered.set()
             await asyncio.Event().wait()
 
-    by = {t.name: t for t in build_research_tools(str(tmp_path), llm=BlockingLLM(), collaboration=service)}
+    by = {t.name: t for t in authorized_tools(build_research_tools(str(tmp_path), llm=BlockingLLM(), collaboration=service), human=False)}
     running = asyncio.create_task(by["task"].handler({"description": "取消研究"}))
     await entered.wait()
     running.cancel()
@@ -215,8 +217,9 @@ async def test_dev_followup_keeps_confirmation_and_role_boundary(tmp_path):
         "task_id": first["task_id"], "round": 1, "message": "修复失败路径", "agent": "other",
     }))
     assert len(asked) == 2
-    assert second["assignee"] == "coder" and second["status"] == "cancelled"
-    assert service.get(first["task_id"]).collaboration["review"] == "not_submitted"
+    assert second["assignee"] == "coder" and second["permission_required"] is True
+    current = service.get(first["task_id"])
+    assert current.collaboration["round"] == 1 and current.collaboration["review"] == "pending"
 
 
 def test_standard_factory_wires_collaboration_and_modules_do_not_import_facade(tmp_path):

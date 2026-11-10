@@ -468,4 +468,4 @@ def build_tools() -> list:
                  "只读查看主人的日历：某天起若干天的日程（时间、标题、地点）。用户问安排、有没有空、"
                  "会议时间时用。不能新建、修改日程或回复邀请。",
                  {"date": "today / tomorrow / YYYY-MM-DD，默认 today", "days": "查几天，1–14，默认 1"},
-                 handler, read_only=True, untrusted_source=True, external_content=True)]
+                 handler, read_only=True, untrusted_source=True, external_content=True, operation_kind='read')]

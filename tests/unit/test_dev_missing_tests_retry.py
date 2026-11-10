@@ -11,6 +11,8 @@ test_remove"，dev_isolated 被调了**两次**、留下**两条 vorto/* 分支*
 · 不能为了追测试把已经绿的实现弄丢：后面几轮更差时，交回先前那份绿的。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.main_agent import _wants_new_tests, build_dev_tools
@@ -51,7 +53,7 @@ def _dev_tool(tmp_path, results, progress, landed):
     originals = (worktree.run_isolated_task, worktree.apply_diff_to_branch)
     worktree.run_isolated_task = fake_run_isolated_task
     worktree.apply_diff_to_branch = fake_apply
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=progress.append)}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path), on_progress=progress.append), human=False)}
 
     def restore() -> None:
         worktree.run_isolated_task, worktree.apply_diff_to_branch = originals

@@ -426,15 +426,10 @@ def _config_edit(operation):
     return locked
 
 
-@_config_edit
-def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
-            announce: str = "im", enabled: bool = True, model: str = "",
-            budget: int = 0, allow_web: bool = False) -> str:
-    """在 cron.yaml 末尾追加一个 **prompt** 作业；返回追加进去的 yaml 块（供确认/回执展示）。
-
-    **只新增不改已有**：重名直接拒。原地重写一个已有作业的多行块，是最容易把主人注释和相邻
-    作业搞坏的操作，收益却只是省一次改名——不值得。改已有作业请人工编辑，或停用后另建。
-    """
+def preview_new_job(repo_root: str, *, name: str, schedule: str, prompt: str,
+                    announce: str = "im", enabled: bool = True, model: str = "",
+                    budget: int = 0, allow_web: bool = False) -> tuple[str, dict]:
+    """Validate and render without changing configuration; writers recheck under their lock."""
     name = str(name or "").strip()
     if not _NAME_RE.match(name):
         raise CronEditError(f"作业名非法：{name!r}（只允许字母/数字/下划线/连字符，≤64 字符）")
@@ -466,6 +461,21 @@ def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
         job["allow_web"] = True
     block = render_job_block(job)
 
+    return block, existing
+
+
+@_config_edit
+def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
+            announce: str = "im", enabled: bool = True, model: str = "",
+            budget: int = 0, allow_web: bool = False) -> str:
+    """在 cron.yaml 末尾追加一个 **prompt** 作业；返回追加进去的 yaml 块（供确认/回执展示）。
+
+    **只新增不改已有**：重名直接拒。原地重写一个已有作业的多行块，是最容易把主人注释和相邻
+    作业搞坏的操作，收益却只是省一次改名——不值得。改已有作业请人工编辑，或停用后另建。
+    """
+    block, existing = preview_new_job(repo_root, name=name, schedule=schedule, prompt=prompt,
+        announce=announce, enabled=enabled, model=model, budget=budget, allow_web=allow_web)
+    name = str(name or "").strip()
     p = cron_path(repo_root)
     text = p.read_text(encoding="utf-8") if p.is_file() else _SCAFFOLD
     lines = text.splitlines(True)

@@ -29,7 +29,7 @@ def test_observers_are_shared_bounded_and_not_exported_to_model():
     resource = ToolResource("browser", "browser", "网站浏览器", lambda: called.append(1) or {
         "state": "needs_human", "approval": "each_action", "account": "工作", "target": "https://example.com",
         "cookie": "synthetic-secret", "path": "/synthetic/private", "detail": "等待真人"})
-    tools = [Tool(f"tool{i}", "test", {}, forbidden, resource=resource) for i in range(3)]
+    tools = [Tool(f"tool{i}", "test", {}, forbidden, resource=resource, operation_kind='read') for i in range(3)]
     result = read(agent(tools))
     assert called == [1]
     assert result["observed_at"] == STAMP
@@ -48,7 +48,7 @@ def test_unloaded_session_does_not_imply_resources_are_absent():
 
 def test_inventory_exports_only_current_tool_declarations_without_probing_or_credentials():
     tool = Tool("web_search", "synthetic-secret description", {"key": "synthetic-secret"}, forbidden,
-                read_only=True, required_capabilities=("web_read",))
+                read_only=True, required_capabilities=("web_read",), operation_kind='read')
     result = read(agent([tool]))
     assert result["tool_inventory"] == {"version": 1, "truncated": False, "items": [
         {"name": "web_search", "read_only": True, "required_capabilities": ["web_read"]}]}
@@ -59,8 +59,8 @@ def test_inventory_exports_only_current_tool_declarations_without_probing_or_cre
 def test_invalid_or_partial_declarations_remain_unknown_without_boolean_coercion(monkeypatch):
     import src.gateway.session_resources as module
     monkeypatch.setattr(module, "MAX_TOOL_INVENTORY", 1)
-    tool = Tool("unknown", "", {}, forbidden, read_only="false", required_capabilities=("bad value",))
-    result = read(agent([tool, Tool("other", "", {}, forbidden)]))["tool_inventory"]
+    tool = Tool("unknown", "", {}, forbidden, read_only="false", required_capabilities=("bad value",), operation_kind='read')
+    result = read(agent([tool, Tool("other", "", {}, forbidden, operation_kind='read')]))["tool_inventory"]
     assert result["truncated"] is True
     assert result["items"] == [{"name": "unknown", "read_only": None, "required_capabilities": None}]
     assert read(SimpleNamespace(tools={"invalid\nname": tool}))["tool_inventory"]["truncated"] is True
@@ -72,8 +72,8 @@ def test_observer_failure_and_ambiguous_identity_never_expose_errors_or_grant_ac
     first = ToolResource("browser", "browser", "first", lambda: {"state": "active", "approval": "each_action", "account": "private"})
     duplicate = ToolResource("browser", "browser", "second", broken)
     other = ToolResource("service:failed", "service", "failed", broken)
-    result = read(agent([Tool("a", "", {}, forbidden, resource=first),
-                         Tool("b", "", {}, forbidden, resource=duplicate), Tool("c", "", {}, forbidden, resource=other)]))
+    result = read(agent([Tool("a", "", {}, forbidden, resource=first, operation_kind='read'),
+                         Tool("b", "", {}, forbidden, resource=duplicate, operation_kind='read'), Tool("c", "", {}, forbidden, resource=other, operation_kind='read')]))
     row = result["items"][0]
     assert row["state"] == row["approval"] == "unknown" and row["account"] == ""
     assert "synthetic-secret" not in str(result)
@@ -82,7 +82,7 @@ def test_observer_failure_and_ambiguous_identity_never_expose_errors_or_grant_ac
 def test_partial_inventory_does_not_claim_unseen_capabilities_are_unavailable(monkeypatch):
     import src.gateway.session_resources as module
     monkeypatch.setattr(module, "MAX_TOOLS", 1)
-    result = read(agent([Tool("first", "", {}, forbidden), Tool("second", "", {}, forbidden)]))
+    result = read(agent([Tool("first", "", {}, forbidden, operation_kind='read'), Tool("second", "", {}, forbidden, operation_kind='read')]))
     assert result["truncated"] and all(r["state"] != "not_provided" for r in result["items"])
 
 
@@ -90,10 +90,10 @@ def test_resource_count_limit_and_reserved_identity(monkeypatch):
     import src.gateway.session_resources as module
     monkeypatch.setattr(module, "MAX_RESOURCES", 5)
     tools = [Tool(f"t{i}", "", {}, forbidden, resource=ToolResource(f"service:{i}", "service", "service",
-            lambda: {"state": "loaded"})) for i in range(10)]
+            lambda: {"state": "loaded"}), operation_kind='read') for i in range(10)]
     result = read(agent(tools))
     assert result["truncated"] and len(result["items"]) <= 5
-    spoof = Tool("spoof", "", {}, forbidden, resource=ToolResource("mcp", "service", "spoof", lambda: pytest.fail("reserved id")))
+    spoof = Tool("spoof", "", {}, forbidden, resource=ToolResource("mcp", "service", "spoof", lambda: pytest.fail("reserved id")), operation_kind='read')
     assert read(agent([spoof]))["truncated"]
 
 
@@ -124,7 +124,7 @@ def test_service_view_does_not_read_credentials_or_probe_account(monkeypatch):
     from src.plugins import Plugin, build_plugin_tools
     from src.agents import mcp_tools
     monkeypatch.setattr(mcp_tools, "load_connector_secret", lambda *a: pytest.fail("must not read secret"))
-    plugin = Plugin("demo", "Demo", "", lambda: [Tool("demo_read", "", {}, forbidden)],
+    plugin = Plugin("demo", "Demo", "", lambda: [Tool("demo_read", "", {}, forbidden, operation_kind='read')],
                     check=lambda: pytest.fail("must not check service"))
     tools = build_plugin_tools([plugin])
     row = read(agent(tools))["items"][0]

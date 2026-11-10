@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
 import asyncio
 import email
 import email.policy
@@ -471,30 +473,29 @@ async def check() -> str:
 
 def build_write_tools(confirm: Any) -> list:
     """起草邮件：每次都要主人在确认卡上点同意（任何授权档位都不免），只存草稿、不发送。"""
-    from src.agents.gate import request
     from src.agents.tool import Tool
-    from src.agents.trust import INTERACT
+    from src.agents.trust import DRAFT
 
-    async def _draft(args: dict) -> str:
+    async def _draft(args: dict) -> object:
         try:
             draft = await asyncio.to_thread(prepare_draft, str(args.get("to") or ""), str(args.get("subject") or ""),
                                             str(args.get("body") or ""), str(args.get("reply_uid") or "").strip())
         except MailError as error:
             return str(error)
-        if not await request(confirm, draft_preview(draft), INTERACT):
-            return "用户没有同意，草稿没存。"
-        try:
-            folder = await asyncio.to_thread(save_draft, draft)
-        except MailError as error:
-            return str(error)
-        return (f"已存进草稿箱「{folder}」：收件人 {', '.join(draft['to'])}，主题「{draft['subject']}」。"
-                "没有发送，请用户在邮箱里检查后自己发。")
+        async def apply():
+            try:
+                folder = await asyncio.to_thread(save_draft, draft)
+            except MailError as error:
+                return str(error)
+            return (f"已存进草稿箱「{folder}」：收件人 {', '.join(draft['to'])}，主题「{draft['subject']}」。"
+                    "没有发送，请用户在邮箱里检查后自己发。")
+        return PreparedToolCall(apply, draft_preview(draft), DRAFT, denied_result='用户没有同意，草稿没存。')
 
-    return [Tool("mail_draft", "起草一封邮件存进用户邮箱的草稿箱，不发送。回复某封信时给 reply_uid，收件人和主题可留空自动补。"
+    return [Tool.prepared("mail_draft", "起草一封邮件存进用户邮箱的草稿箱，不发送。回复某封信时给 reply_uid，收件人和主题可留空自动补。"
                  "每次都会请用户确认；正文写完整，不要留占位符。",
                  {"to": "收件人邮箱，多个用逗号隔开；回复时可空", "subject": "主题；回复时可空",
                   "body": "正文（纯文本）", "reply_uid": "要回复的那封的 uid（mail_list 给的），可空"},
-                 _draft, read_only=False, untrusted_source=True, serial=True)]
+                 _draft, read_only=False, untrusted_source=True, serial=True, operation_kind='draft', confirm=confirm, always_confirm=True)]
 
 
 def build_tools() -> list:
@@ -532,8 +533,8 @@ def build_tools() -> list:
              "或只看未读。返回的 uid 给 mail_read 用。不会标记已读。",
              {"query": "关键词，可空", "days": "最近几天，1–30，默认 7", "unread_only": "true 只看未读",
               "limit": "最多几封，1–30，默认 15"},
-             _list, read_only=True, untrusted_source=True, external_content=True),
+             _list, read_only=True, untrusted_source=True, external_content=True, operation_kind='read'),
         Tool("mail_read", "只读读一封邮件的正文（纯文本，附件只列名字）。不会标记已读，不能回信或转发。",
              {"uid": "mail_list 给的 uid"},
-             _read, read_only=True, untrusted_source=True, external_content=True),
+             _read, read_only=True, untrusted_source=True, external_content=True, operation_kind='read'),
     ]
