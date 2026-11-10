@@ -136,3 +136,50 @@ async def test_a_lazy_session_owner_is_resolved_before_saving(tmp_path, runner):
     assert "小组已开工" in text
     [root] = TeamService(str(tmp_path)).list()
     assert root.owner_session == "sid-live"
+
+
+@pytest.mark.parametrize("level", ["ask", "reads", "full"])
+@pytest.mark.parametrize("answer", [True, False])
+async def test_team_accept_requires_owner_confirmation_at_every_trust_level(
+        tmp_path, runner, level, answer):
+    from src.agents.gate import make_confirm_gate
+
+    service = TeamService(str(tmp_path))
+    root = service.create("sid-main", objective="审查方案", acceptance=["给结论"],
+                          members=[{"name": "审查员", "role": "reviewer"}], mode="private")
+    service.submit(root.id, "审查完成", [{"criterion": 0, "evidence": "已核对方案"}])
+    asked = []
+
+    async def ask(message, kind=None):
+        asked.append((message, kind))
+        # 真正收到确认前，验收不能已经生效。
+        assert service.get(root.id).status == "review"
+        return answer
+
+    gate = make_confirm_gate(ask, trust_level=level, capability_profile="local",
+                             can_ask_human=True)
+    tools = {tool.name: tool for tool in build_team_tools(
+        str(tmp_path), confirm=gate, owner="sid-main")}
+    assert not taint.is_tainted()
+    await tools["team_decide"].handler({"team_id": root.id, "accept": True})
+
+    assert len(asked) == 1
+    assert asked[0][1] == "irreversible"
+    assert service.get(root.id).status == ("done" if answer else "review")
+    assert runner.woken == []
+
+
+async def test_team_accept_without_a_human_is_denied_even_with_auto_approve(tmp_path, runner):
+    from src.agents.gate import make_confirm_gate
+
+    service = TeamService(str(tmp_path))
+    root = service.create("sid-main", objective="审查方案", acceptance=["给结论"],
+                          members=[{"name": "审查员", "role": "reviewer"}], mode="private")
+    service.submit(root.id, "审查完成", [{"criterion": 0, "evidence": "已核对方案"}])
+    tools = {tool.name: tool for tool in build_team_tools(
+        str(tmp_path), confirm=make_confirm_gate(auto_approve=True), owner="sid-main")}
+
+    result = await tools["team_decide"].handler({"team_id": root.id, "accept": True})
+
+    assert "没有确认" in result
+    assert service.get(root.id).status == "review"

@@ -1,7 +1,7 @@
 """主 agent 管任务小组的工具（ADR-014 S1d）：开小组、看进度、回话、验收、停止。
 
 - 开小组会启动成员、花模型用量：按「执行」类过确认门，卡片列出目标、验收、成员与档位。不设额度（2026-11-04）。
-- 验收与回话是主人自己的事项（OWN_DATA）：污点回合里照样要问。
+- 验收通过不可撤回（IRREVERSIBLE）：任何授权档位都要主人确认；退回与回话仍按 OWN_DATA。
 - 停止是保护性动作，不问。
 - 看进度只给代码拼的结构化视图；协调人写的总结在根带污点时按外部内容给（本回合即为污点）。
 - 只有本进程装配了任务调度器（常驻助理）时才挂这些工具。
@@ -46,7 +46,7 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
     """``allow_developers``：只有 Desktop 会话能开带开发成员的小组（批准钥匙 #723 合并前，手机与 IM 都不行）。"""
     from src.agents.gate import request
     from src.agents.taint import mark_tainted
-    from src.agents.trust import EXECUTE, OWN_DATA
+    from src.agents.trust import EXECUTE, IRREVERSIBLE, OWN_DATA
     from src.scheduling.task_notices import notify_transition
     from src.scheduling.team_runner import get_team_runner
     from src.workflow.tasks.errors import CollaborationConflict
@@ -127,7 +127,7 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
     async def decide(args: dict) -> str:
         team_id, accept, note = str(args.get("team_id") or ""), bool(args.get("accept")), str(args.get("note") or "")
         verb = "验收通过" if accept else f"退回（{note}）"
-        if not await request(confirm, f"任务小组 {team_id}：{verb}？", OWN_DATA):
+        if not await request(confirm, f"任务小组 {team_id}：{verb}？", IRREVERSIBLE if accept else OWN_DATA):
             return "主人没有确认。"
         root = service().decide(team_id, accept, note)
         if not accept:
