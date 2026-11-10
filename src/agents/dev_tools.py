@@ -6,6 +6,8 @@ from typing import Any, Callable, Optional
 from src.agents.agent_loop import MainAgent, DEV_SUBAGENT_ROLE, _clip_middle
 from src.agents.tools._common import _truthy
 from src.agents.tool import Tool
+from src.agents.gate import request
+from src.agents.trust import DELIVER
 from src.agents.backends.recovery import RecoveryRequired
 from src.agents.worktree import baseline_note, included_note, local_includes
 from src.agents.tools.files import build_read_tools, build_write_tools, build_test_tool
@@ -463,7 +465,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return ("\n（本环境未接确认门，未自动开 PR；分支已就绪，可用 open_pr 工具手动开。）")
         title = f"dev_auto: {task[:60]}"
         _emit_diff(f"待开 PR 的改动：{branch} → {base}", branch, base)
-        if not await confirm(f"把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}"):
+        if not await request(confirm, f"把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}", DELIVER):
             return f"\n（已取消开 PR；分支 {branch} 保留，可稍后手动 open_pr。）"
         _progress(f"🚀 push {branch} 并对 {base} 开{'（draft）' if draft_pr else ''} PR…")
         from src.agents.vcs import push_and_open_pr
@@ -912,8 +914,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     f"分支 {branch} 未推送。")
         # 绿了 → push（外向操作，走确认门）
         _emit_diff(f"pr_fix 待推送的改动：{branch}（对 origin/{branch}）", branch, f"origin/{branch}")
-        if confirm is not None and not await confirm(
-                f"已按 PR #{fb.get('pr')} 的反馈在 {branch} 上修好且自测通过，push 到远端更新 PR？"):
+        if confirm is not None and not await request(confirm,
+                f"已按 PR #{fb.get('pr')} 的反馈在 {branch} 上修好且自测通过，push 到远端更新 PR？", DELIVER):
             return f"（已在本地 {branch} 修好并提交，但未 push——你取消了。）"
         _progress(f"🚀 push {branch} 更新 PR #{fb.get('pr')}…")
         pushed = await await_thread(push_branch, repo_root, branch)

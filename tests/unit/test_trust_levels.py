@@ -34,7 +34,7 @@ def test_levels_are_ordered_and_unknown_is_strictest():
         (trust.FULL, trust.READ, True),
         (trust.FULL, trust.WRITE, True),
         (trust.FULL, trust.EXECUTE, True),
-        (trust.FULL, trust.DELIVER, True),
+        (trust.FULL, trust.DELIVER, False),
         # ADR-011：主人自己的可撤销数据与草稿在 READS 起免确认；不可逆与 INTERACT 任何档都问。
         (trust.ASK, trust.OWN_DATA, False),
         (trust.ASK, trust.DRAFT, False),

@@ -31,11 +31,13 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
     - **收件人恒为已配对 owner**，模型不能指定目标。这是它与 web_fetch 的本质区别：
       后者 URL 由模型决定，是真外传通道；这里目标固定，等同于"回话给主人"。
     - 路径必须过 `_resolve_within` 围栏，只能发工作目录内的文件。
-    - **走 confirm 门**：干净回合下 gate 判 ALLOW 即静默放行；**污点回合下 gate 会要求人批**
+    - **走 confirm 门**：申报 DELIVER，每次发送均要求主人确认，污点回合同时显示来源警示
       ——被注入的 agent 可能被诱导"把 .env 截个图发出去"，那一步必须有人点头。
     - 无人值守档不装这个工具（同 with_web=False 的道理：没有真人可问，出站面一律砍掉）。
     """
     from pathlib import Path
+    from src.agents.gate import request
+    from src.agents.trust import DELIVER
 
     base = Path(repo_root).resolve()
 
@@ -48,8 +50,8 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         if p is None or not p.is_file():
             return f"路径越界或文件不存在: {rel}"
         if confirm is not None:
-            ok = await confirm(f"把{'图片' if kind == 'image' else '文件'}「{p.name}」发送给主人的 IM？"
-                               f"（{p.stat().st_size // 1024} KB）")
+            ok = await request(confirm, f"把{'图片' if kind == 'image' else '文件'}「{p.name}」发送给主人的 IM？"
+                               f"（{p.stat().st_size // 1024} KB）", DELIVER)
             if not ok:
                 return "已取消：用户未放行本次发送。"
         sender = _OWNER_MEDIA_SENDER

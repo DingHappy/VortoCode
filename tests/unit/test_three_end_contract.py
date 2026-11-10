@@ -288,10 +288,13 @@ async def test_tainted_artifact_update_must_pass_the_gate(tmp_path):
     from src.agents.main_agent import build_agent_tools, make_confirm_gate
     from src.agents.tools.artifacts import ArtifactStore
 
-    async def _yes(_m):
-        return True                                # 端一律说"人同意了"——不该由它说了算
+    asked = []
 
-    gate = make_confirm_gate(_yes, auto_approve=True, can_ask_human=False)   # = headless --yes
+    async def _yes(message):
+        asked.append(message)
+        return not taint.is_tainted()              # 主人批准干净发布，拒绝带污点的覆盖
+
+    gate = make_confirm_gate(_yes, auto_approve=True, can_ask_human=True)
     tools = {t.name: t for t in build_agent_tools(str(tmp_path), confirm=gate, with_artifacts=True)}
     pub = tools["publish_artifact"]
 
@@ -299,17 +302,18 @@ async def test_tainted_artifact_update_must_pass_the_gate(tmp_path):
     aid = r1.split("id=")[1].split(",")[0].strip()
     assert "v1" in r1
 
-    # 未污点更新：静默放行（对齐 CC「批准后再发不再问」）
+    # 更新同样属于外发，主人明确批准后才能覆盖。
     r2 = await pub.handler({"title": "报告", "html": "<b>良性 v2</b>", "id": aid})
     assert "v2" in r2
 
-    # 污点回合更新：必须过门 → headless 无人可问 → 拒；页面**不得**被覆盖
+    # 污点回合更新：必须过门，主人拒绝后页面不得被覆盖。
     taint.mark_tainted()
     blocked = await pub.handler({"title": "报告", "html": "<script>evil()</script>", "id": aid})
     assert "取消" in blocked or "拒绝" in blocked, f"污点更新绕过了确认门！实际：{blocked}"
 
     meta = next(m for m in ArtifactStore(str(tmp_path)).list() if m["id"] == aid)
     assert meta["version"] == 2, "污点更新竟然落盘了——已发布页面被静默覆盖"
+    assert len(asked) == 3 and "外部内容" in asked[-1]
 
 
 def test_repo_memory_redacts_secrets_but_keeps_facts(tmp_path):
@@ -556,3 +560,23 @@ async def test_readonly_connector_never_expands_restricted_profile(profile, read
         assert manager.tool_executor.read_only_servers == frozenset()
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.parametrize("kind", ALL_ENDS + ["desktop", "phone", "unattended"])
+@pytest.mark.parametrize("can_ask", [True, False])
+async def test_outbound_requires_a_human_even_with_full_or_auto_approval(kind, can_ask, tmp_path):
+    from src.agents.trust import DELIVER, FULL
+    from src.gateway.agent_session import build_session
+
+    asked = []
+
+    async def human(message, operation_kind=None):
+        asked.append(operation_kind)
+        return True
+
+    profile = "owner_device" if kind == "phone" else "unattended" if kind == "unattended" else "local"
+    session = build_session(str(tmp_path), kind=kind if kind in ALL_ENDS else "web",
+                            confirm=human, trust_level=FULL, auto_approve=True,
+                            can_ask_human=can_ask, capability_profile=profile)
+    assert await session._confirm_gate("发送交付物", DELIVER) is can_ask
+    assert asked == ([DELIVER] if can_ask else [])

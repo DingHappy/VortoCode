@@ -270,6 +270,7 @@ async def test_pr_fix_repairs_and_pushes_with_confirm(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pr_fix_confirm_denied_not_pushed(tmp_path, monkeypatch):
+    from src.agents.gate import make_confirm_gate
     import src.agents.worktree as wt
     monkeypatch.setattr(vcs, "pr_feedback",
                         lambda root, ref: {"ok": True, "pr": 3, "branch": "vorto/auto-x",
@@ -281,10 +282,15 @@ async def test_pr_fix_confirm_denied_not_pushed(tmp_path, monkeypatch):
     monkeypatch.setattr(vcs, "push_branch",
                         lambda *a, **k: pushed.__setitem__("n", pushed["n"] + 1) or {"ok": True, "output": ""})
 
-    async def deny(_m):
+    asked = []
+
+    async def deny(_m, kind=None):
+        asked.append(kind)
         return False
-    out = await _pr_fix_tool(tmp_path, deny).handler({"pr": "3"})
+    gate = make_confirm_gate(deny, auto_approve=True, can_ask_human=True)
+    out = await _pr_fix_tool(tmp_path, gate).handler({"pr": "3"})
     assert pushed["n"] == 0 and "未 push" in out             # 拒绝 → 不 push
+    assert asked == ["deliver"]
 
 
 async def _ok():
