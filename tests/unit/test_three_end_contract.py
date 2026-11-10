@@ -414,23 +414,23 @@ async def test_attach_confirm_consults_the_kernel_decision(monkeypatch):
     said: list = []
     confirm = _make_attach_confirm(True, said.append)     # --yes
 
-    # 未污点 + --yes → 内核判 ALLOW
-    assert await confirm("写文件？", tainted=False, taint_known=True) is True
+    # 类别明确的写入在未污点 + --yes 时仍由内核放行。
+    assert await confirm("写文件？", tainted=False, taint_known=True, operation_kind="write") is True
 
     # 污点 → --yes 失效 → 拒，且说清是防注入（文案取自内核的单一真相源）
     said.clear()
-    assert await confirm("写文件？", tainted=True, taint_known=True) is False
+    assert await confirm("写文件？", tainted=True, taint_known=True, operation_kind="write") is False
     assert any(gate.TAINT_REFUSED_REASON in s for s in said)
 
     # 对端报不了污点状态（老 serve）→ 仍从严拒，但**不许谎称**"确知摄入过外部内容"
     said.clear()
-    assert await confirm("写文件？", tainted=True, taint_known=False) is False
+    assert await confirm("写文件？", tainted=True, taint_known=False, operation_kind="write") is False
     assert any("未上报" in s for s in said), "没如实说明是对端报不了，而非确知有污点"
     assert not any(gate.TAINT_REFUSED_REASON in s for s in said)
 
     # 换掉内核判定 → attach 必须跟随（证明它真在消费 decide，而不是自己判）
     monkeypatch.setattr(gate, "decide", lambda **_kw: gate.DENY)
-    assert await confirm("写文件？", tainted=False, taint_known=True) is False, \
+    assert await confirm("写文件？", tainted=False, taint_known=True, operation_kind="write") is False, \
         "attach 没跟随内核判定——它还在自己手搓排序"
 
 
@@ -451,16 +451,15 @@ async def test_attach_yes_survives_a_closed_stdin(monkeypatch):
     said: list = []
     confirm = _make_attach_confirm(True, said.append)
 
-    assert await confirm("写文件？", tainted=False, taint_known=True) is True, \
+    assert await confirm("写文件？", tainted=False, taint_known=True, operation_kind="write") is True, \
         "stdin 关闭时 --yes 不放行了（AttributeError 被吞成静默拒绝）"
     taint.mark_tainted()
-    assert await confirm("写文件？", tainted=True, taint_known=True) is False   # 污点仍从严
+    assert await confirm("写文件？", tainted=True, taint_known=True, operation_kind="write") is False   # 污点仍从严
 
 
 @pytest.mark.asyncio
 async def test_attach_client_confirm_fallback_fails_closed():
-    """**契约**：老 confirm 回调不收 tainted 关键字（抛 TypeError）→ 兼容重试一次；
-    但**重试再抛也要拒**，不能让异常冒出接收循环把整个回合带崩。"""
+    """老回调按签名兼容；内部 TypeError 同样拒绝，不重试执行。"""
     from src.gateway.client import ProtocolClient
 
     async def legacy_ok(_text):                    # 老签名：不收 tainted，正常返回
@@ -580,3 +579,46 @@ async def test_outbound_requires_a_human_even_with_full_or_auto_approval(kind, c
                             can_ask_human=can_ask, capability_profile=profile)
     assert await session._confirm_gate("发送交付物", DELIVER) is can_ask
     assert asked == ([DELIVER] if can_ask else [])
+
+
+@pytest.mark.parametrize("operation_kind", ["deliver", "irreversible", "interact", None, "unknown"])
+async def test_headless_attach_does_not_autoapprove_protected_or_unknown_operations(
+        operation_kind, monkeypatch):
+    import io
+    import sys
+    from src.cli import _make_attach_confirm
+    from src.gateway.client import ProtocolClient
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    confirm = _make_attach_confirm(True, lambda _: None)
+    event = {"text": "执行操作？", "tainted": False, "operation_kind": operation_kind}
+    assert await ProtocolClient._dispatch_confirm(event, confirm) is False
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+async def test_attach_outbound_needs_the_actual_human_reply(answer, monkeypatch):
+    from src import cli
+    from src.gateway.client import ProtocolClient
+
+    monkeypatch.setattr(cli, "_tty_can_ask_human", lambda: True)
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or answer)
+    confirm = cli._make_attach_confirm(True, lambda _: None)
+    result = await ProtocolClient._dispatch_confirm(
+        {"text": "发送交付物？", "tainted": False, "operation_kind": "deliver"}, confirm)
+    assert result is (answer == "y")
+    assert len(asked) == 1
+
+
+async def test_attach_callback_type_error_does_not_retry_confirmation():
+    from src.gateway.client import ProtocolClient
+
+    calls = []
+
+    async def broken(text, **kwargs):
+        calls.append(kwargs)
+        raise TypeError("callback failed")
+
+    assert await ProtocolClient._dispatch_confirm(
+        {"text": "操作？", "tainted": False, "operation_kind": "deliver"}, broken) is False
+    assert len(calls) == 1

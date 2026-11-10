@@ -120,7 +120,8 @@ def make_confirm_gate(
 
     ``trust_level`` / ``capability_profile``：用户选的授权档位与会话的能力档案（见 trust.py）。
     档位只影响 ``pre_authorized`` 这一维，且**先被能力档案夹一次**（无人值守永远 ASK、外部会话
-    最高 READS）。``auto_approve=True``（CLI 的 ``--yes``）等价于 FULL，行为与此前完全一致。
+    最高 READS）。``auto_approve=True``（CLI 的 ``--yes``）按当前 FULL 类别表判定：
+    写与执行可免确认；DELIVER、IRREVERSIBLE、INTERACT 始终需主人确认，无人可问则拒绝。
     工具用 ``gate(message, kind=...)`` 申报操作类别；不申报按最重的"写"算。
     ``enable_turn_scope`` 只由可信宿主开启；仍需当前真实回合、允许档案和类别，回调的范围选择
     必须经内核核对才可建立临时授权。旧布尔回调只批准一次。
@@ -130,8 +131,7 @@ def make_confirm_gate(
     from src.agents.wait_clock import waiting
 
     # 能力档案的上限**只夹新的用户档位**。``auto_approve`` 是端自己申报的既有授权
-    # （CLI `--yes`、TUI allow 规则），语义不变——否则 headless --yes 会在 web/im 装配下
-    # 突然不放行，破坏 tests/unit/test_three_end_contract.py 钉住的三端契约。
+    # （CLI `--yes`、TUI allow 规则），同样按当前 FULL 类别表逐项判定，不能免除外发/不可逆/交互确认。
     # 两者的共同天花板仍是污点规则：`decide()` 里污点一票否决，与档位无关。
     def _level() -> str:
         # trust_level 可以是"当前档位"的**读取函数**：用户在 Desktop 里改了档位，正在跑的会话

@@ -88,7 +88,7 @@ def main():
               echo "审一下 cli.py 的健壮性" | %(prog)s        从 stdin 读 prompt（管道）
               %(prog)s --json "列出 src 模块" | jq .reply    JSON 输出，喂给脚本
 
-            高危/外向操作（run_command、open_pr）headless 下默认拒绝；要放行加 --yes。
+            --yes 仅免除允许类别的确认；外发、不可逆及交互操作仍需主人确认，无人可问则拒绝。
         """),
     )
     p.add_argument("prompt", nargs="?",
@@ -100,7 +100,7 @@ def main():
     p.add_argument("--build", "-b", action="store_true",
                    help="build 模式（可用写/dev 工具，隔离实现）；默认 plan（只读/提案）")
     p.add_argument("--yes", "-y", action="store_true",
-                   help="自动确认高危/外向操作（run_command/open_pr）；默认一律拒绝")
+                   help="自动批准允许类别的写入/执行；外发、不可逆、交互仍需主人确认，无人可问则拒绝")
     p.add_argument("--speak", action="store_true",
                    help="把最终回复合成成语音（mimo-v2.5-tts），写 WAV；TTY 下best-effort 播放")
     p.add_argument("--voice", metavar="名称", help="--speak 的声音（可选，不同音色）")
@@ -178,7 +178,7 @@ def main():
     p.add_argument("--max-stages", type=int, default=1,
                    help="一次最多推几道工序（默认 1——每道都是一次真 LLM 回合）")
     p.add_argument("--yes", action="store_true",
-                   help="给 outbound 工序放行。不给这个标志时对外动作一律 fail-closed 拒绝")
+                   help="自动批准允许的类别；outbound 工序仍需主人确认，非交互终端拒绝外发")
     p.add_argument("--if-idle", action="store_true",
                    help="start 时：已有未完成的运行就不开新的（定时开轮必备，防堆积）")
 
@@ -751,16 +751,20 @@ def _make_attach_confirm(auto_yes, say):
     serve 换个版本/改个措辞，猜测就失效，`--yes` 又会在污点回合放行（fail-open）。老 serve 不发
     这个字段时，client 按 `tainted=True` 兜底（fail-closed）并置 `taint_known=False`。
     """
-    async def confirm(text, *, tainted: bool = True, taint_known: bool = True):
+    async def confirm(text, *, tainted: bool = True, taint_known: bool = True,
+                      operation_kind: str | None = None):
         # 取**模块属性** `gate.decide`（而非 `from ... import decide`）：这样无论导入写在哪，
         # 契约测试 monkeypatch 内核判定都能生效——测试不该被导入位置绑架。
         from src.agents import gate
+        from src.agents.trust import FULL, KINDS, pre_authorized
 
         first = (text or "").splitlines()[0] if text else ""
         # **判定不在这里做**：跨进程也好、手搓也罢，排序都必须来自内核那一处（gate.decide）。
         # attach 只负责如实申报三个输入 + 执行结果。此前这里自己写了一遍
         # `if auto_yes and not tainted`，于是内核新加的规矩这一端收不到（审核记为漂移风险）。
-        verdict = gate.decide(tainted=tainted, pre_authorized=auto_yes,
+        # 缺失或未知类别不借 --yes 猜成写入；真人仍可逐次核对。
+        authorized = auto_yes and operation_kind in KINDS and pre_authorized(FULL, operation_kind)
+        verdict = gate.decide(tainted=tainted, pre_authorized=authorized,
                               can_ask_human=_tty_can_ask_human())
         if verdict == gate.ALLOW:
             say(f"✓ 自动确认：{first}")
@@ -776,7 +780,7 @@ def _make_attach_confirm(auto_yes, say):
         elif tainted:
             why = gate.TAINT_REFUSED_REASON              # 单一真相源（headless 那头用的是同一条）
         else:
-            why = "非交互终端，需 --yes 放行"
+            why = "非交互终端，本次操作未获免确认授权或需主人确认"
         say(f"✗ 拒绝（{why}）：{first}")
         return False
 
@@ -789,7 +793,7 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
     """attach 模式：回合在常驻 serve 里跑，本进程只是协议客户端（渲染 + confirm 应答）。
 
     输出契约与进程内一致：emit → stdout（TTY 非 json 时按 stream 增量流式）、say → stderr、
-    confirm → TTY 问询（--yes 自动允许；非 TTY 默认拒绝，安全优先）。退出码：done=0 /
+    confirm → TTY 问询（--yes 只自动批准允许类别；外发等无人可问则拒绝）。退出码：done=0 /
     error=1 / cancelled=130。连接阶段失败抛 ServeUnreachable（调用方回退进程内）。
     """
     from src.gateway import protocol as gp
@@ -874,7 +878,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
     TTY 且非 --json 时把回复流式写 stdout；管道/重定向/--json 则一次性输出（利于脚本/jq）。
-    高危/外向工具（run_command/open_pr）默认拒绝，--yes 才放行（headless 无人值守，安全优先）。
+    --yes 仅放行允许类别的写入/执行；开 PR、发布、发送等外发及不可逆/交互动作无人可问时拒绝。
     images: 可选图片引用列表（路径/URL/data URL），挂到本轮 user 消息（mimo-v2.5 能读图）。
     audio:  可选音频引用列表（路径/data URL），挂到本轮 user 消息（mimo-v2.5 能听音频）。
     speak:  True 则把最终回复合成成语音写 WAV（speak_out，默认 vorto-reply.wav）、TTY 下试播。
@@ -940,7 +944,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             print(f"\033[2m✗ 拒绝（{TAINT_REFUSED_REASON}）：{first}\033[0m",
                   file=sys.stderr, flush=True)
         else:
-            print(f"\033[2m✗ 自动拒绝（需 --yes 放行）：{first}\033[0m", file=sys.stderr, flush=True)
+            print(f"\033[2m✗ 自动拒绝（未获免确认授权或需主人确认）：{first}\033[0m", file=sys.stderr, flush=True)
 
     def _progress(msg):                           # dev 流水线进度 → stderr（--quiet 静默）
         if not quiet:
