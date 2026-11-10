@@ -134,6 +134,7 @@ import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { localGeneral, readLocalCodexObserver } from "./lib/codexObserverHealth";
+import { countUsage } from "./lib/telemetry";
 import { diag } from "./lib/diagnostics";
 import { dismissOfflineChat, listOfflineChats, offlineChatAttachment, recordOfflineChat } from "./lib/offlineChats";
 import { ArtifactCenter } from "./components/ArtifactCenter";
@@ -266,7 +267,8 @@ function App() {
       const action = appShortcut(event, document.querySelector("dialog[open]") !== null);
       if (!action) return;
       event.preventDefault();
-      if (action === "settings") { setSettingsOpen(true); return; }
+      if (action === "settings") { countUsage("settings.open"); setSettingsOpen(true); return; }
+      countUsage("search.open");
       sidebar.setCollapsed(false); setSidebarSearchOpen(true); setSidebarSearchFocus(value => value + 1);
     };
     window.addEventListener("keydown", onKey);
@@ -1946,6 +1948,7 @@ function App() {
     }
     try {
       await client.send(agentFrame(outgoing, requestedMode, modelChoice && !onAssistantHost() ? modelChoice : null));
+      countUsage("chat.send");
       if (appMode === "assistant" && !onAssistantHost() && findAssistantHost(projects)) setOfflineChatIds(recordOfflineChat(activeSid));
       // 写进 socket 不等于送到：连接半死时写进去也不报错。等对应的 pong，等不到就把文字放回输入框。
       void client.confirmDelivery().then((delivered) => {
@@ -2744,7 +2747,7 @@ function App() {
           <WorkNav connected={connection === "connected"} search={sidebarSearch("搜索会话和项目")} waiting={feedWaiting}
             page={mainView === "artifacts" ? "library" : mainView === "plugins" ? "extensions"
               : mainView === "management" ? inspectorTab === "goals" ? "goals" : "tasks" : null}
-            onNewChat={() => { setMainView("chat"); void newSession(); }}
+            onNewChat={() => { setMainView("chat"); countUsage("conversation.new"); void newSession(); }}
             onPage={(page) => {
               if (page === "tasks") { openInspector("inbox"); void refreshRuntimeInboxes(); }
               else if (page === "goals") { openInspector("goals"); void refreshGoals(); }
@@ -2811,7 +2814,7 @@ function App() {
               ? { state: connection === "connected" ? "online" : "offline", name: findAssistantHost(projects)?.name,
                 onClick: () => connection === "connected" ? openAssistantPage("tasks") : void changeAppMode("assistant") }
               : { state: "local", onClick: () => findAssistantHost(projects) ? void changeAppMode("assistant") : setRemoteDialogOpen("assistant") }}
-            onOpenSettings={(target) => { setSettingsSection(target?.section); setSettingsAnchor(target?.anchor); setSettingsOpen(true); }}
+            onOpenSettings={(target) => { countUsage("settings.open"); setSettingsSection(target?.section); setSettingsAnchor(target?.anchor); setSettingsOpen(true); }}
             onLibrary={appMode === "assistant" ? () => openAssistantPage("library") : undefined}
             onCustomize={appMode === "assistant" ? () => openAssistantPage("customize") : undefined}
           />

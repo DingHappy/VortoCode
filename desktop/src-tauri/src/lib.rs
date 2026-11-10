@@ -1716,6 +1716,7 @@ pub fn run() {
             telemetry::set_telemetry_settings,
             telemetry::report_ui_error,
             telemetry::send_feedback,
+            telemetry::count_usage,
             reveal_diagnostics_log,
             remote_ws_send,
             remote_ws_close,

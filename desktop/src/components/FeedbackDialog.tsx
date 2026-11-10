@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useDialogSurface } from "../hooks/useDialogSurface";
 import { feedbackMailto, sendFeedback, type FeedbackDraft } from "../lib/feedback";
+import { countUsage } from "../lib/telemetry";
 import "./FeedbackDialog.css";
 
 /** 「问题反馈」按钮：在 App 里直接写、直接发（原来是打开邮件客户端）。发不出去时仍可改用邮件。 */
@@ -23,7 +24,7 @@ export function FeedbackDialog({ onClose, send = sendFeedback }: {
   const submit = async () => {
     if (state.busy || !draft.text.trim()) return;
     setState({ busy: true, error: "", sent: null });
-    try { setState({ busy: false, error: "", sent: await send(draft) }); }
+    try { const id = await send(draft); countUsage("feedback.sent"); setState({ busy: false, error: "", sent: id }); }
     catch (reason) { setState({ busy: false, error: reason instanceof Error ? reason.message : String(reason), sent: null }); }
   };
   const content = <dialog ref={dialog} className="feedback-dialog" aria-labelledby={titleId}

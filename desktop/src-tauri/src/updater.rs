@@ -175,6 +175,7 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
         format!("下载好了，但替换 App 失败：{text}")
     })?;
     diag("info", "update.installed", &version);
+    telemetry::count_usage_event("update.installed");
     // 装好就在这里重启，不等网页回调：新版替换磁盘上的 .app 后，旧进程的网页进程可能随之退出、窗口变空白，
     // 网页侧的「装完再请求重启」就永远发不出来（真机 2026-11-09，0.2.54 → 0.2.55 停在空白窗口）。
     relaunch(app);
