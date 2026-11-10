@@ -1,0 +1,9 @@
+.staff-pane, .staff-section { display: grid; gap: var(--vc-space-4); }
+.staff-pane h3 { font-size: var(--vc-size-heading); font-weight: var(--vc-weight-strong); margin: 0; }
+.staff-grants { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--vc-space-2) var(--vc-space-4); font-size: var(--vc-size-small); }
+.staff-grants dt { color: var(--vc-muted); }
+.staff-grants dd { margin: 0; overflow-wrap: anywhere; color: var(--vc-text); }
+.staff-pane .settings-card { display: grid; gap: var(--vc-space-3); }
+.staff-record { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vc-font-mono); font-size: var(--vc-size-caption); border-radius: var(--vc-radius-control); padding: var(--vc-space-3); background: var(--vc-fill); color: var(--vc-text); }
+.staff-pane summary { cursor: pointer; color: var(--vc-text-secondary); }
+.staff-pane [role="alert"] { color: var(--vc-danger-text); }

@@ -124,7 +124,7 @@ class StaffService:
         return staff_directory(self.root)
 
 
-def staff_directory(root):
+def staff_directory(root, *, include_prompts=False):
     tasks = TaskLedger(root).list(limit=500)
     members = StaffRegistry(root).members()
     for member in members:
@@ -132,5 +132,6 @@ def staff_directory(root):
                and t.collaboration['dispatch'].get('member') == member['id']]
         member['busy'] = sum(t.status in {'queued', 'running', 'blocked'} for t in own)
         member['recent_tasks'] = [{'id': t.id, 'status': t.status, 'review': t.collaboration.get('review'),
-            'delivery': t.collaboration['dispatch']['delivery']} for t in own[:10]]
+            'delivery': t.collaboration['dispatch']['delivery'],
+            **({'prompt': t.prompt} if include_prompts else {})} for t in own[:10]]
     return {'roles': StaffRegistry(root).roles(), 'members': members, 'departments': []}

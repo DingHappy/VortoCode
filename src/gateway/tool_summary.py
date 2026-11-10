@@ -94,6 +94,7 @@ def tool_summary(name: str, args: Dict[str, Any]) -> str:
         "android_snapshot": "读取 Android 应用界面",
         "android_tap": "点按 Android 应用元素",
         "android_detach": "断开 Android 插件",
+        "staff_propose": "提议岗位与专员",
         "staff_list": "查看专员与岗位",
         "staff_assign": _with("交给专员：", str(args.get("member") or ""), 50),
         "research_parallel": _with("并行调研：", task, 50),

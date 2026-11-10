@@ -496,3 +496,248 @@ def test_unresolved_file_sources_never_fall_back_to_owner_workspace(tmp_path, gr
     with pytest.raises(ValueError, match='尚未接入'):
         service.assign('owner', {'member': member['id'], 'prompt': '核对文件'})
     assert not pool.jobs
+
+
+def test_staff_proposals_do_not_grant_authority_before_owner_decision(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    from src.workflow.staff.registry import StaffRegistry
+    approvals = StaffApprovals(str(tmp_path))
+    proposal = approvals.propose('owner', 'role', role(), '需要独立审查')
+    assert proposal['status'] == 'pending'
+    with pytest.raises(ValueError):
+        StaffRegistry(str(tmp_path)).role('reader')
+    applied = approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    assert applied['status'] == 'approved'
+    assert StaffRegistry(str(tmp_path)).role('reader')['grants']['tools'] == []
+
+
+def test_private_or_network_roles_require_registered_desktop_approval_key(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    approvals = StaffApprovals(str(tmp_path))
+    for data in [role(web=True), role(sees=['plugin:calendar'], tools=['calendar_events'])]:
+        proposal = approvals.propose('owner', 'role', data, '需要专员')
+        assert proposal['requires_desktop_key']
+        with pytest.raises(ValueError, match='批准钥匙'):
+            approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+
+
+def staff_key(approvals):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    from cryptography.hazmat.primitives import hashes
+    private = ec.generate_private_key(ec.SECP256R1())
+    public = private.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
+    def sign(message):
+        return private.sign(message, ec.ECDSA(hashes.SHA256())).hex()
+    approvals.bind_key(public, sign(approvals.enrollment_message(public)))
+    return public, sign
+
+
+def test_desktop_key_binds_exact_proposal_and_replay_is_idempotent(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    from src.workflow.staff.registry import StaffRegistry
+    approvals = StaffApprovals(str(tmp_path))
+    public, sign = staff_key(approvals)
+    proposal = approvals.propose('owner', 'role', role(web=True, tools=['web_search']), '查公开资料')
+    signature = sign(approvals.approval_message(proposal))
+    with pytest.raises(ValueError, match='变化'):
+        approvals.decide(proposal['id'], True, '0' * 64, owner_confirmation=True, signature=signature)
+    with pytest.raises(ValueError, match='签名'):
+        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature='00')
+    result = approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature=signature)
+    assert result['status'] == 'approved' and result['decision']['source'] == 'desktop_key'
+    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True) == result
+    assert StaffRegistry(str(tmp_path)).role('reader')['revision'] == 1
+    other = approvals.propose('owner', 'role', {**role(web=True), 'id': 'other'}, '独立岗位')
+    with pytest.raises(ValueError, match='签名'):
+        approvals.decide(other['id'], True, other['digest'], owner_confirmation=True, signature=signature)
+    with pytest.raises(ValueError, match='已有批准钥匙'):
+        staff_key(approvals)
+
+
+def test_pending_member_approval_checks_current_role_and_retains_owner_history(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    from src.workflow.staff.registry import StaffRegistry
+    registry = StaffRegistry(str(tmp_path))
+    registry.register_role(role())
+    approvals = StaffApprovals(str(tmp_path))
+    proposal = approvals.propose('owner', 'member', {'id': 'staff-new', 'name': '独立专员', 'role': 'reader',
+        'engine': 'vortocode'}, '独立整理')
+    assert registry.members() == []
+    approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    assert registry.member('staff-new')['created_by'] == 'owner'
+    assert approvals.list()[0]['decision']['approve'] is True
+    pending = approvals.propose('owner', 'member', {'id': 'staff-other', 'name': '另一专员', 'role': 'reader',
+        'engine': 'vortocode'}, '独立核对')
+    registry.register_role({**registry.role('reader'), 'brief': '已调整职责'})
+    with pytest.raises(ValueError, match='变化'):
+        approvals.decide(pending['id'], True, pending['digest'], owner_confirmation=True)
+    assert len(registry.members()) == 1
+
+
+def test_grant_failure_has_durable_approval_and_can_resume_without_duplicate_registration(tmp_path, monkeypatch):
+    from src.workflow.staff.approvals import StaffApprovals
+    approvals = StaffApprovals(str(tmp_path))
+    proposal = approvals.propose('owner', 'role', role(), '只读审查')
+    original = approvals.registry.register_role
+    def fail(*args):
+        raise OSError('synthetic storage failure')
+    monkeypatch.setattr(approvals.registry, 'register_role', fail)
+    with pytest.raises(OSError):
+        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    saved = approvals.get(proposal['id'])
+    assert saved['status'] == 'applying' and saved['decision']['approve'] is True
+    assert saved['decision']['at']
+    monkeypatch.setattr(approvals.registry, 'register_role', original)
+    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)['status'] == 'approved'
+    assert approvals.registry.role('reader')['revision'] == 1
+
+
+@pytest.mark.parametrize('tainted,answer', [(True, True), (False, False), (False, True)])
+async def test_propose_requires_owner_even_full_and_tainted_turns_cannot_propose(tmp_path, tainted, answer):
+    from src.agents.staff_proposals import build_staff_proposal_tool
+    from src.agents.taint import mark_tainted
+    from src.agents.gate import make_confirm_gate
+    from src.workflow.staff.registry import StaffRegistry
+    asked = []
+    async def human(message, kind):
+        asked.append(kind)
+        assert not StaffRegistry(str(tmp_path)).members()
+        return answer
+    tool = build_staff_proposal_tool(str(tmp_path), owner='owner', confirm=make_confirm_gate(human,
+        auto_approve=True, can_ask_human=True))
+    if tainted:
+        mark_tainted()
+    await tool.handler({'kind': 'role', 'data': role(), 'reason': '只读整理'})
+    assert asked == ([] if tainted else ['execute'])
+    roles = StaffRegistry(str(tmp_path)).roles()
+    assert ('reader' in {x['id'] for x in roles}) == (not tainted and answer)
+
+
+async def test_high_privilege_proposal_remains_pending_after_normal_confirmation(tmp_path):
+    from src.agents.staff_proposals import build_staff_proposal_tool
+    from src.agents.gate import make_confirm_gate
+    from src.workflow.staff.approvals import StaffApprovals
+    async def human(message, kind): return True
+    tool = build_staff_proposal_tool(str(tmp_path), owner='owner', confirm=make_confirm_gate(human, can_ask_human=True))
+    await tool.handler({'kind': 'role', 'data': role(web=True, tools=['web_fetch']), 'reason': '公开资料'})
+    approvals = StaffApprovals(str(tmp_path))
+    assert approvals.list()[0]['status'] == 'pending'
+    with pytest.raises(ValueError):
+        approvals.registry.role('reader')
+
+
+def test_staff_admin_routes_reject_device_credentials_and_enforce_key_and_revision(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.web.server import app
+    from src.workflow.staff.approvals import StaffApprovals
+    registry, member, pool, service = staff_setup(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('VORTOONE_API_TOKEN', 'staff-admin-fixture')
+    approvals = StaffApprovals(str(tmp_path))
+    proposal = approvals.propose('owner', 'role', {**role(web=True), 'id': 'network'}, '公开资料')
+    client = TestClient(app)
+    for method, path, body in [('GET', '/api/staff', None),
+        ('POST', f"/api/staff/proposals/{proposal['id']}/decision", {'approve': True, 'digest': proposal['digest']}),
+        ('PUT', f"/api/staff/members/{member['id']}/status", {'status': 'paused', 'revision': 1}),
+        ('POST', '/api/staff/approval-key', {'public_key': '00', 'signature': '00'})]:
+        assert client.request(method, path, json=body, headers={'Authorization': 'Bearer device-fixture'}).status_code == 401
+    headers = {'Authorization': 'Bearer staff-admin-fixture'}
+    assert client.get('/api/staff', headers=headers).status_code == 200
+    assert client.post(f"/api/staff/proposals/{proposal['id']}/decision", headers=headers,
+        json={'approve': True, 'digest': proposal['digest']}).status_code == 409
+    endpoint = f"/api/staff/members/{member['id']}/status"
+    assert client.put(endpoint, headers=headers, json={'status': 'paused', 'revision': 1}).json()['status'] == 'paused'
+    assert client.put(endpoint, headers=headers, json={'status': 'active', 'revision': 1}).status_code == 409
+    assert client.put(endpoint, headers=headers, json={'status': 'retired', 'revision': 2}).json()['status'] == 'retired'
+    assert client.put(endpoint, headers=headers, json={'status': 'active', 'revision': 3}).status_code == 409
+    assert client.put(endpoint, headers=headers, json={'status': 'active', 'revision': 3, 'grants': {}}).status_code == 422
+
+
+@pytest.mark.parametrize('profile', ['local', 'external', 'owner_device'])
+async def test_low_risk_registration_uses_the_real_shared_confirmation_on_all_ends(tmp_path, profile):
+    from src.gateway.agent_session import build_session
+    from src.workflow.staff.registry import StaffRegistry
+    asked = []
+    async def human(message, kind):
+        asked.append(kind)
+        return True
+    agent = build_session(str(tmp_path), kind='cli' if profile == 'local' else 'web',
+        workspace_scope='general', capability_profile=profile, task_owner='owner', confirm=human,
+        can_ask_human=True, trust_level='full')
+    await agent._run_tool('staff_propose', {'kind': 'role', 'data': role(), 'reason': '独立只读核对'}, 'plan', lambda _: None)
+    assert asked == ['execute'] and StaffRegistry(str(tmp_path)).role('reader')['revision'] == 1
+
+
+def test_staff_api_is_available_in_general_without_a_project():
+    from src.gateway.workspace_scope import http_workspace_requirement
+    for path in ['/api/staff', '/api/staff/approval-key', '/api/staff/members/reader/status',
+                 '/api/staff/proposals/fixture/decision']:
+        assert http_workspace_requirement(path, 'general') is None
+
+
+def test_enrollment_proof_cannot_be_replayed_on_another_instance(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    first, other = StaffApprovals(str(tmp_path / 'first')), StaffApprovals(str(tmp_path / 'other'))
+    key = ec.generate_private_key(ec.SECP256R1())
+    public = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
+    proof = key.sign(first.enrollment_message(public), ec.ECDSA(hashes.SHA256())).hex()
+    first.bind_key(public, proof)
+    with pytest.raises(ValueError, match='签名'):
+        other.bind_key(public, proof)
+    assert other.key_info()['key'] is None
+
+
+def test_failed_receipt_never_grants_and_failed_final_save_replays_exact_target(tmp_path, monkeypatch):
+    from src.workflow.staff.approvals import StaffApprovals
+    approvals = StaffApprovals(str(tmp_path))
+    proposal = approvals.propose('owner', 'role', role(), '只读核对')
+    original = approvals.registry._write
+    def fail_receipt(name, value):
+        if name == 'proposals.json':
+            raise OSError('synthetic receipt failure')
+        return original(name, value)
+    monkeypatch.setattr(approvals.registry, '_write', fail_receipt)
+    with pytest.raises(OSError):
+        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    with pytest.raises(ValueError):
+        approvals.registry.role('reader')
+    def fail_final(name, value):
+        if name == 'proposals.json' and any(x['status'] == 'approved' for x in value['proposals']):
+            raise OSError('synthetic final save failure')
+        return original(name, value)
+    monkeypatch.setattr(approvals.registry, '_write', fail_final)
+    with pytest.raises(OSError):
+        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    assert approvals.registry.role('reader')['revision'] == 1
+    assert approvals.get(proposal['id'])['status'] == 'applying'
+    monkeypatch.setattr(approvals.registry, '_write', original)
+    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)['status'] == 'approved'
+    assert approvals.registry.role('reader')['revision'] == 1
+
+
+async def test_headless_auto_approve_cannot_register_staff(tmp_path):
+    from src.agents.staff_proposals import build_staff_proposal_tool
+    from src.agents.gate import make_confirm_gate
+    from src.workflow.staff.approvals import StaffApprovals
+    tool = build_staff_proposal_tool(str(tmp_path), owner='owner',
+        confirm=make_confirm_gate(auto_approve=True, can_ask_human=False))
+    await tool.handler({'kind': 'role', 'data': role(), 'reason': '只读核对'})
+    assert StaffApprovals(str(tmp_path)).list() == []
+    with pytest.raises(ValueError):
+        StaffApprovals(str(tmp_path)).registry.role('reader')
+
+
+def test_corrupt_key_registration_fails_closed_without_replacing_identity(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    approvals = StaffApprovals(str(tmp_path))
+    approvals.key_info()
+    path = approvals.registry.directory / 'approval-key.json'
+    broken = {'version': 1, 'key': None}
+    path.write_text(json.dumps(broken))
+    with pytest.raises(ValueError, match='损坏'):
+        approvals.key_info()
+    assert json.loads(path.read_text()) == broken
