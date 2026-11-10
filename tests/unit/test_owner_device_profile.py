@@ -1,6 +1,8 @@
 """owner_device 能力档案（ADR-012 / v4 审查 V2）：手机 App 发起的回合走公网入口，只能读与检索、
 查资料、改主人自己的事项与记忆；命令执行、写文件、操控电脑与浏览器、派开发任务、对外发送一律拒绝。"""
 
+from src.agents.gate import make_confirm_gate
+
 import pytest
 
 from src.agents.capabilities import (AUTHENTICATED_OUTBOUND, HOST_PROCESS, OWNER_DEVICE_PROFILE,
@@ -79,7 +81,7 @@ async def test_refusal_happens_before_the_handler_runs(tmp_path):
             return {"content": self.replies.pop(0)}
 
     agent = MainAgent([Tool("run_command", "跑命令", {}, handler, read_only=False,
-                            required_capabilities=(HOST_PROCESS,))], llm=LLM())
+                            required_capabilities=(HOST_PROCESS,), operation_kind='write', confirm=make_confirm_gate(auto_approve=True))], llm=LLM())
     agent._capabilities = SessionCapabilities.for_profile(OWNER_DEVICE_PROFILE, str(tmp_path))
     await agent.run_turn("帮我跑一下 ls", mode="build")
     assert ran == []

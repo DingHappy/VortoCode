@@ -1,6 +1,8 @@
 """细粒度工具权限（.vortoone/permissions.yaml allow/deny 规则）—— src/agents/permissions.py
 + MainAgent._run_tool 硬拦。"""
 
+from src.agents.gate import make_confirm_gate
+
 import pytest
 
 from src.agents.permissions import Permissions, load_permissions
@@ -148,7 +150,7 @@ async def test_main_agent_blocks_denied_tool():
         ran.append(args)
         return "ran"
 
-    tool = Tool("run_command", "shell", {"command": "命令"}, handler, read_only=False)
+    tool = Tool("run_command", "shell", {"command": "命令"}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([tool], llm=_ScriptedLLM('{"tool":"run_command","args":{"command":"rm -rf build"}}',
                                                "好的，我换种方式。"),
                       permissions=Permissions([("run_command", "rm *")]))
@@ -168,7 +170,7 @@ async def test_main_agent_allows_unmatched():
         ran.append(args)
         return "已执行 ls"
 
-    tool = Tool("run_command", "shell", {"command": "命令"}, handler, read_only=False)
+    tool = Tool("run_command", "shell", {"command": "命令"}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([tool], llm=_ScriptedLLM('{"tool":"run_command","args":{"command":"ls"}}', "列好了。"),
                       permissions=Permissions([("run_command", "rm *")]))
     await agent.run_turn("看看", mode="build", emit=lambda _m: None)
@@ -184,7 +186,7 @@ async def test_explicit_client_tool_uses_same_permission_gate():
         ran.append(args)
         return "saved"
 
-    tool = Tool("write_file", "desktop save", {"path": "路径"}, handler, read_only=False)
+    tool = Tool("write_file", "desktop save", {"path": "路径"}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([], permissions=Permissions([("write_file", "src/*")]))
     result = await agent._run_bound_tool(
         tool, {"path": "src/main.py", "content": "x"}, "build", lambda _m: None)

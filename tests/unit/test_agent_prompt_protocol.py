@@ -57,7 +57,7 @@ async def test_permanent_fallback_changes_prompt_in_the_same_turn_and_preserves_
                 return {"content": '{"tool":"read_file","args":{"path":"README.md"}}'}
             return {"content": "已读取 verified-fixture。"}
 
-    agent = MainAgent([Tool("read_file", "read", {"path": "file"}, read, read_only=True)],
+    agent = MainAgent([Tool("read_file", "read", {"path": "file"}, read, read_only=True, operation_kind='read')],
                       llm=UnsupportedTools(), native=True)
     final = await agent.run_turn("读取 README", mode="plan")
     assert "verified-fixture" in final
@@ -87,7 +87,7 @@ async def test_transient_failure_does_not_switch_protocol_or_send_fallback_reque
     async def read(args):
         pytest.fail("failed model request must not execute tools")
 
-    agent = MainAgent([Tool("read_file", "read", {}, read, read_only=True)], llm=Timeout(), native=True)
+    agent = MainAgent([Tool("read_file", "read", {}, read, read_only=True, operation_kind='read')], llm=Timeout(), native=True)
     assert await agent.run_turn("读取", mode="plan") == ""
     assert agent._native is True
     assert len(prompts) == 1

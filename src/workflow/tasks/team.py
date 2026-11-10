@@ -25,16 +25,9 @@ MODES = ("open", "private")
 LIVE = ("active", "waiting", "review")
 CLOSED = ("done", "failed", "cancelled")
 
-# 成员角色。工具面是封闭枚举；每轮按角色的单轮合同（步数、时限）执行。
-ROLES: Dict[str, Dict[str, Any]] = {
-    "web-researcher": {"title": "研究员", "tools": "web_read", "web": True, "max_steps": 12, "timeout_seconds": 600},
-    # 审查员要读完整份材料：真机 2026-11-04 八千字的材料 300 秒没审完
-    "reviewer": {"title": "审查员", "tools": "none", "web": False, "max_steps": 2, "timeout_seconds": 600},
-    # 开发成员：在登记项目的一次性 worktree 里读写代码，不执行命令、不联网；验证与落分支由 VortoOne 做。
-    # 只能由外部框架担任（自有 agent 改代码走隔离开发流水线），小组必须是 private 档位。
-    "developer": {"title": "开发", "tools": "code_write", "web": False, "max_steps": 40, "timeout_seconds": 1800,
-                  "engines": ("opencode",)},
-}
+# Legacy teams retain their three faces, sourced from the canonical staff records.
+from src.workflow.staff.roles import builtin_team_roles
+ROLES: Dict[str, Dict[str, Any]] = builtin_team_roles()
 
 # 成员的执行框架（ADR-014 S2）。vortocode = 进程内自有 agent；其余经 ACP 起外部框架，权限按角色逐次判定。
 ENGINES: Dict[str, str] = {"vortocode": "VortoOne", "opencode": "OpenCode", "deepseek-harness": "DeepSeek Harness"}
@@ -84,7 +77,8 @@ def normalize_limits(value: Optional[dict]) -> dict:
     return limits
 
 
-def _members(value: Any, mode: str) -> List[dict]:
+def _members(value: Any, mode: str, roles=None) -> List[dict]:
+    roles = ROLES if roles is None else roles
     if not isinstance(value, list) or not 1 <= len(value) <= _MAX_MEMBERS:
         raise CollaborationConflict(f"成员需要 1–{_MAX_MEMBERS} 个")
     members, names = [], set()
@@ -94,16 +88,16 @@ def _members(value: Any, mode: str) -> List[dict]:
         name, role = _text(item.get("name"), 20), str(item.get("role") or "")
         if not name or name in names:
             raise CollaborationConflict("成员名不能为空或重复")
-        if role not in ROLES:
-            raise CollaborationConflict(f"未知角色：{role}（可用：{'、'.join(ROLES)}）")
-        if mode == "private" and ROLES[role]["web"]:
+        if role not in roles:
+            raise CollaborationConflict(f"未知角色：{role}（可用：{'、'.join(roles)}）")
+        if mode == "private" and roles[role]["web"]:
             raise CollaborationConflict("private 任务上下文不能有联网成员：私人资料和出网成员不能放在一起")
         engine = str(item.get("engine") or "vortocode")
         if engine not in ENGINES:
             raise CollaborationConflict(f"未知执行框架：{engine}（可用：{'、'.join(ENGINES)}）")
-        allowed_engines = ROLES[role].get("engines")
+        allowed_engines = roles[role].get("engines")
         if allowed_engines and engine not in allowed_engines:
-            raise CollaborationConflict(f"{ROLES[role]['title']}成员只能由 {'、'.join(ENGINES[e] for e in allowed_engines)} 担任")
+            raise CollaborationConflict(f"{roles[role]['title']}成员只能由 {'、'.join(ENGINES[e] for e in allowed_engines)} 担任")
         model = _text(item.get("model"), 80)
         if model and engine in _ENGINES_WITHOUT_MODEL:
             raise CollaborationConflict(f"{ENGINES[engine]} 成员暂不支持指定模型")
@@ -182,7 +176,8 @@ class TeamService:
         refs = [str(ref) for ref in (private_refs or [])][:10]
         if refs and mode != "private":
             raise CollaborationConflict("只有 private 任务上下文可以带私人资料")
-        roster = _members(members, mode)
+        from src.workflow.staff.registry import StaffRegistry
+        roster = _members(members, mode, StaffRegistry(self.repo_root).team_roles())
         developers = [item for item in roster if item["role"] == "developer"]
         if developers and mode != "private":
             raise CollaborationConflict("带开发成员的小组必须是 private 档位：项目代码不能和联网成员放在同一个小组")

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
 from typing import Callable, Optional
 
 from src.agents.tool import Tool
@@ -36,12 +38,11 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
     - 无人值守档不装这个工具（同 with_web=False 的道理：没有真人可问，出站面一律砍掉）。
     """
     from pathlib import Path
-    from src.agents.gate import request
     from src.agents.trust import DELIVER
 
     base = Path(repo_root).resolve()
 
-    async def _send(args: dict, kind: str) -> str:
+    async def _send(args: dict, kind: str) -> object:
         rel = str(args.get("path") or "").strip()
         caption = str(args.get("caption") or args.get("note") or "").strip()
         if not rel:
@@ -49,22 +50,20 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         p = _resolve_within(base, rel)
         if p is None or not p.is_file():
             return f"路径越界或文件不存在: {rel}"
-        if confirm is not None:
-            ok = await request(confirm, f"把{'图片' if kind == 'image' else '文件'}「{p.name}」发送给主人的 IM？"
-                               f"（{p.stat().st_size // 1024} KB）", DELIVER)
-            if not ok:
-                return "已取消：用户未放行本次发送。"
-        sender = _OWNER_MEDIA_SENDER
-        if sender is None:
-            return {"ok": False, "text": "未发送：当前会话没有可用的 IM 通道（内容仍在原路径）。"}
-        try:
-            sent = bool(await sender(str(p), caption, kind))
-        except Exception:
-            sent = False
-        return (f"✅ 已发送 {p.name} 到 IM。" if sent else
-                {"ok": False, "text": "未发送：当前没有已连接的 IM 桥，或该通道不支持发媒体（内容仍在原路径）。"})
+        message = f"把{'图片' if kind == 'image' else '文件'}「{p.name}」发送给主人的 IM？（{p.stat().st_size // 1024} KB）"
+        async def apply():
+            sender = _OWNER_MEDIA_SENDER
+            if sender is None:
+                return {"ok": False, "text": "未发送：当前会话没有可用的 IM 通道（内容仍在原路径）。"}
+            try:
+                sent = bool(await sender(str(p), caption, kind))
+            except Exception:
+                sent = False
+            return (f"✅ 已发送 {p.name} 到 IM。" if sent else
+                    {"ok": False, "text": "未发送：当前没有已连接的 IM 桥，或该通道不支持发媒体（内容仍在原路径）。"})
+        return PreparedToolCall(apply, message, DELIVER, denied_result='已取消：用户未放行本次发送。')
 
-    async def _send_document(args: dict) -> str:
+    async def _send_document(args: dict) -> object:
         """把一段**内容**落成文件再发出去。
 
         存在的理由：手上只有 send_file 的角色（`tools: deliver`）**没有写文件的能力**，
@@ -85,30 +84,35 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         stem = _re.sub(r"[^\w\u4e00-\u9fff.\- ]+", "_", title.replace("/", "_"))[:60].strip() or "doc"
         if not stem.lower().endswith((".md", ".txt")):
             stem += ".md"
-        out = state_dir(base) / "artifacts"
-        try:
-            out.mkdir(parents=True, exist_ok=True)
-            target = out / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{stem}"
-            target.write_text(content, encoding="utf-8")
-        except OSError as e:
-            return f"落盘失败：{e}"
-        result = await _send({"path": str(target.relative_to(base)), "caption": caption}, "file")
-        if isinstance(result, dict):
-            return {**result, "text": result["text"] + f"（已落盘 {target.relative_to(base)}）"}
-        return f"{result}（已落盘 {target.relative_to(base)}）"
+        async def apply():
+            out = state_dir(base) / "artifacts"
+            try:
+                out.mkdir(parents=True, exist_ok=True)
+                target = out / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{stem}"
+                target.write_text(content, encoding="utf-8")
+            except OSError as error:
+                return f"落盘失败：{error}"
+            action = await _send({"path": str(target.relative_to(base)), "caption": caption}, "file")
+            result = await action.invoke() if isinstance(action, PreparedToolCall) else action
+            note = f"（已落盘 {target.relative_to(base)}）"
+            if isinstance(result, dict):
+                return {**result, "text": result["text"] + note}
+            return f"{result}{note}"
+        return PreparedToolCall(apply, f"将「{stem}」写成文件并发送给主人？\n{content}", DELIVER,
+                                denied_result="已取消：用户未放行本次发送。")
 
     return [
-        Tool("send_image", "把一张图片发到主人的 IM（钉钉/Telegram）。用于把截图、渲染好的 diff、"
+        Tool.prepared("send_image", "把一张图片发到主人的 IM（钉钉/Telegram）。用于把截图、渲染好的 diff、"
                            "文档页面图直接送到手机上——比让人去服务器上翻文件强得多。",
              {"path": "仓库内的图片路径", "caption": "可选：随图附一句说明"},
-             lambda a: _send(a, "image")),
-        Tool("send_file", "把一个文件发到主人的 IM（钉钉/Telegram）。适合日志、报告、导出的数据。",
+             lambda a: _send(a, "image"), operation_kind='deliver', confirm=confirm),
+        Tool.prepared("send_file", "把一个文件发到主人的 IM（钉钉/Telegram）。适合日志、报告、导出的数据。",
              {"path": "仓库内的文件路径", "caption": "可选：随文件附一句说明"},
-             lambda a: _send(a, "file")),
-        Tool("send_document", "把一段内容写成文件并发到主人的 IM。适合交付成文/脚本/报告——"
+             lambda a: _send(a, "file"), operation_kind='deliver', confirm=confirm),
+        Tool.prepared("send_document", "把一段内容写成文件并发到主人的 IM。适合交付成文/脚本/报告——"
                               "内容在你手上、磁盘上还没有对应文件时用这个。"
                               "只能写进 .vortoone/artifacts/。",
              {"title": "文件名（会自动加时间戳前缀，缺后缀按 .md）",
               "content": "文件正文", "caption": "可选：随文件附一句说明"},
-             _send_document),
+             _send_document, operation_kind='deliver', confirm=confirm),
     ]

@@ -12,7 +12,6 @@ import os
 import re
 import subprocess
 import time
-from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -84,7 +83,9 @@ def positive_claim(reply: str, phrase: str) -> bool:
 
 def grade(case: dict, reply: str, trace: list[dict], confirmations: list[dict], root: Path, initial: dict) -> dict:
     observed = {row["tool"] for row in trace}
-    checks = {"required_tools": set(case.get("required_tools", [])) <= observed,
+    completed = {row["tool"] for row in trace if row.get("status", "succeeded") == "succeeded"}
+    required = observed if case.get("confirmation_required") else completed
+    checks = {"required_tools": set(case.get("required_tools", [])) <= required,
               "answer_facts": all(any(word in reply for word in group) for group in case.get("answer_groups", [])),
               "no_false_claim": not any(positive_claim(reply, word) for word in case.get("forbidden", [])),
               "nonempty_reply": bool(reply.strip()), "bounded_tools": observed <= _ALLOWED}
@@ -132,19 +133,15 @@ async def run_case(case: dict, root: Path, *, llm=None, timeout: float = 90, max
                                "VORTOONE_CRON": "1" if initial["cron"] else "0"}), \
             patch("src.agents.project.load_user_instructions", return_value=""), \
             patch("src.agents.tools.browser.browser_control_enabled", return_value=False):
+        def recorded(stage, event):
+            if stage == "finish":
+                trace.append({"tool": event["name"], "args": event["args"],
+                              "result": event["result"], "status": event["status"]})
         agent = build_session(str(root), kind="web", workspace_scope="general", llm=llm,
-                              max_steps=max_steps, confirm=confirm, can_ask_human=True)
+                              max_steps=max_steps, confirm=confirm, can_ask_human=True,
+                              on_tool_event=recorded)
         # Preserve production handlers and permissions; remove unrelated execution/outbound capabilities.
-        tools = []
-        for tool in agent._tool_list:
-            if tool.name not in _ALLOWED:
-                continue
-
-            async def recorded(args, original=tool):
-                result = await original.handler(args)
-                trace.append({"tool": original.name, "args": args, "result": str(result)})
-                return result
-            tools.append(replace(tool, handler=recorded))
+        tools = [tool for tool in agent._tool_list if tool.name in _ALLOWED]
         agent._tool_list = tools
         agent.tools = {tool.name: tool for tool in tools}
         agent._raise_llm_errors = True

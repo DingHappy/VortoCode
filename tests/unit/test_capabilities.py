@@ -1,5 +1,7 @@
 """D0 session capability profiles keep external content away from credentials."""
 
+from src.agents.gate import make_confirm_gate
+
 import pytest
 
 from src.agents.capabilities import (
@@ -66,7 +68,7 @@ async def test_local_session_rejects_external_content_before_handler():
         handler,
         untrusted_source=True,
         external_content=True,
-    )
+     operation_kind='read')
     agent = MainAgent([tool], capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE))
     result = await agent._run_tool("web_fetch", {"url": "https://example.com"}, "plan", lambda _m: None)
     assert "能力拦截" in result and "external 会话" in result
@@ -87,7 +89,7 @@ async def test_external_session_allows_external_content():
         {"url": "url"},
         handler,
         external_content=True,
-    )
+     operation_kind='read')
     agent = MainAgent([tool], capabilities=SessionCapabilities.for_profile(EXTERNAL_PROFILE))
     result = await agent._run_tool("web_fetch", {"url": "https://example.com"}, "plan", lambda _m: None)
     assert result == "external"
@@ -109,7 +111,7 @@ async def test_external_session_rejects_credentials_before_allow_or_confirmation
         handler,
         read_only=False,
         required_capabilities=(HOST_PROCESS,),
-    )
+     operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     permissions = Permissions(allow=[("run_command", None)])
     agent = MainAgent(
         [command],
@@ -145,7 +147,7 @@ async def test_external_session_denies_sensitive_explicit_write(tmp_path):
         [],
         capabilities=SessionCapabilities.for_profile(EXTERNAL_PROFILE, str(tmp_path)),
     )
-    tool = Tool("write_file", "explicit editor save", {"path": "path"}, handler, read_only=False)
+    tool = Tool("write_file", "explicit editor save", {"path": "path"}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     result = await agent._run_bound_tool(
         tool, {"path": ".env", "content": "secret"}, "build", lambda _m: None)
     assert "能力拦截" in result and SENSITIVE_FILES in result

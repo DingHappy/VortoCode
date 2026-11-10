@@ -42,6 +42,64 @@ class ToolResource:
     observe: Callable[[], dict]
 
 
+@dataclass(frozen=True, eq=False)
+class InternalToolScope:
+    """Trusted host binding; identity and domain checks cannot come from tool arguments."""
+    name: str
+    tools: frozenset[str]
+    check: Callable[[str, dict], None]
+
+
+@dataclass(frozen=True, eq=False)
+class ApprovedTaskScope:
+    """Host-issued permission for a particular disposable task workspace."""
+    task_id: str
+    workspace: str
+    _identity: tuple[int, int] = field(init=False, repr=False)
+
+    def __post_init__(self):
+        from pathlib import Path
+        observed = Path(self.workspace).resolve(strict=True).stat()
+        object.__setattr__(self, "_identity", (observed.st_dev, observed.st_ino))
+
+    def permits(self, tool: Tool, args: dict, kind: str) -> bool:
+        from pathlib import Path
+        if not self.task_id or tool.task_scope is not self:
+            return False
+        try:
+            root = Path(self.workspace).resolve(strict=True)
+            observed = root.stat()
+            if (observed.st_dev, observed.st_ino) != self._identity or tool.execution_root != str(root):
+                return False
+            if tool.name == "run_tests":
+                return kind == "execute"
+            if tool.name not in {"edit_file", "write_file"} or kind != "write":
+                return False
+            path = Path(str(args.get("path") or ""))
+            if path.is_absolute() or not str(path):
+                return False
+            (root / path).resolve().relative_to(root)
+            return True
+        except (OSError, ValueError, RuntimeError):
+            return False
+
+
+@dataclass(frozen=True)
+class PreparedToolCall:
+    """Read-only preparation followed by one precisely described action."""
+    invoke: Callable[[], Awaitable[object]]
+    message: str
+    operation_kind: str | None = None
+    denied_result: object = "主人没有确认，操作已取消。"
+    approval_context: Callable | None = None
+    on_denied: Callable[[], None] | None = None
+    protective: bool = False
+
+
+async def _prepared_only(args: dict) -> object:
+    raise RuntimeError("Prepared tool has no unprepared execution path")
+
+
 @dataclass
 class Tool:
     """A trusted callable and its policy metadata, independent of an agent core."""
@@ -50,6 +108,7 @@ class Tool:
     description: str
     args: dict[str, str]
     handler: Callable[[dict], Awaitable[object]]
+    operation_kind: str = field(kw_only=True)
     read_only: bool = True
     untrusted_source: bool = False
     outward: bool = False
@@ -61,6 +120,40 @@ class Tool:
     serial: bool = False  # Read-only tools that may ask for approval must not race confirmation cards.
     resource: ToolResource | None = None
     required_args: tuple[str, ...] = ()  # Opt-in local required fields; legacy tools remain optional.
+    confirm: Callable | None = field(default=None, repr=False)
+    prepare: Callable[[dict], Awaitable[object]] | None = field(default=None, repr=False)
+    possible_operations: tuple[str, ...] = ()
+    requires_confirmation: bool = False
+    always_confirm: bool = False
+    internal_scope: InternalToolScope | None = field(default=None, repr=False)
+    task_scope: ApprovedTaskScope | None = field(default=None, repr=False)
+    execution_root: str | None = field(default=None, repr=False)
+    authority_owner: object | None = field(default=None, repr=False)
+    authority_name: str | None = field(default=None, repr=False)
+    classify: Callable[[dict], str] | None = field(default=None, repr=False)
+    denied_result: object = "主人没有确认，操作已取消。"
+    protective: bool = False
+    _implementation: Callable[[dict], Awaitable[object]] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from src.agents.trust import INTERNAL, KINDS
+        if self.operation_kind not in KINDS or any(kind not in KINDS for kind in self.possible_operations):
+            raise ValueError("工具必须显式声明已知操作类别")
+        if self.operation_kind == INTERNAL and (self.internal_scope is None or self.name not in self.internal_scope.tools):
+            raise ValueError("内部协作工具必须绑定宿主声明的作用域")
+        self._implementation = self.handler
+
+        async def invoke(args: dict) -> object:
+            from src.agents.tool_runtime import invoke_tool_handler
+            return await invoke_tool_handler(self, args)
+
+        self.handler = invoke
+
+    @classmethod
+    def prepared(cls, name: str, description: str, args: dict[str, str],
+                 prepare: Callable[[dict], Awaitable[object]], *, operation_kind: str, **kwargs) -> Tool:
+        return cls(name, description, args, _prepared_only, operation_kind=operation_kind,
+                   prepare=prepare, **kwargs)
 
 
 def tool_definitions(tools: Iterable[Tool]) -> list[dict]:

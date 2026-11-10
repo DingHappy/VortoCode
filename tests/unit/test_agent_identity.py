@@ -1,3 +1,5 @@
+
+from src.agents.gate import make_confirm_gate
 import pytest
 
 from src.agents.main_agent import MainAgent, Tool
@@ -14,7 +16,7 @@ def test_guidance_tracks_tools_and_mode_without_imaginary_fallbacks(native):
     for missing in ("cron_add", "allow_web", "edit_file/write_file", "grep/read_file"):
         assert missing not in prompt
     assert "request_build" not in empty._system("plan")
-    cron = Tool("cron_add", "创建定时", {}, lambda _: "", read_only=False)
+    cron = Tool("cron_add", "创建定时", {}, lambda _: "", read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     configured = MainAgent([cron], native=native)
     assert "【定时工具】" in configured._system("build")
     configured.remove_tools(["cron_add"])
@@ -40,7 +42,7 @@ def test_profile_edit_requires_new_assembly_and_cannot_grant_owner_device_permis
 def test_work_and_team_guidance_follow_the_actual_tool_set(monkeypatch):
     from src.agents import agent_loop
     names = ("work_status", "team_propose", "team_open", "team_reply", "team_decide")
-    agent = MainAgent([Tool(name, "测试工具", {}, lambda _: "") for name in names])
+    agent = MainAgent([Tool(name, "测试工具", {}, lambda _: "", operation_kind='read') for name in names])
     prompt = agent._system("build")
     assert "【在办工作】" in prompt and "【任务协调】" in prompt
     assert "主人验收" in prompt and "未知偏好" in prompt

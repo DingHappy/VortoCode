@@ -1,9 +1,12 @@
 """Real assembly/delegation with scripted model responses; no paid requests."""
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
+from tests.tool_authorization import approve_fixture
 
 from src.agents.main_agent import build_subagent
 from src.gateway.agent_session import build_session
@@ -36,7 +39,7 @@ async def test_main_dispatches_to_cheap_channel_and_keeps_its_own_model(tmp_path
             return {"content": "", "tool_calls": [{"id": "call_delegation", "name": "task", "arguments": json.dumps({"description": "只读分析示例模块"})}]}
         return {"content": "已整理分析，供主 Agent 核对。"}
     monkeypatch.setattr(LLMClient, "chat", chat)
-    parent = build_session(str(tmp_path), kind="web", workspace_scope="project", llm=LLMClient())
+    parent = build_session(str(tmp_path), kind="web", workspace_scope="project", llm=LLMClient(), confirm=approve_fixture, can_ask_human=True)
     parent._native = True
     result = await parent.run_turn("分派只读分析并汇总", mode="plan", emit=lambda _: None)
     assert result
@@ -119,6 +122,6 @@ async def test_owned_role_client_is_closed_after_delegated_execution(tmp_path, m
     async def run(self, *args, **kwargs): return "完成分析"
     monkeypatch.setattr(LLMClient, "close", close)
     monkeypatch.setattr(MainAgent, "run_turn", run)
-    tool = next(tool for tool in build_research_tools(str(tmp_path), llm=parent) if tool.name == "task")
+    tool = next(tool for tool in authorized_tools(build_research_tools(str(tmp_path), llm=parent), human=False) if tool.name == "task")
     await tool.handler({"description": "示例", "agent": "helper"})
     assert len(closed) == 1 and closed[0] is not parent and parent.config.model == "planner-model"

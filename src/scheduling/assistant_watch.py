@@ -918,10 +918,10 @@ def build_status_tools(root: str) -> list:
     tools = [Tool("recent_notices",
                   "你最近主动推给用户手机的通知（Codex 巡视汇报、提醒、任务单状态、早晚报），新的在前。"
                   "用户的话像是在回复一条通知（「就按这个做」「让它补测试」「第二个怎么回事」）时先查它，弄清在回哪条。",
-                  {"limit": "条数，可选，默认 8，最多 20"}, _notices, untrusted_source=True),
-             Tool("today_activity", "今天和用户聊过的事（每件一行：时间、标题、结果）。", {}, _today, untrusted_source=True),
-             Tool("schedule_list", "列出定时事项（早晚报、跟进、你交代的作业）与上次运行时间。", {}, _cron, untrusted_source=True),
+                  {"limit": "条数，可选，默认 8，最多 20"}, _notices, untrusted_source=True, operation_kind='read'),
+             Tool("today_activity", "今天和用户聊过的事（每件一行：时间、标题、结果）。", {}, _today, untrusted_source=True, operation_kind='read'),
+             Tool("schedule_list", "列出定时事项（早晚报、跟进、你交代的作业）与上次运行时间。", {}, _cron, untrusted_source=True, operation_kind='read'),
              Tool("schedule_history", "读取指定定时作业最近保留的执行记录、成功/失败及错误；空记录不代表从未执行。",
-                  {"name": "定时作业的精确名称"}, _history, untrusted_source=True)]
+                  {"name": "定时作业的精确名称"}, _history, untrusted_source=True, operation_kind='read')]
     tools += [tool for tool in assistant_dispatch.build_dispatch_tools(root) if tool.name == "list_dispatches"]
     return tools

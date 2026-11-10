@@ -1,6 +1,8 @@
 """派活挂到个人目标的验收标准上：做完问你算不算达成；你点了才记通过（和目标卡上确认一样）。全部离线。"""
 from __future__ import annotations
 
+from tests.tool_authorization import authorized_tools
+
 import json
 from datetime import datetime
 
@@ -40,7 +42,7 @@ def _done_for_goal(root):
 async def test_propose_validates_the_goal_and_the_assistant_sees_the_link(tmp_path):
     root = str(tmp_path)
     goal_id, criterion_id = _goal(root)
-    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(root)}
+    tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root))}
     assert "找不到个人目标" in await tools["propose_task"].handler(
         {"project": "VortoOne", "title": "x", "goal": "y", "goal_id": "personal-nope"})
     assert "没有验收标准" in await tools["propose_task"].handler(

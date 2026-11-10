@@ -4,6 +4,7 @@ import os
 from dataclasses import replace
 
 import pytest
+from tests.tool_authorization import approve_fixture
 
 from src.agents.tools.model_assessment import build_model_assessment_tools
 from src.llm.client import LLMClient, LLMConfig, _account
@@ -184,7 +185,7 @@ async def test_cost_comparison_works_with_judge_disabled_and_never_sends_a_reque
     service = CollaborationService(str(tmp_path), "owner"); current = populate(service)
     async def forbidden(*args, **kwargs): pytest.fail("deterministic comparison must not send")
     monkeypatch.setattr(LLMClient, "chat", forbidden)
-    assess = next(t for t in build_model_assessment_tools(service) if t.name == "task_model_assess")
+    assess = next(t for t in build_model_assessment_tools(service, confirm=approve_fixture) if t.name == "task_model_assess")
     result = json.loads(await assess.handler({"task_id": current.id, "round": 1}))
     saved = service.get(current.id).collaboration["model_comparison"]
     assert result["model_comparison"] == saved

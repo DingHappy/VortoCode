@@ -27,7 +27,7 @@ def test_legacy_parameter_types_required_fields_and_copying_share_one_contract()
                 required_args=("items",), argument_schema={
                     "items": {"type": "array", "items": {"type": "boolean"}},
                     "count": {"type": "integer", "minimum": 0},
-                })
+                }, operation_kind='read')
     native = function_schemas([tool])[0]["function"]["parameters"]
     prompted = prompt_schemas(_tool_catalog([tool]))[0]
     assert prompted == native
@@ -46,7 +46,7 @@ def test_legacy_parameter_types_required_fields_and_copying_share_one_contract()
 
 def test_effective_guidance_and_recovery_identity_follow_the_live_contract(monkeypatch):
     import src.agents.agent_loop as loop
-    tool = Tool("read_file", "Read", {"path": "Path"}, noop)
+    tool = Tool("read_file", "Read", {"path": "Path"}, noop, operation_kind='read')
     agent = MainAgent([tool], plan_tool=True)
     before = agent.behavior_fingerprint()
     # A rendered mode or runtime plan must not cause a false capability update.
@@ -68,7 +68,7 @@ def test_effective_guidance_and_recovery_identity_follow_the_live_contract(monke
     current = agent.behavior_fingerprint()
     monkeypatch.setattr(agent, "_orchestration_hint", lambda: "updated orchestration")
     assert agent.behavior_fingerprint() != current
-    agent.add_tools([Tool("web_fetch", "Fetch", {}, noop)])
+    agent.add_tools([Tool("web_fetch", "Fetch", {}, noop, operation_kind='read')])
     assert "unavailable guidance changed" in agent._system("plan")
     agent.remove_tools(["web_fetch"])
     assert "unavailable guidance changed" not in agent._system("plan")

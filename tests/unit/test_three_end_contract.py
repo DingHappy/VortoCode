@@ -46,7 +46,7 @@ async def test_mcp_allow_follows_each_session_kernel_gate(kind, tmp_path, mcp_pe
     assert captured[0] is agent._confirm_gate
     name = 'mcp__probe__act'
     try:
-        expected = int(kind not in ('desktop', 'unattended'))
+        expected = 0  # Unknown MCP effects cannot be exempted by FULL without a human.
         first = await agent.tools[name].handler({})
         assert (first == 'probe executed') is bool(expected)
         taint.mark_tainted()
@@ -661,3 +661,49 @@ async def test_headless_yes_does_not_execute_delivery_or_deletion(tmp_path, monk
     assert not pushed and not sent and not asked
     assert len(store.list()) == 1
     assert store.meta(original["id"])["version"] == 1
+
+
+@pytest.mark.parametrize('end', ALL_ENDS)
+@pytest.mark.parametrize('level', ['ask', 'reads', 'full'])
+async def test_declared_draft_that_requires_each_confirmation_uses_the_kernel(end, level):
+    from src.agents.tool import Tool
+    from src.agents.tool_runtime import ToolExecutionContext, ToolRuntime
+    from src.agents.capabilities import SessionCapabilities
+    taint.reset_taint()
+    asked, ran = [], []
+    async def human(message, kind):
+        assert not ran
+        asked.append(kind)
+        return False
+    async def write(args):
+        ran.append(True)
+    tool = Tool('mail_draft', 'draft only', {}, write, operation_kind='draft', always_confirm=True)
+    runtime = ToolRuntime(lambda: {'mail_draft': tool}, ToolExecutionContext(
+        capabilities=SessionCapabilities.for_profile('local' if end == 'cli' else 'external'),
+        confirm=make_confirm_gate(human, can_ask_human=True, trust_level=level)))
+    outcome = await runtime.execute('mail_draft', {}, 'build')
+    assert outcome.status == 'blocked' and asked == ['draft'] and not ran
+
+
+@pytest.mark.parametrize('end', ALL_ENDS)
+async def test_runtime_task_scope_does_not_authorize_outbound_or_tainted_write(end, tmp_path):
+    from src.agents.tool import ApprovedTaskScope, Tool
+    from src.agents.tool_runtime import ToolExecutionContext, ToolRuntime
+    from src.agents.capabilities import SessionCapabilities
+    taint.reset_taint()
+    ran = []
+    async def action(args):
+        ran.append(True)
+        return 'done'
+    scope = ApprovedTaskScope('approved', str(tmp_path))
+    tool = Tool('open_pr', '', {}, action, operation_kind='deliver', task_scope=scope)
+    runtime = ToolRuntime(lambda: {'open_pr': tool}, ToolExecutionContext(
+        capabilities=SessionCapabilities.for_profile('local'),
+        task_scopes=(scope,), confirm=make_confirm_gate()))
+    assert (await runtime.execute('open_pr', {}, 'build')).status == 'blocked'
+    write = Tool('write_file', '', {}, action, operation_kind='write', task_scope=scope)
+    runtime.tools = lambda: {'write_file': write}
+    taint.mark_tainted()
+    assert (await runtime.execute('write_file', {'path': 'a'}, 'build')).status == 'blocked'
+    assert not ran
+    taint.reset_taint()

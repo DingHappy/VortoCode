@@ -3,6 +3,8 @@
 用假 WebSocket + 假 LLM 直接驱动 handle_agent_message，不起真实服务、不触网。
 """
 
+from src.agents.gate import make_confirm_gate
+
 import asyncio
 import contextlib
 import subprocess
@@ -562,7 +564,7 @@ async def test_web_ensure_mcp_connects_once(monkeypatch):
 
     async def fake_connect(repo, **kwargs):
         calls["connect"] += 1
-        return FakeMgr(), [Tool("mcp__s__t", "[MCP:s] t", {}, _h, read_only=False)]
+        return FakeMgr(), [Tool("mcp__s__t", "[MCP:s] t", {}, _h, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
     monkeypatch.setattr(mt, "connect_mcp", fake_connect)
     monkeypatch.setenv("VORTOONE_WEB_MCP", "1")        # 网页 MCP 是 opt-in
 

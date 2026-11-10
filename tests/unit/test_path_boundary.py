@@ -5,6 +5,8 @@
 能读仓库外任意文件。现读写共用 _resolve_within，行为一致。撤回修复即 FAIL。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.main_agent import build_read_tools, build_write_tools, _resolve_within
@@ -15,7 +17,7 @@ def _read(root):
 
 
 def _write(root):
-    return {t.name: t for t in build_write_tools(str(root))}
+    return {t.name: t for t in authorized_tools(build_write_tools(str(root)), human=False)}
 
 
 # ---- _resolve_within 单元行为 ----

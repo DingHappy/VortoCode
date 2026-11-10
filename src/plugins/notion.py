@@ -233,8 +233,8 @@ def build_tools() -> list:
     return [
         Tool("notion_search", "在主人的 Notion 里按关键词搜页面和数据库（不填关键词=最近编辑的），返回标题、ID、类型、最后编辑日期。只读。",
              {"query": "关键词，可空", "limit": "最多几条，1–20，默认 10"},
-             _search, read_only=True, untrusted_source=True, external_content=True),
+             _search, read_only=True, untrusted_source=True, external_content=True, operation_kind='read'),
         Tool("notion_read", "读一个 Notion 页面的正文（含属性和一层子块），或一个数据库的最近 50 行。只读。",
              {"page_id": "notion_search 给的 ID，或页面链接"},
-             _read, read_only=True, untrusted_source=True, external_content=True),
+             _read, read_only=True, untrusted_source=True, external_content=True, operation_kind='read'),
     ]

@@ -1,4 +1,6 @@
 """Cancellation must retain thread, Git lock, worktree and task ownership."""
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 import shutil
 import threading
@@ -191,7 +193,7 @@ async def test_cancel_during_tests_waits_before_worktree_cleanup(tmp_path, monke
     monkeypatch.setattr(worktree, "remove_worktree", remove)
     if entry == "tool":
         add()
-        operation = build_test_tool(str(path), ["fixture"]).handler({})
+        operation = authorized_tools(build_test_tool(str(path), ["fixture"]), human=False).handler({})
     elif entry == "isolated":
         operation = worktree.run_isolated_task(tmp_path, path.name, "fixture", lambda _: Agent(), test_cmd=["fixture"])
     else:

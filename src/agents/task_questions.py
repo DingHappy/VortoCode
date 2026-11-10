@@ -1,4 +1,6 @@
 """Task-bound child tool. Successful persistence yields the current model turn."""
+
+from src.agents.tool import InternalToolScope
 from src.agents.tool import Tool, ToolTurnYield
 from dataclasses import dataclass
 import json
@@ -19,7 +21,7 @@ def build_question_tool(service, task) -> Tool:
         {"question": "需要确认的具体问题，最多 2000 字符", "options": "可选的最多 3 个建议答案",
          "context": "已有发现、证据位置和未完成内容，最多 4000 字符"}, ask,
         argument_schema={"options": {"type": "array", "items": {"type": "string"}, "maxItems": 3}},
-        yields_turn=True)
+        yields_turn=True, operation_kind='internal', internal_scope=InternalToolScope(f'task:{task.id}', frozenset({'ask_task_question'}), lambda _name, _args: service.get(task.id)))
 
 
 @dataclass
@@ -52,5 +54,5 @@ def bind_development_question(service, task, plan, block) -> DevelopmentQuestion
                     {"question": "具体问题，最多 2000 字符", "options": "可选的最多 3 个建议答案",
                      "context": "已确认事实、文件证据和未完成内容，最多 4000 字符"}, ask,
                     argument_schema={"options": {"type": "array", "items": {"type": "string"}, "maxItems": 3}},
-                    yields_turn=True)
+                    yields_turn=True, operation_kind='internal', internal_scope=InternalToolScope(f'development:{task.id}:{block.id}', frozenset({'ask_task_question'}), lambda _name, _args: service.get(task.owner_session, task.id)))
     return DevelopmentQuestionBinding(tool, context, bool(state.get("tainted")))

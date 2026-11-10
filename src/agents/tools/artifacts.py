@@ -237,23 +237,23 @@ def artifact_url(base_url: Optional[str], artifact_id: str) -> str:
 
 def build_artifact_tools(
     repo_root: str,
-    confirm: Optional[Callable[[dict, bool], Awaitable[bool]]] = None,
+    confirm: Optional[Callable[..., Awaitable[bool]]] = None,
     base_url: Optional[str] = None,
     on_published: Optional[Callable[[dict, str], None]] = None,
-    confirm_delete: Optional[Callable[[dict], Awaitable[bool]]] = None,
+    confirm_delete: Optional[Callable[..., Awaitable[bool]]] = None,
 ) -> list:
     """构建 publish_artifact / list_artifacts / delete_artifact 工具（TUI 与 Web 共用）。
 
-    - confirm(preview, is_update) -> bool：发布前确认钩子；首次发布及每次更新都调用，由内核判定。
-    - confirm_delete(preview) -> bool：删除前确认钩子（同理，TUI 接 ConfirmScreen）。
+    - confirm(message, kind) -> bool：运行层使用的确认门，发布及每次更新都需要授权。
+    - confirm_delete(message, kind) -> bool：可选的删除确认门，默认复用 confirm。
     - base_url：拼链接用（见 artifact_url）。
     - on_published(meta, url)：发布成功回调，供 UI 提示链接。
     """
-    from src.agents.tool import Tool
+    from src.agents.tool import PreparedToolCall, Tool
 
     store = ArtifactStore(repo_root)
 
-    async def _publish(args: dict) -> str:
+    async def _publish(args: dict) -> object:
         title = str(args.get("title", "")).strip()
         html = str(args.get("html", "") or "")
         md = str(args.get("markdown") or args.get("md") or "")
@@ -269,27 +269,22 @@ def build_artifact_tools(
             return "publish_artifact 需要 title（页面标题）。"
         is_update = bool(artifact_id and store.exists(artifact_id))
         # 发布和更新都会改变对外可访问的内容，每次都过确认门。
-        if confirm is not None:
+        async def apply():
             try:
-                ok = await confirm({"title": title, "id": artifact_id}, is_update)
-            except Exception:  # noqa: BLE001
-                ok = False
-            if not ok:
-                return "用户取消了发布制品。"
-        try:
-            meta = store.publish(title or (artifact_id or ""), html, artifact_id, kind=kind)
-        except ValueError as e:
-            return f"发布失败：{e}。请精简内容，或调大环境变量 VORTOONE_ARTIFACT_MAX_BYTES。"
-        url = artifact_url(base_url, meta["id"])
-        if on_published is not None:
-            try:
-                on_published(meta, url)
-            except Exception:  # noqa: BLE001
-                pass
-        verb = "更新" if meta["version"] > 1 else "发布"
-        return (f"已{verb}制品「{meta['title']}」(id={meta['id']}, v{meta['version']}, {kind})。\n"
-                f"查看：{url}\n"
-                f"（要更新同一页面，下次带 id=\"{meta['id']}\" 重新调用即可，已打开的页面会自动刷新。）")
+                meta = store.publish(title or (artifact_id or ""), html, artifact_id, kind=kind)
+            except ValueError as e:
+                return f"发布失败：{e}。请精简内容，或调大环境变量 VORTOONE_ARTIFACT_MAX_BYTES。"
+            url = artifact_url(base_url, meta["id"])
+            if on_published is not None:
+                try:
+                    on_published(meta, url)
+                except Exception:  # noqa: BLE001
+                    pass
+            verb = "更新" if meta["version"] > 1 else "发布"
+            return (f"已{verb}制品「{meta['title']}」(id={meta['id']}, v{meta['version']}, {kind})。\n"
+                    f"查看：{url}\n"
+                    f"（要更新同一页面，下次带 id=\"{meta['id']}\" 重新调用即可，已打开的页面会自动刷新。）")
+        return PreparedToolCall(apply, f"{'更新' if is_update else '发布'}制品「{title or artifact_id}」？它会被写盘并经 /artifact/ 对外提供访问。", "deliver", denied_result='用户取消了发布制品。')
 
     async def _list(_args: dict) -> str:
         items = store.list()
@@ -302,23 +297,18 @@ def build_artifact_tools(
         ]
         return "制品列表:\n" + "\n".join(lines)
 
-    async def _delete(args: dict) -> str:
+    async def _delete(args: dict) -> object:
         aid = str(args.get("id") or args.get("artifact_id") or "").strip()
         if not aid:
             return "delete_artifact 需要 id（先 list_artifacts 看 id）。"
         if not store.exists(aid):
             return f"没有 id={aid} 的制品。"
-        if confirm_delete is not None:
-            try:
-                ok = await confirm_delete({"id": aid})
-            except Exception:  # noqa: BLE001
-                ok = False
-            if not ok:
-                return f"用户取消了删除 {aid}。"
-        return f"已删除制品 {aid}。" if store.delete(aid) else f"删除 {aid} 失败。"
+        async def apply():
+            return f"已删除制品 {aid}。" if store.delete(aid) else f"删除 {aid} 失败。"
+        return PreparedToolCall(apply, f"删除制品「{aid}」？此操作不可逆。", "irreversible", denied_result=f'用户取消了删除 {aid}。')
 
     return [
-        Tool(
+        Tool.prepared(
             "publish_artifact",
             "把自包含网页内容发布成可分享、随会话实时更新的网页（制品）；写操作，仅 build。"
             "传 html 或 markdown（二选一，markdown 会渲染成整页）。传相同 id 则原地更新、已打开的页面会自动刷新。"
@@ -326,13 +316,13 @@ def build_artifact_tools(
             {"title": "页面标题", "html": "完整自包含 HTML（内联 CSS/JS，勿引用外部资源）",
              "markdown": "或：markdown 文本（与 html 二选一）", "id": "可选；更新已有制品时传它的 id"},
             _publish, read_only=False,
-        ),
+         operation_kind='deliver', confirm=confirm),
         Tool(
             "list_artifacts", "列出已发布的制品（标题/id/版本/类型/链接）",
             {}, _list, read_only=True,
-        ),
-        Tool(
+         operation_kind='read', confirm=confirm),
+        Tool.prepared(
             "delete_artifact", "删除一个制品；写操作，需确认，仅 build",
             {"id": "要删除的制品 id"}, _delete, read_only=False,
-        ),
+         operation_kind='irreversible', confirm=confirm_delete or confirm),
     ]

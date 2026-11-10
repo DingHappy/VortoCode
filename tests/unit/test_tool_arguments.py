@@ -1,6 +1,10 @@
 """Deterministic argument checks through the shared runtime and both protocols."""
 from __future__ import annotations
 
+from tests.tool_authorization import authorized_tools
+
+from src.agents.gate import make_confirm_gate
+
 from copy import deepcopy
 import json
 
@@ -113,7 +117,7 @@ async def test_invalid_parameters_are_blocked_before_approval_hooks_and_side_eff
         calls.append("hook")
 
     tool = Tool("write", "", {"round": "Round"}, handler, read_only=False,
-                argument_schema={"round": {"type": "integer", "minimum": 1}})
+                argument_schema={"round": {"type": "integer", "minimum": 1}}, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     ctx = ToolExecutionContext(on_escalate=approve, on_hook=hook,
         on_result=lambda *_args: calls.append("audit"),
         on_success=lambda *_args: calls.append("success"),
@@ -136,13 +140,13 @@ async def test_contracts_are_live_and_full_provider_schema_keeps_precedence():
         return "ok"
 
     tool = Tool("read", "", {"count": "Count"}, handler,
-                argument_schema={"count": {"type": "integer", "maximum": 2}})
+                argument_schema={"count": {"type": "integer", "maximum": 2}}, operation_kind='read')
     runtime = ToolRuntime(lambda: {tool.name: tool}, ToolExecutionContext())
     assert (await runtime.execute("read", {"count": 3})).status == "blocked"
     tool.argument_schema["count"]["maximum"] = 4
     args = {"count": 3}
     assert (await runtime.execute("read", args)).status == "succeeded"
-    assert received == [args] and received[0] is args
+    assert received == [args] and received[0] is not args
     # Full external schemas are exported verbatim, not partially interpreted by
     # the deliberately smaller local validator. The adapter/handler owns them.
     tool.input_schema = {"$ref": "#/$defs/value", "$defs": {"value": {"type": "object"}}}
@@ -215,7 +219,7 @@ async def test_real_file_tools_allow_explicit_empty_replacement_and_file_content
     async def confirm(_message):
         return True
 
-    tools = build_write_tools(str(tmp_path)) if isolated else build_confirmed_write_tools(str(tmp_path), confirm)
+    tools = authorized_tools(build_write_tools(str(tmp_path)), human=False) if isolated else build_confirmed_write_tools(str(tmp_path), confirm)
     runtime = ToolRuntime(lambda: {t.name: t for t in tools}, ToolExecutionContext(
         capabilities=SessionCapabilities.for_profile("local", str(tmp_path))))
     path = tmp_path / "note.txt"; path.write_text("before")
@@ -269,7 +273,7 @@ async def test_main_agent_can_correct_invalid_arguments_using_the_same_contract(
     tool = Tool("review", "", {"round": "Round", "verdict": "Decision"}, handler, read_only=False,
         argument_schema={"round": {"type": "integer", "minimum": 1, "maximum": 3},
                          "verdict": {"type": "string", "enum": ["accept", "rework"]}},
-        required_args=("round", "verdict"))
+        required_args=("round", "verdict"), operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     llm = Script()
     agent = MainAgent([tool], llm=llm, native=native, on_escalate=escalate,
         on_tool_event=lambda stage, data: events.append((stage, data)), max_steps=4)

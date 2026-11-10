@@ -4,6 +4,8 @@
 ——污点回合的指令性文本与疑似凭据一律拒绝落盘（否则外部内容就成了每轮喂给模型的事实）。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.main_agent import MainAgent, build_dev_tools, build_memory_tools
@@ -196,7 +198,7 @@ async def test_dev_subagent_inherits_repo_memory(tmp_path, monkeypatch):
 
     monkeypatch.setattr("src.agents.worktree.run_isolated_task", _fake_isolated)
 
-    tool = next(t for t in build_dev_tools(str(tmp_path)) if t.name == "dev_isolated")
+    tool = next(t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False) if t.name == "dev_isolated")
     await tool.handler({"description": "加个函数"})
 
     sub = built["agent"]

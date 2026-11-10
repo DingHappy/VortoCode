@@ -283,14 +283,14 @@ def draft_tool(confirm):
 
 
 async def test_draft_asks_every_time_and_only_appends_to_drafts(home, monkeypatch):
-    from src.agents.trust import INTERACT
+    from src.agents.trust import DRAFT
     fake = inbox_server(monkeypatch, {})
     asker = Asker()
     tool_ = draft_tool(asker)
     assert not tool_.read_only
     out = await tool_.handler({"to": "zs@example.com, ls@example.com", "subject": "周五聚餐",
                                "body": "周五晚上七点，老地方。"})
-    assert len(asker) == 1 and asker[0][1] == INTERACT
+    assert len(asker) == 1 and asker[0][1] == DRAFT
     assert "不发送" in asker[0][0] and "zs@example.com, ls@example.com" in asker[0][0] and "老地方" in asker[0][0]
     assert ("APPEND", '"My Drafts"', "(\\Draft \\Seen)") in fake.commands
     saved = email.message_from_bytes(fake.appended, policy=email.policy.default)

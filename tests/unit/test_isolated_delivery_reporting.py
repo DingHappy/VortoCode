@@ -1,4 +1,6 @@
 """Real temporary Git/test evidence reaches the parent, distinct from the requested command."""
+
+from tests.tool_authorization import authorized_tools
 from copy import deepcopy
 import json
 import subprocess
@@ -38,7 +40,7 @@ async def test_actual_verifier_and_commit_reach_the_parent_model(tmp_path, monke
                                       "def total(price, percent):\n    return price * (1 - percent / 100)\n"})
             return "合成实现结论，声称运行了 unittest"  # Must not replace verifier evidence.
 
-    tools = [tool for tool in build_dev_tools(str(tmp_path), agent_factory=Writer) if tool.name == "dev_isolated"]
+    tools = [tool for tool in authorized_tools(build_dev_tools(str(tmp_path), agent_factory=Writer), human=False) if tool.name == "dev_isolated"]
     requests = []
 
     class ParentLLM:
@@ -104,7 +106,7 @@ async def test_verification_survives_failed_landing_or_recording(tmp_path, monke
     monkeypatch.setattr(worktree, "run_isolated_task", implement)
     monkeypatch.setattr(worktree, "apply_diff_to_branch", land)
     monkeypatch.setattr(isolated_deliveries, "record_isolated_delivery", record)
-    tool = next(tool for tool in build_dev_tools(str(tmp_path)) if tool.name == "dev_isolated")
+    tool = next(tool for tool in authorized_tools(build_dev_tools(str(tmp_path)), human=False) if tool.name == "dev_isolated")
     result = await tool.handler({"description": "修复折扣"})
     text = result if isinstance(result, str) else result["text"]
     assert "actual-test --check" in text and "synthetic-verifier-pass" in text

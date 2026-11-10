@@ -184,12 +184,16 @@ class CollaborationService:
                           task.collaboration["assignee"], task.error or task.result)
             return self._save(task)
 
-    def review(self, task_id: str, expected_round: int, verdict: str, note: str) -> BackgroundTask:
+    def review(self, task_id: str, expected_round: int, verdict: str, note: str, *, owner_approved: bool = False) -> BackgroundTask:
         self._round(expected_round)
         if verdict not in {"accept", "rework"} or not note.strip():
             raise CollaborationConflict("验收必须提供 accept/rework 和具体理由")
         with _LOCK:
             task = self._load(task_id, expected_round)
+            dispatch = task.collaboration.get("dispatch", {})
+            if (dispatch.get("source") == "staff" and dispatch.get("delivery") == "review"
+                    and verdict == "accept" and not owner_approved):
+                raise CollaborationConflict("专员的要验收任务必须由主人确认通过")
             desired = "accepted" if verdict == "accept" else "rework_requested"
             if task.status != "done":
                 raise CollaborationConflict("执行未成功提交结果，不能验收")

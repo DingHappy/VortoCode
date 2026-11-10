@@ -3,7 +3,7 @@
 Agent adapters own model messages, history, turn boundaries and media delivery.
 This module owns capability/permission checks, plan escalation, tool lifecycle,
 ordered/parallel dispatch and taint propagation. Exported schemas grant no rights.
-Tool factories must still bind the shared confirmation gate to their handlers.
+Required operation declarations and prepared continuations share one confirmation path.
 """
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable, Mapping
 
 from src.agents.capabilities import EXTERNAL_PROFILE, SessionCapabilities
 from src.agents.notice import housekeeping
 from src.agents.taint import mark_tainted
-from src.agents.tool import Tool, ToolResult, ToolTurnYield, tool_definitions
+from src.agents.tool import ApprovedTaskScope, InternalToolScope, PreparedToolCall, Tool, ToolResult, ToolTurnYield, tool_definitions
 from src.agents.tool_calls import ToolCallError, argument_object
 from src.agents.tool_arguments import ToolArgumentError, validate_arguments
 from src.agents.wait_clock import minus_wait, waited
@@ -25,6 +26,15 @@ from src.agents.tools._common import _max_tool_result
 from src.llm.hard_budget import claim_check_tool
 
 logger = logging.getLogger(__name__)
+_EXECUTION_CONTEXT: ContextVar[ToolExecutionContext | None] = ContextVar("tool_execution_context", default=None)
+_AUTHORITY: ContextVar[tuple | None] = ContextVar("tool_authority", default=None)
+
+
+def has_runtime_authority(owner: object, name: str, args: dict, kind: str) -> bool:
+    from src.agents.taint import is_tainted
+    proof = _AUTHORITY.get()
+    return (proof is not None and proof[0] is owner and proof[1] == name
+            and proof[2] == args and proof[3] == kind and proof[4] == is_tainted())
 
 
 @dataclass(frozen=True)
@@ -114,6 +124,125 @@ class ToolExecutionContext:
     consume_result: Callable[[object], str] = _text_result
     transform_success: Callable[[Tool, dict, str], str] = lambda tool, args, text: text
     on_success: Callable[[Tool, dict, str], None] = lambda tool, args, text: None
+    confirm: Callable | None = None
+    internal_scopes: tuple[InternalToolScope, ...] = ()
+    task_scopes: tuple[ApprovedTaskScope, ...] = ()
+
+
+async def invoke_tool_handler(tool: Tool, args: dict) -> object:
+    """The one confirmation path, also used by explicitly bound direct callers."""
+    from src.agents.gate import is_kernel_gate, request
+    from src.agents.trust import INTERNAL, READ
+    import json
+
+    from copy import deepcopy
+    args = deepcopy(args)  # Approval and execution share one frozen argument snapshot.
+    ctx = _EXECUTION_CONTEXT.get()
+    if ctx is not None:
+        if ctx.capabilities is not None:
+            reason = ctx.capabilities.denied(tool.name, args, tool.required_capabilities,
+                external_content=tool.external_content, read_only=tool.read_only, outward=tool.outward)
+            if reason:
+                return ToolResult(f"[能力拦截] {reason}", "blocked")
+        if ctx.permissions is not None and (reason := ctx.permissions.denied(tool.name, args)):
+            return ToolResult(f"[权限拦截] {reason}", "blocked")
+    classified = tool.classify(args) if tool.classify is not None else None
+    if classified is not None and classified not in {tool.operation_kind, *tool.possible_operations}:
+        return ToolResult("工具分类函数返回了未声明的操作类别，未执行。", "blocked")
+    if tool.operation_kind == INTERNAL:
+        scope = tool.internal_scope
+        if scope is None or tool.name not in scope.tools or (ctx is not None and scope not in ctx.internal_scopes):
+            return ToolResult("内部协作作用域不匹配，未执行。", "blocked")
+        scope.check(tool.name, args)
+        if classified in {None, INTERNAL}:
+            return await tool._implementation(args)
+        # A scoped tool may declare a heavier owner action. It uses this same
+        # runtime guard; the internal scope never authorizes that action.
+    if tool.prepare is not None:
+        action = await tool.prepare(args)
+        if not isinstance(action, PreparedToolCall):
+            return action
+    else:
+        async def run():
+            return await tool._implementation(args)
+        action = PreparedToolCall(run, f"执行 {tool.name}？\n{tool.description}\n" + json.dumps(args, ensure_ascii=False),
+                                  denied_result=tool.denied_result)
+    first_action = True
+    while isinstance(action, PreparedToolCall):
+        kind = action.operation_kind or classified or tool.operation_kind
+        if first_action and classified is not None and kind != classified:
+            return ToolResult("动作与工具分类不一致，未执行。", "blocked")
+        first_action = False
+        if kind not in {tool.operation_kind, *tool.possible_operations} or kind == INTERNAL:
+            return ToolResult("工具申报了未声明的操作类别，未执行。", "blocked")
+        protective = False
+        if action.protective:
+            protective = tool.protective and (
+                (tool.name == "cron_toggle" and args.get("enabled") is False
+                 and set(args) <= {"name", "enabled"} and bool(args.get("name")))
+                or (tool.name == "cron_set_web" and args.get("allow_web") is False
+                    and set(args) <= {"name", "allow_web"} and bool(args.get("name")))
+                or (tool.name == "team_stop" and bool(args.get("team_id"))
+                    and set(args) <= {"team_id", "reason"})
+                or (tool.name == "codex_handover" and bool(args.get("thread"))
+                    and str(args.get("take_back") or "").strip().lower() in {"1", "true", "yes", "on", "是", "收回"}
+                    and set(args) <= {"thread", "take_back"}))
+            if not protective:
+                return ToolResult("保护性操作只允许停用、撤权或停止指定任务，未执行。", "blocked")
+        scoped = False
+        already_approved = tool.authority_owner is not None and has_runtime_authority(
+            tool.authority_owner, tool.authority_name or tool.name, args, kind)
+        if not already_approved and (kind != READ or tool.requires_confirmation or tool.always_confirm):
+            confirm = ctx.confirm if ctx is not None and ctx.confirm is not None else tool.confirm
+            scopes = (ctx.task_scopes if ctx is not None else ()) + ((tool.task_scope,) if tool.task_scope else ())
+            scoped = ((ctx is None or getattr(ctx.capabilities, "profile", "") not in {"unattended", "owner_device"})
+                      and any(scope.permits(tool, args, kind) for scope in scopes))
+            if scoped:
+                from src.agents.gate import make_confirm_gate
+                confirm = confirm if is_kernel_gate(confirm) else make_confirm_gate()
+            elif protective and not is_kernel_gate(confirm):
+                from src.agents.gate import make_confirm_gate
+                confirm = make_confirm_gate(confirm, can_ask_human=confirm is not None,
+                    capability_profile=getattr(ctx.capabilities, "profile", None) if ctx else None)
+            from contextlib import nullcontext
+            with action.approval_context() if action.approval_context is not None else nullcontext():
+                try:
+                    if confirm is not None and is_kernel_gate(confirm):
+                        ok = await confirm(action.message, kind, force_prompt=tool.always_confirm,
+                                           _task_authorized=scoped, _protective_authorized=protective)
+                    else:
+                        ok = await request(confirm, action.message, kind)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    ok = False
+            if not ok:
+                if action.on_denied is not None:
+                    action.on_denied()
+                if isinstance(action.denied_result, PreparedToolCall):
+                    action = action.denied_result
+                    continue
+                if ctx is None:
+                    return action.denied_result
+                denied = action.denied_result
+                return denied if isinstance(denied, ToolResult) else ToolResult(
+                    str(denied.get("text") or denied.get("error") or denied) if isinstance(denied, dict) else str(denied), "blocked")
+        if ctx is not None:
+            ctx.check_execution()
+        if scoped and not any(scope.permits(tool, args, kind) for scope in scopes):
+            return ToolResult("任务副本已变化，未执行。", "blocked")
+        from copy import deepcopy
+        from src.agents.taint import is_tainted
+        token = _AUTHORITY.set((tool.authority_owner, tool.authority_name or tool.name,
+                                deepcopy(args), kind, is_tainted())) if tool.authority_owner is not None else None
+        try:
+            result = await action.invoke()
+        finally:
+            if token is not None:
+                _AUTHORITY.reset(token)
+        if not isinstance(result, PreparedToolCall):
+            return result
+        action = result
 
 
 class ToolRuntime:
@@ -263,7 +392,11 @@ class ToolRuntime:
         yielded = None
         ctx.check_execution()
         try:
-            raw = await tool.handler(args)
+            context_token = _EXECUTION_CONTEXT.set(ctx)
+            try:
+                raw = await invoke_tool_handler(tool, args)
+            finally:
+                _EXECUTION_CONTEXT.reset(context_token)
             if isinstance(raw, ToolResult):
                 status, raw = raw.status, raw.text
             # 工具可以**正常返回**却表示失败（隔离实现没过、预检不通过…）。没有这条，台账把

@@ -1,5 +1,8 @@
 """Reproduce extension adapter defects without starting third-party services."""
+
+from tests.tool_authorization import authorized_tools
 import pytest
+from tests.tool_authorization import approve_fixture
 from src.agents.agent_loop import MainAgent
 from src.agents.mcp_tools import wrap_mcp_manager
 from src.agents.tools.skills import build_skill_tools
@@ -23,7 +26,7 @@ async def test_registered_manager_routes_to_its_connected_client(monkeypatch):
     import src.tools.manager as module
     client=FakeClient();monkeypatch.setattr(module,"create_mcp_client",lambda *a,**k:client)
     from src.agents.gate import make_confirm_gate
-    manager=ToolManager(confirm=make_confirm_gate(auto_approve=True))
+    manager=ToolManager(confirm=make_confirm_gate(approve_fixture, auto_approve=True, can_ask_human=True))
     manager.config={"servers":[{"name":"fixture","transport":"http","url":"http://fixture.invalid"}],"permissions":{"rules":[{"id":"fixture-only","scope":"global","action":"allow","tool_names":["count"],"priority":100}]}}
     try:
         assert await manager.initialize()
@@ -53,7 +56,7 @@ async def test_mcp_failure_is_a_failed_agent_event():
     class Manager:
         def list_tools(self):return [MCPTool(name="count",server_name="fixture",input_schema=SCHEMA)]
         async def execute_tool(self,*args):return MCPToolResult(success=False,error="fixture rejected")
-    events=[];tool=wrap_mcp_manager(Manager())[0]
+    events=[];tool=authorized_tools(wrap_mcp_manager(Manager()))[0]
     agent=MainAgent([tool],on_tool_event=lambda stage,payload:events.append((stage,payload)))
     result=await agent._run_tool(tool.name,{},"build",lambda _:None)
     assert "fixture rejected" in result
