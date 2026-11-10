@@ -36,7 +36,7 @@ async def test_changed_queries_stop_across_build_segments_and_reset_for_new_turn
             if tools is not None:
                 return {"content": "", "tool_calls": [{"name": "web_search", "arguments": json.dumps({"query": query})}]}
             return {"content": json.dumps({"tool": "web_search", "args": {"query": query}})}
-    agent = MainAgent([Tool("web_search", "search", {"query":"text"}, search, read_only=True)],
+    agent = MainAgent([Tool("web_search", "search", {"query":"text"}, search, read_only=True, operation_kind='read')],
                       llm=Looping(), native=native, max_steps=1, env_context=False)
     assert await agent.run_turn("研究", mode="build", say=notices.append) == "资料不足，尚未核实。"
     assert len(executed) == 3
@@ -56,7 +56,7 @@ async def test_failed_tools_consume_dispatch_budget_without_accepting_results(mo
         async def chat(self, messages, **kwargs):
             return {"content": '{"tool":"web_fetch","args":{}}'}
     async def confirm(*args): confirms.append(args); return True
-    agent = MainAgent([Tool("web_fetch", "fetch", {}, failing, read_only=True)],
+    agent = MainAgent([Tool("web_fetch", "fetch", {}, failing, read_only=True, operation_kind='read')],
                       llm=Looping(), native=False, on_escalate=confirm, on_tool_event=lambda stage, payload: events.append((stage,payload)))
     await agent.run_turn("读取", mode="plan")
     assert agent._web_tool_calls == 1
@@ -95,7 +95,7 @@ async def test_batch_history_contains_only_the_admitted_prefix(monkeypatch, nati
             if tools:
                 return {"content":"", "tool_calls":[{"name":c["tool"],"arguments":json.dumps(c["args"])} for c in calls]}
             return {"content":json.dumps(calls)}
-    a=MainAgent([Tool("web_search","search",{},handler,read_only=True)],llm=Batch(),native=native)
+    a=MainAgent([Tool("web_search","search",{},handler,read_only=True, operation_kind='read')],llm=Batch(),native=native)
     await a.run_turn("查询",mode="build")
     assert executions == [{"query":"0"},{"query":"1"}]
 

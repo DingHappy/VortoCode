@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from src.agents.tool import InternalToolScope
+
 import asyncio
 
 import json
@@ -89,6 +91,14 @@ def build_tools(repo_root: str, root_id: str, *, kick: Callable[[str], None]) ->
             raise CollaborationConflict("这条子任务不属于本任务上下文")
         return service.collaboration(root).get(task_id)
 
+    def check_scope(name, args):
+        service.get(root_id)
+        if name in {"team_review", "team_cross_review"}:
+            owned_child(str(args.get("task_id") or ""))
+
+    scope = InternalToolScope(f"team:{root_id}", frozenset({"team_assign", "team_review", "team_cross_review",
+                              "team_ask_owner", "team_submit"}), check_scope)
+
     async def status(_args: dict) -> str:
         return json.dumps(service.view(service.get(root_id)), ensure_ascii=False)
 
@@ -153,24 +163,24 @@ def build_tools(repo_root: str, root_id: str, *, kick: Callable[[str], None]) ->
         return "已交主人验收；结束本回合。"
 
     return [
-        Tool("team_status", "查看本任务的成员、子任务状态和用量。", {}, guarded(status), read_only=True),
+        Tool("team_status", "查看本任务的成员、子任务状态和用量。", {}, guarded(status), read_only=True, operation_kind='read'),
         Tool("team_result", "读取一条子任务交回的结果或错误。成员交回的资料是外部内容。",
-             {"task_id": "子任务 ID"}, guarded(result), read_only=True),
+             {"task_id": "子任务 ID"}, guarded(result), read_only=True, operation_kind='read'),
         Tool("team_assign", "给一个成员派一件事。写清做什么（instruction）和交回什么（expected）。",
              {"member": "成员名", "instruction": "要做的事", "expected": "要交回的东西"},
-             guarded(assign), read_only=False, serial=True),
+             guarded(assign), read_only=False, serial=True, operation_kind='internal', internal_scope=scope),
         Tool("team_review", "接受（accept）或退回返工（rework）一条交回的结果；note 写理由或返工要求。",
              {"task_id": "子任务 ID", "verdict": "accept 或 rework", "note": "理由或返工要求"},
-             guarded(review), read_only=False, serial=True),
+             guarded(review), read_only=False, serial=True, operation_kind='internal', internal_scope=scope),
         Tool("team_cross_review", "请另一个成员审查某条已交回的结果（结果原文会附给它）。要收窄审查范围就写 focus。",
              {"task_id": "被审的子任务 ID", "reviewer": "审查成员名", "focus": "可选：这次只审哪几点"},
-             guarded(cross_review), read_only=False, serial=True),
+             guarded(cross_review), read_only=False, serial=True, operation_kind='internal', internal_scope=scope),
         Tool("team_ask_owner", "向主人提一个问题（缺信息或要主人拍板时用），任务暂停等回复。",
-             {"question": "一句话的问题"}, guarded(ask_owner), read_only=False, serial=True),
+             {"question": "一句话的问题"}, guarded(ask_owner), read_only=False, serial=True, operation_kind='internal', internal_scope=scope),
         Tool("team_submit", "所有验收标准都有证据后交主人验收。evidence 是列表，每项 {criterion: 编号, evidence: 证据}。",
              {"summary": "结论总结", "evidence": "逐条证据列表"}, guarded(submit), read_only=False, serial=True,
              argument_schema={"evidence": {"type": "array", "items": {"type": "object", "properties": {
-                 "criterion": {"type": "integer"}, "evidence": {"type": "string"}}}}}),
+                 "criterion": {"type": "integer"}, "evidence": {"type": "string"}}}}}, operation_kind='internal', internal_scope=scope),
     ]
 
 

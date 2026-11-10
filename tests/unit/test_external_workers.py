@@ -3,6 +3,8 @@
 事件样本录自真实 CLI（codex-cli 0.162、Claude Code 2.1，2026-10-17），路径已脱敏；
 运行测试用一个假 CLI 脚本，全程离线、不碰真实账号。
 """
+
+from tests.tool_authorization import authorized_tools
 import json
 import asyncio
 import os
@@ -359,7 +361,7 @@ async def test_dev_isolated_routes_implementer_to_configured_worker(fake_cli, tm
 
     monkeypatch.setattr(worktree, "run_isolated_task", fake_run_isolated_task)
     progress = []
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=progress.append)}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path), on_progress=progress.append), human=False)}
     await tools["dev_isolated"].handler({"description": "add impl"})
     assert built and isinstance(built[0], ew.ExternalWorkerAgent) and built[0].write
     assert any(line.startswith("[codex] 改动") for line in progress)
@@ -385,7 +387,7 @@ class _Binding:
             self.asked.append(args)
             raise ToolTurnYield("开发问题已保存")
 
-        self.tool = Tool("ask_task_question", "ask", {}, ask, yields_turn=True) if with_tool else None
+        self.tool = Tool("ask_task_question", "ask", {}, ask, yields_turn=True, operation_kind='read') if with_tool else None
         self.context, self.tainted = "", tainted
 
 
@@ -745,7 +747,7 @@ async def test_dev_isolated_external_implementer_falls_back_to_the_internal_writ
         return "", "", None
 
     monkeypatch.setattr(worktree, "run_isolated_task", fake_run_isolated_task)
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}
     await tools["dev_isolated"].handler({"description": "add impl"})
     external = built[0]
     assert isinstance(external, ew.ExternalWorkerAgent) and external.fallback is not None
@@ -791,7 +793,7 @@ async def test_dev_isolated_uses_internal_writer_when_experiment_is_off(monkeypa
         return "", "", None
 
     monkeypatch.setattr(worktree, "run_isolated_task", fake_run_isolated_task)
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}
     await tools["dev_isolated"].handler({"description": "add impl"})
     assert built and not isinstance(built[0], ew.ExternalWorkerAgent)
 

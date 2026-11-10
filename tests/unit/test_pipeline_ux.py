@@ -9,6 +9,8 @@
 2. **跳过必须明说**：文档档位的"绿"是没跑测试的绿，台账/结论/IM 都要写明「跳过≠通过」。
 3. **心跳只在真有任务跑时说话**，且不跟真进度抢话。
 """
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 from pathlib import Path
 
@@ -366,7 +368,7 @@ async def test_dev_auto_refuses_to_start_without_identity(tmp_path, monkeypatch)
         raise AssertionError("预检没过却开始分解了——白烧 token")
     monkeypatch.setattr(dc, "decompose_for_parallel", _boom)
 
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}
     out = await tools["dev_auto"].handler({"task": "随便干点啥"})
     assert "预检未过" in out and "git config" in out
 
@@ -394,6 +396,6 @@ async def test_dev_auto_proceeds_after_healing_the_environment(tmp_path, monkeyp
         raise RuntimeError("走到分解了")
     monkeypatch.setattr(dc, "decompose_for_parallel", _sentinel)
 
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}
     out = await tools["dev_auto"].handler({"task": "随便干点啥"})
     assert reached, f"自愈后仍被预检拦住：{out[:200]}"

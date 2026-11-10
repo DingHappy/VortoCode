@@ -1,4 +1,6 @@
 """Actual model request and execution wiring, with offline scripted responses."""
+
+from src.agents.gate import make_confirm_gate
 import json
 
 import pytest
@@ -52,7 +54,7 @@ async def test_failed_mode_request_blocks_writes_and_new_human_turn_can_retry(na
         return "written"
     llm = Model([("request_build", {"reason": "需要写入", "next_action": "写入"}), ("write", {}), "尚未执行。",
                  ("write", {}), "已经执行。"])
-    agent = MainAgent([Tool("write", "Write", {}, write, read_only=False)], llm=llm,
+    agent = MainAgent([Tool("write", "Write", {}, write, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))], llm=llm,
                       native=native, plan_tool=True, on_escalate=escalate,
                       on_tool_event=lambda stage, event: events.append((stage, event)))
     await agent.run_turn("请处理这件事", mode="plan")

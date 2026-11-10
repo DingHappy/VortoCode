@@ -1,4 +1,6 @@
 """Trusted recovery decisions and their propagation; entirely offline."""
+
+from tests.tool_authorization import authorized_tools
 from dataclasses import replace
 from pathlib import Path
 
@@ -112,7 +114,7 @@ async def test_development_repair_does_not_repeat_a_recovery_required_attempt(tm
         raise RecoveryRequired("先核对原尝试", uncertain(), str(tmp_path / "retained"))
 
     monkeypatch.setattr(worktree, "run_isolated_task", blocked)
-    tool = next(item for item in build_dev_tools(str(tmp_path), on_progress=progress.append) if item.name == "dev_isolated")
+    tool = next(item for item in authorized_tools(build_dev_tools(str(tmp_path), on_progress=progress.append), human=False) if item.name == "dev_isolated")
     result = await tool.handler({"description": "fix the behavior"})
     assert result["ok"] is False and "需人工核对" in result["text"]
     assert len(calls) == 1 and not any(line.startswith("↻") for line in progress)
@@ -187,6 +189,6 @@ async def test_dependent_repair_stops_after_one_recovery_required_result(tmp_pat
     monkeypatch.setattr(worktree, "apply_diffs_to_branch", lambda *args, **kwargs:
                         {"ok": True, "branch": "vorto/test", "applied": ["A"], "failed": [], "integration": None})
     monkeypatch.setattr(worktree, "verify_branch", lambda *args, **kwargs: {"ok": True, "output": "", "cmd": "test"})
-    tool = next(item for item in build_dev_tools(str(tmp_path)) if item.name == "dev_auto")
+    tool = next(item for item in authorized_tools(build_dev_tools(str(tmp_path)), human=False) if item.name == "dev_auto")
     result = await tool.handler({"task": "implement two parts"})
     assert len(calls) == 1 and "需人工核对" in result

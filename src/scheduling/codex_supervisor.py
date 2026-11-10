@@ -695,4 +695,4 @@ def build_supervisor_tools(root: str) -> list:
                  "查看监管节奏及未完成的推进判断，或调整节奏。不带参数 = 查看现状。interval_minutes：每多少分钟检查一次"
                  "（最少 10，默认 30）；nudge：做完一轮后要不要主动判断下一步并拟好话（true/false）。只在主人明确要求时修改。",
                  {"interval_minutes": "整数，可选", "nudge": "true / false，可选"},
-                 _settings, read_only=False, serial=True)]
+                 _settings, read_only=False, serial=True, operation_kind='write', possible_operations=('read',), classify=lambda args: 'write' if any(args.get(key) not in (None, '') for key in DEFAULTS) else 'read')]

@@ -1,4 +1,6 @@
 """Malformed model calls must not turn into default-argument side effects."""
+
+from src.agents.gate import make_confirm_gate
 import json
 
 import pytest
@@ -91,7 +93,7 @@ async def test_rejected_batch_has_no_prefix_side_effect_or_approval(tmp_path, na
             return {"content": '[{"tool":"write","args":{"content":"would overwrite"}},'
                                '{"tool":"write","args":"DO_NOT_ECHO"}]'}
 
-    agent = MainAgent([Tool("write", "Write active file", {"content": "Text"}, write, read_only=False)],
+    agent = MainAgent([Tool("write", "Write active file", {"content": "Text"}, write, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))],
                       llm=Script(), native=native, on_escalate=approve, env_context=False,
                       on_tool_event=lambda *args: events.append(args))
     assert await agent.run_turn("更新当前文档", mode="plan") == "本批没有执行。"
@@ -129,7 +131,7 @@ async def test_corrected_call_runs_once_through_the_existing_mode_gate(tmp_path,
                 return {"content": "", "tool_calls": [{"name": "write", "arguments": json.dumps(args)}]}
             return {"content": json.dumps({"tool": "write", "args": args})}
 
-    agent = MainAgent([Tool("write", "Write active file", {"content": "Text"}, write, read_only=False)],
+    agent = MainAgent([Tool("write", "Write active file", {"content": "Text"}, write, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))],
                       llm=Script(), native=native, on_escalate=approve, env_context=False,
                       on_tool_event=lambda stage, payload: events.append((stage, payload)))
     assert await agent.run_turn("更新当前文档", mode="plan") == "已执行有效的修正调用。"
@@ -162,7 +164,7 @@ async def test_repeated_protocol_errors_stop_without_auto_continue_or_budget_esc
                 return {"content": "", "tool_calls": [{"name": "write", "arguments": "null"}]}
             return {"content": '{"tool":"write","args":null}'}
 
-    agent = MainAgent([Tool("write", "Write", {}, handler, read_only=False)], llm=Broken(),
+    agent = MainAgent([Tool("write", "Write", {}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))], llm=Broken(),
                       native=native, max_steps=steps, plan_tool=True, on_escalate=approve, env_context=False)
     assert await agent.run_turn("处理", mode=mode, emit=emitted.append) == ""
     assert len(requested) == expected_requests and executed == asked == []
@@ -186,7 +188,7 @@ async def test_shared_runtime_rejects_invalid_argument_objects_before_approval_a
     async def hook(*args, **kwargs):
         hooks.append(True)
 
-    tool = Tool("write", "Write", {}, handler, read_only=False)
+    tool = Tool("write", "Write", {}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     runtime = ToolRuntime(lambda: {"write": tool}, ToolExecutionContext(
         on_escalate=approve, on_hook=hook, on_event=lambda stage, payload: events.append((stage, payload))))
     outcome = await runtime.execute_bound(tool, args, "plan")
@@ -227,7 +229,7 @@ async def test_format_correction_cannot_escape_into_auto_continuation_by_changin
                 return {"content": "", "tool_calls": [{"name": "write", "arguments": "null"}]}
             return {"content": '{"tool":"write","args":null}'}
 
-    agent = MainAgent([Tool("write", "Write", {}, must_not_execute, read_only=False)],
+    agent = MainAgent([Tool("write", "Write", {}, must_not_execute, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))],
                       llm=Script(), native=native, max_steps=8, plan_tool=True,
                       on_escalate=approve, env_context=False)
     assert await agent.run_turn("处理", mode="build", emit=emitted.append) == ""
@@ -251,7 +253,7 @@ async def test_malformed_call_in_forced_synthesis_cannot_request_execution_permi
         async def chat(self, messages, **kwargs):
             return {"content": '{"tool":"write","args":"DO_NOT_ECHO"}'}
 
-    agent = MainAgent([Tool("write", "Write", {}, must_not_execute, read_only=False)],
+    agent = MainAgent([Tool("write", "Write", {}, must_not_execute, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))],
                       llm=Broken(), native=native, plan_tool=True, on_escalate=approve, env_context=False)
     assert await agent._force_finish("plan", lambda _: None, None, emitted.append) == ""
     assert asked == [] and len(emitted) == 1 and "本次尝试已停止" in emitted[0]

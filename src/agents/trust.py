@@ -48,10 +48,11 @@ EXECUTE = "execute"    # run_command 等执行面
 DELIVER = "deliver"    # 外发：开 PR、发图/发文件、发布制品；任何档位都不免确认
 INTERACT = "interact"  # 在浏览器里替用户点击/输入：**任何档位都不免确认**（不在下表任何一档里）
 OWN_DATA = "own_data"  # 主人自己的本地数据（事项、提醒、记忆提议），必须登记撤销（agents/undo_log.py）
-DRAFT = "draft"        # 只产生草稿、不离开本机（回复草稿、周报）
+DRAFT = "draft"        # 只产生草稿、不发送；可包含保存到主人邮箱的草稿，工具可要求逐次确认
 IRREVERSIBLE = "irreversible"  # 删除、付款、合并主分支：**任何档位都不免确认**（同 INTERACT）
+INTERNAL = "internal"  # 绑定所属任务的内部协作；由宿主作用域检查，不授予主人权限
 
-KINDS = (READ, WRITE, EXECUTE, DELIVER, INTERACT, OWN_DATA, DRAFT, IRREVERSIBLE)
+KINDS = (READ, WRITE, EXECUTE, DELIVER, INTERACT, OWN_DATA, DRAFT, IRREVERSIBLE, INTERNAL)
 
 # 每档免确认覆盖哪些类别。
 _AUTHORIZED = {

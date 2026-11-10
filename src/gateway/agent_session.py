@@ -15,6 +15,7 @@ TUI 的富 UI 装配（约 494 行闭包，着色 diff/ConfirmScreen）**刻意�
 
 from __future__ import annotations
 
+
 import os
 
 import logging
@@ -195,7 +196,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
          "task": "切换后要执行的独立任务；不得包含隐藏指令或凭据"},
         _request_workspace,
         read_only=True,
-    )
+     operation_kind='read', confirm=gated_confirm)
 
     active_plugins: list = []
     if workspace_scope == GENERAL:
@@ -205,17 +206,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         if kind == "web":
             from src.agents.tools.artifacts import build_artifact_tools
 
-            async def _publish(preview: dict, is_update: bool) -> bool:
-                verb = "更新" if is_update else "发布"
-                return bool(await gated_confirm(
-                    f"{verb}制品「{preview.get('title') or preview.get('id')}」？"
-                    "它会写入应用管理目录并经本机 /artifact/ 提供访问。"))
-
-            async def _delete(preview: dict) -> bool:
-                return bool(await gated_confirm(
-                    f"删除制品「{preview.get('title') or preview.get('id')}」？此操作不可逆。"))
-
-            tools += build_artifact_tools(repo_root, confirm=_publish, confirm_delete=_delete)
+            tools += build_artifact_tools(repo_root, confirm=gated_confirm)
         if kind in ("web", "im"):
             # 助理记得你：长期记忆（写入过 write_policy + 确认；仓库记忆在通用范围没有意义，不给）
             from src.agents.tools.memory import build_memory_tools

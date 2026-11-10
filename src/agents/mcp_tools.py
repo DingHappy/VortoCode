@@ -50,7 +50,7 @@ def wrap_mcp_manager(manager: Any, read_only_servers: frozenset = frozenset()) -
         public_name = orig if getattr(mt, "metadata", {}).get("mcp_tool_name") else f"mcp__{server}__{orig}"
         wrapped.append(Tool(public_name, f"[MCP:{server}] {mt.description}",
                             targs, handler, read_only=read_only, untrusted_source=True,
-                            external_content=True, input_schema=schema))
+                            external_content=True, input_schema=schema, operation_kind='read' if read_only else 'irreversible', confirm=getattr(getattr(manager, 'tool_executor', None), 'confirm', None), authority_owner=getattr(manager, 'tool_executor', manager), authority_name=orig, denied_result={'ok': False, 'error': 'MCP 调用未获内核确认，已拒绝执行'}))
     return wrapped
 
 

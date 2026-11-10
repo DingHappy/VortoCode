@@ -13,12 +13,12 @@ async def test_mcp_yaml_never_overrides_kernel_gate(mcp_permission_probe, monkey
     manager, tools, client = await mcp_permission_probe(confirm, action)
     taint.reset_taint()
     try:
-        assert await tools[0].handler({}) == 'probe executed'
+        assert (await tools[0].handler({}))['ok'] is False
         taint.mark_tainted()
-        assert (await tools[0].handler({}))['ok'] is False and client.calls == 1 and not asked
+        assert (await tools[0].handler({}))['ok'] is False and client.calls == 0 and not asked
         taint.reset_taint()
         monkeypatch.setattr(gate, 'decide', lambda **_: gate.DENY)
-        assert (await tools[0].handler({}))['ok'] is False and client.calls == 1
+        assert (await tools[0].handler({}))['ok'] is False and client.calls == 0
     finally:
         taint.reset_taint(); await manager.shutdown()
 
@@ -136,7 +136,7 @@ async def test_tainted_mcp_confirm_shows_one_banner_and_audits_raw_operation(mcp
         banner = gate.taint_prefix()
         assert len(prompts) == 1 and prompts[0].count(banner.strip()) == 1
         assert len(decisions) == 1 and banner.strip() not in decisions[0]
-        assert decisions[0].startswith('MCP 工具 `')
+        assert 'mcp__probe__act' in decisions[0]
     finally:
         taint.reset_taint(); await manager.shutdown()
 

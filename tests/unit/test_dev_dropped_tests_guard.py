@@ -12,6 +12,8 @@ tests/test_todo.py 里补一个 test_remove"。子 agent 把既有的 `test_add_
 就是那轮真实产出的删改。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.main_agent import (
@@ -80,7 +82,7 @@ def _dev_tool(tmp_path, results, progress, landed):
     originals = (worktree.run_isolated_task, worktree.apply_diff_to_branch)
     worktree.run_isolated_task = fake_run_isolated_task
     worktree.apply_diff_to_branch = fake_apply
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=progress.append)}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path), on_progress=progress.append), human=False)}
 
     def restore() -> None:
         worktree.run_isolated_task, worktree.apply_diff_to_branch = originals

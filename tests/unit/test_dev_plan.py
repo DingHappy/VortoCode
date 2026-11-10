@@ -4,6 +4,8 @@
 ①计划文件 schema 往返 ②write-ahead 时序（崩溃不超前标 landed）③dev_resume 跳过已 landed、
 只重跑未完成 ④全 landed 时幂等（只重验集成）⑤手改计划文件后按改后的跑。
 """
+
+from tests.tool_authorization import authorized_tools
 import json
 import subprocess
 
@@ -179,7 +181,7 @@ class _Sub:
 
 
 def _dev_tools(tmp_path, on_progress=None):
-    return {t.name: t for t in ma.build_dev_tools(str(tmp_path), on_progress=on_progress)}
+    return {t.name: t for t in authorized_tools(ma.build_dev_tools(str(tmp_path), on_progress=on_progress), human=False)}
 
 
 @pytest.mark.asyncio

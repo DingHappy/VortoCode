@@ -162,7 +162,7 @@ async def test_real_child_yields_before_later_tools_and_answer_rebuilds_under_sa
         calls.append("after")
         return "must not execute after a question"
 
-    monkeypatch.setattr(delegation, "build_read_tools", lambda root: [Tool("before", "read", {}, before, untrusted_source=True), Tool("after", "read", {}, after)])
+    monkeypatch.setattr(delegation, "build_read_tools", lambda root: [Tool("before", "read", {}, before, untrusted_source=True, operation_kind='read'), Tool("after", "read", {}, after, operation_kind='read')])
 
     class LLM:
         async def chat(self, messages, **kwargs):

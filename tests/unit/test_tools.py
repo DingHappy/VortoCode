@@ -1,6 +1,8 @@
 """工具集成测试"""
 
 import pytest
+from src.agents.gate import make_confirm_gate
+from tests.tool_authorization import approve_fixture
 
 from src.tools import (
     MCPTransport, ToolRegistry, Tool, ToolPermission,
@@ -147,7 +149,7 @@ class TestToolExecutor:
         """测试执行工具"""
         registry = ToolRegistry()
         permission_manager = ToolPermissionManager()
-        executor = ToolExecutor(registry, permission_manager)
+        executor = ToolExecutor(registry, permission_manager, confirm=make_confirm_gate(approve_fixture, can_ask_human=True))
         
         # 注册工具
         tool = Tool(

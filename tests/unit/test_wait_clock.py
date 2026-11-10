@@ -109,7 +109,7 @@ async def test_tool_duration_excludes_the_confirmation_wait(monkeypatch, tmp_pat
         return "好了"
 
     wc.start_turn()
-    await agent._run_bound_tool(Tool("probe", "", {}, handler, read_only=False), {}, "build",
+    await agent._run_bound_tool(Tool("probe", "", {}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True)), {}, "build",
                                 lambda _m: None)
     finish = [p for stage, p in events if stage == "finish"][0]
     assert finish["duration_ms"] < 100, f"等待被算进了耗时：{finish['duration_ms']}ms"

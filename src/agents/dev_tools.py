@@ -1,12 +1,16 @@
 """Isolated development tool assembly; independent of client/session assembly."""
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
+
+from src.agents.tool import ApprovedTaskScope
+
 from typing import Any, Callable, Optional
 
 from src.agents.agent_loop import MainAgent, DEV_SUBAGENT_ROLE, _clip_middle
 from src.agents.tools._common import _truthy
 from src.agents.tool import Tool
-from src.agents.gate import request
 from src.agents.trust import DELIVER
 from src.agents.backends.recovery import RecoveryRequired
 from src.agents.worktree import baseline_note, included_note, local_includes
@@ -59,7 +63,7 @@ def build_followup_tool(repo_root: str, source: str, recorded: Optional[list] = 
         "发现**与本任务无关**、但值得另外处理的问题（别处的 bug、缺的测试、过时的文档）时用它记一条，"
         "**不要顺手去改**——改动要守在任务范围内。title 一句话说清要做什么，detail 写在哪、为什么。每个任务最多 3 条。",
         {"title": "要做什么（一句话）", "detail": "在哪、为什么值得做（可选）"},
-        _suggest, read_only=False)
+        _suggest, read_only=False, operation_kind='draft')
 
 
 def followup_note(titles: list) -> str:
@@ -217,7 +221,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 return external if external is not None else _internal(wt)
 
             def _internal(wt):
-                tools = (build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)]
+                from src.agents.worktree_bindings import current_worktree_owner
+                import uuid
+                owner = current_worktree_owner()
+                scope = ApprovedTaskScope(owner.get("task_id") or owner.get("plan_id") or f"development-{uuid.uuid4().hex}", str(wt))
+                tools = (build_read_tools(wt) + build_write_tools(wt, task_scope=scope) + [build_test_tool(wt, test_cmd, task_scope=scope)]
                          + [build_followup_tool(repo_root, (str(_desc or "").strip().splitlines() or [""])[0], recorded)])
                 kwargs = {}
                 if question is not None:
@@ -459,23 +467,30 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             note = f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）。"
         return head + note + dropped_note + "\n" + "\n".join(lines)
 
-    async def _open_pr_for_branch(branch: str, task: str, body: str, base: str) -> str:
+    async def _prepare_pr_for_branch(branch: str, task: str, body: str, base: str) -> object:
         """dev_auto 集成绿后、经确认把分支 push 并开 PR。confirm 缺失/被拒/失败都给清楚说明、不抛。"""
         if confirm is None:
             return ("\n（本环境未接确认门，未自动开 PR；分支已就绪，可用 open_pr 工具手动开。）")
         title = f"dev_auto: {task[:60]}"
         _emit_diff(f"待开 PR 的改动：{branch} → {base}", branch, base)
-        if not await request(confirm, f"把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}", DELIVER):
-            return f"\n（已取消开 PR；分支 {branch} 保留，可稍后手动 open_pr。）"
-        _progress(f"🚀 push {branch} 并对 {base} 开{'（draft）' if draft_pr else ''} PR…")
-        from src.agents.vcs import push_and_open_pr
-        res = await await_thread(push_and_open_pr, repo_root, branch, title, body[:4000],
-                                      base, "origin", draft_pr)
-        if res.get("ok") and res.get("url"):
-            return f"\n🎉 已开 PR：{res['url']}"
-        if res.get("pushed"):
-            return f"\n（已 push {branch}，但开 PR 失败：{res.get('error')}。可手动 gh pr create。）"
-        return f"\n（开 PR 失败：{res.get('error')}；分支 {branch} 保留。）"
+        async def apply():
+            _progress(f"🚀 push {branch} 并对 {base} 开{'（draft）' if draft_pr else ''} PR…")
+            from src.agents.vcs import push_and_open_pr
+            res = await await_thread(push_and_open_pr, repo_root, branch, title, body[:4000],
+                                          base, "origin", draft_pr)
+            if res.get("ok") and res.get("url"):
+                return f"\n🎉 已开 PR：{res['url']}"
+            if res.get("pushed"):
+                return f"\n（已 push {branch}，但开 PR 失败：{res.get('error')}。可手动 gh pr create。）"
+            return f"\n（开 PR 失败：{res.get('error')}；分支 {branch} 保留。）"
+        return PreparedToolCall(apply, f'把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}', DELIVER, denied_result=f'\n（已取消开 PR；分支 {branch} 保留，可稍后手动 open_pr。）')
+
+    async def _open_pr_for_branch(branch, task, body, base):
+        tool = Tool.prepared("open_pr", "发布本任务已验证的分支", {},
+            lambda _args: _prepare_pr_for_branch(branch, task, body, base),
+            operation_kind="deliver", confirm=confirm, read_only=False, outward=True,
+            required_capabilities=("authenticated_outbound",))
+        return await tool.handler({"branch": branch, "title": task, "body": body, "base": base})
 
     async def _run_review_gate(branch: str, base: str, test_cmd, on_incomplete=None) -> tuple:
         """薄封装：把"依赖接力修复"作为 repair 注入 review.run_gate（挑刺→修→重审），返回 (note, blocked)。
@@ -510,7 +525,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     diff = _review._branch_diff(_repo_root, _base, _branch)
                     if not diff.strip():
                         return []
-                    tools = build_read_tools(str(path)) + [build_test_tool(str(path), test_cmd)]
+                    from src.agents.worktree_bindings import current_worktree_owner
+                    owner = current_worktree_owner()
+                    scope = ApprovedTaskScope(owner.get("task_id") or owner.get("plan_id") or f"review-{uuid.uuid4().hex}", str(path))
+                    tools = build_read_tools(str(path)) + [build_test_tool(str(path), test_cmd, task_scope=scope)]
                     extra = (_review._REVIEWER_SYSTEM
                              + (f"\n\n{lens}" if lens else "")
                              + (f"\n\n【本仓库审查规范】\n{guidelines}" if guidelines else ""))
@@ -853,7 +871,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         _log_stage_usage("execute", execute_usage)
         return result
 
-    async def _pr_fix(args: dict) -> str:
+    async def _pr_fix(args: dict) -> object:
         """读一个 PR 的 review 评论 + CI 状态 → 在其分支上逐条修（自测）→ 绿则 push（确认门）。
 
         硬闸：分支必须匹配 vorto/*，绝不碰 main/master/其它分支。'人在合并口'之前的往返自动化。"""
@@ -914,14 +932,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     f"分支 {branch} 未推送。")
         # 绿了 → push（外向操作，走确认门）
         _emit_diff(f"pr_fix 待推送的改动：{branch}（对 origin/{branch}）", branch, f"origin/{branch}")
-        if confirm is not None and not await request(confirm,
-                f"已按 PR #{fb.get('pr')} 的反馈在 {branch} 上修好且自测通过，push 到远端更新 PR？", DELIVER):
-            return f"（已在本地 {branch} 修好并提交，但未 push——你取消了。）"
-        _progress(f"🚀 push {branch} 更新 PR #{fb.get('pr')}…")
-        pushed = await await_thread(push_branch, repo_root, branch)
-        if pushed["ok"]:
-            return f"✅ 已按 PR #{fb.get('pr')} 的反馈修好、自测通过并 push 到 {branch}（PR 时间线可见新 commit）。"
-        return f"已在 {branch} 本地修好，但 push 失败：{pushed['output']}"
+        async def apply():
+            _progress(f"🚀 push {branch} 更新 PR #{fb.get('pr')}…")
+            pushed = await await_thread(push_branch, repo_root, branch)
+            if pushed["ok"]:
+                return f"✅ 已按 PR #{fb.get('pr')} 的反馈修好、自测通过并 push 到 {branch}（PR 时间线可见新 commit）。"
+            return f"已在 {branch} 本地修好，但 push 失败：{pushed['output']}"
+        return PreparedToolCall(apply, f"已按 PR #{fb.get('pr')} 的反馈在 {branch} 上修好且自测通过，push 到远端更新 PR？", DELIVER, denied_result=f'（已在本地 {branch} 修好并提交，但未 push——你取消了。）')
 
     async def _dev_resume(args: dict) -> str:
         """从落盘的 dev_auto 计划断点续跑：已 landed 的块跳过，未完成的（pending/running/failed）重走，
@@ -964,14 +981,14 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
              "❌带失败输出供修正。仅 build",
              {"description": "要在隔离工作区实现的子任务",
               "test": "可选，pytest 文件/节点路径或 test_函数名，不是 shell 命令；实际命令由仓库探测决定，以返回的验证记录为准"},
-             _dev_isolated, read_only=False, required_capabilities=("host_process",)),
+             _dev_isolated, read_only=False, required_capabilities=("host_process",), operation_kind='execute', possible_operations=('deliver',), confirm=confirm),
         Tool("dev_parallel",
              "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突，"
              "红了带失败反馈自修复重试），绿块一并落到一个 vorto/parallel 新分支（不碰 main），"
              "**落分支后再跑一遍集成测试**抓'单独绿合起来红'，汇报各自 ✅/❌ 及集成结果。最多 5（仅 build）",
              {"tasks": "相互独立的子任务字符串列表",
               "test": "可选，pytest 文件/节点路径或 test_函数名；省略则各自跑全量 tests/"},
-             _dev_parallel, read_only=False, required_capabilities=("host_process",)),
+             _dev_parallel, read_only=False, required_capabilities=("host_process",), operation_kind='execute', possible_operations=('deliver',), confirm=confirm),
         Tool("dev_auto",
              "把一个大任务**端到端**做完：自动分解→无依赖子任务并行隔离实现→**有依赖的按拓扑序"
              "在同一 vorto/auto 分支上逐个接力实现**（看得见前面的改动、自测绿才提交）→最后整条分支"
@@ -980,13 +997,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
              {"task": "要自动分解并实现的大任务（自然语言）",
               "test": "可选，pytest 选择器",
               "open_pr": "可选，true 则集成绿后经确认 push 分支并开 PR"},
-             _dev_auto, read_only=False, required_capabilities=("host_process",)),
+             _dev_auto, read_only=False, required_capabilities=("host_process",), operation_kind='execute', possible_operations=('deliver',), confirm=confirm),
         Tool("dev_resume",
              "从一个中断的 dev_auto 计划**断点续跑**：已落地(landed)的子任务块跳过、未完成的（含失败）重走，"
              "最后重跑集成验证（原计划要开 PR 的还会接着审查+开 PR）。10 个子任务断在第 7 个不用从头再来。"
              "不传 plan_id 则列出最近可续的计划。仅 build",
              {"plan_id": "要续跑的计划 id（dev_auto 起跑时会给出、存于 .vortoone/dev_plans/）；省略则列出可续计划"},
-             _dev_resume, read_only=False, required_capabilities=("host_process",)),
+             _dev_resume, read_only=False, required_capabilities=("host_process",), operation_kind='execute', possible_operations=('deliver',), confirm=confirm),
         Tool("pr_fix",
              "读一个 PR 的 review 评论（含行级、已 resolved 的自动跳过）+ CI 失败检查，在其 **vorto/* 分支**上"
              "逐条修正 + 自测，绿了经确认 push 更新 PR。'人在合并口'之前的往返自动化。硬闸：只碰 vorto/* 分支。仅 build",
@@ -994,5 +1011,5 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
               "branch": "可选，vorto/* 分支名（与 pr 二选一）",
               "test": "可选，pytest 选择器"},
              _pr_fix, read_only=False, outward=True,
-             required_capabilities=("host_process", "authenticated_outbound")),
+             required_capabilities=("host_process", "authenticated_outbound"), operation_kind='execute', possible_operations=('deliver',), confirm=confirm),
     ]

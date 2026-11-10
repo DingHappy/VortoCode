@@ -4,6 +4,7 @@
 """
 
 import pytest
+from tests.tool_authorization import approve_fixture
 from fastapi.testclient import TestClient
 
 from src.agents.tools.artifacts import (
@@ -72,7 +73,7 @@ def test_artifact_url_env(monkeypatch):
 # --------------------------------------------------------------- 工具封装
 @pytest.mark.asyncio
 async def test_publish_tool_requires_html(tmp_path):
-    pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
+    pub = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm=approve_fixture)}["publish_artifact"]
     assert not pub.read_only
     out = await pub.handler({"title": "t"})
     assert "需要 html" in out
@@ -82,7 +83,7 @@ async def test_publish_tool_requires_html(tmp_path):
 async def test_publish_tool_returns_url_and_updates(tmp_path):
     seen = {}
     tools = {t.name: t for t in build_artifact_tools(
-        str(tmp_path), base_url="http://h:1", on_published=lambda m, u: seen.update(m=m, u=u))}
+        str(tmp_path), confirm=approve_fixture, base_url="http://h:1", on_published=lambda m, u: seen.update(m=m, u=u))}
     out = await tools["publish_artifact"].handler({"title": "Rep", "html": "<b>1</b>"})
     assert "http://h:1/artifact/" in out and "v1" in out
     aid = seen["m"]["id"]
@@ -96,8 +97,9 @@ async def test_publish_tool_returns_url_and_updates(tmp_path):
 async def test_publish_tool_confirms_create_and_update(tmp_path):
     calls = []
 
-    async def confirm(preview, is_update):
-        calls.append(is_update)
+    async def confirm(message, kind):
+        assert kind == "deliver"
+        calls.append(message.startswith("更新"))
         return True
 
     tools = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm=confirm)}
@@ -110,7 +112,7 @@ async def test_publish_tool_confirms_create_and_update(tmp_path):
 
 @pytest.mark.asyncio
 async def test_publish_tool_cancel(tmp_path):
-    async def deny(preview, is_update):
+    async def deny(message, kind):
         return False
 
     pub = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm=deny)}["publish_artifact"]
@@ -199,7 +201,7 @@ def test_publish_rejects_oversize(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_publish_tool_oversize_message(tmp_path, monkeypatch):
     monkeypatch.setenv("VORTOONE_ARTIFACT_MAX_BYTES", "50")
-    pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
+    pub = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm=approve_fixture)}["publish_artifact"]
     out = await pub.handler({"title": "t", "html": "y" * 999})
     assert "发布失败" in out and "上限" in out
     assert ArtifactStore(str(tmp_path)).list() == []        # 未落盘
@@ -222,7 +224,7 @@ def test_render_markdown_doc():
 
 @pytest.mark.asyncio
 async def test_publish_tool_markdown_kind(tmp_path):
-    pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
+    pub = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm=approve_fixture)}["publish_artifact"]
     out = await pub.handler({"title": "报告", "markdown": "# 标题\n正文"})
     assert "markdown" in out
     m = ArtifactStore(str(tmp_path)).list()[0]
@@ -232,7 +234,7 @@ async def test_publish_tool_markdown_kind(tmp_path):
 
 @pytest.mark.asyncio
 async def test_publish_tool_needs_html_or_markdown(tmp_path):
-    pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
+    pub = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm=approve_fixture)}["publish_artifact"]
     out = await pub.handler({"title": "t"})
     assert "html 或 markdown" in out
 
@@ -252,9 +254,10 @@ def test_store_delete(tmp_path):
 async def test_delete_tool_confirm_and_cancel(tmp_path):
     calls = []
 
-    async def confirm_del(preview):
-        calls.append(preview["id"])
-        return preview["id"].startswith("keep") is False   # 取消以 keep 开头的
+    async def confirm_del(message, kind):
+        assert kind == "irreversible" and aid in message
+        calls.append(aid)
+        return aid.startswith("keep") is False   # 取消以 keep 开头的
 
     tools = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm_delete=confirm_del)}
     store = ArtifactStore(str(tmp_path))
@@ -271,7 +274,7 @@ async def test_delete_tool_confirm_and_cancel(tmp_path):
 
 @pytest.mark.asyncio
 async def test_delete_tool_respects_cancel(tmp_path):
-    async def deny(preview):
+    async def deny(message, kind):
         return False
 
     tools = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm_delete=deny)}

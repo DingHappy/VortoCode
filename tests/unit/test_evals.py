@@ -4,6 +4,8 @@
 之本。另测场景 setup 产出正确的 scratch 仓库，以及 runner 的事实采集+评分（用假 dev 工具，无 LLM）。
 """
 
+from src.agents.gate import make_confirm_gate
+
 from types import SimpleNamespace
 
 import pytest
@@ -200,7 +202,7 @@ async def test_runner_scores_real_green_branch(monkeypatch, tmp_path):
             subprocess.run(["git", "-C", repo_root, "commit", "-qm", "fake"], check=True)
             subprocess.run(["git", "-C", repo_root, "checkout", "-q", "-"], check=True)  # 回 base，主区干净
             return "✅ 已落到 vorto/fake 且测试通过（本次改动含 1 个测试文件）。"
-        return [Tool("dev_isolated", "fake", {}, _h, read_only=False)]
+        return [Tool("dev_isolated", "fake", {}, _h, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
 
     monkeypatch.setattr(runner, "build_dev_tools", _fake_build)
     s, note = await runner.run_scenario(BY_NAME["no_gitignore"], tmp_path)
@@ -217,7 +219,7 @@ async def test_runner_catches_hallucinated_branch(monkeypatch, tmp_path):
     def _fake_build(repo_root, on_progress=None, confirm=None):
         async def _h(args):
             return "✅ 已在 vorto/ghost 完成，5 个测试全过。"       # 纯编造，没建任何分支
-        return [Tool("dev_isolated", "fake", {}, _h, read_only=False)]
+        return [Tool("dev_isolated", "fake", {}, _h, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
 
     monkeypatch.setattr(runner, "build_dev_tools", _fake_build)
     s, _ = await runner.run_scenario(BY_NAME["no_gitignore"], tmp_path)
@@ -252,7 +254,7 @@ async def test_runner_fails_noop_resume(monkeypatch, tmp_path):
     def _fake_build(repo_root, on_progress=None, confirm=None):
         async def _h(args):
             return "✅ 已续跑计划 eval-resume，集成后全量测试通过。"   # 什么都不改
-        return [Tool("dev_resume", "fake", {}, _h, read_only=False)]
+        return [Tool("dev_resume", "fake", {}, _h, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
 
     monkeypatch.setattr(runner, "build_dev_tools", _fake_build)
     s, note = await runner.run_scenario(BY_NAME["resume_interrupted"], tmp_path)
@@ -274,7 +276,7 @@ async def test_runner_fails_resume_that_deletes_red_test(monkeypatch, tmp_path):
             subprocess.run(["git", "-C", repo_root, "commit", "-qm", "cheat: drop red test"], check=True)
             subprocess.run(["git", "-C", repo_root, "checkout", "-q", "-"], check=True)
             return "✅ 已续跑计划 eval-resume，集成后全量测试通过。"
-        return [Tool("dev_resume", "fake", {}, _h, read_only=False)]
+        return [Tool("dev_resume", "fake", {}, _h, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
 
     monkeypatch.setattr(runner, "build_dev_tools", _fake_build)
     s, note = await runner.run_scenario(BY_NAME["resume_interrupted"], tmp_path)

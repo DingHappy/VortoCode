@@ -4,6 +4,10 @@
 工具调用回灌、plan/build 工具权限门、未知工具、工具报错兜底、步数上限、LLM 出错。
 """
 
+from tests.tool_authorization import authorized_tools
+
+from src.agents.gate import make_confirm_gate
+
 import pytest
 
 from src.agents.main_agent import (MainAgent, SkillRegistry, Tool, _diff_change_counts, _to_native_messages,
@@ -92,7 +96,7 @@ async def test_tool_then_reply():
         calls.append(args)
         return "file contents X"
 
-    tool = Tool("read_file", "读文件", {"path": "路径"}, handler, read_only=True)
+    tool = Tool("read_file", "读文件", {"path": "路径"}, handler, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=ScriptedLLM(
         '{"tool":"read_file","args":{"path":"a.py"}}',
         "这个文件里是 X。",
@@ -115,9 +119,9 @@ async def test_structured_tool_lifecycle_reports_success_failure_and_block():
     async def fails(_args):
         raise RuntimeError("boom")
 
-    read = Tool("read_file", "读", {"path": "路径"}, succeeds, read_only=True)
-    broken = Tool("broken", "坏工具", {}, fails, read_only=True)
-    write = Tool("write_file", "写", {"path": "路径"}, succeeds, read_only=False)
+    read = Tool("read_file", "读", {"path": "路径"}, succeeds, read_only=True, operation_kind='read')
+    broken = Tool("broken", "坏工具", {}, fails, read_only=True, operation_kind='read')
+    write = Tool("write_file", "写", {"path": "路径"}, succeeds, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([read, broken, write], on_tool_event=lambda stage, item: events.append((stage, item)))
 
     assert await agent._run_tool("read_file", {"path": "a.py"}, "plan", lambda _m: None) == "read a.py"
@@ -172,7 +176,7 @@ async def test_plan_mode_denies_heavy_tool():
         ran.append(True)
         return "ran"
 
-    heavy = Tool("run_dev_workflow", "重型", {"goal": "目标"}, handler, read_only=False)
+    heavy = Tool("run_dev_workflow", "重型", {"goal": "目标"}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([heavy], llm=ScriptedLLM(
         '{"tool":"run_dev_workflow","args":{"goal":"x"}}',
         "好的，我先不开发。",
@@ -192,7 +196,7 @@ async def test_build_mode_allows_heavy_tool():
         ran.append(args)
         return "结果: 成功"
 
-    heavy = Tool("run_dev_workflow", "重型", {"goal": "目标"}, handler, read_only=False)
+    heavy = Tool("run_dev_workflow", "重型", {"goal": "目标"}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([heavy], llm=ScriptedLLM(
         '{"tool":"run_dev_workflow","args":{"goal":"加法"}}',
         "开发完成。",
@@ -220,7 +224,7 @@ async def test_tool_error_fed_back_not_crash():
     async def boom(args):
         raise RuntimeError("炸了")
 
-    tool = Tool("read_file", "读", {"path": "p"}, boom, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, boom, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=ScriptedLLM(
         '{"tool":"read_file","args":{"path":"a"}}',
         "读取失败了，我换个思路。",
@@ -251,7 +255,7 @@ async def test_force_finish_salvages_work_on_cap():
     async def handler(args):
         return "file body"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     # 跑满预算后，强制"无工具"收尾把已读内容综合成结论，而不是丢弃返回空
     agent = MainAgent([tool], llm=_CapThenFinishLLM("综合结论：A 成熟、B 半成品。"), max_steps=3)
     out, say, emit = _capture()
@@ -266,7 +270,7 @@ async def test_max_steps_cap_degrades_gracefully():
     async def handler(args):
         return "again"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     # 模型连收尾都不听话、仍只返回工具调用 → 优雅降级：给"上限"提示、返回空，但不崩
     agent = MainAgent([tool], llm=ScriptedLLM('{"tool":"read_file","args":{"path":"a"}}'), max_steps=3)
     out, say, emit = _capture()
@@ -283,7 +287,7 @@ async def test_build_safety_cap_mentions_auto_continue_limit(monkeypatch):
     async def handler(args):
         return "again"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=ScriptedLLM('{"tool":"read_file","args":{"path":"a"}}'), max_steps=3)
     out, say, emit = _capture()
     r = await agent.run_turn("循环", mode="build", say=say, emit=emit)
@@ -304,7 +308,7 @@ async def test_build_auto_continues_past_single_step_budget(monkeypatch):
         ran.append(args)
         return "again"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=ScriptedLLM(
         '{"tool":"read_file","args":{"path":"a"}}',
         '{"tool":"read_file","args":{"path":"b"}}',
@@ -461,8 +465,8 @@ def test_orchestration_hint_adapts_to_tools():
     assert "dev_parallel" not in only_plan and "【开发工具】" not in only_plan
     # 有隔离/并行实现工具 → 给出"先计划、再并行隔离实现+验证"的完整编排
     full = MainAgent([
-        Tool("dev_isolated", "d", {}, _noop, read_only=False),
-        Tool("dev_parallel", "d", {}, _noop, read_only=False),
+        Tool("dev_isolated", "d", {}, _noop, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True)),
+        Tool("dev_parallel", "d", {}, _noop, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True)),
     ], plan_tool=True)._system("build")
     assert "dev_parallel" in full and "dev_isolated" in full and "隔离 worktree" in full
 
@@ -541,7 +545,7 @@ async def test_streaming_suppresses_tool_call_json():
         calls.append(args)
         return "ok"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     # 第一步流式吐工具调用 JSON（应被抑制、不回显），第二步流式吐文本（应回显）
     agent = MainAgent([tool], llm=StreamLLMSeq([
         ['{"tool":', '"read_file",', '"args":{"path":"a"}}'],
@@ -612,7 +616,7 @@ async def test_native_function_calling():
         calls.append(args)
         return "结果X"
 
-    tool = Tool("read_file", "读", {"path": "路径"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "路径"}, handler, read_only=True, operation_kind='read')
 
     class NativeLLM:
         def __init__(self):
@@ -643,7 +647,7 @@ async def test_native_executes_prompt_style_tool_json_instead_of_emitting_it():
         calls.append(args)
         return "已请求工作区"
 
-    tool = Tool("request_workspace", "请求工作区", {"scope": "范围"}, handler, read_only=True)
+    tool = Tool("request_workspace", "请求工作区", {"scope": "范围"}, handler, read_only=True, operation_kind='read')
 
     class CompatNativeLLM:
         def __init__(self):
@@ -672,7 +676,7 @@ async def test_native_falls_back_to_prompted_on_error():
     async def handler(args):
         return "ok"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
 
     class FlakyLLM:
         async def chat(self, messages, tools=None, **k):
@@ -737,7 +741,7 @@ async def test_native_streams_only_final_not_tool_step():
         calls.append(args)
         return "ok"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=NativeStreamLLM([
         ([], [{"id": "1", "name": "read_file", "arguments": '{"path": "a"}'}]),  # 工具步
         (["读", "完", "了"], None),                                              # 最终步
@@ -758,7 +762,7 @@ async def test_native_empty_after_tool_retries_and_never_emits_no_reply():
         calls.append(args)
         return "指数 3803"
 
-    tool = Tool("web_search", "搜索", {"query": "关键词"}, handler, read_only=True)
+    tool = Tool("web_search", "搜索", {"query": "关键词"}, handler, read_only=True, operation_kind='read')
 
     class EmptyThenFinal:
         def __init__(self):
@@ -802,7 +806,7 @@ async def test_native_stream_suppresses_prompt_style_tool_json():
         calls.append(args)
         return "已请求"
 
-    tool = Tool("request_workspace", "请求工作区", {"scope": "范围"}, handler, read_only=True)
+    tool = Tool("request_workspace", "请求工作区", {"scope": "范围"}, handler, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=NativeStreamLLM([
         ([raw[:12], raw[12:]], None),
         (["请", "选择", "项目。"], None),
@@ -874,7 +878,7 @@ async def test_native_preamble_before_toolcall_keeps_stream_monotonic():
         calls.append(args)
         return "ok"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     llm = NativePreambleLLM(["先", "看"],
                             {"id": "1", "name": "read_file", "arguments": '{"path": "a"}'},
                             ["结", "果"])
@@ -908,7 +912,7 @@ async def test_plan_escalation_runs_write_tool_when_accepted():
         escalated.append(name)
         return True                               # 用户同意切 build 并继续
 
-    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    w = Tool("w", "写工具", {}, w_handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([w], llm=ScriptedLLM('{"tool":"w","args":{}}', "做完了。"),
                       on_escalate=on_escalate)
     out, say, emit = _capture()
@@ -928,7 +932,7 @@ async def test_plan_escalation_refused_blocks_write_tool():
     async def on_escalate(name, args):
         return False                              # 用户拒绝切 build
 
-    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    w = Tool("w", "写工具", {}, w_handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([w], llm=ScriptedLLM('{"tool":"w","args":{}}', "那先不动。"),
                       on_escalate=on_escalate)
     out, say, emit = _capture()
@@ -951,7 +955,7 @@ async def test_request_build_accepted_allows_followup_write_tool():
         escalated.append((name, args))
         return True
 
-    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    w = Tool("w", "写工具", {}, w_handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([w], llm=ScriptedLLM(
         '{"tool":"request_build","args":{"reason":"方案已确认","next_action":"写入修复"}}',
         '{"tool":"w","args":{"file":"a.py"}}',
@@ -975,7 +979,7 @@ async def test_request_build_refused_keeps_plan_and_blocks_write_tool():
     async def on_escalate(name, args):
         return False
 
-    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    w = Tool("w", "写工具", {}, w_handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([w], llm=ScriptedLLM(
         '{"tool":"request_build","args":{"reason":"方案已确认","next_action":"写入修复"}}',
         '{"tool":"w","args":{}}',
@@ -1512,7 +1516,7 @@ async def test_run_tool_long_result_preserves_tail():
     async def handler(args):
         return big
 
-    tool = Tool("run_command", "shell", {"command": "命令"}, handler, read_only=False)
+    tool = Tool("run_command", "shell", {"command": "命令"}, handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     agent = MainAgent([tool], llm=ScriptedLLM(
         '{"tool":"run_command","args":{"command":"c"}}', "看到报错了。"))
     await agent.run_turn("跑一下", mode="build", emit=lambda _m: None)
@@ -1556,7 +1560,7 @@ async def test_dev_parallel_caps_concurrency(monkeypatch, tmp_path):
         return ("", None, {"ok": False, "output": "未绿"})       # 不绿 → dev_parallel 早退、不碰 git
 
     monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated_task)
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}
     out = await tools["dev_parallel"].handler({"tasks": ["a", "b", "c", "d", "e"]})
 
     assert state["ran"] == 5                                    # 5 个全跑了（只是没挤在一起）
@@ -1738,8 +1742,8 @@ async def test_parallel_read_only_tools_run_in_one_step():
     async def h2(_a):
         ran.append("t2"); return "R2"
 
-    tools = [Tool("t1", "读1", {}, h1, read_only=True),
-             Tool("t2", "读2", {}, h2, read_only=True)]
+    tools = [Tool("t1", "读1", {}, h1, read_only=True, operation_kind='read'),
+             Tool("t2", "读2", {}, h2, read_only=True, operation_kind='read')]
     llm = _ScriptLLM(['[{"tool":"t1","args":{}},{"tool":"t2","args":{}}]', "两个都读完了"])
     a = MainAgent(tools, llm=llm, max_steps=5)
     out = await a.run_turn("并行读两个文件", mode="plan")
@@ -1824,7 +1828,7 @@ async def test_native_path_runs_all_tool_calls():
                     {"name": "t", "arguments": "{}"}, {"name": "t", "arguments": "{}"}]}
             return {"content": "都跑完了", "tool_calls": []}
 
-    a = MainAgent([Tool("t", "", {}, h, read_only=True)], llm=NativeLLM(), native=True, max_steps=5)
+    a = MainAgent([Tool("t", "", {}, h, read_only=True, operation_kind='read')], llm=NativeLLM(), native=True, max_steps=5)
     out = await a.run_turn("并行", mode="plan")
     assert out == "都跑完了" and len(ran) == 2                # 两个 tool_call 都执行了
 
@@ -1856,7 +1860,7 @@ async def test_plan_native_batch_is_not_truncated_by_tool_budget(monkeypatch):
             ]}
 
     out, say, emit = _capture()
-    a = MainAgent([Tool("t", "", {}, h, read_only=True)], llm=NativeLLM(), native=True, max_steps=5)
+    a = MainAgent([Tool("t", "", {}, h, read_only=True, operation_kind='read')], llm=NativeLLM(), native=True, max_steps=5)
     r = await a.run_turn("并行", mode="plan", say=say, emit=emit)
     assert r == "已按预算总结。"
     assert len(ran) == 3
@@ -1871,7 +1875,7 @@ async def test_plan_prompt_array_is_not_truncated_by_tool_budget(monkeypatch):
     async def h(args):
         ran.append(args); return "ok"
 
-    tool = Tool("t", "", {}, h, read_only=True)
+    tool = Tool("t", "", {}, h, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=ScriptedLLM(
         '[{"tool":"t","args":{"n":1}},{"tool":"t","args":{"n":2}}]',
         "已按预算总结。",
@@ -1897,7 +1901,7 @@ async def test_plan_step_cap_empty_finish_requests_build_and_continues():
         escalations.append((name, payload))
         return True
 
-    tool = Tool("t", "", {}, h, read_only=True)
+    tool = Tool("t", "", {}, h, read_only=True, operation_kind='read')
     agent = MainAgent([tool], llm=ScriptedLLM(
         '{"tool":"t","args":{"n":1}}',
         "",
@@ -2308,7 +2312,7 @@ async def test_build_runs_more_steps_before_announcing_the_segment_end():
     async def handler(args):
         return "again"
 
-    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True, operation_kind='read')
     script = '{"tool":"read_file","args":{"path":"a"}}'
 
     plan_agent = MainAgent([tool], llm=ScriptedLLM(script))
@@ -2365,8 +2369,8 @@ async def test_leaked_tool_syntax_never_reaches_the_user():
 
 def test_remove_tools_drops_catalogue_schema_and_dispatch_together():
     """撤销连接器工具时，模型可见的目录/原生 schema 与可执行表必须同一次移除。"""
-    keep = Tool("keep", "保留", {}, lambda a: "k", read_only=True)
-    gone = Tool("mcp__x__read", "撤销", {}, lambda a: "g", read_only=True)
+    keep = Tool("keep", "保留", {}, lambda a: "k", read_only=True, operation_kind='read')
+    gone = Tool("mcp__x__read", "撤销", {}, lambda a: "g", read_only=True, operation_kind='read')
     agent = MainAgent([keep, gone])
     assert agent.remove_tools({"mcp__x__read", "never_existed"}) == {"mcp__x__read"}
     assert "mcp__x__read" not in agent.tools

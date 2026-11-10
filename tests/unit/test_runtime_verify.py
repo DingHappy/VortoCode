@@ -8,6 +8,8 @@
   单测先过才跑、任一红/配置坏则整体红、单测红则跳过。
 用真实临时 git 仓库 + 无端口的确定性命令（文件存在性探活），不触网、不占端口。
 """
+
+from tests.tool_authorization import authorized_tools
 import subprocess
 import time
 from pathlib import Path
@@ -437,7 +439,7 @@ async def test_dev_auto_requests_runtime_and_reports(tmp_path, monkeypatch):
     monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
     monkeypatch.setattr(wt, "verify_branch", fake_verify)
 
-    tool = {t.name: t for t in ma.build_dev_tools(str(tmp_path))}["dev_auto"]
+    tool = {t.name: t for t in authorized_tools(ma.build_dev_tools(str(tmp_path)), human=False)}["dev_auto"]
     out = await tool.handler({"task": "做个大功能"})
 
     assert captured["runtime_flag"] is True          # dev_auto 请求了运行时验证

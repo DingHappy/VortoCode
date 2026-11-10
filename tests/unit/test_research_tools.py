@@ -4,6 +4,8 @@
 用注入的假 LLM 驱动子 agent，确定性、不触网。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.main_agent import build_research_tools
@@ -19,7 +21,7 @@ class EchoLLM:
 
 
 def _by_name(repo, **kw):
-    return {t.name: t for t in build_research_tools(repo, **kw)}
+    return {t.name: t for t in authorized_tools(build_research_tools(repo, **kw), human=False)}
 
 
 def test_exposes_task_and_parallel_readonly(tmp_path):

@@ -1,4 +1,6 @@
 """Plugin adapter contracts with synthetic fixtures, no external service or model."""
+
+from tests.tool_authorization import authorized_tools
 import json
 from types import SimpleNamespace
 
@@ -66,7 +68,7 @@ async def test_wrapper_json_is_roundtrippable_and_external_taint_is_retained():
         def list_tools(self):
             return [SimpleNamespace(name="lookup", server_name="fixture", description="fixture", metadata={}, input_schema={})]
         async def execute_tool(self, *_): return result
-    tool = wrap_mcp_manager(Manager())[0]
+    tool = authorized_tools(wrap_mcp_manager(Manager()))[0]
     assert tool.untrusted_source and tool.external_content and not tool.read_only
     assert json.loads(await tool.handler({})) == {"content": content, "structuredContent": {"ok": True, "missing": None}}
     result.structured_content = None

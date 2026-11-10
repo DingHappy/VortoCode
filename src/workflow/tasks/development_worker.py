@@ -32,12 +32,18 @@ async def execute_development(root, task, on_progress, *, build_tools, load_plan
             if not answered_round:
                 validate_recovery_plan(task, load_plan(root, task.plan_id))
             pid = task.plan_id
+            from src.agents.gate import make_confirm_gate
+            # The durable dispatch/recovery approval covers this exact task/plan.
+            # Outbound phases retain the separate _deny binding above.
+            tools["dev_resume"].confirm = make_confirm_gate(auto_approve=True)
             with bind_worktree_owner(task_id=task.id, owner_session=task.owner_session, plan_id=pid):
                 result = await tools["dev_resume"].handler({"plan_id": pid})
         else:
             pid = task.plan_id or f"bg-{task.id}"
             task.plan_id = pid
             on_progress(f"已绑定持久计划 {pid}")
+            from src.agents.gate import make_confirm_gate
+            tools["dev_auto"].confirm = make_confirm_gate(auto_approve=True)
             with bind_worktree_owner(task_id=task.id, owner_session=task.owner_session, plan_id=pid):
                 result = await tools["dev_auto"].handler({"task": task.prompt, "plan_id": pid})
     except ToolTurnYield:
