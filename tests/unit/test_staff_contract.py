@@ -741,3 +741,17 @@ def test_corrupt_key_registration_fails_closed_without_replacing_identity(tmp_pa
     with pytest.raises(ValueError, match='损坏'):
         approvals.key_info()
     assert json.loads(path.read_text()) == broken
+
+
+@pytest.mark.parametrize('kind', ['own_data', 'draft', 'write', 'execute', 'interact'])
+async def test_staged_nonread_roles_declare_their_real_category_and_do_not_dispatch(tmp_path, kind):
+    from src.agents.staff import build_staff_tools
+    from src.agents.gate import make_confirm_gate
+    registry, member, pool, service = staff_setup(tmp_path, operations=['read', kind])
+    tool = next(t for t in build_staff_tools(str(tmp_path), confirm=make_confirm_gate(), owner='owner', service=service)
+                if t.name == 'staff_assign')
+    args = {'member': member['id'], 'prompt': '本批暂不执行的任务'}
+    assert tool.classify(args) == kind
+    with pytest.raises(ValueError, match='后台审批'):
+        await tool.handler(args)
+    assert not pool.jobs
