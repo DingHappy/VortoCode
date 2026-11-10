@@ -76,7 +76,9 @@ def message(task: Any) -> Optional[str]:
         return None
     if getattr(task, "kind", "") == "team":
         return _team_message(task)
-    label = _LABELS[task.status]
+    dispatch = task.collaboration.get("dispatch", {})
+    label = ("交回了汇报" if task.status == "done" and dispatch.get("source") == "staff"
+             and dispatch.get("delivery") == "notify" else _LABELS[task.status])
     if task.collaboration.get("tainted"):
         return f"🧩 一个后台子任务{label}（它读过外部内容，结果要核对）。回到对话里让我汇报。"
     title = " ".join(str(task.prompt or "").split())[:30] or task.id

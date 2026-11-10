@@ -217,3 +217,67 @@ class StaffRegistry:
 
     def team_roles(self) -> dict:
         return team_role_view(self.roles())
+
+    def validate_member(self, data: dict) -> dict:
+        from datetime import datetime, timezone
+        fields = {'id', 'name', 'role', 'engine', 'model', 'department', 'status', 'limits',
+                  'created_by', 'approved_at', 'revision'}
+        if not isinstance(data, dict) or set(data) - fields:
+            raise ValueError('专员包含未知字段或权限字段')
+        item = deepcopy(data)
+        if not isinstance(item.get('id'), str) or not _ID.fullmatch(item['id']):
+            raise ValueError('专员 id 无效')
+        if not isinstance(item.get('name'), str) or not item['name'].strip() or len(item['name']) > 80:
+            raise ValueError('专员名称无效')
+        assigned = self.role(item.get('role'))
+        if not assigned['enabled']:
+            raise ValueError('岗位已停用')
+        if item.get('engine') not in assigned['engine']:
+            raise ValueError('执行框架不在岗位允许范围内')
+        # D10 applies to new staff; S1 only preserves the old team executor choices.
+        if item['engine'] != 'vortocode' and assigned['id'] != 'developer':
+            raise ValueError('D10：新专员只有开发岗允许外部框架')
+        if not isinstance(item.get('model', ''), str) or len(item.get('model', '')) > 160:
+            raise ValueError('模型名称无效')
+        if item.get('department', ''):
+            raise ValueError('部门登记在 S5 开放')
+        limits = item.get('limits', {'parallel': 1, 'daily_tokens': 0})
+        if (not isinstance(limits, dict) or set(limits) != {'parallel', 'daily_tokens'}
+                or type(limits['parallel']) is not int or limits['parallel'] < 1
+                or type(limits['daily_tokens']) is not int or limits['daily_tokens'] != 0):
+            raise ValueError('专员 parallel 必须为正整数；每日额度在 S5 开放')
+        if item.get('status', 'active') not in {'active', 'paused', 'retired'}:
+            raise ValueError('专员状态无效')
+        item.update(model=item.get('model', ''), department='', status=item.get('status', 'active'),
+                    limits=limits, revision=item.get('revision', 1), created_by='owner',
+                    approved_at=item.get('approved_at') or datetime.now(timezone.utc).isoformat())
+        if type(item['revision']) is not int or item['revision'] < 1:
+            raise ValueError('专员版本无效')
+        return item
+
+    def members(self) -> list[dict]:
+        with TASK_STATE_LOCK:
+            payload = self._read('members.json', {'version': 1, 'members': []})
+            records = payload.get('members')
+            if not isinstance(records, list) or any(not isinstance(x, dict) for x in records):
+                raise ValueError('专员登记格式无效')
+            ids = [x.get('id') for x in records]
+            if any(not isinstance(x, str) or not _ID.fullmatch(x) for x in ids) or len(ids) != len(set(ids)):
+                raise ValueError('专员登记重复或无效')
+            return deepcopy(records)
+
+    def member(self, member_id: str) -> dict:
+        return next((x for x in self.members() if x['id'] == member_id), None) or self._missing('专员不存在')
+
+    def register_member(self, data: dict) -> dict:
+        """Trusted owner-approved registration; model tools only submit proposals (S3)."""
+        with TASK_STATE_LOCK:
+            entries = self.members()
+            previous = next((x for x in entries if x['id'] == data.get('id')), None)
+            if previous and (previous['status'] == 'retired' or data.get('revision') != previous['revision']):
+                raise ValueError('专员已撤掉或版本变化')
+            item = self.validate_member(data)
+            item['revision'] = previous['revision'] + 1 if previous else 1
+            entries = [item if x['id'] == item['id'] else x for x in entries] if previous else [*entries, item]
+            self._write('members.json', {'version': 1, 'members': entries})
+            return deepcopy(item)

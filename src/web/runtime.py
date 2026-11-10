@@ -79,6 +79,8 @@ async def runtime_lifespan():
             root = os.getcwd()
             team_runner = TeamRunner(root, get_runner(), on_update=lambda task: notify_transition(root, task))
             set_team_runner(team_runner)
+            from src.scheduling.staff_runner import set_staff_service
+            set_staff_service(root, get_runner(), on_update=lambda task: notify_transition(root, task))
             try:
                 await team_runner.recover()
             except Exception:  # noqa: BLE001 —— 恢复失败不挡住服务启动；坏掉的任务在列表里可见
@@ -89,6 +91,8 @@ async def runtime_lifespan():
             if team_runner is not None:
                 from src.scheduling.team_runner import set_team_runner
                 set_team_runner(None)
+                from src.scheduling.staff_runner import set_staff_service
+                set_staff_service(os.getcwd())
                 await team_runner.close()
             stop.set()
             for task in (watch, observer):
