@@ -1,4 +1,6 @@
 """Durable dev resumption, persistence failures and cancellation boundaries."""
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 import json
 
@@ -178,7 +180,7 @@ async def test_plan_edited_while_queued_is_rejected_before_dev_tool_runs(tmp_pat
         return "unexpected"
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(main_agent, "build_dev_tools", lambda *args, **kwargs: [Tool("dev_resume", "resume", {}, resume)])
+    monkeypatch.setattr(main_agent, "build_dev_tools", lambda *args, **kwargs: [Tool("dev_resume", "resume", {}, resume, operation_kind='read')])
     runner, recovery, source, plan, _, _ = stopped(tmp_path, worker=tasks._dev_worker)
     child, _ = recovery.resume(source.id)
     plan.blocks[-1].desc = "新范围必须重新审阅"
@@ -211,7 +213,7 @@ async def test_dev_worker_uses_plan_evidence_and_keeps_failed_result(tmp_path, m
         return "测试/实现失败的具体证据，不能当作成功"
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(main_agent, "build_dev_tools", lambda *args, **kwargs: [Tool("dev_auto", "dev", {}, execute)])
+    monkeypatch.setattr(main_agent, "build_dev_tools", lambda *args, **kwargs: [Tool("dev_auto", "dev", {}, execute, operation_kind='read')])
     runner = TaskRunner(str(tmp_path), tasks._dev_worker)
     task = await runner.submit("实现配置")
     await runner.join(task.id)
@@ -366,7 +368,7 @@ async def test_dev_resume_checkpoint_failure_stops_before_implementation(tmp_pat
         return False if count == failed_checkpoint else saved(root, plan)
 
     monkeypatch.setattr(dev_plan, "save_plan", save)
-    tool = next(t for t in build_dev_tools(str(tmp_path)) if t.name == "dev_resume")
+    tool = next(t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False) if t.name == "dev_resume")
     with pytest.raises(OSError, match="检查点"):
         await tool.handler({"plan_id": plan.plan_id})
     persisted = dev_plan.load_plan(str(tmp_path), plan.plan_id)
@@ -386,7 +388,7 @@ async def test_fresh_plan_save_failure_stops_after_decomposition_before_child_ex
     monkeypatch.setattr(decompose, "decompose_for_parallel", plan)
     monkeypatch.setattr(dev_tools, "preflight_dev", lambda *args, **kwargs: [])
     monkeypatch.setattr(dev_plan, "save_plan", lambda *args: False)
-    tool = next(t for t in dev_tools.build_dev_tools(str(tmp_path)) if t.name == "dev_auto")
+    tool = next(t for t in authorized_tools(dev_tools.build_dev_tools(str(tmp_path)), human=False) if t.name == "dev_auto")
     with pytest.raises(OSError, match="检查点"):
         await tool.handler({"task": "实现配置"})
     assert calls == ["实现配置"] and dev_plan.list_plans(str(tmp_path)) == []
@@ -397,7 +399,7 @@ async def test_direct_dev_resume_rejects_nonisolated_branch(tmp_path):
     from src.agents.dev_tools import build_dev_tools
     plan = dev_plan.DevPlan.new("不得写主分支", "main", "main")
     dev_plan.save_plan(str(tmp_path), plan)
-    tool = next(t for t in build_dev_tools(str(tmp_path)) if t.name == "dev_resume")
+    tool = next(t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False) if t.name == "dev_resume")
     with pytest.raises(ValueError, match="隔离分支"):
         await tool.handler({"plan_id": plan.plan_id})
 

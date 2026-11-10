@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from tests.tool_authorization import authorized_tools
 
 from src.scheduling import codex_supervisor as sup
 from src.scheduling import codex_watch as watch
@@ -286,7 +287,7 @@ async def test_a_drafted_message_says_whether_it_will_join_the_running_turn(tmp_
     root = str(tmp_path)
     _report(root, [_thread()], T0)
     watch.hand_over(root, watch.load_state(root)["threads"][0], now=T0)
-    tool = {tool.name: tool for tool in watch.build_codex_action_tools(root)}["propose_codex_message"]
+    tool = {tool.name: tool for tool in authorized_tools(watch.build_codex_action_tools(root))}["propose_codex_message"]
     running = await tool.handler({"thread": "#000001", "text": "顺便补个测试"})
     assert "插进当前这一轮" in running and "不要猜" in running
     _report(root, [_done()], _m(5))

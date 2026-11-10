@@ -208,24 +208,7 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
         tools += build_web_tools() + build_screenshot_tool(repo_root)
     if with_artifacts:
         from src.agents.tools.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
-        from src.agents.gate import request
-        from src.agents.trust import DELIVER, IRREVERSIBLE
-
-        # 制品是**对外发布**（写盘 + 经 /artifact/<id> 提供服务）、删除不可逆 → 必须过确认门。
-        # 此前这里根本没传 confirm，publish/delete 完全绕过了 gate（自审逮到）。
-        # artifact 的 confirm 签名是 (preview, is_update)，这里适配成内核 gate 的 (message, kind)。
-        async def _art_publish(preview: dict, is_update: bool) -> bool:
-            what = "更新" if is_update else "发布"
-            return await request(confirm,
-                f"{what}制品「{preview.get('title') or preview.get('id')}」？"
-                f"它会被写盘并经 /artifact/ 对外提供访问。", DELIVER)
-
-        async def _art_delete(preview: dict) -> bool:
-            return await request(confirm,
-                f"删除制品「{preview.get('title') or preview.get('id')}」？此操作不可逆。", IRREVERSIBLE)
-
-        tools += build_artifact_tools(repo_root, confirm=_art_publish,
-                                      confirm_delete=_art_delete)
+        tools += build_artifact_tools(repo_root, confirm=confirm)
     if with_web if with_im_media is None else with_im_media:
         tools += build_im_media_tools(repo_root, confirm)
     if with_cron:

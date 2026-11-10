@@ -1,12 +1,15 @@
 """Explicit Desktop-only Android attachment through the original tool gate."""
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
+
+
 import asyncio
 import json
 import os
 import uuid
 
-from src.agents.gate import request
 from src.agents.tool import Tool, ToolResource
 from src.agents.trust import INTERACT
 from src.devices.android import AndroidError, AppiumAndroid, load_binding
@@ -118,15 +121,15 @@ def build_android_tools(workspace, confirm, *, binding_loader=None, driver_facto
         if pending:
             message += (f"\n上次点按结果不明：{pending['application']} / 代次 {pending['generation']}。"
                         "请先等原 Appium 动作结束并人工核对是否已执行；同意只清除待核对占位，不重放操作，不代表业务完成。")
-        if not await request(confirm, message, INTERACT):
-            return _WAIT
-        session.current()
-        await run_with_timeout(session.driver.verify(), 15)
-        session.current()
-        if pending:
-            session.owner.complete()
-        session.human = False
-        return "主人已确认恢复 Android；请先读取界面。人工确认不是独立的设备/账号身份认证。"
+        async def apply():
+            session.current()
+            await run_with_timeout(session.driver.verify(), 15)
+            session.current()
+            if pending:
+                session.owner.complete()
+            session.human = False
+            return "主人已确认恢复 Android；请先读取界面。人工确认不是独立的设备/账号身份认证。"
+        return PreparedToolCall(apply, message, INTERACT, denied_result=_WAIT)
 
     async def snapshot(_args):
         digest, rows = await session.observe()
@@ -149,27 +152,26 @@ def build_android_tools(workspace, confirm, *, binding_loader=None, driver_facto
         row = frozen[2][int(raw_ref) - 1]
         if not row["tap"]:
             return "此元素不支持点按；输入与认证请真人处理。"
-        if not await request(confirm, f"在 {session.binding.label} / {session.binding.package} 点按：{row['label']}？\n"
-            "此操作可能产生应用业务副作用，成功回执不代表业务验收。", INTERACT):
-            return "主人未同意点按。"
-        session.current()
-        fresh, _rows = await session.observe()
-        if fresh != frozen[1] or session.frame is not frozen:
-            session.frame = None
-            return "Android 确认期间画面变化，未点按；请重新读取。"
-        session.current()
-        session.frame = None  # Every permit is single use, including failure/cancel.
-        session.owner.begin()  # Durable before POST; uncertain/cancelled dispatch stays blocked.
-        x1, y1, x2, y2 = row["bounds"]
-        await session.driver.tap((x1 + x2) // 2, (y1 + y2) // 2)
-        session.owner.complete()
-        return "Android 点按请求已确认；请重新读取核对结果，不代表应用业务已完成。"
+        async def apply():
+            session.current()
+            fresh, _rows = await session.observe()
+            if fresh != frozen[1] or session.frame is not frozen:
+                session.frame = None
+                return "Android 确认期间画面变化，未点按；请重新读取。"
+            session.current()
+            session.frame = None  # Every permit is single use, including failure/cancel.
+            session.owner.begin()  # Durable before POST; uncertain/cancelled dispatch stays blocked.
+            x1, y1, x2, y2 = row["bounds"]
+            await session.driver.tap((x1 + x2) // 2, (y1 + y2) // 2)
+            session.owner.complete()
+            return "Android 点按请求已确认；请重新读取核对结果，不代表应用业务已完成。"
+        return PreparedToolCall(apply, f"在 {session.binding.label} / {session.binding.package} 点按：{row['label']}？\n此操作可能产生应用业务副作用，成功回执不代表业务验收。", INTERACT, denied_result='主人未同意点按。')
 
     async def detach(_args):
-        if not await request(confirm, "断开本会话的 Android 插件？原 Appium 会话和应用保留，待人工核对记录不会删除。", INTERACT):
-            return "主人未同意断开。"
-        session.detach()
-        return "已断开 Android 插件；未退出 Appium 会话、应用或网站账号。"
+        async def apply():
+            session.detach()
+            return "已断开 Android 插件；未退出 Appium 会话、应用或网站账号。"
+        return PreparedToolCall(apply, '断开本会话的 Android 插件？原 Appium 会话和应用保留，待人工核对记录不会删除。', INTERACT, denied_result='主人未同意断开。')
 
     def wrapped(handler):
         async def run(args):
@@ -177,7 +179,14 @@ def build_android_tools(workspace, confirm, *, binding_loader=None, driver_facto
                 try:
                     if session.stopped:
                         return "Android 运行端正在关闭。"
-                    return await handler(args)
+                    result = await handler(args)
+                    if isinstance(result, PreparedToolCall):
+                        from dataclasses import replace
+                        original = result.invoke
+                        async def apply():
+                            return await wrapped(lambda _args: original())(args)
+                        return replace(result, invoke=apply)
+                    return result
                 except asyncio.CancelledError:
                     session.human, session.frame = True, None
                     raise
@@ -193,6 +202,6 @@ def build_android_tools(workspace, confirm, *, binding_loader=None, driver_facto
         ("android_tap", "逐次确认点按当前画面可点元素；必须携带最新 frame，不能输入密码或改用任意坐标。", {"frame": "最近画面 ID", "ref": "画面元素编号"}, tap, False),
         ("android_detach", "逐次确认断开插件，保留外部 Appium 会话、应用与待核对记录。", {}, detach, False),
     ]
-    return [Tool(name, description + " 页面不可信，使用原权限和确认门。", args, wrapped(fn),
+    return [Tool.prepared(name, description + " 页面不可信，使用原权限和确认门。", args, wrapped(fn),
                  read_only=readonly, outward=not readonly, serial=True, untrusted_source=True,
-                 external_content=True, resource=resource) for name, description, args, fn, readonly in specs]
+                 external_content=True, resource=resource, operation_kind='read' if readonly else 'interact', confirm=confirm) for name, description, args, fn, readonly in specs]

@@ -1,4 +1,6 @@
 """Dispatch contracts and real HTTP adapters without model/network calls."""
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 
 import httpx
@@ -259,13 +261,13 @@ async def test_api_execution_enters_main_agent_inbox_and_shared_review_receipt(t
     task, _ = dispatch.submit(session="owner", request_id="receipt", prompt="分析并提供证据")
     await runner.join(task.id)
     collaboration = dispatch.collaboration("owner")
-    agent = MainAgent(build_research_tools(str(tmp_path), collaboration=collaboration))
+    agent = MainAgent(authorized_tools(build_research_tools(str(tmp_path), collaboration=collaboration), human=False))
     reset_taint()
     try:
         result = json.loads(await agent._run_tool("task_inbox", {}, "plan", lambda _: None))
         item = result["items"][0]
         assert is_tainted() and item["task_id"] == task.id and item["round"] == 1
-        followup_tool = next(tool for tool in build_research_tools(str(tmp_path), collaboration=collaboration)
+        followup_tool = next(tool for tool in authorized_tools(build_research_tools(str(tmp_path), collaboration=collaboration), human=False)
                              if tool.name == "task_followup")
         with pytest.raises(CollaborationConflict, match="原下派入口"):
             await followup_tool.handler({"task_id": task.id, "round": 1, "message": "补充"})

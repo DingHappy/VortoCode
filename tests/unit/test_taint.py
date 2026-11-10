@@ -1,3 +1,4 @@
+from src.agents.gate import make_confirm_gate
 """不可信输入污点标记（D0）测试。
 
 覆盖：taint 原语 / 工具旗标（untrusted_source / outward）/ _run_tools 在回合上下文打污点 /
@@ -70,8 +71,8 @@ def test_command_and_pr_tools_are_outward():
 async def test_run_tools_marks_taint_only_for_untrusted():
     async def _h(_a):
         return "外部内容"
-    ext = Tool("ext", "", {}, _h, read_only=True, untrusted_source=True)
-    normal = Tool("noop", "", {}, _h, read_only=True)
+    ext = Tool("ext", "", {}, _h, read_only=True, untrusted_source=True, operation_kind='read')
+    normal = Tool("noop", "", {}, _h, read_only=True, operation_kind='read')
     agent = MainAgent([ext, normal])
 
     await agent._run_tools([("noop", {})], "plan", lambda _m: None)
@@ -82,6 +83,8 @@ async def test_run_tools_marks_taint_only_for_untrusted():
 
 @pytest.mark.asyncio
 async def test_mixed_tool_batch_propagates_taint_before_later_write():
+    async def _yes():
+        return True
     observed = []
 
     async def _external(_args):
@@ -92,8 +95,8 @@ async def test_mixed_tool_batch_propagates_taint_before_later_write():
         return "written"
 
     agent = MainAgent([
-        Tool("ext", "", {}, _external, read_only=True, untrusted_source=True),
-        Tool("write", "", {}, _write, read_only=False),
+        Tool("ext", "", {}, _external, read_only=True, untrusted_source=True, operation_kind='read'),
+        Tool("write", "", {}, _write, read_only=False, operation_kind='write', confirm=make_confirm_gate(lambda _m: _yes(), can_ask_human=True)),
     ])
     await agent._run_tools([("ext", {}), ("write", {})], "build", lambda _m: None)
     assert observed == [True]
@@ -106,7 +109,7 @@ async def test_task_preserves_parent_taint_and_instruction_stays_a_proposal(tmp_
             return {"content": "child done"}
 
     research = {tool.name: tool for tool in build_research_tools(
-        str(tmp_path), llm=EchoLLM()
+        str(tmp_path), llm=EchoLLM(), confirm=_yes
     )}
     memory = {tool.name: tool for tool in build_memory_tools(
         str(tmp_path), _yes, source="web"
@@ -153,7 +156,7 @@ async def test_full_loop_web_fetch_task_then_save_memory_stays_tainted(monkeypat
 
     tools = (
         build_web_tools()
-        + build_research_tools(str(tmp_path), llm=ChildLLM())
+        + build_research_tools(str(tmp_path), llm=ChildLLM(), confirm=_yes)
         + build_memory_tools(str(tmp_path), _yes, source="web")
     )
     agent = MainAgent(tools, llm=ParentLLM(), native=False)
@@ -175,7 +178,7 @@ async def test_parallel_subagent_taint_merges_back_to_parent(monkeypatch, tmp_pa
         return "external child result"
 
     monkeypatch.setattr(MainAgent, "run_turn", _tainted_child)
-    research = {tool.name: tool for tool in build_research_tools(str(tmp_path))}
+    research = {tool.name: tool for tool in build_research_tools(str(tmp_path), confirm=_yes)}
     taint.reset_taint()
 
     await research["research_parallel"].handler({"tasks": ["one", "two"]})
@@ -190,7 +193,7 @@ async def test_task_exception_cannot_clear_parent_taint(monkeypatch, tmp_path):
         raise RuntimeError("child failed")
 
     monkeypatch.setattr(MainAgent, "run_turn", _broken_child)
-    task = {tool.name: tool for tool in build_research_tools(str(tmp_path))}["task"]
+    task = {tool.name: tool for tool in build_research_tools(str(tmp_path), confirm=_yes)}["task"]
     taint.mark_tainted()
 
     result = await task.handler({"description": "inspect code"})

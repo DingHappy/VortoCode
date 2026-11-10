@@ -153,7 +153,7 @@ async def test_native_core_reports_progress_and_returned_text_without_inventing_
     monkeypatch.setenv("DEFAULT_MODEL", "unknown-test-model")
     async def read(args):
         return "source"
-    agent = MainAgent([Tool("inspect", "Inspect", {}, read)], max_steps=2,
+    agent = MainAgent([Tool("inspect", "Inspect", {}, read, operation_kind='read')], max_steps=2,
         llm=LLM('{"tool":"inspect","args":{}}', "tests passed according to model"))
     owned = ref(backend_id="vortocode")
     assert await agent.run_turn("inspect", execution_ref=owned) == "tests passed according to model"

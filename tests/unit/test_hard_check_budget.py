@@ -1,3 +1,5 @@
+
+from src.agents.gate import make_confirm_gate
 import asyncio
 
 import pytest
@@ -119,7 +121,7 @@ async def test_tool_batch_cannot_expand_limit_and_swallowed_error_is_not_success
         executed.append(args)
         return "evidence"
     guard = HardBudgetedLLM(Adapter(), CheckLimits(tool_calls=2))
-    agent = MainAgent([Tool("read", "read", {}, read)], llm=guard)
+    agent = MainAgent([Tool("read", "read", {}, read, operation_kind='read')], llm=guard)
     async def operation():
         # MainAgent normally renders a batch's individual exceptions as data.
         await agent._run_tools([("read", {"i": i}) for i in range(8)], "plan", lambda _: None)
@@ -146,8 +148,8 @@ async def test_readonly_check_is_real_agent_execution_with_unsupported_provider_
 
 @pytest.mark.asyncio
 async def test_bounded_context_rejects_readonly_named_delegation_and_write_tools():
-    for tool in (Tool("task", "spawn", {}, lambda _: None),
-                 Tool("write", "write", {}, lambda _: None, read_only=False)):
+    for tool in (Tool("task", "spawn", {}, lambda _: None, operation_kind='read'),
+                 Tool("write", "write", {}, lambda _: None, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))):
         guard = HardBudgetedLLM(Adapter())
         async def operation():
             guard.claim_tool(tool)

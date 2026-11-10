@@ -5,6 +5,8 @@
 test_model_providers.py），只测**装配点真的去问了角色表**，且不配时行为一字不变。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.main_agent import build_dev_tools, build_research_tools
@@ -53,7 +55,7 @@ async def test_implement_role_reaches_the_isolated_writer(tmp_path, monkeypatch)
     original = worktree.run_isolated_task
     worktree.run_isolated_task = fake_run_isolated_task
     try:
-        tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
+        tool = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path)), human=False)}["dev_isolated"]
         monkeypatch.setenv("VORTOONE_DEV_ATTEMPTS", "1")
         await tool.handler({"description": "随便做点什么"})
     finally:
@@ -70,7 +72,7 @@ async def test_implement_role_reaches_the_isolated_writer(tmp_path, monkeypatch)
 async def test_research_role_reaches_the_default_subagent(tmp_path, monkeypatch):
     monkeypatch.setenv("VORTOONE_MODEL_ROLES", "research=vendorb:cheap-reader")
     seen = _captured_agents(monkeypatch)
-    tools = {t.name: t for t in build_research_tools(str(tmp_path))}
+    tools = {t.name: t for t in authorized_tools(build_research_tools(str(tmp_path)), human=False)}
     spawn = tools["task"]
 
     import src.agents.agent_loop as loop

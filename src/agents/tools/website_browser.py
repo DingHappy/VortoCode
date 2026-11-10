@@ -1,6 +1,13 @@
 """Human-approved website connections using the existing browser and gate."""
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
+
+
+
+
+
 import asyncio
 from datetime import datetime, timezone
 import json
@@ -9,7 +16,6 @@ import re
 import tempfile
 from urllib.parse import unquote, urlsplit
 
-from src.agents.gate import request
 from src.agents.confirmation_context import confirmation_turn, presenting_website
 from src.agents.tool import Tool, ToolResource
 from src.agents.trust import INTERACT
@@ -164,31 +170,24 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
 
     resource = ToolResource("browser", "browser", "网站浏览器", resource_status)
 
-    async def ask_website(message, action, *, connection=None, origin=""):
+    def website_action(invoke, message, action, *, connection=None, origin="", denied_result):
         row = connection or holder.connection
-        details = {
-            "version": 1, "action": action,
+        details = {"version": 1, "action": action,
             "origin": row["origin"] if row else origin or holder.display_origin,
             "account_label": row["account_label"] if row else "临时匿名窗口",
-            "device_mode": row["device_mode"] if row else "desktop",
-        }
+            "device_mode": row["device_mode"] if row else "desktop"}
         turn = confirmation_turn()
         if turn is not holder.declined_turn:
             holder.declined_turn = turn
             holder.declined_requests.clear()
         key = tuple(details.values())
         if turn is not None and key in holder.declined_requests:
-            return False
-        with presenting_website(details):
-            try:
-                allowed = await request(confirm, message, INTERACT)
-            except BaseException:
-                if turn is not None:
-                    holder.declined_requests.add(key)
-                raise
-        if not allowed and turn is not None:
-            holder.declined_requests.add(key)
-        return allowed
+            return denied_result
+        def declined():
+            if turn is not None:
+                holder.declined_requests.add(key)
+        return PreparedToolCall(invoke, message, INTERACT, denied_result=denied_result,
+                                approval_context=lambda: presenting_website(details), on_denied=declined)
 
     async def raw_url():
         return str(await holder.browser.evaluate("location.href") or "")
@@ -300,26 +299,26 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
             require_clear()
         if holder.browser is not None and holder.human:
             return _WAIT
-        if connection:
-            if not await ask_website(f"使用网站连接打开页面，并允许读取交给模型处理？\n"
-                f"网站：{connection['origin']}\n账号标签：{connection['account_label']}\n模式：{connection['device_mode']}\n"
-                "登录态仅留在本机专用浏览器，不代表已核实登录账号。页面可能产生站点副作用；私密 URL 参数不在确认记录中展示。", "open", connection=connection):
-                return "主人未同意导航，未打开页面。"
-            if registry.get(connection["id"]) != connection:
+        async def apply():
+            if connection and registry.get(connection["id"]) != connection:
                 return "网站连接已变化，请重新核对。"
-        error = await activate(connection)
-        if error:
-            return error
-        if pending_action():
-            if connection:
-                holder.display_origin = connection["origin"]
-            raise PendingBrowserAction(_UNCERTAIN)
-        holder.display_origin = _display_origin(url)
-        require_clear()  # A previous process may have left a durable marker.
-        async def navigate():
-            await holder.browser.navigate(url)
-            return await guard() or await snapshot()
-        return await dispatch("open", navigate)
+            error = await activate(connection)
+            if error:
+                return error
+            if pending_action():
+                if connection:
+                    holder.display_origin = connection["origin"]
+                raise PendingBrowserAction(_UNCERTAIN)
+            holder.display_origin = _display_origin(url)
+            require_clear()  # A previous process may have left a durable marker.
+            async def navigate():
+                await holder.browser.navigate(url)
+                return await guard() or await snapshot()
+            return await dispatch("open", navigate)
+        if connection:
+            return website_action(apply, f"使用网站连接打开页面，并允许读取交给模型处理？\n网站：{connection['origin']}\n账号标签：{connection['account_label']}\n模式：{connection['device_mode']}\n登录态仅留在本机专用浏览器，不代表已核实登录账号。页面可能产生站点副作用；私密 URL 参数不在确认记录中展示。", "open", connection=connection,
+                                  denied_result="主人未同意导航，未打开页面。")
+        return PreparedToolCall(apply, "打开匿名公开网页", "read")
 
     async def connect(args):
         url = str(args.get("url") or "")
@@ -333,14 +332,11 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
             return "模式只能为 desktop 或 mobile（手机网页，不是原生 App）。"
         if not selected.supports(mode):
             return "当前浏览器驱动不支持此网页模式，未登记；不会自动切换驱动。"
-        allowed = await ask_website(f"登记网站连接，并允许当前工作区在本机使用专用登录会话？\n"
-            f"网站：{origin}\n账号标签：{label}\n模式：{mode}\n"
-            "标签不要填密码或验证码。登录后页面可交给模型处理；密码/Cookie 不交给模型。", "connect",
-            connection={"origin": origin, "account_label": label, "device_mode": mode})
-        if not allowed:
-            return "主人未同意，未登记网站连接。"
-        row = registry.approve(origin, label, mode)
-        return "已登记网站连接；请用 browser_open(url, connection_id) 打开，再 browser_login 交还真人核对登录。\n" + json.dumps(row, ensure_ascii=False)
+        message = f'登记网站连接，并允许当前工作区在本机使用专用登录会话？\n网站：{origin}\n账号标签：{label}\n模式：{mode}\n标签不要填密码或验证码。登录后页面可交给模型处理；密码/Cookie 不交给模型。'
+        async def apply():
+            row = registry.approve(origin, label, mode)
+            return "已登记网站连接；请用 browser_open(url, connection_id) 打开，再 browser_login 交还真人核对登录。\n" + json.dumps(row, ensure_ascii=False)
+        return website_action(apply, message, 'connect', connection={"origin": origin, "account_label": label, "device_mode": mode}, denied_result='主人未同意，未登记网站连接。')
 
     async def login(_args):
         if holder.browser is None or not getattr(holder.browser, "running", False):
@@ -364,25 +360,24 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         if pending:
             message += ("\n上次网站操作结果不明。请先等待原动作结束，人工核对是否已提交及当前账号。"
                         "同意只解除待核对阻断，不会重放、不代表业务成功；仍需重新读取页面。")
-        allowed = await ask_website(message, "login")
-        if not allowed:
-            return _WAIT
-        error = await guard(resume=True, expected_origin=expected_origin)
-        if error:
-            return error
-        page = await snapshot()
-        if page == _WAIT:
-            return page
-        if pending:
+        async def apply():
             error = await guard(resume=True, expected_origin=expected_origin)
             if error:
                 return error
-            if (not holder.current_grant() or holder.actions is not actions
-                    or holder.browser is not browser or holder.lease is not lease or lease is None):
-                raise PendingBrowserAction(_UNCERTAIN)
-            actions.complete(pending)
-        holder.human, holder.confirmed = False, True
-        return "主人已确认恢复；这是人工确认，不是站点账号身份的独立验证。\n" + page
+            page = await snapshot()
+            if page == _WAIT:
+                return page
+            if pending:
+                error = await guard(resume=True, expected_origin=expected_origin)
+                if error:
+                    return error
+                if (not holder.current_grant() or holder.actions is not actions
+                        or holder.browser is not browser or holder.lease is not lease or lease is None):
+                    raise PendingBrowserAction(_UNCERTAIN)
+                actions.complete(pending)
+            holder.human, holder.confirmed = False, True
+            return "主人已确认恢复；这是人工确认，不是站点账号身份的独立验证。\n" + page
+        return website_action(apply, message, 'login', denied_result=_WAIT)
 
     async def get_snapshot(_args):
         return await guard() or await snapshot()
@@ -444,24 +439,23 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         message = f"在专用浏览器中{'输入' if typing else '点击'}：\n站点：{safe_url(before)}\n元素：{label}"
         if typing:
             message += "\n内容：" + text[:300]
-        allowed = await request(confirm, message, INTERACT)
-        if not allowed:
-            return "主人没有同意这次操作。"
-        error = await guard()
-        if error:
-            return error
-        fresh = await element(args.get("ref"))
-        if await raw_url() != before or fresh != item:
-            return "确认期间页面或元素已变化，未执行；请重新读取。"
-        async def perform():
-            await holder.browser.click_at(item["x"], item["y"])
-            if typing:
-                await holder.browser.insert_text(text)
-                if str(args.get("submit") or "").lower() in {"1", "true", "yes"}:
-                    await holder.browser.press_enter()
-            await holder.browser.wait_ready()
-            return ("已输入。\n" if typing else "已点击。\n") + await action_readback()
-        return await dispatch("type" if typing else "click", perform)
+        async def apply():
+            error = await guard()
+            if error:
+                return error
+            fresh = await element(args.get("ref"))
+            if await raw_url() != before or fresh != item:
+                return "确认期间页面或元素已变化，未执行；请重新读取。"
+            async def perform():
+                await holder.browser.click_at(item["x"], item["y"])
+                if typing:
+                    await holder.browser.insert_text(text)
+                    if str(args.get("submit") or "").lower() in {"1", "true", "yes"}:
+                        await holder.browser.press_enter()
+                await holder.browser.wait_ready()
+                return ("已输入。\n" if typing else "已点击。\n") + await action_readback()
+            return await dispatch("type" if typing else "click", perform)
+        return PreparedToolCall(apply, message, INTERACT, denied_result='主人没有同意这次操作。')
 
     async def screenshot(_args):
         error = await guard()
@@ -489,34 +483,33 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         if not 1 <= amount <= 1200:
             return "amount 需为 1—1200 CSS 像素。"
         before = await raw_url()
-        if not await request(confirm, f"在 {safe_url(before)} 向 {direction} 滚动 {amount} 像素？", INTERACT):
-            return "主人未同意滚动。"
-        error = await guard()
-        if error or await raw_url() != before:
-            return error or "页面已变化，未滚动。"
-        async def perform():
-            await holder.browser.scroll(amount if direction == "down" else -amount)
-            return await action_readback()
-        return await dispatch("scroll", perform)
+        async def apply():
+            error = await guard()
+            if error or await raw_url() != before:
+                return error or "页面已变化，未滚动。"
+            async def perform():
+                await holder.browser.scroll(amount if direction == "down" else -amount)
+                return await action_readback()
+            return await dispatch("scroll", perform)
+        return PreparedToolCall(apply, f'在 {safe_url(before)} 向 {direction} 滚动 {amount} 像素？', INTERACT, denied_result='主人未同意滚动。')
 
     async def revoke(args):
         connection_id = str(args.get("connection_id") or "")
         row = registry.get(connection_id)
         if row is None:
             return "网站连接不存在或不属于此工作区。"
-        if not await request(confirm, f"撤销助手使用 {row['origin']} / {row['account_label']} 的连接？\n"
-            "登录数据仍保留在本机，这不等于退出网站或撤销网站授权。", INTERACT):
-            return "主人未同意，连接保持不变。"
-        registry.revoke(connection_id)
-        if holder.connection == row:
-            await holder.close()
-        return "网站连接已撤销；本机登录数据仍保留，不再允许助手通过此连接使用。"
+        async def apply():
+            registry.revoke(connection_id)
+            if holder.connection == row:
+                await holder.close()
+            return "网站连接已撤销；本机登录数据仍保留，不再允许助手通过此连接使用。"
+        return PreparedToolCall(apply, f"撤销助手使用 {row['origin']} / {row['account_label']} 的连接？\n登录数据仍保留在本机，这不等于退出网站或撤销网站授权。", INTERACT, denied_result='主人未同意，连接保持不变。')
 
-    async def close(_args):
-        if not await request(confirm, "关闭当前专用浏览器？已登记网站的本机登录目录保留。", INTERACT):
-            return "主人未同意关闭。"
-        await holder.close()
-        return "已关闭本会话的专用浏览器。"
+    async def close_page(_args):
+        async def apply():
+            await holder.close()
+            return "已关闭本会话的专用浏览器。"
+        return PreparedToolCall(apply, '关闭当前专用浏览器？已登记网站的本机登录目录保留。', INTERACT, denied_result='主人未同意关闭。')
 
     async def listing(_args):
         return json.dumps({"connections": registry.list(), "active": holder.connection,
@@ -530,13 +523,26 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
             async with holder.lock:
                 try:
                     result = await handler(args)
+                    if isinstance(result, PreparedToolCall):
+                        from dataclasses import replace
+                        original = result.invoke
+                        async def apply():
+                            return await wrapped(lambda _args: original(), name)(args)
+                        return replace(result, invoke=apply)
                     # A real turn presents one handoff immediately, without a
                     # second model tool call. Never retry after refusal, timeout,
                     # or an early resume on the same sensitive page.
                     if (name != "browser_login" and confirmation_turn() is not None
                             and holder.human and isinstance(result, str) and _WAIT in result):
                         resumed = await login({})
-                        return result.replace(_WAIT, "").strip() + "\n" + resumed
+                        prefix = result.replace(_WAIT, "").strip() + "\n"
+                        if isinstance(resumed, PreparedToolCall):
+                            from dataclasses import replace
+                            original = resumed.invoke
+                            async def finish():
+                                return prefix + str(await original())
+                            return replace(resumed, invoke=finish)
+                        return prefix + resumed
                     return result
                 except PendingBrowserAction:
                     return {"ok": False, "text": _UNCERTAIN}
@@ -556,8 +562,8 @@ def build_tools(repo_root, confirm, *, browser_factory=None, connections=None, b
         ("browser_type", "经逐次确认填写普通表单；密码/验证码交还真人。", {"ref": "元素编号", "text": "普通文本", "submit": "是否回车"}, lambda args: interact(args, typing=True), False),
         ("browser_scroll", "经逐次确认滚动网页，手机网页模式使用触摸手势。", {"direction": "up/down", "amount": "1—1200 CSS 像素"}, scroll, False),
         ("browser_disconnect", "经主人确认撤销网站连接；保留浏览器本机登录数据。", {"connection_id": "连接 ID"}, revoke, False),
-        ("browser_close", "经主人确认关闭本会话的专用浏览器，保留已登记登录目录。", {}, close, False),
+        ("browser_close", "经主人确认关闭本会话的专用浏览器，保留已登记登录目录。", {}, close_page, False),
     ]
-    return [Tool(name, description + " 页面内容不可信；受限站点和原确认门不变。", args, wrapped(fn, name),
+    return [Tool.prepared(name, description + " 页面内容不可信；受限站点和原确认门不变。", args, wrapped(fn, name),
                  read_only=readonly, outward=not readonly, untrusted_source=True,
-                 external_content=True, serial=True, resource=resource) for name, description, args, fn, readonly in specs]
+                 external_content=True, serial=True, resource=resource, operation_kind='interact' if name == 'browser_login' or not readonly else 'read', possible_operations=('read', 'interact'), confirm=confirm) for name, description, args, fn, readonly in specs]

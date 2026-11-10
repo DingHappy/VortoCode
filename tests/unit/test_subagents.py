@@ -4,6 +4,8 @@
 task 工具的 dev 委派过确认门（fail-closed）、坏定义文件安全跳过。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.capabilities import LOCAL_PROFILE, SessionCapabilities
@@ -135,7 +137,7 @@ async def test_task_dispatch_by_agent_name(tmp_path):
     from src.agents.main_agent import build_research_tools
     _write_agent(tmp_path, "pm.md", _PM)
     llm = _EchoLLM()
-    tools = {t.name: t for t in build_research_tools(str(tmp_path), llm=llm)}
+    tools = {t.name: t for t in authorized_tools(build_research_tools(str(tmp_path), llm=llm), human=False)}
     out = await tools["task"].handler({"description": "拆一下这个需求", "agent": "product-manager"})
     assert "结论" in out
     assert any("你是产品经理" in s for s in llm.systems)          # 角色人格真进了子 agent
@@ -145,7 +147,7 @@ async def test_task_dispatch_by_agent_name(tmp_path):
 async def test_task_unknown_agent_lists_available(tmp_path):
     from src.agents.main_agent import build_research_tools
     _write_agent(tmp_path, "pm.md", _PM)
-    tools = {t.name: t for t in build_research_tools(str(tmp_path), llm=_EchoLLM())}
+    tools = {t.name: t for t in authorized_tools(build_research_tools(str(tmp_path), llm=_EchoLLM()), human=False)}
     out = await tools["task"].handler({"description": "x", "agent": "ceo"})
     assert "没有名为" in out and "product-manager" in out         # 报可用清单，不瞎跑
 
@@ -159,7 +161,7 @@ async def test_task_dev_agent_gated_by_confirm(tmp_path):
     # 无 confirm → 拒绝
     tools = {t.name: t for t in build_research_tools(str(tmp_path), llm=llm)}
     out = await tools["task"].handler({"description": "实现 X", "agent": "backend-dev"})
-    assert "拒绝" in out and llm.systems == []                    # 子 agent 根本没起
+    assert "取消" in out and llm.systems == []                    # 子 agent 根本没起
     # confirm 拒绝 → 取消
     async def _deny(_m):
         return False
@@ -179,7 +181,7 @@ async def test_default_task_unchanged_without_agent(tmp_path):
     """不带 agent 参数：默认只读研究员，行为与从前一致（向后兼容）。"""
     from src.agents.main_agent import build_research_tools
     llm = _EchoLLM()
-    tools = {t.name: t for t in build_research_tools(str(tmp_path), llm=llm)}
+    tools = {t.name: t for t in authorized_tools(build_research_tools(str(tmp_path), llm=llm), human=False)}
     out = await tools["task"].handler({"description": "看看结构"})
     assert "结论" in out and any("只读研究子 agent" in s for s in llm.systems)
 

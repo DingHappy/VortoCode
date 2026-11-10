@@ -24,6 +24,6 @@ def build_personal_skill_tools(root: str) -> list[Tool]:
                           "不执行技能 Hook 或脚本，不自动读取相对引用；需要文件时由用户明确指定并授权。"}
 
     return [Tool("list_personal_skills", "查看私人助理的个人技能及当前启用版本", {}, listing,
-                 untrusted_source=True, external_content=True),
+                 untrusted_source=True, external_content=True, operation_kind='read'),
             Tool("use_personal_skill", "按 ID 加载已启用的个人技能指令；不自动执行脚本或增加权限",
-                 {"id": "个人技能 ID"}, use, untrusted_source=True, external_content=True)]
+                 {"id": "个人技能 ID"}, use, untrusted_source=True, external_content=True, operation_kind='read')]

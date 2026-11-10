@@ -1,4 +1,6 @@
 """Explicit dependency release, durable inputs and the original shared pool."""
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 import hashlib
 import json
@@ -311,9 +313,9 @@ async def test_parent_release_tool_uses_live_owner_and_does_not_wait(tmp_path, n
     owner = ["sid-owner"]
     collaboration = service.collaboration("owner")
     collaboration._owner = lambda: owner[0]
-    tools = build_research_tools(str(tmp_path), collaboration=collaboration, release_task_dependencies=service.release)
+    tools = authorized_tools(build_research_tools(str(tmp_path), collaboration=collaboration, release_task_dependencies=service.release), human=True)
     by = {tool.name: tool for tool in tools}
-    assert "task_release" not in {tool.name for tool in build_research_tools(str(tmp_path), collaboration=collaboration)}
+    assert "task_release" not in {tool.name for tool in authorized_tools(build_research_tools(str(tmp_path), collaboration=collaboration), human=True)}
     owner[0] = "sid-other"
     with pytest.raises(CollaborationConflict):
         await by["task_release"].handler({"task_id": child.id, "round": 1})

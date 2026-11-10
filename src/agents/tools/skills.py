@@ -6,6 +6,8 @@ save_skill 是写操作，走注入的 confirm 门；args/read_only 与 TUI 版�
 
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
 from dataclasses import dataclass
 import hashlib
 import os
@@ -131,29 +133,28 @@ def build_skill_tools(repo_root: str, confirm, *, registry: SkillRegistry | None
                 f"路径基准：{Path(sk.source).parent.as_posix()}。"
                 f"引用文件按此基准读取，脚本仍须遵守当前工作区与工具授权，不自动执行：\n\n{sk.instructions}")
 
-    async def _save_skill(args: dict) -> str:
+    async def _save_skill(args: dict) -> object:
         name = _re.sub(r"[^\w一-鿿-]", "-", str(args.get("name", "")).strip()).strip("-")
         desc = str(args.get("description", "")).strip()
         instr = str(args.get("instructions", "")).strip()
         if not name or not instr:
             return "save_skill 需要 name 和 instructions（技能正文）。"
-        if confirm is not None and not await confirm(
-                f"把技能「{name}」写到 .vortoone/skills/{name}/SKILL.md？（用户技能目录，不碰 main）"):
-            return f"用户取消了保存技能 {name}。"
-        p = state_dir(repo_root) / "skills" / name / "SKILL.md"
-        try:
-            p.resolve().relative_to(Path(repo_root).resolve())
-        except (OSError, RuntimeError, ValueError):
-            return {"ok": False, "error": "技能保存路径指向工作区外，已拒绝。"}
-        p.parent.mkdir(parents=True, exist_ok=True)
-        import yaml
-        header = yaml.safe_dump({"name": name, "description": desc}, allow_unicode=True, sort_keys=False)
-        p.write_text(f"---\n{header}---\n\n{instr}\n", encoding="utf-8")
-        registry.load()                              # 原地重扫：当前 agent 立刻能 use_skill 到它
-        return f"已保存技能 {name} 到 .vortoone/skills/{name}/SKILL.md。"
+        async def apply():
+            p = state_dir(repo_root) / "skills" / name / "SKILL.md"
+            try:
+                p.resolve().relative_to(Path(repo_root).resolve())
+            except (OSError, RuntimeError, ValueError):
+                return {"ok": False, "error": "技能保存路径指向工作区外，已拒绝。"}
+            p.parent.mkdir(parents=True, exist_ok=True)
+            import yaml
+            header = yaml.safe_dump({"name": name, "description": desc}, allow_unicode=True, sort_keys=False)
+            p.write_text(f"---\n{header}---\n\n{instr}\n", encoding="utf-8")
+            registry.load()                              # 原地重扫：当前 agent 立刻能 use_skill 到它
+            return f"已保存技能 {name} 到 .vortoone/skills/{name}/SKILL.md。"
+        return PreparedToolCall(apply, f'把技能「{name}」写到 .vortoone/skills/{name}/SKILL.md？（用户技能目录，不碰 main）', 'write', denied_result=f'用户取消了保存技能 {name}。')
 
     return [Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
-                 {"name": "技能名"}, _use_skill, read_only=True, untrusted_source=True, required_args=('name',), argument_schema={'name': {'type': 'string'}}),
-            Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
+                 {"name": "技能名"}, _use_skill, read_only=True, untrusted_source=True, required_args=('name',), argument_schema={'name': {'type': 'string'}}, operation_kind='read', confirm=confirm),
+            Tool.prepared("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
                  {"name": "技能名", "description": "一句话描述", "instructions": "技能正文（自然语言步骤）"},
-                 _save_skill, read_only=False, required_args=('name', 'instructions'), argument_schema={'name': {'type': 'string'}, 'instructions': {'type': 'string'}})]
+                 _save_skill, read_only=False, required_args=('name', 'instructions'), argument_schema={'name': {'type': 'string'}, 'instructions': {'type': 'string'}}, operation_kind='write', confirm=confirm)]

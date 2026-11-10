@@ -26,7 +26,7 @@ class ToolExecutionResult(BaseModel):
 
 class ToolExecutor:
     """工具执行器"""
-    
+
     def __init__(
         self,
         tool_registry: ToolRegistry,
@@ -43,7 +43,7 @@ class ToolExecutor:
         self.confirm = confirm
         # Trusted local connector configuration, never remote tool metadata alone.
         self.read_only_servers = frozenset(read_only_servers)
-    
+
     def _read_only_connector_call(self, tool: Tool) -> bool:
         annotations = (getattr(tool, "metadata", None) or {}).get("annotations")
         return (tool.server_name in self.read_only_servers
@@ -59,66 +59,15 @@ class ToolExecutor:
     ) -> ToolExecutionResult:
         """执行工具"""
         start_time = time.time()
-        
+
         # 检查权限
         permission_result = self.permission_manager.check_permission(
             tool_name, agent_role, arguments, self.tool_registry
         )
-        
-        # ASK 规则：**真的去问人**。此前这段是死的——check_permission 对 ASK 返回
-        # allowed=False + requires_confirmation=True，而上面的 `if not allowed` 先 return 了，
-        # 下面那句 logger.warning 永远执行不到。于是 config/mcp.yaml 里写的 `action: ask`
-        # 规则（filesystem-write / git-operations，以及两条默认 ASK 规则）**全都是静默硬拒**，
-        # 从来不"问"——配置在撒谎。
-        # 修法**只往安全一侧靠**：有确认门就问、同意才放行；**没有确认门仍然拒绝**（fail-closed），
-        # 只是把理由说清楚，绝不把"要问人"降级成"直接放行"。
-        tool = self.tool_registry.get(tool_name)
-        if tool is not None and tool.server_name and (permission_result.allowed or permission_result.requires_confirmation):
-            # Only operator-selected read-only connectors with a literal True
-            # hint and YAML ALLOW skip this additional confirmation. ASK still
-            # goes through the kernel; remote metadata alone grants nothing.
-            from src.agents.gate import is_kernel_gate, make_confirm_gate, request
-            try:
-                # 会话门已是内核 gate → 直接用（再包会叠横幅、污染审计）；端传的裸回调才包一层。
-                gate = self.confirm if is_kernel_gate(self.confirm) else \
-                    make_confirm_gate(self.confirm, can_ask_human=self.confirm is not None)
-                exempt = (permission_result.allowed and not permission_result.requires_confirmation
-                          and self._read_only_connector_call(tool))
-                approved = exempt or await request(gate, f"MCP 工具 `{tool_name}` 需要确认\n  参数：{arguments}")
-            except Exception:
-                approved = False
-            if not approved:
-                return ToolExecutionResult(success=False, tool_name=tool_name,
-                    error="MCP 调用未获内核确认，已拒绝执行", execution_time=time.time() - start_time)
-        elif permission_result.requires_confirmation:
-            if self.confirm is None:
-                return ToolExecutionResult(
-                    success=False,
-                    tool_name=tool_name,
-                    error=(f"Permission denied: 规则要求人工确认（ask），但当前入口没有接确认门 "
-                           f"—— {permission_result.reason}"),
-                    execution_time=time.time() - start_time
-                )
-            try:
-                approved = bool(await self.confirm(
-                    f"MCP 工具 `{tool_name}` 需要确认（权限规则 action=ask）\n  参数：{arguments}"))
-            except Exception as e:  # noqa: BLE001 —— 确认门炸了 → 拒绝（安全优先）
-                approved = False
-                logger.warning(f"Confirm gate failed for {tool_name}: {e}")
-            if not approved:
-                return ToolExecutionResult(
-                    success=False,
-                    tool_name=tool_name,
-                    error=f"用户取消了 MCP 工具 {tool_name} 的调用",
-                    execution_time=time.time() - start_time
-                )
-        elif not permission_result.allowed:
-            return ToolExecutionResult(
-                success=False,
-                tool_name=tool_name,
-                error=f"Permission denied: {permission_result.reason}",
-                execution_time=time.time() - start_time
-            )
+
+        if not permission_result.allowed and not permission_result.requires_confirmation:
+            return ToolExecutionResult(success=False, tool_name=tool_name,
+                error=f"Permission denied: {permission_result.reason}", execution_time=time.time() - start_time)
 
         # 获取工具
         tool = self.tool_registry.get(tool_name)
@@ -129,38 +78,57 @@ class ToolExecutor:
                 error=f"Tool {tool_name} not found",
                 execution_time=time.time() - start_time
             )
-        
-        # 执行工具
-        try:
-            if tool.server_name and tool.server_name in self.mcp_clients:
-                # 通过MCP服务器执行
-                result = await self._execute_via_mcp(tool, arguments, timeout)
-            else:
-                # 本地执行
-                result = await self._execute_locally(tool, arguments, timeout)
-            
-            result.execution_time = time.time() - start_time
-            
-            # 记录执行历史
-            self.execution_history.append(result)
-            
-            return result
-            
-        except asyncio.TimeoutError:
-            return ToolExecutionResult(
-                success=False,
-                tool_name=tool_name,
-                error=f"Tool execution timed out after {timeout} seconds",
-                execution_time=time.time() - start_time
-            )
-        except Exception as e:
-            return ToolExecutionResult(
-                success=False,
-                tool_name=tool_name,
-                error=str(e),
-                execution_time=time.time() - start_time
-            )
-    
+
+        from src.agents.gate import is_kernel_gate, make_confirm_gate
+        from src.agents.tool import Tool as AgentTool
+        read_only = bool(permission_result.allowed and not permission_result.requires_confirmation
+                         and self._read_only_connector_call(tool))
+        gate = self.confirm if is_kernel_gate(self.confirm) else make_confirm_gate(
+            self.confirm, can_ask_human=self.confirm is not None)
+        async def invoke(_args):
+            # Permission waits can revoke/remove the captured registration.
+            if self.tool_registry.get(tool_name) is not tool:
+                return ToolExecutionResult(success=False, tool_name=tool_name,
+                                           error="工具登记已变化，未执行")
+            try:
+                if tool.server_name:
+                    # 通过MCP服务器执行
+                    result = await self._execute_via_mcp(tool, arguments, timeout)
+                else:
+                    # 本地执行
+                    result = await self._execute_locally(tool, arguments, timeout)
+
+                result.execution_time = time.time() - start_time
+
+                # 记录执行历史
+                self.execution_history.append(result)
+
+                return result
+
+            except asyncio.TimeoutError:
+                return ToolExecutionResult(
+                    success=False,
+                    tool_name=tool_name,
+                    error=f"Tool execution timed out after {timeout} seconds",
+                    execution_time=time.time() - start_time
+                )
+            except Exception as e:
+                return ToolExecutionResult(
+                    success=False,
+                    tool_name=tool_name,
+                    error=str(e),
+                    execution_time=time.time() - start_time
+                )
+
+        bound = AgentTool(tool_name, "MCP 调用：远程声明不授予操作权限", {}, invoke,
+            operation_kind="read" if read_only else "irreversible", confirm=gate,
+            authority_owner=self, authority_name=tool_name)
+        outcome = await bound.handler(arguments)
+        if isinstance(outcome, ToolExecutionResult):
+            return outcome
+        return ToolExecutionResult(success=False, tool_name=tool_name,
+            error="MCP 调用未获内核确认，已拒绝执行", execution_time=time.time() - start_time)
+
     async def _execute_via_mcp(
         self,
         tool: Tool,
@@ -175,19 +143,19 @@ class ToolExecutor:
                 tool_name=tool.name,
                 error=f"MCP server {tool.server_name} not connected"
             )
-        
+
         # 创建工具调用
         tool_call = MCPToolCall(
             tool_name=tool.metadata.get("mcp_tool_name", tool.name),
             arguments=arguments
         )
-        
+
         # 执行调用
         result = await asyncio.wait_for(
             client.call_tool(tool_call),
             timeout=timeout
         )
-        
+
         return ToolExecutionResult(
             success=result.success,
             tool_name=tool.name,
@@ -200,7 +168,7 @@ class ToolExecutor:
                 "transport": client.transport.value
             }
         )
-    
+
     async def _execute_locally(
         self,
         tool: Tool,
@@ -210,19 +178,19 @@ class ToolExecutor:
         """本地执行工具"""
         # 这里可以实现本地工具执行逻辑
         # 目前返回一个模拟结果
-        
+
         logger.info(f"Executing tool locally: {tool.name}")
-        
+
         # 模拟执行
         await asyncio.sleep(0.1)
-        
+
         return ToolExecutionResult(
             success=True,
             tool_name=tool.name,
             output={"message": f"Tool {tool.name} executed locally"},
             metadata={"local": True}
         )
-    
+
     async def execute_batch(
         self,
         tool_calls: List[Dict[str, Any]],
@@ -231,14 +199,14 @@ class ToolExecutor:
     ) -> List[ToolExecutionResult]:
         """批量执行工具"""
         results = []
-        
+
         # 创建信号量限制并发数
         semaphore = asyncio.Semaphore(max_concurrent)
-        
+
         async def execute_with_semaphore(tool_name: str, arguments: Dict[str, Any]):
             async with semaphore:
                 return await self.execute(tool_name, arguments, agent_role)
-        
+
         # 创建任务列表
         tasks = []
         for call in tool_calls:
@@ -246,10 +214,10 @@ class ToolExecutor:
             arguments = call.get("arguments", {})
             task = execute_with_semaphore(tool_name, arguments)
             tasks.append(task)
-        
+
         # 并发执行
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # 处理异常结果
         final_results = []
         for i, result in enumerate(results):
@@ -262,10 +230,10 @@ class ToolExecutor:
                 ))
             else:
                 final_results.append(result)
-        
+
         return final_results
-    
-    
+
+
     def get_statistics(self) -> Dict[str, Any]:
         """获取执行统计"""
         if not self.execution_history:
@@ -274,22 +242,22 @@ class ToolExecutor:
                 "success_rate": 0.0,
                 "average_execution_time": 0.0
             }
-        
+
         total = len(self.execution_history)
         successful = sum(1 for r in self.execution_history if r.success)
         total_time = sum(r.execution_time for r in self.execution_history)
-        
+
         return {
             "total_executions": total,
             "success_rate": successful / total if total > 0 else 0.0,
             "average_execution_time": total_time / total if total > 0 else 0.0,
             "tool_usage": self._get_tool_usage_stats()
         }
-    
+
     def _get_tool_usage_stats(self) -> Dict[str, Dict[str, Any]]:
         """获取工具使用统计"""
         stats = {}
-        
+
         for result in self.execution_history:
             tool_name = result.tool_name
             if tool_name not in stats:
@@ -299,20 +267,20 @@ class ToolExecutor:
                     "failed_calls": 0,
                     "total_time": 0.0
                 }
-            
+
             stats[tool_name]["total_calls"] += 1
             if result.success:
                 stats[tool_name]["successful_calls"] += 1
             else:
                 stats[tool_name]["failed_calls"] += 1
             stats[tool_name]["total_time"] += result.execution_time
-        
+
         return stats
 
 
 class AsyncToolExecutor(ToolExecutor):
     """异步工具执行器，支持更高级的并发控制"""
-    
+
     def __init__(
         self,
         tool_registry: ToolRegistry,
@@ -326,8 +294,8 @@ class AsyncToolExecutor(ToolExecutor):
         self.max_workers = max_workers
         self.worker_semaphore = asyncio.Semaphore(max_workers)
         self.running_tasks: Dict[str, asyncio.Task] = {}
-    
-    
+
+
     async def cancel_execution(self, execution_id: str) -> bool:
         """取消执行"""
         if execution_id in self.running_tasks:
@@ -336,7 +304,7 @@ class AsyncToolExecutor(ToolExecutor):
             del self.running_tasks[execution_id]
             return True
         return False
-    
+
     async def cancel_all(self) -> None:
         """取消所有执行"""
         for execution_id in list(self.running_tasks.keys()):

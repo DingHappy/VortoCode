@@ -34,8 +34,8 @@ async def test_handoff_returns_to_same_task_and_delivers_reviewable_local_artifa
 
     gate = make_confirm_gate(ask, can_ask_human=True)
 
-    async def approve_artifact(_preview, _update):
-        return await request(gate, "保存本次网站整理结果为可审阅的本机制品？", "write")
+    async def approve_artifact(message, kind):
+        return await request(gate, message, kind)
 
     tools = build_browser_tools(str(root), gate, browser_factory=lambda: browser, connections=registry)
     tools += build_artifact_tools(str(root), confirm=approve_artifact,

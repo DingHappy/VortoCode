@@ -9,6 +9,8 @@
 写/执行类工具和"结果变了"一律不受影响——那两种重复是正当的。
 """
 
+from src.agents.gate import make_confirm_gate
+
 import pytest
 
 from src.agents.agent_loop import MainAgent
@@ -23,14 +25,14 @@ def _read_tool(box):
     async def handler(_args):
         return box["text"]
     return Tool("read_file", "读文件", {"type": "object", "properties": {}},
-                handler, read_only=True)
+                handler, read_only=True, operation_kind='read')
 
 
 def _write_tool(box):
     async def handler(_args):
         return box["text"]
     return Tool("edit_file", "改文件", {"type": "object", "properties": {}},
-                handler, read_only=False)
+                handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
 
 
 async def _call(agent, name, args):

@@ -1,4 +1,6 @@
 """MCP media engineering fixtures; no image decoding, inference or external access."""
+
+from tests.tool_authorization import authorized_tools
 import base64
 from copy import deepcopy
 import json
@@ -106,7 +108,7 @@ class Manager:
 async def test_original_agent_delivers_images_to_next_model_message_without_binary_in_trace(native):
     from src.agents.taint import is_tainted, reset_taint
     manager = Manager()
-    tool = wrap_mcp_manager(manager)[0]
+    tool = authorized_tools(wrap_mcp_manager(manager))[0]
     events, audit = [], []
     class Model:
         calls = 0
@@ -138,7 +140,7 @@ async def test_original_agent_delivers_images_to_next_model_message_without_bina
 async def test_server_failure_never_queues_image_and_local_profile_still_blocks_mcp():
     from src.agents.capabilities import SessionCapabilities
     manager = Manager(success=False)
-    tool = wrap_mcp_manager(manager)[0]
+    tool = authorized_tools(wrap_mcp_manager(manager))[0]
     assert (await tool.handler({}))["ok"] is False
     agent = MainAgent([tool], capabilities=SessionCapabilities.for_profile("local"))
     await agent._run_tool(tool.name, {}, "build", lambda _: None)
@@ -148,7 +150,7 @@ async def test_server_failure_never_queues_image_and_local_profile_still_blocks_
 @pytest.mark.asyncio
 async def test_shared_batch_image_queue_keeps_original_total_cap():
     manager = Manager()
-    tools = wrap_mcp_manager(manager)
+    tools = authorized_tools(wrap_mcp_manager(manager))
     agent = MainAgent(tools)
     notes = [await agent._run_tool(tools[0].name, {}, "build", lambda _: None) for _ in range(5)]
     assert len(agent._pending_images) == 4 and "已达单批上限" in notes[-1]

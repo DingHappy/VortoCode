@@ -1,3 +1,5 @@
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 
 import pytest
@@ -143,7 +145,7 @@ async def test_tools_are_shared_and_inbox_marks_untrusted(tmp_path):
     from src.agents.taint import is_tainted, reset_taint
 
     service, task, inbox = setup_inbox(tmp_path)
-    tools = build_research_tools(str(tmp_path), collaboration=service)
+    tools = authorized_tools(build_research_tools(str(tmp_path), collaboration=service), human=False)
     agent = MainAgent(tools)
     reset_taint()
     result = await agent._run_tool("task_inbox", {}, "plan", lambda _: None)
