@@ -3,7 +3,7 @@
 // 先写进本机队列再发：断网、账号服务不通时留到下次；同一个错误每次运行只发一次，每天最多 MAX_REPORTS_PER_DAY 条。
 // 崩溃处理里不能联网，只入队，下次启动再发。隐私页（account.vortotech.com/privacy）与这里同口径。
 use super::*;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
 
 const MAX_REPORTS_PER_DAY: u32 = 20;
@@ -25,13 +25,41 @@ pub(crate) struct TelemetryState {
     pub(crate) notice_shown: bool,
     pub(crate) day: String,
     pub(crate) sent_today: u32,
+    /// 匿名使用计数：{UTC 日期: {事件: 次数}}，只在 usage_enabled 时累加，最多留 USAGE_DAYS 天没发出去的
+    pub(crate) usage: BTreeMap<String, BTreeMap<String, u32>>,
 }
 
 impl Default for TelemetryState {
     fn default() -> Self {
         Self { install_id: String::new(), errors_enabled: true, usage_enabled: false, notice_shown: false,
-               day: String::new(), sent_today: 0 }
+               day: String::new(), sent_today: 0, usage: BTreeMap::new() }
     }
+}
+
+const USAGE_DAYS: usize = 7;
+const MAX_USAGE_EVENTS: usize = 60;
+
+fn usage_name_ok(name: &str) -> bool {
+    let mut chars = name.chars();
+    name.len() <= 40 && chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_.-".contains(c))
+}
+
+/// 记一次功能使用：没打开使用统计、名字不合格、当天事件种类太多都不记。纯逻辑，单独测。
+pub(crate) fn tally(state: &mut TelemetryState, event: &str, now: SystemTime) -> bool {
+    if !state.usage_enabled || !usage_name_ok(event) {
+        return false;
+    }
+    let day = state.usage.entry(today(now)).or_default();
+    if !day.contains_key(event) && day.len() >= MAX_USAGE_EVENTS {
+        return false;
+    }
+    *day.entry(event.to_string()).or_insert(0) += 1;
+    while state.usage.len() > USAGE_DAYS {
+        let oldest = state.usage.keys().next().cloned().unwrap_or_default();
+        state.usage.remove(&oldest);
+    }
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -238,12 +266,71 @@ pub(crate) async fn flush(app: AppHandle) {
     drop(app);
 }
 
+/// 记一次功能使用（原生层与前端共用）。任何失败都吞掉。
+pub(crate) fn count_usage_event(event: &str) {
+    if cfg!(test) {
+        return;
+    }
+    let Some(dir) = state_dir() else { return };
+    let Ok(_guard) = LOCK.lock() else { return };
+    let mut state = load_state_from(&dir);
+    if tally(&mut state, event, SystemTime::now()) {
+        let _ = save_state_to(&dir, &state);
+    }
+}
+
+/// 发出使用计数：每天一份，发的是当天累计值（服务端取较大的，重发不重复累加）；过去的日期发成功就删，当天的留着继续累加。
+pub(crate) async fn flush_usage() {
+    let Some(dir) = state_dir() else { return };
+    let (days, install_id) = {
+        let Ok(_guard) = LOCK.lock() else { return };
+        let mut state = load_state_from(&dir);
+        if !state.usage_enabled {
+            if !state.usage.is_empty() {
+                state.usage.clear();
+                let _ = save_state_to(&dir, &state);
+            }
+            return;
+        }
+        (state.usage.clone(), state.install_id)
+    };
+    let (Ok(base), Ok(client)) = (account::default_base_url(), http_client()) else { return };
+    let current = today(SystemTime::now());
+    let mut done = Vec::new();
+    for (day, counts) in &days {
+        let body = serde_json::json!({"install_id": install_id, "version": env!("CARGO_PKG_VERSION"), "os": os_label(),
+                                      "day": day, "counts": counts});
+        match client.post(format!("{base}/api/telemetry/usage")).json(&body).send().await {
+            Ok(response) if response.status().is_success() || matches!(response.status().as_u16(), 400 | 413 | 422) => {
+                if *day != current { done.push(day.clone()); }
+            }
+            _ => break,
+        }
+    }
+    if done.is_empty() {
+        return;
+    }
+    let Ok(_guard) = LOCK.lock() else { return };
+    let mut state = load_state_from(&dir);
+    for day in done { state.usage.remove(&day); }
+    let _ = save_state_to(&dir, &state);
+}
+
 /// 启动时：记住 AppHandle、装崩溃记录、补发上次没发出去的；第一次（或升级到带错误报告的版本后第一次）告诉用户。
 pub(crate) fn start(app: &AppHandle) {
     let _ = APP.set(app.clone());
     install_panic_hook();
     let handle = app.clone();
     tauri::async_runtime::spawn(async move { flush(handle).await });
+    count_usage_event("app.start");
+    // 使用计数：启动 30 秒后发一次，之后每小时一次（没打开使用统计时什么也不发）
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        loop {
+            flush_usage().await;
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    });
     let Some(dir) = state_dir() else { return };
     let show = {
         let Ok(_guard) = LOCK.lock() else { return };
@@ -329,6 +416,9 @@ pub(crate) fn set_telemetry_settings(errors_enabled: bool, usage_enabled: bool) 
     let _guard = LOCK.lock().map_err(|_| "设置正忙，请重试".to_string())?;
     let mut state = load_state_from(&dir);
     state.errors_enabled = errors_enabled;
+    if !usage_enabled {
+        state.usage.clear();          // 关掉使用统计：没发出去的计数一并丢掉
+    }
     state.usage_enabled = usage_enabled;
     state.notice_shown = true;
     save_state_to(&dir, &state).map_err(|error| format!("保存失败：{error}"))?;
@@ -338,6 +428,12 @@ pub(crate) fn set_telemetry_settings(errors_enabled: bool, usage_enabled: bool) 
     diag("info", "telemetry.settings", &format!("错误报告 {}，使用统计 {}", if errors_enabled { "开" } else { "关" },
                                                  if usage_enabled { "开" } else { "关" }));
     Ok(TelemetrySettings { errors_enabled, usage_enabled })
+}
+
+/// 前端记一次功能使用（发消息、新对话、打开设置……）；没打开使用统计时什么也不记。
+#[tauri::command]
+pub(crate) fn count_usage(event: String) {
+    count_usage_event(&event);
 }
 
 /// 界面里没人接住的报错：前端 diagnostics.ts 调过来，和原生错误走同一条路。
@@ -472,6 +568,22 @@ mod tests {
         assert!(excerpt.starts_with("2026-11-09T00:00:00Z info"));        // 不从半行开始
         assert!(excerpt.contains("第 4999 行") && !excerpt.contains("abcdefghijklmnop"));
         assert_eq!(feedback_log_excerpt(b"short\nlog"), "short\nlog");
+    }
+
+    #[test]
+    fn usage_is_counted_only_when_turned_on_with_valid_names_and_a_week_of_backlog() {
+        let mut state = TelemetryState::default();
+        let day0 = UNIX_EPOCH + Duration::from_secs(20_000 * 86_400);
+        assert!(!tally(&mut state, "chat.send", day0));                 // 默认关：不记
+        state.usage_enabled = true;
+        assert!(tally(&mut state, "chat.send", day0) && tally(&mut state, "chat.send", day0));
+        assert!(!tally(&mut state, "Chat Send!", day0) && !tally(&mut state, "", day0));
+        assert_eq!(state.usage[&today(day0)]["chat.send"], 2);
+        for index in 0..MAX_USAGE_EVENTS { tally(&mut state, &format!("e{index}"), day0); }
+        assert_eq!(state.usage[&today(day0)].len(), MAX_USAGE_EVENTS);   // 当天事件种类有上限
+        for offset in 1..=10 { tally(&mut state, "app.start", day0 + Duration::from_secs(offset * 86_400)); }
+        assert_eq!(state.usage.len(), USAGE_DAYS);                       // 只留最近一周
+        assert!(!state.usage.contains_key(&today(day0)));
     }
 
     #[test]

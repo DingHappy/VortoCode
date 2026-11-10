@@ -20,3 +20,11 @@ it("hands uncaught UI errors to the native error report, bounded and never throw
   invoke.mockImplementationOnce(() => { throw new Error("no tauri"); });
   expect(() => reportUiError("ui.error", "boom")).not.toThrow();
 });
+
+it("counts a feature use by event name only and never throws", async () => {
+  const { countUsage } = await import("./telemetry");
+  countUsage("chat.send");
+  expect(invoke).toHaveBeenLastCalledWith("count_usage", { event: "chat.send" });
+  invoke.mockImplementationOnce(() => { throw new Error("no tauri"); });
+  expect(() => countUsage("settings.open")).not.toThrow();
+});

@@ -19,3 +19,10 @@ export function reportUiError(kind: "ui.error" | "ui.unhandled_rejection", messa
     void invoke("report_ui_error", { kind, message: message.slice(0, 600) }).catch(() => undefined);
   } catch { /* 不在 Tauri 里 */ }
 }
+
+/** 记一次功能使用（只记事件名和次数）。没打开「发送匿名使用统计」时原生层什么也不记。 */
+export function countUsage(event: "chat.send" | "conversation.new" | "settings.open" | "search.open" | "feedback.sent"): void {
+  try {
+    void invoke("count_usage", { event }).catch(() => undefined);
+  } catch { /* 不在 Tauri 里 */ }
+}
