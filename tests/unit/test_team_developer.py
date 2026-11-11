@@ -211,8 +211,8 @@ async def test_only_desktop_sessions_can_open_a_developer_team(tmp_path, project
     try:
         async def yes(*_args, **_kwargs):
             return True
-        args = {"objective": "改代码", "acceptance": ["测试通过"], "mode": "private", "project": "proj",
-                "members": [{"name": "开发", "role": "developer", "engine": "opencode"}]}
+        args = {"objective": "改代码", "acceptance": ["测试通过"], "reason": "independent_review", "mode": "private", "project": "proj",
+                "members": [{"name": "开发", "role": "developer", "engine": "opencode"}, {"name": "审查", "role": "reviewer"}]}
         phone = {t.name: t for t in build_team_tools(str(tmp_path / "a"), confirm=yes, owner="o")}
         assert "只能在 Desktop" in await phone["team_propose"].handler(args)
         desk = {t.name: t for t in build_team_tools(str(tmp_path / "a"), confirm=yes, owner="o", allow_developers=True)}

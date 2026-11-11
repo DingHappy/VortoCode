@@ -4,10 +4,12 @@ import type { TeamClient } from "./TeamCard";
 import { ResultDocument } from "./ResultDocument";
 import { firstSentence } from "../lib/activityFeed";
 import "./TeamDelivery.css";
+import { TaskOutputView } from './TaskOutputView';
+import type { TeamOutputClient } from '../lib/teamOutputs';
 
 /** A read-only view of the saved submission and explicitly identified member records. */
 export function TeamDelivery({ id, client, connected, initial = null }: {
-  id: string; client: Pick<TeamClient, "getTeam">; connected: boolean; initial?: TeamDetail | null;
+  id: string; client: Pick<TeamClient, "getTeam"> & Partial<TeamOutputClient>; connected: boolean; initial?: TeamDetail | null;
 }) {
   const [snapshot, setSnapshot] = useState({ client, id, data: initial?.id === id ? initial : null });
   const [error, setError] = useState("");
@@ -32,7 +34,7 @@ export function TeamDelivery({ id, client, connected, initial = null }: {
     return () => { alive = false; window.clearInterval(timer); };
   }, [client, id, connected, refresh]);
   const team = snapshot.client === client && snapshot.id === id ? snapshot.data : null;
-  const results = team?.children.filter(child => child.result) ?? [];
+  const results = team?.children.filter(child => child.result || child.output || child.outputs?.length) ?? [];
   return <section className="team-delivery" aria-label="小组交付">
     <header><h3>交付与原文</h3><button type="button" disabled={!connected} onClick={() => setRefresh(value => value + 1)}>刷新交付</button></header>
     {!connected && <p role="status">连接中断，下面保留上次读到的交付。</p>}
@@ -46,9 +48,14 @@ export function TeamDelivery({ id, client, connected, initial = null }: {
         </details>
       </> : <p>小组还没有提交交付总结，可先查看成员交回的原文。</p>}
       <h4>成员交回的原文 · {results.length}</h4>
-      <p className="team-delivery-note">按任务和轮次保留，可能含历史版本；以交付总结引用的任务为准。显示服务端已保存的文本，长结果可能被截断，正文缺失时需补交。协调人接受成员结果不等于你已验收小组。</p>
-      {[...results].reverse().map(child => <ResultDocument key={`${child.id}:${child.round}`} title={`${child.member} · ${child.id} · 第 ${child.round ?? 1} 轮 · ${child.review === "accepted" ? "协调人已接受" : "尚未由协调人接受"}`}
-        text={child.result!} tainted={child.tainted} />)}
+      <p className="team-delivery-note">按任务和轮次保留，以交付总结引用的任务为准。文件逐页读取，读完后核对摘要；旧记录的长结果可能被截断，正文缺失时需补交。协调人接受成员结果不等于你已验收小组。</p>
+      {[...results].reverse().map(child => <section key={`${child.id}:${child.round}`}>
+        <h4>{`${child.member} · ${child.id} · 第 ${child.round ?? 1} 轮 · ${child.review === 'accepted' ? '协调人已接受' : '尚未由协调人接受'}`}</h4>
+        {(child.outputs?.length ? child.outputs : child.output ? [child.output] : []).map(output =>
+          <TaskOutputView key={`${output.task_id}:${output.round}:${output.sha256}`} team={id} output={output} client={client} connected={connected} />)}
+        {child.result && <ResultDocument title={(child.output || child.outputs?.length) ? '查看结果摘要（非全文）' : `第 ${child.round ?? 1} 轮保存稿（完整性待核对）`}
+          text={child.result} tainted={child.tainted} />}
+      </section>)}
       {results.length === 0 && <p>尚未读到成员原文；交付总结不代表已经取得完整正文。</p>}
     </>}
   </section>;

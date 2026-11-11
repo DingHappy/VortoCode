@@ -74,7 +74,7 @@ function openQuestion(task: TaskItem) {
 
 export function feedStatus(task: TaskItem): FeedStatus {
   if (task.status === "blocked" && task.collaboration?.quota?.status === "waiting") return "stopped";
-  if (task.collaboration?.dispatch?.source === "staff" && task.status === "blocked" && task.collaboration.approval) {
+  if (task.status === "blocked" && task.collaboration?.approval) {
     const state = task.collaboration.approval.status;
     return state === "pending" ? "waiting" : ["approved", "denied"].includes(state) ? "running" : "stopped";
   }
@@ -92,7 +92,7 @@ export function feedStatus(task: TaskItem): FeedStatus {
 export function taskFeedItem(task: TaskItem): FeedItem {
   const status = feedStatus(task);
   const question = openQuestion(task);
-  const approval = task.collaboration?.dispatch?.source === "staff" && task.status === "blocked" ? task.collaboration.approval : undefined;
+  const approval = task.status === "blocked" ? task.collaboration?.approval : undefined;
   const summary = task.status === "blocked" && task.collaboration?.quota?.status === "waiting" ? task.collaboration.quota.reason
     : approval?.status === "pending" ? `专员等你批准：${firstSentence(approval.payload.message, MAX_SUMMARY - 7)}`
     : approval && ["approved", "denied"].includes(approval.status) ? "审批决定已保存，等待继续执行"
@@ -107,7 +107,7 @@ export function taskFeedItem(task: TaskItem): FeedItem {
     id: `task:${task.id}`,
     kind: "task",
     taskId: task.id,
-    ...(question ? { requiresReply: true } : {}),
+    ...(question || approval?.status === 'pending' ? { requiresReply: true } : {}),
     presentation: task.status === "cancelled" ? "history" : undefined,
     title: firstSentence(task.prompt, MAX_TITLE) || "未命名任务",
     summary,

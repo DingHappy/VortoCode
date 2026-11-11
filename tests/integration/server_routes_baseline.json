@@ -1746,5 +1746,11 @@
     "methods": [
       "PUT"
     ]
+  },
+  {
+    "path": "/api/teams/{team_id}/outputs/{task_id}/{number}",
+    "methods": [
+      "GET"
+    ]
   }
 ]

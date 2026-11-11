@@ -1,6 +1,6 @@
 """主 agent 管任务小组的工具（ADR-014 S1d）：开小组、看进度、回话、验收、停止。
 
-- 开小组会启动成员、花模型用量：按「执行」类过确认门，卡片列出目标、验收、成员与档位。不设额度（2026-11-04）。
+- 开小组按「执行」类过确认门，卡片列出目标、验收、成员与档位；额度沿用专员后台和部门设置。
 - 验收通过不可撤回（IRREVERSIBLE）：任何授权档位都要主人确认；退回与回话仍按 OWN_DATA。
 - 停止是保护性动作，不问。
 - 看进度只给代码拼的结构化视图；协调人写的总结在根带污点时按外部内容给（本回合即为污点）。
@@ -35,7 +35,7 @@ def _card(objective: str, acceptance: List[str], members: List[dict], mode: str,
                      "改完由 VortoOne 在沙箱里跑测试，改动落成本地分支——不推送、不合并，由你审")
     lines.append("档位：" + ("open（成员可联网，小组看不到你的记忆、目标和对话）" if mode == "open"
                             else "private（成员不能联网）"))
-    lines.append("不设额度：小组做到交付验收或你停止为止；连续 3 次没有进展会停下来问你")
+    lines.append('额度沿用专员后台和部门设置，0 表示不限；连续 3 次没有进展会停下来问你')
     return "\n".join(lines)
 
 
@@ -84,13 +84,21 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
 
     async def propose(args: dict) -> object:
         runner()
+        if set(args) - {'objective', 'acceptance', 'members', 'mode', 'project', 'limits', 'department', 'reason'}:
+            raise CollaborationConflict('组队包含未知或权限字段')
         objective = str(args.get("objective") or "").strip()
         acceptance = [str(item) for item in args.get("acceptance") or []]
-        members = [item for item in args.get("members") or [] if isinstance(item, dict)]
+        members = args.get('members')
         mode = str(args.get("mode") or "open")
+        reason, department = args.get('reason', ''), args.get('department', '')
+        from src.workflow.staff.team_roster import normalize
+        try:
+            roster = normalize(repo_root, members, mode, department, reason)
+        except ValueError as error:
+            raise CollaborationConflict(str(error)) from error
         limits = normalize_limits({key: value for key, value in (args.get("limits") or {}).items() if key in DEFAULT_LIMITS})
         project = None
-        if any(item.get("role") == "developer" for item in members):
+        if any(item.get("role") == "developer" for item in roster['members']):
             if not allow_developers:
                 return "未执行：带开发成员的小组只能在 Desktop 上开（手机和 IM 里不行）。请主人到 Desktop 上再提。"
             name = str(args.get("project") or "").strip()
@@ -99,11 +107,19 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
                 from src.workflow.workbench.resident_projects import load_resident_projects
                 names = "、".join(item["name"] for item in load_resident_projects()) or "（没有登记任何项目）"
                 return f"未执行：开发成员要指定一个登记过的常驻项目 project。可选：{names}"
-        card = _card(objective, acceptance, members, mode, limits, project)
+        card = _card(objective, acceptance, roster['members'], mode, limits, project)
+        card += '\n组队原因：' + reason + '\n部门：' + (department or '临时团队')
+        card += '\n成员岗位权限（仅来自登记）：\n' + json.dumps([
+            {'name': item['name'], 'member': item['member'], 'role': item['role'], 'revision': item['role_snapshot']['revision'],
+             'grants': item['role_snapshot']['grants']} for item in roster['members']], ensure_ascii=False)
+        if roster['coordinator']['kind'] == 'staff_lead':
+            card += '\n协调人：' + roster['coordinator']['member_snapshot']['name'] + '；只拿本团队协调工具，不携带原岗位工具。'
+        session = str((owner() if callable(owner) else owner) or '')
         async def apply():
-            session = str((owner() if callable(owner) else owner) or "")
+            if str((owner() if callable(owner) else owner) or '') != session:
+                raise CollaborationConflict('确认期间会话已变化')
             root = service().create(session, objective=objective, acceptance=acceptance, members=members, mode=mode,
-                                    limits=limits, project=project)
+                                    limits=limits, project=project, reason=reason, department=department, expected_roster=roster)
             runner().wake(root.id, "任务刚开始：先拆解，再给成员派活")
             return (f"小组已开工：{root.id}。成员交回结果时由小组自己推进；需要主人决定、交付验收或失败时会通知。"
                     "现在简短告诉主人小组开工了，不要替小组做研究。")
@@ -162,7 +178,9 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
              "执行框架 engine 默认 vortocode；主人要求时可选 opencode 或 deepseek-harness（外部框架，同样只能做该角色允许的事）。"
              "小任务直接自己做，不要开小组。",
              {"objective": "目标", "acceptance": "验收标准列表（1–10 条）",
-              "members": "成员列表，每项 {name, role, engine 可选, model 可选}", "mode": "open（默认）或 private",
+              "members": "成员列表：{member: 专员id}，或 {name, role: 内置岗位id, engine 可选, model 可选}；不能覆盖登记权限",
+              "reason": "separate_permissions（权限隔离）、independent_review（独立审查）或 parallel（明确并行）",
+              "department": "可选：所属部门 id；跨部门协作留空", "mode": "open（默认）或 private",
               "project": "有 developer 成员时必填：常驻电脑上登记的项目名",
               "limits": "可选 {parallel}：同时最多几个成员在跑（1–4，默认 2）"},
              guarded(propose), read_only=False, serial=True,
@@ -171,6 +189,7 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
              'members': {'type': 'array',
                          'items': {'type': 'object',
                                    'properties': {'name': {'type': 'string'},
+                                                  'member': {'type': 'string'},
                                                   'role': {'type': 'string',
                                                            'enum': ['web-researcher',
                                                                     'reviewer',
@@ -180,10 +199,13 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
                                                                       'opencode',
                                                                       'deepseek-harness']},
                                                   'model': {'type': 'string'}},
-                                   'required': ['name', 'role']}},
+                                   }},
+             'reason': {'type': 'string', 'enum': ['separate_permissions', 'independent_review', 'parallel']},
+             'department': {'type': 'string'},
              'limits': {'type': 'object',
                         'properties': {'parallel': {'type': 'integer', 'minimum': 1, 'maximum': 4}}},
-             'mode': {'type': 'string', 'enum': ['open', 'private']}}, required_args=('objective', 'acceptance', 'members'), operation_kind='execute', confirm=confirm),
+             'mode': {'type': 'string', 'enum': ['open', 'private']}}, required_args=('objective', 'acceptance', 'members', 'reason'),
+             requires_confirmation=True, operation_kind='execute', confirm=confirm),
         Tool("team_list", "列出进行中的任务小组：状态、成员、子任务和用量。", {}, guarded(overview), read_only=True, operation_kind='read', confirm=confirm),
         Tool("team_open", "查看一个任务小组的详情；交付了的会带上协调人的总结和逐条证据。",
              {"team_id": "小组 ID"}, guarded(open_one), read_only=True, required_args=('team_id',), argument_schema={'team_id': {'type': 'string'}}, operation_kind='read', confirm=confirm),

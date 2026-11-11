@@ -6,12 +6,13 @@
 - ``kick``：只把能开始的成员子任务放进池子，不叫醒协调人（派活工具用它）。
 - ``recover``：启动时按 ``TeamService.recover_after_restart`` 处理被打断的协调回合；被打断的成员子任务由启动
   扫描标为 interrupted，协调人醒来时会看到。
-- 无进展判定、验收证据都在 ``TeamService`` 里，本模块不重复判断。不设额度。
+- 无进展判定、验收证据都在 ``TeamService`` 里；新团队沿用专员后台的调用间额度。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,29 @@ class TeamRunner:
         self._pending: Dict[str, List[str]] = {}
         self._driving: Dict[str, asyncio.Task] = {}
         self._closing = False
+        self._team_slots = {}
+
+    def staff(self):
+        from src.scheduling.staff_runner import get_staff_service, set_staff_service
+        try:
+            value = get_staff_service(self.repo_root)
+        except ValueError:
+            value = set_staff_service(self.repo_root, self.runner)
+        if value.runner is not self.runner:
+            raise ValueError('团队和专员必须使用同一共享执行池')
+        return value
+
+    def admission(self, root, *, coordinator=False):
+        semaphore = self._team_slots.setdefault(root.id, asyncio.Semaphore(root.team['limits']['parallel']))
+        @asynccontextmanager
+        async def enter():
+            async with semaphore:
+                if coordinator:
+                    async with self.staff().coordinator_admission(root):
+                        yield
+                else:
+                    yield
+        return enter
 
     # ── 成员 ──────────────────────────────────────────────────────────
     def kick(self, root_id: str) -> None:
@@ -66,6 +90,8 @@ class TeamRunner:
         try:
             root = self.service.get(root_id)
             children = self.service.runnable(root)
+            if root.team.get('staff_roster') and root.status == 'active':
+                children = [child for child in self.service.children(root) if child.status == 'queued']
         except Exception as error:  # noqa: BLE001
             logger.warning("任务上下文 %s 读不到：%s", root_id, type(error).__name__)
             return
@@ -73,6 +99,20 @@ class TeamRunner:
             if self.runner.is_active(child.id):
                 continue
             number = child.collaboration["round"]
+            if root.team.get('staff_roster'):
+                staff = self.staff()
+                try:
+                    member, role = self.service.execution_identity(child.id)
+                except Exception as error:
+                    current = self.service.collaboration(root).abort(child.id, number, error=str(error))
+                    self._note(root_id, current)
+                    self.wake(root_id, describe(current))
+                    continue
+                def after(current, root_id=root_id):
+                    self._note(root_id, current)
+                    self.wake(root_id, describe(current))
+                staff.schedule(child, member, role, after=after, extra_admission=self.admission(root))
+                continue
             self.runner.enqueue_existing(child.id, self._member_job(root_id, child.id, number),
                                          on_cancel=self._member_stopped(root_id, child.id, number, cancelled=True),
                                          on_failure=lambda error, cid=child.id, n=number: self._member_stopped(
@@ -149,12 +189,28 @@ class TeamRunner:
             if root.status != "active":
                 return                       # 等你 / 待验收 / 已结束：主人的动作会再叫醒
             try:
-                await self._coordinator(self.repo_root, root_id, events, kick=self.kick)
+                if root.team.get('staff_roster'):
+                    self.staff()
+                    failures = []
+                    async def coordinate():
+                        await self._coordinator(self.repo_root, root_id, events, kick=self.kick)
+                    if not self.runner.enqueue_existing(root_id, coordinate, admission=self.admission(root, coordinator=True),
+                        on_cancel=lambda: None, on_failure=lambda error: failures.append(error)):
+                        raise ValueError('协调人已在执行池中，不能重复开始')
+                    await self.runner.join(root_id)
+                    if failures:
+                        raise failures[0]
+                else:
+                    await self._coordinator(self.repo_root, root_id, events, kick=self.kick)
             except CollaborationConflict as error:
                 logger.info("任务上下文 %s 协调人未醒来：%s", root_id, error)
+                if root.team.get('staff_roster'):
+                    self.service.interrupt_coordinator(root_id)
                 return
             except Exception as error:  # noqa: BLE001 —— 一个任务出错不拖垮其它任务
                 logger.warning("任务上下文 %s 协调回合异常：%s", root_id, type(error).__name__)
+                if root.team.get('staff_roster'):
+                    self.service.interrupt_coordinator(root_id)
                 return
             self.kick(root_id)
             if root_id not in self._pending and nudges < STALL_NUDGES and self._stuck(root_id):
@@ -179,6 +235,10 @@ class TeamRunner:
             return
         for root in self.service.list():
             if root.status not in LIVE:
+                continue
+            if root.team.get('staff_roster') and root.team.get('quota', {}).get('status') == 'waiting':
+                from src.workflow.staff.team_budget import TeamBudget
+                TeamBudget(self.repo_root, self.staff()).stage(root, root.team['quota'], interrupted=True)
                 continue
             outcome = self.service.recover_after_restart(root.id)
             if outcome == "rerun":

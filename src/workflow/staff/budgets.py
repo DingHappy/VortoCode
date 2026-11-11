@@ -7,6 +7,17 @@ from src.workflow.staff.registry import StaffRegistry
 from src.workflow.tasks.tasks import TASK_STATE_LOCK, TaskLedger
 
 
+def _recorded_usage(task):
+    return (task.team.get('usage') if task.kind == 'team' else task.collaboration.get('usage')) or {}
+
+
+def _recorded_dispatch(task):
+    if task.kind == 'team' and task.team.get('staff_roster'):
+        return {'source': 'team', 'staff_roster': True, 'department': task.team.get('department', ''),
+                'member': task.team['coordinator'].get('member') or task.id + '-coordinator'}
+    return task.collaboration.get('dispatch', {})
+
+
 class StaffBudgets:
     def __init__(self, root, *, today=date.today):
         self.root, self.today = str(root), today
@@ -63,17 +74,19 @@ class StaffBudgets:
         settings, usage = self.settings(), self.usage()
         dispatch = task.collaboration['dispatch']
         current = TaskLedger(self.root).load(task.id)
-        spent = (current.collaboration.get('usage') or {}).get('tokens', 0) if current else 0
+        spent = _recorded_usage(current).get('tokens', 0) if current else 0
         department = self.registry.department(dispatch['department']) if dispatch['department'] else None
         department_limit = department['limits']['daily_tokens'] if department else 0
         limits_on = settings['daily_tokens'] or settings['task_tokens'] or member['limits']['daily_tokens'] or department_limit
-        unknown = [t for t in TaskLedger(self.root).list() if (t.collaboration.get('usage') or {}).get('complete') is False
-                   and (t.collaboration.get('usage') or {}).get('day') == usage['day']
-                   and t.collaboration.get('dispatch', {}).get('source') == 'staff'] if limits_on else []
-        task_unknown = settings['task_tokens'] and current and (current.collaboration.get('usage') or {}).get('complete') is False
+        if limits_on and member.get('engine', 'vortocode') != 'vortocode':
+            return {'scope': 'accounting', 'reason': '外部框架用量尚不能可靠核对；已设额度时暂停，不按零放行', 'day': usage['day']}
+        unknown = [_recorded_dispatch(t) for t in TaskLedger(self.root).list() if _recorded_usage(t).get('complete') is False
+                   and _recorded_usage(t).get('day') == usage['day']
+                   and (_recorded_dispatch(t).get('source') == 'staff' or _recorded_dispatch(t).get('staff_roster') is True)] if limits_on else []
+        task_unknown = settings['task_tokens'] and current and _recorded_usage(current).get('complete') is False
         if task_unknown or unknown and (settings['daily_tokens']
-                        or member['limits']['daily_tokens'] and any(t.collaboration['dispatch']['member'] == member['id'] for t in unknown)
-                        or department_limit and any(t.collaboration['dispatch']['department'] == dispatch['department'] for t in unknown)):
+                        or member['limits']['daily_tokens'] and any(t['member'] == member['id'] for t in unknown)
+                        or department_limit and any(t['department'] == dispatch['department'] for t in unknown)):
             return {'scope': 'accounting', 'reason': '相关模型用量不完整，先核对用量或明确调整额度，不能按零放行', 'day': usage['day']}
         checks = [('task', spent, settings['task_tokens']), ('global', usage['total'], settings['daily_tokens']),
                   ('member', usage['members'].get(member['id'], 0), member['limits']['daily_tokens'])]

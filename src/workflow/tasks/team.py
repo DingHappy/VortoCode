@@ -162,7 +162,8 @@ class TeamService:
     # ── 建根（主人批准之后由调用方调用） ────────────────────────────────
     def create(self, owner: str, *, objective: str, acceptance: List[str], members: List[dict],
                mode: str = "open", limits: Optional[dict] = None, private_refs: Optional[List[str]] = None,
-               tid: Optional[str] = None, project: Optional[dict] = None) -> BackgroundTask:
+               tid: Optional[str] = None, project: Optional[dict] = None, department: str = '', reason: str = '',
+               expected_roster: Optional[dict] = None) -> BackgroundTask:
         if not isinstance(owner, str) or not owner:
             raise CollaborationConflict("任务上下文必须属于一个会话")
         objective = _text(objective, 2000)
@@ -177,7 +178,16 @@ class TeamService:
         if refs and mode != "private":
             raise CollaborationConflict("只有 private 任务上下文可以带私人资料")
         from src.workflow.staff.registry import StaffRegistry
-        roster = _members(members, mode, StaffRegistry(self.repo_root).team_roles())
+        registered = bool(reason or department or any(isinstance(x, str) or isinstance(x, dict) and 'member' in x for x in members))
+        proposal = None
+        if registered:
+            from src.workflow.staff.team_roster import normalize
+            proposal = normalize(self.repo_root, members, mode, department, reason)
+            if expected_roster is not None and proposal != expected_roster:
+                raise CollaborationConflict('确认期间岗位、成员或部门已变化，未组队')
+            roster = proposal['members']
+        else:
+            roster = _members(members, mode, StaffRegistry(self.repo_root).team_roles())
         developers = [item for item in roster if item["role"] == "developer"]
         if developers and mode != "private":
             raise CollaborationConflict("带开发成员的小组必须是 private 档位：项目代码不能和联网成员放在同一个小组")
@@ -187,6 +197,12 @@ class TeamService:
         if project and not developers:
             project = None
         with _LOCK:
+            if registered:
+                from src.workflow.staff.team_roster import normalize
+                if normalize(self.repo_root, members, mode, department, reason) != proposal:
+                    raise CollaborationConflict('组队保存前岗位、成员或部门已变化')
+            if registered and not department and sum(root.status in LIVE and not root.team.get('department') for root in self.list()) >= 3:
+                raise CollaborationConflict('同时进行的临时团队最多 3 个')
             root = BackgroundTask.new(KIND, objective, tid=tid, owner_session=owner)
             if self.ledger.load(root.id) is not None:
                 raise CollaborationConflict("任务上下文 ID 已存在")
@@ -202,6 +218,9 @@ class TeamService:
                 "wake": {"open": False, "cuts": 0, "events_at_start": 0, "idle": 0, "last_error": "", "same_error": 0,
                          "seen_results": {}},
             }
+            if proposal is not None:
+                root.team.update(staff_roster=True, department=department, reason=reason,
+                    department_snapshot=proposal['department_snapshot'], notes=proposal['notes'], coordinator=proposal['coordinator'])
             self._event(root, "created", objective)
             return self._save(root)
 
@@ -221,16 +240,34 @@ class TeamService:
 
     # ── 协调人的动作 ───────────────────────────────────────────────────
     def assign(self, root_id: str, member: str, instruction: str, expected: str, *,
-               tainted: bool = False) -> BackgroundTask:
+               tainted: bool = False, materials: Optional[List[dict]] = None) -> BackgroundTask:
         """给成员派一件事：先记用量并落盘根，再建子任务。
 
         ``tainted``：要求里带着别的成员交回的外部内容（例如请审查员审研究员的结果），这条子任务一开始就是污点。"""
         if not instruction.strip() or not expected.strip():
             raise CollaborationConflict("派活要写清做什么和交回什么")
+        if len(instruction) > _MAX_INSTRUCTION:
+            raise CollaborationConflict('派活要求超过 16000 字符，未静默截断；请用交付文件引用或收窄要求')
         with _LOCK:
             root = self._live(root_id)
             entry = self._member(root, member)
-            role = ROLES[entry["role"]]
+            if root.team.get('staff_roster'):
+                from src.workflow.staff.team_roster import identity, check
+                specialist, assigned = identity(root, entry)
+                check(self.repo_root, root, specialist, assigned)
+                role = assigned
+            else:
+                role = ROLES[entry["role"]]
+            if materials:
+                if not isinstance(materials, list) or len(materials) > 8 or any(not isinstance(item, dict)
+                        or item.get('task_id') not in root.team['children'] for item in materials):
+                    raise CollaborationConflict('交接材料不属于本团队')
+                from src.workflow.staff.registry import StaffRegistry
+                if 'read_delivery' not in StaffRegistry(self.repo_root).role(entry['role'])['grants']['tools']:
+                    raise CollaborationConflict('岗位没有交付读取权限，请主人先批准岗位升级')
+                from src.workflow.tasks.task_outputs import TaskOutputs
+                for item in materials:
+                    TaskOutputs(self.repo_root).read(item['task_id'], item, limit=1)
             self._charge(root, {"tasks": 1, "rounds": 1, "steps": role["max_steps"],
                                 "timeout_seconds": role["timeout_seconds"]})
             self._save(root)
@@ -240,6 +277,16 @@ class TeamService:
                           "model": entry["model"], "engine": entry.get("engine", "vortocode"),
                           "max_steps": role["max_steps"],
                           "timeout_seconds": role["timeout_seconds"]})
+            if root.team.get('staff_roster'):
+                child.collaboration['dispatch'].update(member=specialist['id'], member_revision=specialist['revision'],
+                    role_revision=assigned['revision'], department=entry['department'], delivery='review',
+                    staff_roster=True, notes=entry['notes'])
+                if not self.ledger.save(child):
+                    raise OSError('专员任务快照保存失败')
+            if materials:
+                child.collaboration['dispatch']['materials'] = materials
+                if not self.ledger.save(child):
+                    raise OSError('交接材料未能保存')
             if tainted:
                 child.collaboration["tainted"] = True
                 if not self.ledger.save(child):
@@ -249,6 +296,81 @@ class TeamService:
             self._event(root, "assigned", f"{member}：{instruction}")
             self._save(root)
             return child
+
+    def execution_identity(self, child_id):
+        child = self.ledger.load(child_id)
+        dispatch = child.collaboration.get('dispatch', {}) if child else {}
+        root = self.get(dispatch.get('root', ''))
+        if child_id not in root.team['children'] or child.owner_session != child_owner(root.id):
+            raise CollaborationConflict('任务不属于本团队')
+        from src.workflow.staff.team_roster import identity, check
+        entry = self._member(root, child.collaboration['assignee'])
+        member, role = identity(root, entry)
+        check(self.repo_root, root, member, role)
+        if (dispatch.get('member') != member['id'] or dispatch.get('member_revision') != member['revision']
+                or dispatch.get('role_revision') != role['revision']):
+            raise CollaborationConflict('成员子任务的版本快照已变化')
+        return member, role
+
+    def check_coordinator(self, root_id):
+        root = self.get(root_id)
+        if not root.team.get('staff_roster'):
+            return
+        if root.status != 'active' and not (root.status == 'waiting' and root.team.get('quota', {}).get('status') == 'waiting'):
+            raise CollaborationConflict('团队已停止或不在协调阶段')
+        from src.workflow.staff.registry import StaffRegistry
+        registry = StaffRegistry(self.repo_root)
+        if root.team.get('department') and registry.department(root.team['department'])['status'] != 'active':
+            raise CollaborationConflict('部门已暂停，协调人不能继续')
+        coordinator = root.team['coordinator']
+        if coordinator['kind'] == 'staff_lead':
+            if (registry.member(coordinator['member']) != coordinator['member_snapshot']
+                    or registry.role(coordinator['role_snapshot']['id']) != coordinator['role_snapshot']):
+                raise CollaborationConflict('部门协调人的岗位或版本已变化')
+
+    def interrupt_coordinator(self, root_id):
+        """Park a failed shared-pool continuation; never silently replay previous actions."""
+        with _LOCK:
+            root = self.get(root_id)
+            if root.status == 'active' or root.status == 'waiting' and root.team.get('quota', {}).get('status') == 'waiting':
+                root.status = 'waiting'
+                root.team['waiting_reason'] = '协调执行已中断；请核对现有任务和执行结果后，显式回复继续。'
+                root.team['wake']['open'] = False
+                if root.team.get('quota', {}).get('status') == 'waiting':
+                    root.team['quota']['status'] = 'interrupted'
+                self._event(root, 'failed', root.team['waiting_reason'])
+                self._save(root)
+            return root
+
+    def read_material(self, child_id, source_id, number, *, offset=0, part='result', limit=8000):
+        """Host-bound reader: only explicit inputs or this child's own previous deliveries."""
+        current = self.ledger.load(child_id)
+        if type(number) is not int or number < 1:
+            raise CollaborationConflict('交付轮次无效')
+        if current is None or current.collaboration.get('dispatch', {}).get('source') != 'team':
+            raise CollaborationConflict('没有绑定团队子任务')
+        root = self.get(current.collaboration['dispatch']['root'])
+        if child_id not in root.team['children'] or root.status not in {'active', 'waiting'}:
+            raise CollaborationConflict('当前任务不在本团队执行范围')
+        child = self.collaboration(root).get(child_id)
+        if root.team.get('staff_roster'):
+            _, role = self.execution_identity(child_id)
+        else:
+            from src.workflow.staff.registry import StaffRegistry
+            role = StaffRegistry(self.repo_root).role(child.collaboration['dispatch']['role'])
+        if 'read_delivery' not in role['grants']['tools']:
+            raise CollaborationConflict('岗位未获交付读取能力；请主人批准岗位升级')
+        materials = child.collaboration['dispatch'].get('materials', [])
+        reference = next((x for x in materials if x.get('task_id') == source_id and x.get('round') == number
+                          and x.get('part', 'result') == part), None)
+        if source_id == child_id and part == 'result' and number < child.collaboration['round']:
+            return self.collaboration(root).read_output(source_id, number, offset=offset, limit=limit)
+        if reference is None or source_id not in root.team['children']:
+            raise CollaborationConflict('该交付未明确交给当前任务，不能按任务 ID 越界读取')
+        if root.team['mode'] == 'private' and role['grants']['web']:
+            raise CollaborationConflict('私人交付不能交给联网成员')
+        from src.workflow.tasks.task_outputs import TaskOutputs
+        return TaskOutputs(self.repo_root).read(source_id, reference, offset=offset, limit=limit)
 
     def review(self, root_id: str, child_id: str, verdict: str, note: str) -> BackgroundTask:
         """接受或返工一条成员结果；返工即下一轮。"""
@@ -262,7 +384,10 @@ class TeamService:
             if verdict == "rework":
                 if child.status == "done":
                     service.review(child_id, number, "rework", note)
-                role = ROLES[self._member(root, child.collaboration["assignee"])["role"]]
+                entry = self._member(root, child.collaboration['assignee'])
+                role = entry['role_snapshot'] if root.team.get('staff_roster') else ROLES[entry['role']]
+                if root.team.get('staff_roster'):
+                    self.execution_identity(child_id)
                 self._charge(root, {"rounds": 1, "steps": role["max_steps"], "timeout_seconds": role["timeout_seconds"]})
                 self._save(root)
                 child = service.followup(child_id, number, note)
@@ -532,6 +657,10 @@ class TeamService:
         """由代码拼的结构化视图：主对话与 work_status 用它，不读协调人写的文字。"""
         children = self.children(root)
         return {"id": root.id, "objective": root.team["objective"], "status": root.status, "mode": root.team["mode"],
+                'department': root.team.get('department', ''),
+                'coordinator': {'kind': root.team['coordinator']['kind'],
+                    'name': (root.team['coordinator'].get('member_snapshot') or {}).get('name', '协调人'),
+                    'member': root.team['coordinator'].get('member', '')},
                 "waiting_reason": root.team["waiting_reason"], "used": dict(root.team["used"]),
                 "limits": dict(root.team["limits"]),
                 "project": (root.team.get("project") or {}).get("name"),
@@ -540,6 +669,7 @@ class TeamService:
                 "children": [{"id": child.id, "member": child.collaboration.get("assignee"), "status": child.status,
                               "review": child.collaboration.get("review"), "round": child.collaboration.get("round"),
                               "tainted": bool(child.collaboration.get("tainted")),
+                              **({'output': child.collaboration['output']} if child.collaboration.get('output') else {}),
                               **({"delivery": child.collaboration["delivery"]} if child.collaboration.get("delivery") else {})}
                              for child in children],
                 "tainted": bool(root.team.get("tainted")) or any(child.collaboration.get("tainted") for child in children)}
@@ -559,7 +689,7 @@ def member_states(service: "TeamService", root: BackgroundTask) -> List[Dict[str
         mine = [child for child in children if child.collaboration.get("assignee") == item["name"]]
         messages = [message for child in mine for message in child.collaboration.get("messages") or []]
         busy = next((child for child in mine if child.status in ("running", "queued")), None)
-        out.append({"name": item["name"], "role": item["role"], "title": ROLES[item["role"]]["title"],
+        out.append({"name": item["name"], "role": item["role"], "title": (item.get('role_snapshot') or ROLES.get(item['role'], {})).get('title', item['role']),
                     "engine": item.get("engine", "vortocode"), "model": item.get("model", ""),
                     "state": "working" if busy is not None and busy.status == "running"
                     else "queued" if busy is not None else "idle",
@@ -593,7 +723,8 @@ def transcript(service: "TeamService", root: BackgroundTask) -> List[Dict[str, A
                              "tainted": tainted})
             elif kind == "submitted":
                 full = child.result if index == last_submitted and child.status == "done" and child.result else body
-                rows.append({**base, "speaker": "member", "kind": "result", "text": full, "tainted": tainted})
+                rows.append({**base, "speaker": "member", "kind": "result", "text": full, "tainted": tainted,
+                             **({'output': message['output']} if message.get('output') else {})})
             elif kind in ("failed", "interrupted", "cancelled"):
                 rows.append({**base, "speaker": "member", "kind": kind, "text": body})
             elif kind in ("accept", "rework"):

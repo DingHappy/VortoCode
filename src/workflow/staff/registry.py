@@ -33,11 +33,12 @@ def tool_catalog(root: str) -> dict:
     from src.agents.tools.memory import build_memory_tools
     from src.agents.tools.personal_goals import build_personal_goal_tools
     from src.plugins import mail, caldav, calendar_ics, notion
+    from src.agents.tools.deliveries import build_delivery_reader
     gate = make_confirm_gate()
     tools = (build_read_tools(root) + build_write_tools(root) + [build_test_tool(root)] + build_web_tools()
              + build_memory_tools(root, gate) + build_personal_goal_tools(root, confirm=gate)
              + mail.build_tools() + mail.build_write_tools(gate) + caldav.build_write_tools(gate)
-             + calendar_ics.build_tools() + notion.build_tools())
+             + calendar_ics.build_tools() + notion.build_tools() + [build_delivery_reader()])
     return {tool.name: tool for tool in tools}
 
 
@@ -169,7 +170,9 @@ class StaffRegistry:
                 if not isinstance(row, dict) or not isinstance(row.get('id'), str) or row['id'] in ids:
                     raise ValueError('岗位重复或格式无效')
                 expected = builtins.get(row.get('id'))
-                if expected and any(row.get(k) != v for k, v in expected.items() if k not in {'enabled', 'revision'}):
+                legacy = next((x for x in builtin_roles(legacy=True) if x['id'] == row['id']), None)
+                matches = lambda target: target is not None and all(row.get(k) == v for k, v in target.items() if k not in {'enabled', 'revision'})
+                if expected and not (matches(expected) or matches(legacy)):
                     raise ValueError('内置岗位被改写')
                 item = self.validate_role(row, builtin=expected is not None, catalog=catalog)
                 output.append(item)
@@ -207,6 +210,19 @@ class StaffRegistry:
                     departments.check_notes(department, StaffNotes(self.root).snapshot(department['id']), replacement=item)
             entries = [item if x['id'] == item['id'] else x for x in entries] if previous else [*entries, item]
             self._write('roles.json', {'version': 1, 'roles': entries})
+            return deepcopy(item)
+
+    def upgrade_builtin(self, data):
+        """Only the explicit owner-approved proposal path calls this shipped-definition upgrade."""
+        with TASK_STATE_LOCK:
+            entries = self.roles()
+            previous = self.role(data['id'])
+            canonical = next((x for x in builtin_roles() if x['id'] == data['id']), None)
+            target = {**(canonical or {}), 'enabled': previous['enabled'], 'revision': previous['revision']}
+            if not previous['builtin'] or data != target:
+                raise ValueError('内置岗位升级只能使用当前发布的完整定义和原版本')
+            item = {**target, 'revision': previous['revision'] + 1}
+            self._write('roles.json', {'version': 1, 'roles': [item if x['id'] == item['id'] else x for x in entries]})
             return deepcopy(item)
 
     def set_role_enabled(self, role_id: str, enabled: bool) -> dict:
