@@ -71,7 +71,10 @@ export function assistantPanelActions(deps: AssistantPanelDeps) {
     const current = sameAs(client, scope);
     if (!client || !current() || !item.revision) return;
     const epoch = ++deps.scheduleEpoch.current;
-    await client.setScheduleEnabled(item.title, !item.enabled, item.revision);
+    if (item.routine_id) {
+      if (!Number.isSafeInteger(item.routine_revision)) throw new Error('例行工作版本待核对');
+      await client.changeRoutines('status', { id: item.routine_id, revision: item.routine_revision, enabled: !item.enabled });
+    } else await client.setScheduleEnabled(item.title, !item.enabled, item.revision);
     if (!current()) return;
     // Reload every card: the revision covers the shared config file.
     try {
@@ -86,7 +89,14 @@ export function assistantPanelActions(deps: AssistantPanelDeps) {
     const client = deps.client();
     const scope = deps.renderScope;
     if (!client || deps.scope() !== scope) return [];
-    const runs = await client.getScheduleHistory(item.title);
+    let runs: AssistantScheduleRun[];
+    if (item.routine_id) {
+      const snapshot = await client.readRoutines();
+      const routine = snapshot.items.find(row => row.id === item.routine_id);
+      const last = routine?.last_delivery;
+      runs = routine?.legacy ? await client.getScheduleHistory(routine.legacy.name)
+        : last ? [{ id: last.id, status: last.status, created: last.created, summary: last.result, error: last.error }] : [];
+    } else runs = await client.getScheduleHistory(item.title);
     if (deps.client() !== client || deps.scope() !== scope) return [];
     return runs;
   };

@@ -52,6 +52,9 @@ def _key(task: Any) -> Optional[str]:
         return None
     if task.status not in _LABELS:
         return None
+    legacy = (task.collaboration.get('dispatch', {}).get('routine') or {}).get('legacy')
+    if legacy and task.status == 'done' and legacy['announce'] != 'im':
+        return None
     quota = task.collaboration.get('quota') or {}
     if task.status == 'blocked' and quota.get('status') == 'waiting':
         return f"quota:{quota.get('scope')}:{task.collaboration.get('dispatch', {}).get('department', '')}:{quota.get('day')}"
@@ -77,13 +80,21 @@ def _team_message(task: Any) -> str:
     return text if text[-1] in "。？！）" else text + "。"
 
 
-def message(task: Any) -> Optional[str]:
+def message(task: Any, *, root: Optional[str] = None) -> Optional[str]:
     """要推的那句话；不该推就返回 None。"""
     if _key(task) is None:
         return None
     if getattr(task, "kind", "") == "team":
         return _team_message(task)
     dispatch = task.collaboration.get("dispatch", {})
+    legacy = (dispatch.get('routine') or {}).get('legacy')
+    if legacy and task.status in {'done', 'failed', 'interrupted'}:
+        if task.status == 'done':
+            return f"⏰ cron [{legacy['name']}] 跑完：\n{task.result[:800]}"
+        from src.scheduling.cron import CronState, _env_int
+        streak = CronState(root).failures(legacy['name']) if root is not None else 0
+        prefix = f'🔺 已连续失败 {streak} 次，需要人工核对。\n' if streak >= _env_int('VORTOONE_CRON_FAIL_ESCALATE', 3) > 0 else ''
+        return prefix + f"🔴 cron [{legacy['name']}] 执行中断或失败：{task.error[:600]}"
     quota = task.collaboration.get('quota') or {}
     if task.status == 'blocked' and quota.get('status') == 'waiting':
         return '🧩 专员后台工作因额度暂停。对话不受影响；到 Desktop 核对用量、调整额度或等待每日额度重置。'
@@ -172,7 +183,7 @@ def notify_transition(root: str, task: Any, *, notify: Optional[Notify] = None) 
 
     任务小组还会在主要聊天里写一条（``team_chat_note``）：主人只面对主 agent，交付要出现在对话里。"""
     key = _key(task)
-    text = message(task)
+    text = message(task, root=root)
     if key is None or text is None:
         return False
     if getattr(task, "kind", "") == "team":
@@ -192,7 +203,8 @@ def notify_transition(root: str, task: Any, *, notify: Optional[Notify] = None) 
         return False
     if notify is None:
         from src.scheduling.notices import make_notifier
-        notify = make_notifier(root, source="assistant")
+        legacy = (task.collaboration.get('dispatch', {}).get('routine') or {}).get('legacy')
+        notify = make_notifier(root, source='cron:' + legacy['name'] if legacy else 'assistant')
 
     async def deliver() -> None:
         try:

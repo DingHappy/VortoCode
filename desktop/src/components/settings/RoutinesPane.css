@@ -1,0 +1,8 @@
+.routines-pane{display:grid;gap:var(--vc-space-3);margin-top:var(--vc-space-5);font-size:var(--vc-size-body);min-width:0}
+.routines-pane h3,.routines-pane h4{margin:0;font-size:var(--vc-size-body);font-weight:var(--vc-weight-strong)}
+.routines-pane h3{font-size:var(--vc-size-heading)}
+.routines-pane .settings-card{display:grid;gap:var(--vc-space-3);min-width:0}
+.routines-pane label{display:grid;gap:var(--vc-space-2);margin-block:var(--vc-space-3)}
+.routines-pane input{min-width:0;width:100%;box-sizing:border-box;padding:var(--vc-space-2);border:1px solid var(--vc-border);border-radius:var(--vc-radius-control);background:var(--vc-surface);color:var(--vc-text);font:inherit}
+.routines-pane p{margin:0;overflow-wrap:anywhere;line-height:inherit}
+.routines-pane small{color:var(--vc-text-secondary);font-size:var(--vc-size-caption)}

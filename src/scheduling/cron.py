@@ -29,13 +29,18 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+from time import sleep as _state_lock_sleep
 from src.utils.state_dir import state_dir
 
 _STATE_FILE = "cron_state.json"
+_CRON_STATE_LOCK = threading.RLock()
+_STATE_LOCK_BACKOFF = (0.05, 0.1, 0.2, 0.3, 0.35)  # Six acquisition attempts, at most one second of waits.
 
 
 class TokenBudgetTripped(RuntimeError):
@@ -70,6 +75,18 @@ class Schedule:
                 return False
             # 同一分钟只跑一次（防一分钟内多次 tick 重复触发）
             return last is None or last.replace(second=0, microsecond=0) < now.replace(second=0, microsecond=0)
+        return False
+
+    def missed(self, now: datetime, last: Optional[datetime]) -> bool:
+        """One catch-up, bounded to the existing schedule horizon; never a replay queue."""
+        if self.kind != 'cron' or last is None or last >= now:
+            return False
+        probe = now.replace(second=0, microsecond=0)
+        lower = max(last, now - timedelta(days=_NEXT_DUE_HORIZON_DAYS))
+        while probe > lower:
+            if _cron_matches(self.cron, probe):
+                return True
+            probe -= timedelta(minutes=1)
         return False
 
 
@@ -166,6 +183,8 @@ def next_due(schedule, last, now: datetime) -> Optional[datetime]:
     - `at`/`cron`：本就以分钟为语义粒度，逐分钟探测 Schedule.due() 即精确值；
       视界 62 天，None 含义是「视界内无排期」（含死表达式，但不特指它）。
     """
+    if schedule.missed(now, last):
+        return now
     if schedule.kind == "every" and schedule.interval:
         target = now if last is None else last + schedule.interval
         return target if target > now else now
@@ -270,6 +289,33 @@ def parse_jobs_text(text: str) -> List[CronJob]:
     return jobs
 
 
+def _state_change(operation):
+    from functools import wraps
+    @wraps(operation)
+    def update(self, *args, **kwargs):
+        from contextlib import ExitStack
+        from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock
+        with _CRON_STATE_LOCK, ExitStack() as locks:
+            for attempt in range(len(_STATE_LOCK_BACKOFF) + 1):
+                try:
+                    locks.enter_context(pipeline_lock(self._repo_root, 'cron-state', kind='edit'))
+                except PipelineBusy:
+                    if attempt == len(_STATE_LOCK_BACKOFF):
+                        raise
+                    _state_lock_sleep(_STATE_LOCK_BACKOFF[attempt])
+                else:
+                    break
+            if self._path.exists():
+                try:
+                    self._data = json.loads(self._path.read_text(encoding='utf-8'))
+                    if not isinstance(self._data, dict):
+                        raise ValueError('不是状态对象')
+                except (OSError, ValueError) as error:
+                    raise OSError('定时状态不可核对，未覆盖或重放旧执行') from error
+            return operation(self, *args, **kwargs)
+    return update
+
+
 class CronState:
     """每个 job 上次运行时刻的持久化（.vortoone/cron_state.json），防重复触发、重启不忘。"""
     def __init__(self, repo_root: str):
@@ -300,6 +346,7 @@ class CronState:
         except (TypeError, ValueError):
             return 0
 
+    @_state_change
     def record_result(self, name: str, ok: bool) -> int:
         """记录一次作业结果，返回**更新后的**连续失败次数（成功清零）。
 
@@ -318,6 +365,23 @@ class CronState:
         self._persist()
         return streak
 
+    @_state_change
+    def record_task_result(self, name, ok, task_id):
+        receipts = self._data.setdefault('__task_results__', {})
+        previous = receipts.get(name, [])
+        if task_id in previous:
+            return self.failures(name)
+        fails = self._data.setdefault(self._FAILS_KEY, {})
+        streak = 0 if ok else self.failures(name) + 1
+        if ok:
+            fails.pop(name, None)
+        else:
+            fails[name] = streak
+        receipts[name] = [*previous, task_id][-100:]
+        self._persist()
+        return streak
+
+    @_state_change
     def mark(self, name: str, when: datetime) -> None:
         self._data[name] = when.isoformat()
         self._persist()
@@ -330,8 +394,8 @@ class CronState:
             tmp = self._path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(self._path)
-        except (OSError, TypeError, ValueError):
-            pass
+        except (OSError, TypeError, ValueError) as error:
+            raise OSError('定时执行状态未保存，未宣称完成认领') from error
 
 
 # --------------------------------------------------------------------- 编辑面（B10：agent 可排班）
@@ -411,6 +475,27 @@ def _write(repo_root: str, text: str) -> None:
     tmp.replace(p)                                    # 原子替换：别让并发的调度器读到半截表
 
 
+@contextmanager
+def config_lock(repo_root):
+    from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock
+    try:
+        with pipeline_lock(repo_root, 'cron-config', kind='edit'):
+            yield
+    except PipelineBusy as error:
+        raise CronEditError('定时配置正在修改，请稍后刷新') from error
+
+
+@contextmanager
+def job_lock(repo_root, name):
+    import hashlib
+    from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock
+    try:
+        with pipeline_lock(repo_root, 'cron-job-' + hashlib.sha256(name.encode()).hexdigest()[:24], kind='run'):
+            yield
+    except PipelineBusy as error:
+        raise CronEditError('旧作业正在执行；请等结束后再继续同一次迁移或手动执行') from error
+
+
 def _config_edit(operation):
     """Serialize config writers from Desktop, CLI and agent tools."""
     from functools import wraps
@@ -420,6 +505,10 @@ def _config_edit(operation):
         from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock
         try:
             with pipeline_lock(repo_root, "cron-config", kind="edit"):
+                if operation.__name__ in {'set_job_enabled', 'set_job_prompt', 'set_job_web'} and args:
+                    from src.workflow.staff.routine_migration import legacy_owner
+                    if legacy_owner(repo_root, args[0]):
+                        raise CronEditError('该事项已迁移；请在例行工作中修改，旧配置不会重新启用')
                 return operation(repo_root, *args, **kwargs)
         except PipelineBusy as error:
             raise CronEditError("定时配置正在修改，请稍后刷新") from error
@@ -741,8 +830,10 @@ def track_trigger(name: str, task) -> None:
 def due_jobs(repo_root: str, now: datetime) -> List[CronJob]:
     """当前 now 该跑的启用作业（按 schedule.due + 上次运行状态过滤）。"""
     state = CronState(repo_root)
+    from src.workflow.staff.routine_migration import legacy_owner
     return [j for j in load_jobs(repo_root)
-            if j.enabled and j.schedule.due(now, state.last_run(j.name))]
+            if j.enabled and not legacy_owner(repo_root, j.name) and (j.schedule.due(now, state.last_run(j.name))
+                              or j.schedule.missed(now, state.last_run(j.name)))]
 
 
 # --------------------------------------------------------------------- 执行
@@ -779,7 +870,7 @@ _ANNOUNCE_CAP = 900                              # 单条通知长度上限（IM
 
 def record_outcome(repo_root: str, name: str, *, ok: bool, summary: str, command: str = "",
                    code: Optional[int] = None, error: str = "",
-                   sandbox: Optional[dict] = None) -> str:
+                   sandbox: Optional[dict] = None, run_id: Optional[str] = None) -> str:
     """把一次例行作业的结果落进 run lane，返回 run id（写不进去 → 空串）。
 
     这就是"进 Journal / 决策台账"那一步：`build_daily_journal` 从 `RunLedger` 组装时间线，
@@ -788,7 +879,14 @@ def record_outcome(repo_root: str, name: str, *, ok: bool, summary: str, command
     """
     try:
         from src.workflow.workbench.runs import CommandRun, RunLedger
+        if run_id and RunLedger(repo_root).load(run_id) is not None:
+            return run_id
         run = CommandRun.new(command or f"cron:{name}", _LANE_KIND)
+        if run_id:
+            from src.utils.ids import typed_id
+            if not typed_id(run_id, 'run'):
+                raise ValueError('执行收据 id 无效')
+            run.id = run_id
         run.status = "done" if ok else "failed"
         run.code = (0 if code is None else int(code)) if ok else (-1 if code is None else int(code))
         run.output = str(summary or "")[-_LANE_SUMMARY_CAP:]
@@ -880,6 +978,15 @@ def _mark_ran(repo_root: str, job: CronJob, now: Optional[datetime]) -> None:
 
 
 async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None,
+                  now: Optional[datetime] = None, trigger: str = 'scheduler') -> str:
+    with job_lock(repo_root, job.name):
+        from src.workflow.staff.routine_migration import legacy_owner
+        if legacy_owner(repo_root, job.name):
+            raise CronEditError('该作业已由例行工作接管，不能继续执行旧配置')
+        return await _run_job(repo_root, job, run_session=run_session, notify=notify, now=now, trigger=trigger)
+
+
+async def _run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None,
                   now: Optional[datetime] = None, trigger: str = "scheduler") -> str:
     """跑一个作业；给了 now 则记为上次运行（防重复触发）。
 
@@ -934,9 +1041,11 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         if job.allow_web:                          # 作业级出网许可（默认关，见 CronJob.allow_web）
             extra_kwargs["allow_web"] = True
         from contextlib import nullcontext
+        from src.utils.async_ops import timeout_scope
         with guard.scope() if guard is not None else nullcontext():
-            result = await run_session(repo_root, job.prompt, mode="build", model=job.model,
-                                       **extra_kwargs)
+            async with timeout_scope(job.timeout):
+                result = await run_session(repo_root, job.prompt, mode="build", model=job.model,
+                                           **extra_kwargs)
         if guard is not None and guard.tripped:
             # 兜底：即使 agent 内部把预算异常吞成一句普通报错文本，这次作业也必须按失败处理——
             # 预算超限绝不能被静默洗成"跑完了"（那样封顶就成了摆设）。
@@ -968,9 +1077,13 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         heal_note = outcome.note()
         if heal_note:
             detail = f"{detail}\n{heal_note}"
-        streak = CronState(repo_root).record_result(job.name, False)
+        streak = 0
+        try:
+            streak = CronState(repo_root).record_result(job.name, False)
+            _mark_ran(repo_root, job, now)
+        except Exception as state_error:  # noqa: BLE001 - the independent run/notice lanes must still report failure.
+            detail += f'\n定时结果状态未保存（{type(state_error).__name__}）；请核对原任务和已生效动作，未重跑执行。'
         escalation = _escalate_streak(repo_root, job, streak)
-        _mark_ran(repo_root, job, now)
         record_outcome(repo_root, job.name, ok=False, summary=detail, command=job.command,
                        code=-1, error=f"cron [{job.name}] 执行异常：{detail}"
                        + (f"\n{escalation}" if escalation else ""))
@@ -980,27 +1093,64 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         raise
 
 
-async def run_due(repo_root: str, now: datetime, *, run_session=None, notify=None) -> List[str]:
+_RUNNING_JOBS = set()
+
+
+async def run_due(repo_root: str, now: datetime, *, run_session=None, notify=None, capacity=None) -> List[str]:
     """跑当前所有到点的作业（各自隔离），返回**跑成功**的作业名。单个出错不拖垮其它。
 
     这里吞异常只是为了别让一个坏作业停掉整轮调度——失败在 `run_job` 里已经落了
     决策台账 + 通知台账，不是静默丢。
     """
-    ran: List[str] = []
-    for job in due_jobs(repo_root, now):
+    import asyncio
+    from contextlib import AsyncExitStack
+    async def run(job):
+        key = (str(Path(repo_root).resolve()), job.name)
+        if key in _RUNNING_JOBS:
+            return None
+        _RUNNING_JOBS.add(key)
+        entered = False
         try:
-            await run_job(repo_root, job, run_session=run_session, notify=notify, now=now,
-                          trigger="scheduler")
-            ran.append(job.name)
-        except Exception:  # noqa: BLE001
-            pass
-    return ran
+            # Claim before waiting for shared capacity. A restart cannot repeat an
+            # uncertain old step, and another tick cannot queue the same live job.
+            CronState(repo_root).mark(job.name, now)
+            async with AsyncExitStack() as stack:
+                if capacity is not None:
+                    await stack.enter_async_context(capacity())
+                entered = True
+                await run_job(repo_root, job, run_session=run_session, notify=notify, now=now,
+                              trigger="scheduler")
+            return job.name
+        except asyncio.CancelledError:
+            record_outcome(repo_root, job.name, ok=False, summary='定时执行中断；未自动重试旧动作', error='定时执行中断')
+            raise
+        except Exception as error:  # noqa: BLE001
+            if not entered:
+                record_outcome(repo_root, job.name, ok=False, summary='定时认领未完成', error=type(error).__name__)
+                await _announce(repo_root, job, '定时认领或排队未完成；请核对记录，未自动重试。', ok=False, notify=notify)
+            return None
+        finally:
+            _RUNNING_JOBS.discard(key)
+    return [name for name in await asyncio.gather(*(run(job) for job in due_jobs(repo_root, now))) if name is not None]
 
 
 async def run_job_by_name(repo_root: str, name: str, *, run_session=None, notify=None,
                           now: Optional[datetime] = None,
                           trigger: str = "manual") -> Optional[str]:
     """手动触发一个具名作业（vc cron run <name>）；找不到 → None。"""
+    from src.workflow.staff.routine_migration import legacy_owner
+    migrated = legacy_owner(repo_root, name)
+    if migrated:
+        if migrated['status'] != 'complete':
+            raise CronEditError('迁移尚待核对，相关新旧作业都未启用')
+        from src.scheduling.staff_runner import get_staff_service
+        from src.workflow.staff.routines import Routines
+        routine = Routines(repo_root).get(migrated['routine'])
+        if routine['retired']:
+            raise CronEditError('该例行工作已删除，未恢复旧配置')
+        when = now.astimezone() if now is not None else datetime.now().astimezone()
+        ids = Routines(repo_root).dispatch(get_staff_service(repo_root), when, only=migrated['routine'], manual=True)
+        return '已交给专员：' + '、'.join(ids) if ids else '原任务尚在处理或待核对，未重复派发。'
     for job in load_jobs(repo_root):
         if job.name == name:
             return await run_job(repo_root, job, run_session=run_session, notify=notify,

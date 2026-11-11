@@ -1752,5 +1752,17 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/staff/routines",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/staff/routines",
+    "methods": [
+      "PUT"
+    ]
   }
 ]

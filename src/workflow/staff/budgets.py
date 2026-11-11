@@ -73,6 +73,9 @@ class StaffBudgets:
     def status(self, task, member):
         settings, usage = self.settings(), self.usage()
         dispatch = task.collaboration['dispatch']
+        routine_limit = (dispatch.get('routine') or {}).get('token_budget', 0)
+        if routine_limit:
+            settings = {**settings, 'task_tokens': min(x for x in (settings['task_tokens'], routine_limit) if x)}
         current = TaskLedger(self.root).load(task.id)
         spent = _recorded_usage(current).get('tokens', 0) if current else 0
         department = self.registry.department(dispatch['department']) if dispatch['department'] else None

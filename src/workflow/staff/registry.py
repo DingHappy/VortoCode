@@ -9,7 +9,7 @@ from copy import deepcopy
 from src.agents.trust import KINDS, INTERNAL, DELIVER, IRREVERSIBLE
 from src.utils.state_dir import state_dir
 from src.workflow.tasks.tasks import TASK_STATE_LOCK
-from src.workflow.staff.roles import builtin_roles, team_role_view
+from src.workflow.staff.roles import builtin_roles, canonical_roles, team_role_view
 
 _ID = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 _ENGINES = {'vortocode', 'opencode', 'deepseek-harness'}
@@ -34,12 +34,20 @@ def tool_catalog(root: str) -> dict:
     from src.agents.tools.personal_goals import build_personal_goal_tools
     from src.plugins import mail, caldav, calendar_ics, notion
     from src.agents.tools.deliveries import build_delivery_reader
+    from src.scheduling.assistant_watch import build_status_tools
     gate = make_confirm_gate()
     tools = (build_read_tools(root) + build_write_tools(root) + [build_test_tool(root)] + build_web_tools()
              + build_memory_tools(root, gate) + build_personal_goal_tools(root, confirm=gate)
              + mail.build_tools() + mail.build_write_tools(gate) + caldav.build_write_tools(gate)
-             + calendar_ics.build_tools() + notion.build_tools() + [build_delivery_reader()])
-    return {tool.name: tool for tool in tools}
+             + calendar_ics.build_tools() + notion.build_tools() + [build_delivery_reader()] + build_status_tools(root))
+    catalog = {tool.name: tool for tool in tools}
+    if 'list_dispatches' not in catalog:
+        from src.agents.tool import Tool
+        async def unavailable(_args):
+            return '没有登记可读的项目任务单；未读取项目文件或保留的旧任务单。'
+        catalog['list_dispatches'] = Tool('list_dispatches', '读取已登记项目的任务单状态；未登记时没有可读内容。',
+            {}, unavailable, operation_kind='read', untrusted_source=True)
+    return catalog
 
 
 def _strings(value, label, *, empty=True):
@@ -109,6 +117,8 @@ class StaffRegistry:
             raise ValueError('未知执行框架')
         if item.get('builtin', False) and not builtin:
             raise ValueError('不能改写或伪造内置岗位')
+        if not builtin and item['id'] in {x['id'] for x in canonical_roles()}:
+            raise ValueError('不能占用内置岗位的保留名称')
         grants = item.get('grants')
         if not isinstance(grants, dict) or set(grants) != {'operations', 'tools', 'sees', 'web', 'project'}:
             raise ValueError('grants 必须显式声明全部权限字段')
@@ -138,6 +148,10 @@ class StaffRegistry:
             if name not in declared:
                 raise ValueError(f'未知岗位工具：{name}')
             tool = declared[name]
+            private_status = {'recent_notices': {'memory', 'conversation', 'goals'}, 'today_activity': {'conversation'},
+                              'schedule_list': {'conversation', 'goals'}, 'schedule_history': {'conversation'}, 'list_dispatches': {'conversation'}}
+            if name in private_status and not private_status[name] <= set(sees):
+                raise ValueError(f'工具 {name} 缺少私人状态来源授权')
             if not {tool.operation_kind, *tool.possible_operations} <= set(operations):
                 raise ValueError(f'工具 {name} 的操作类别超出岗位')
             needed = next((f'plugin:{plugin}' for plugin, prefix in [('mail', 'mail_'), ('notion', 'notion_'),
@@ -163,7 +177,7 @@ class StaffRegistry:
             records = payload.get('roles')
             if not isinstance(records, list):
                 raise ValueError('岗位登记格式无效')
-            builtins = {x['id']: x for x in builtin_roles()}
+            builtins = {x['id']: x for x in canonical_roles()}
             catalog = self.tool_catalog()
             output, ids = [], set()
             for row in records:
@@ -177,7 +191,7 @@ class StaffRegistry:
                 item = self.validate_role(row, builtin=expected is not None, catalog=catalog)
                 output.append(item)
                 ids.add(item['id'])
-            if not set(builtins) <= ids:
+            if not {x['id'] for x in builtin_roles()} <= ids:
                 raise ValueError('内置岗位缺失，未自动恢复权限')
             if missing:
                 self._write('roles.json', {'version': 1, 'roles': output})
@@ -217,7 +231,7 @@ class StaffRegistry:
         with TASK_STATE_LOCK:
             entries = self.roles()
             previous = self.role(data['id'])
-            canonical = next((x for x in builtin_roles() if x['id'] == data['id']), None)
+            canonical = next((x for x in canonical_roles() if x['id'] == data['id']), None)
             target = {**(canonical or {}), 'enabled': previous['enabled'], 'revision': previous['revision']}
             if not previous['builtin'] or data != target:
                 raise ValueError('内置岗位升级只能使用当前发布的完整定义和原版本')

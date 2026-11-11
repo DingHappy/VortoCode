@@ -667,6 +667,12 @@ class TaskRunner:
         t = self._running.get(tid)
         return t is not None and not t.done()
 
+    @asynccontextmanager
+    async def background_capacity(self):
+        """Existing cron run-ledger work shares capacity without a second task type."""
+        async with self._sem:
+            yield
+
     async def join(self, tid: str) -> None:
         """等某个后台任务的 asyncio 任务真正跑完（供一次性/CLI 场景 drain，别让进程退出前把它取消掉）。
 

@@ -3,6 +3,8 @@ import { confirmAction } from "../../lib/confirm";
 import { GatewayClient } from "../../gateway";
 import { staffController, type StaffClient, type StaffState, type StaffRole, type StaffMember, type StaffProposal, type StaffBudgetSettings } from "../../lib/staff";
 import { StaffBudgets } from "./StaffBudgets";
+import { RoutinesPane } from './RoutinesPane';
+import type { RoutinesClient } from '../../lib/routines';
 import "./StaffPane.css";
 
 const statuses = { active: "可接活", paused: "已暂停", retired: "已撤掉" };
@@ -52,7 +54,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll, onBu
         {value.proposals.filter(p => ["pending", "applying"].includes(p.status)).map(proposal => {
           const role = proposal.snapshot.kind === "role" ? proposal.snapshot.data as unknown as StaffRole : proposal.snapshot.role_snapshot;
           return <article className="settings-card" key={proposal.id}>
-            <strong>{String(proposal.snapshot.data.title ?? proposal.snapshot.data.name ?? "登记提议")}</strong>
+            <strong>{proposal.snapshot.kind === 'routine_migration' ? '迁移旧定时事项' : String(proposal.snapshot.data.title ?? proposal.snapshot.data.name ?? "登记提议")}</strong>
             <p>{proposal.reason}</p>
             <p className="settings-card-note">{proposal.status === "applying" ? "已有主人批准记录，登记结果待核对；可核对后继续完成。" : "待你批准，尚未登记或授予权限。"}</p>
             {role && <><p>{role.brief}</p><RoleGrants role={role} /></>}
@@ -91,7 +93,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll, onBu
   </div>;
 }
 
-export function StaffPane({ projectId, client: injected }: { projectId?: string; client?: StaffClient }) {
+export function StaffPane({ projectId, client: injected }: { projectId?: string; client?: StaffClient & Partial<RoutinesClient> }) {
   const client = useMemo(() => injected ?? (projectId ? new GatewayClient({ baseUrl: "", token: "", remoteProjectId: projectId, expectedScope: "general" }) : null), [projectId, injected]);
   const [state, setState] = useState<StaffState>({ value: null, busy: false, error: "" });
   const controller = useRef<ReturnType<typeof staffController> | null>(null);
@@ -104,7 +106,7 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
     return () => { current.dispose(); if (controller.current === current) controller.current = null; };
   }, [client]);
   if (!client) return <p>请先在“电脑与连接”中登记常驻电脑。专员登记保存在常驻助理，不跟随本机项目切换。</p>;
-  return <StaffView state={state} onRefresh={() => void controller.current?.refresh()} onDecide={(proposal, approve) => void controller.current?.decide(proposal, approve)}
+  return <><StaffView state={state} onRefresh={() => void controller.current?.refresh()} onDecide={(proposal, approve) => void controller.current?.decide(proposal, approve)}
     onBudgets={settings => void controller.current?.budgets(settings)}
     onEnroll={authorization => void controller.current?.enroll(authorization)}
     onStatus={(member, status) => {
@@ -113,5 +115,7 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
       void confirmAction(`撤掉「${member.name}」？保留历史记录，但不能再接活，本批不能恢复。`)
         .then(ok => { if (ok && current === controller.current) void current?.status(member, status); })
         .catch(() => { if (current === controller.current) setState(value => ({ ...value, error: "确认窗口未完成，请刷新后重试" })); });
-    }} />;
+    }} />{client.readRoutines && client.changeRoutines
+      ? <RoutinesPane client={client as StaffClient & RoutinesClient} onProposed={() => void controller.current?.refresh()} />
+      : <p>当前连接尚不支持例行工作管理。</p>}</>;
 }

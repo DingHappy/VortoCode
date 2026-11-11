@@ -1,6 +1,7 @@
 import type { StaffSnapshot, StaffProof, StaffMember, StaffBudgetSettings } from "./lib/staff";
 import type { DepartmentDetail, DepartmentNoteSnapshot, NotesDecision } from "./lib/departments";
 import type { StaffAction } from "./lib/staffAction";
+import type { RoutinesSnapshot } from './lib/routines';
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { ownerAccessSnapshot, type OwnerAccessSnapshot } from "./lib/ownerAccess";
 import { invoke } from "@tauri-apps/api/core";
@@ -669,6 +670,14 @@ export class GatewayClient {
   }
 
   /** 助理名下的定时事项（早晚报、跟进、Heartbeat、定时作业）。 */
+  async readRoutines(timezone = ''): Promise<RoutinesSnapshot> {
+    return this.request('/api/staff/routines' + (timezone ? `?migration_timezone=${encodeURIComponent(timezone)}` : ''));
+  }
+
+  async changeRoutines(action: string, data: Record<string, unknown>): Promise<unknown> {
+    return this.request('/api/staff/routines', { method: 'PUT', body: JSON.stringify({ action, data }) });
+  }
+
   async setScheduleEnabled(name: string, enabled: boolean, revision: string): Promise<void> {
     await this.request(`/api/cron/${encodeURIComponent(name)}/enabled`, {
       method: "PUT", body: JSON.stringify({ enabled, revision }),

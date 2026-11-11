@@ -845,6 +845,9 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
         jobs, revision = config_snapshot(root)
         scheduler_enabled = os.getenv("VORTOONE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
         for job in jobs:
+            from src.workflow.staff.routine_migration import legacy_owner
+            if legacy_owner(root, job.name):
+                continue
             last = state.last_run(job.name)
             due = next_due(job.schedule, last, now) if job.enabled else None
             items.append({"id": f"cron-{job.name}", "kind": "cron", "title": job.name,
@@ -855,6 +858,25 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
                           "last": last.isoformat(timespec="minutes") if last else None})
     except Exception:  # noqa: BLE001 —— 作业表坏了不影响其余几项
         pass
+    try:
+        from src.workflow.staff.routines import Routines
+        from src.scheduling.routine_schedule import RoutineSchedule
+        from src.workflow.tasks.tasks import TaskLedger
+        now = datetime.now().astimezone()
+        scheduler_enabled = os.getenv('VORTOONE_CRON', '').lower() in {'1', 'true', 'yes', 'on'}
+        for item in Routines(root).list():
+            if item['retired']:
+                continue
+            following = RoutineSchedule(item['schedule'], item['timezone']).next(now, item['state']['cursor'])
+            previous = TaskLedger(root).load(item['state']['last_task']) if item['state'].get('last_task') else None
+            items.append({'id': item['id'], 'kind': 'cron', 'title': item['name'],
+                'routine_id': item['id'], 'routine_revision': item['revision'], 'revision': str(item['revision']),
+                'schedule': item['schedule'] + ' · ' + item['timezone'], 'enabled': item['enabled'],
+                'detail': '例行工作 · ' + item['binding']['member']['name'] + (' · ' + item['state']['error'] if item['state'].get('error') else ''),
+                'scheduler_enabled': scheduler_enabled, 'next': following.isoformat() if following and item['enabled'] and not item['state'].get('error') else None,
+                'last': previous.created if previous else None})
+    except (ValueError, OSError, KeyError):
+        logger.warning('例行工作概览暂不可核对')
     return items
 
 
