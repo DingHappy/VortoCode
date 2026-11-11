@@ -13,7 +13,8 @@ from src.workflow.staff.roles import builtin_roles, canonical_roles, published_r
 
 _ID = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 _ENGINES = {'vortocode', 'opencode', 'deepseek-harness'}
-_FIELDS = {'id', 'title', 'brief', 'grants', 'engine', 'max_steps', 'timeout_seconds', 'builtin', 'revision', 'enabled'}
+_FIELDS = {'id', 'title', 'brief', 'grants', 'engine', 'max_steps', 'timeout_seconds', 'builtin', 'revision', 'enabled',
+           'project', 'project_binding'}
 _FORBIDDEN_TOOLS = {'staff_assign', 'staff_propose', 'staff_plan', 'routine_propose', 'task', 'research_parallel',
     'team_propose', 'team_assign', 'task_followup', 'task_release', 'cron_add', 'cron_run', 'cron_toggle',
     'cron_set_web', 'cron_set_prompt', 'send_file', 'send_image', 'send_document', 'open_pr', 'pr_fix',
@@ -166,6 +167,8 @@ class StaffRegistry:
             if name.startswith('web_') and not grants['web']:
                 raise ValueError('联网工具缺少 web 授权')
         item.update(builtin=builtin, enabled=item.get('enabled', True), revision=item.get('revision', 1))
+        from src.workflow.staff.projects import validate
+        validate(item)
         if type(item['enabled']) is not bool or type(item['revision']) is not int or item['revision'] <= 0:
             raise ValueError('岗位状态或版本无效')
         return item
@@ -215,6 +218,9 @@ class StaffRegistry:
             if previous and data.get('revision') != previous['revision']:
                 raise ValueError('岗位版本已变化，请重新核对')
             item = self.validate_role(data)
+            if item.get('project_binding'):
+                from src.workflow.staff.projects import check
+                check(item)
             item['revision'] = previous['revision'] + 1 if previous else 1
             from src.workflow.staff.departments import Departments
             from src.workflow.staff.notes import StaffNotes
@@ -284,7 +290,7 @@ class StaffRegistry:
         if item.get('engine') not in assigned['engine']:
             raise ValueError('执行框架不在岗位允许范围内')
         # D10 applies to new staff; S1 only preserves the old team executor choices.
-        if item['engine'] != 'vortocode' and assigned['id'] != 'developer':
+        if item['engine'] != 'vortocode' and not (assigned['id'] == 'developer' or assigned.get('project_binding')):
             raise ValueError('D10：新专员只有开发岗允许外部框架')
         if not isinstance(item.get('model', ''), str) or len(item.get('model', '')) > 160:
             raise ValueError('模型名称无效')

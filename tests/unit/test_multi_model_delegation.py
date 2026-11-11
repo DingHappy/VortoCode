@@ -32,16 +32,35 @@ def routing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_main_dispatches_to_cheap_channel_and_keeps_its_own_model(tmp_path, monkeypatch):
+    from src.workflow.staff.registry import StaffRegistry
+    from src.scheduling.staff_runner import set_staff_service
+    from src.llm.client import add_usage
+    registry = StaffRegistry(str(tmp_path))
+    registry.register_member({'id': 'review-staff', 'name': '审查专员', 'role': 'reviewer',
+                              'engine': 'vortocode', 'model': 'worker:small-model'})
+    jobs = {}
+    class Pool:
+        def enqueue_existing(self, tid, execute, **callbacks):
+            jobs[tid] = execute
+            return True
+    set_staff_service(str(tmp_path), Pool())
+    monkeypatch.setattr('src.llm.usage_ledger._path', lambda: tmp_path / 'usage' / 'daily.json')
     calls = []
     async def chat(self, messages, **kwargs):
         calls.append((self.config.base_url, self.config.model, self.config.api_key))
+        add_usage(2, 2, model=self.config.model)
         if self.config.model == "planner-model" and not any(message["role"] == "tool" for message in messages):
-            return {"content": "", "tool_calls": [{"id": "call_delegation", "name": "task", "arguments": json.dumps({"description": "只读分析示例模块"})}]}
+            return {"content": "", "tool_calls": [{"id": "call_delegation", "name": "staff_assign", "arguments": json.dumps({'member': 'review-staff', 'prompt': '只读审查交给它的材料'})}]}
         return {"content": "已整理分析，供主 Agent 核对。"}
     monkeypatch.setattr(LLMClient, "chat", chat)
     parent = build_session(str(tmp_path), kind="web", workspace_scope="project", llm=LLMClient(), confirm=approve_fixture, can_ask_human=True)
     parent._native = True
-    result = await parent.run_turn("分派只读分析并汇总", mode="plan", emit=lambda _: None)
+    try:
+        result = await parent.run_turn('分派只读审查', mode='build', emit=lambda _: None)
+        assert len(jobs) == 1
+        await next(iter(jobs.values()))()
+    finally:
+        set_staff_service(str(tmp_path))
     assert result
     assert {model for _, model, _ in calls} == {"planner-model", "small-model"}
     assert all((base, key) == (("https://worker.example.test/v1", "synthetic-worker-key") if model == "small-model"
@@ -50,8 +69,9 @@ async def test_main_dispatches_to_cheap_channel_and_keeps_its_own_model(tmp_path
     from src.workflow.tasks.tasks import TaskLedger
     tasks = [task for task in TaskLedger(str(tmp_path)).list() if task.kind == "delegation"]
     assert len(tasks) == 1 and tasks[0].collaboration["review"] == "pending"
-    target = tasks[0].collaboration["model_target"]
-    assert target == {"model": "small-model", "provider": "worker", "evidence": "selected_request_target", "round": 1}
+    assert tasks[0].status == 'done'
+    assert tasks[0].collaboration['dispatch']['source'] == 'staff'
+    assert registry.member('review-staff')['model'] == 'worker:small-model'
     assert "synthetic-worker-key" not in json.dumps(tasks[0].to_dict())
 
 

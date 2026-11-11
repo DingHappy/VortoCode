@@ -182,7 +182,10 @@ class StaffService:
     @staticmethod
     def executable(role):
         if role['grants']['project']:
-            raise ValueError('登记项目副本尚未接入专员执行；不会读写主工作区')
+            if not role.get('project_binding'):
+                raise ValueError('未绑定的登记项目副本尚未接入专员执行；不会读写主工作区')
+            from src.workflow.staff.projects import check
+            check(role)
         if any(source.startswith('files:') for source in role['grants']['sees']):
             raise ValueError('登记目录来源尚未接入；不会用主工作区代替')
 
@@ -415,7 +418,9 @@ def staff_directory(root, *, include_prompts=False):
         usage = budgets.usage()
     except (OSError, ValueError):
         usage = {'error': '用量暂不可核对，不能据此推断为零'}
+    from src.workflow.workbench.resident_projects import load_resident_projects
     return {'roles': StaffRegistry(root).roles(), 'members': members, 'departments': departments,
+            'development_projects': [{'name': row['name']} for row in load_resident_projects()],
             'standing_specialists': standing_catalog(),
             'routines': [{k: row[k] for k in ('id', 'name', 'member', 'schedule', 'timezone', 'enabled', 'revision', 'delivery', 'token_budget')}
                          for row in routine_rows if not row['retired']],

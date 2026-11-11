@@ -137,24 +137,38 @@ async def _run_developer(service: Any, root: Any, work: Any, child: Any, number:
                          tainted: bool, *, run_external: Optional[Callable[..., Any]] = None,
                          run_tests: Optional[Callable[..., Any]] = None) -> Any:
     """开发成员（ADR-014 S2）：一次性 worktree 里改代码 → VortoOne 验证 → 落分支。见 ``team_delivery``。"""
-    from src.agents import team_delivery, team_engines
     project = root.team.get("project") or {}
+    return await execute_development(work, child, dispatch, engine, project, tainted,
+        record_delivery=lambda delivery: service.record_delivery(root.id, child.id, delivery),
+        run_external=run_external, run_tests=run_tests)
+
+
+async def execute_development(work, child, dispatch, engine, project, tainted, *, record_delivery,
+                              check=None, run_external=None, run_tests=None):
+    """Shared isolated-copy execution; no coordinator or second task is required."""
+    from src.agents import team_delivery, team_engines
+    number = child.collaboration['round']
     repo_root = str(project.get("repo_root") or "")
     if not repo_root:
         return work.finish(child.id, number, "", error="小组没有登记项目，开发成员无处可改", tainted=tainted)
     runner = run_external or team_engines.run_external
     path = None
     try:
+        if check is not None:
+            check()
         path = await asyncio.to_thread(team_delivery.prepare, repo_root, child.id, number, _previous_branch(child))
+        options = {'check': check} if check is not None else {}
         result = await runner(engine, "developer", dispatch.get("model", ""), external_developer_prompt(child, work),
-                              timeout=dispatch["timeout_seconds"], child_id=child.id, workdir=str(path))
+                              timeout=dispatch["timeout_seconds"], child_id=child.id, workdir=str(path), **options)
         tainted = tainted or result.networked
+        if check is not None:
+            check()
         if result.error:
             return work.finish(child.id, number, str(result.text or ""), tainted=tainted,
                                error=f"{team_engines.ENGINE_LABELS.get(engine, engine)}：{result.error}")
         delivery = await asyncio.to_thread(team_delivery.finish_round, repo_root, path, child_id=child.id,
                                            number=number, objective=child.prompt, run_tests=run_tests)
-        service.record_delivery(root.id, child.id, delivery)
+        record_delivery(delivery)
         text = (str(result.text or "").strip() + "\n\n" + team_delivery.describe(delivery, project.get("name", ""))).strip()
         return work.finish(child.id, number, text, error=delivery.get("error", ""), tainted=tainted)
     except team_engines.EngineUnavailable as error:

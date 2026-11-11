@@ -1758,5 +1758,11 @@
     "methods": [
       "PUT"
     ]
+  },
+  {
+    "path": "/api/staff/development-proposals",
+    "methods": [
+      "POST"
+    ]
   }
 ]

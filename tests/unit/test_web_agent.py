@@ -524,11 +524,11 @@ def test_web_agent_includes_isolated_dev_and_command():
         assert name in agent.tools and agent.tools[name].read_only is False
 
 
-def test_web_agent_includes_research_delegation():
+def test_web_agent_uses_registered_staff_and_preserves_task_lifecycle():
     from src.web.routers import realtime
-    agent = realtime._new_agent()                       # 网页 agent 现也带只读子 agent 委派（补齐与 TUI 差距）
-    for name in ("task", "research_parallel"):
-        assert name in agent.tools and agent.tools[name].read_only is True
+    agent = realtime._new_agent()
+    assert {'staff_list', 'staff_assign', 'task_status', 'task_review', 'task_followup'} <= set(agent.tools)
+    assert not {'task', 'research_parallel'} & set(agent.tools)
 
 
 def test_web_agent_registers_turn_bindings():

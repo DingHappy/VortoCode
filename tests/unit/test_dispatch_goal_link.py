@@ -39,16 +39,17 @@ def _done_for_goal(root):
     return dispatch.list_dispatches(root)[0], goal_id
 
 
-async def test_propose_validates_the_goal_and_the_assistant_sees_the_link(tmp_path):
+async def test_propose_validates_the_goal_and_the_assistant_sees_the_link(tmp_path, monkeypatch):
     root = str(tmp_path)
     goal_id, criterion_id = _goal(root)
     tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root))}
-    assert "找不到个人目标" in await tools["propose_task"].handler(
-        {"project": "VortoOne", "title": "x", "goal": "y", "goal_id": "personal-nope"})
-    assert "没有验收标准" in await tools["propose_task"].handler(
-        {"project": "VortoOne", "title": "x", "goal": "y", "goal_id": goal_id, "criterion_id": "c-nope"})
-    assert "已写好任务单" in await tools["propose_task"].handler(
-        {"project": "VortoOne", "title": "改登录超时", "goal": "把超时改成 30 秒", "goal_id": goal_id, "criterion_id": criterion_id})
+    from tests.staff_setup import registered_developer
+    registered_developer(tmp_path, monkeypatch, 'VortoOne')
+    with pytest.raises(dispatch.DispatchError, match='找不到个人目标'):
+        dispatch.propose_staff(root, project='VortoOne', title='x', goal='y', goal_id='personal-nope')
+    with pytest.raises(dispatch.DispatchError, match='没有验收标准'):
+        dispatch.propose_staff(root, project='VortoOne', title='x', goal='y', goal_id=goal_id, criterion_id='c-nope')
+    dispatch.propose_staff(root, project='VortoOne', title='改登录超时', goal='把超时改成 30 秒', goal_id=goal_id, criterion_id=criterion_id)
     link = dispatch.list_dispatches(root)[0]["goal_link"]
     assert link == {"id": goal_id, "objective": "上线新版登录", "criterion_id": criterion_id, "criterion": "登录超时 30 秒"}
     assert "为目标「上线新版登录」的标准「登录超时 30 秒」" in await tools["list_dispatches"].handler({})

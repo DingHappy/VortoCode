@@ -4,6 +4,11 @@ import json
 import pytest
 
 from evals.assistant.runner import cases, grade, run_case, setup
+from src.workflow.staff.roles import builtin_roles
+
+_DEVELOPER = {key: value for key, value in next(row for row in builtin_roles() if row['id'] == 'developer').items()
+              if key not in {'builtin', 'revision', 'enabled'}}
+_DEVELOPER.update(id='demo-developer', project='demo')
 
 _STEPS = {
     'memory_retrieval': ('recall_memory', {'query': '猫'}),
@@ -13,7 +18,7 @@ _STEPS = {
     'schedule_no_history': ('schedule_history', {'name': 'brief'}),
     'schedule_pause': ('cron_toggle', {'name': 'brief', 'enabled': False}),
     'schedule_resume_denied': ('cron_toggle', {'name': 'brief', 'enabled': True}),
-    'proposal_not_execution': ('propose_task', {'project': 'demo', 'title': '修复登录', 'goal': '超时改为30秒，保留接口', 'criteria': '超时测试通过'}),
+    'proposal_not_execution': ('staff_propose', {'kind': 'role', 'data': _DEVELOPER, 'reason': '登记开发岗位后才能承接项目修复'}),
     'done_not_accepted': ('list_dispatches', {}),
     'offline_not_current': ('list_dispatches', {}),
     'today_receipt': ('today_activity', {}),

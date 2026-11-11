@@ -214,4 +214,4 @@ async def test_bridge_uses_owner_config(box):
     """
     br = _bridge(box.root, FakeChannel(), ScriptedLLM("x"))
     assert br._with_dev is True
-    assert "cron_run" in br.agent.tools, "主人那条桥应当有排班工具面"
+    assert 'routine_propose' in br.agent.tools, '主人那条桥应当有专员排班入口'

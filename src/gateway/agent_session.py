@@ -210,7 +210,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         staff_owner = task_owner or f"staff-{uuid.uuid4().hex}"
         tools += build_staff_tools(repo_root, confirm=gated_confirm, owner=staff_owner, capabilities=capabilities)
         staff_work = CollaborationService(repo_root, staff_owner, on_update=on_task_update)
-        tools += [tool for tool in build_research_tools(repo_root, confirm=gated_confirm, collaboration=staff_work)
+        tools += [tool for tool in build_research_tools(repo_root, confirm=gated_confirm, collaboration=staff_work,
+                                                       legacy_creation=False)
                   if tool.name in {"task_status", "task_review", "task_followup"}]
         if kind == "web":
             from src.agents.tools.artifacts import build_artifact_tools
@@ -229,8 +230,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             # 交代定时的事（「每天早上帮我…」）：只在本进程真的会跑调度时给——Desktop 本机 sidecar
             # 固定关调度，给了只会建出永远不跑的作业。建/改都过确认门；要联网的作业创建时单独问人。
             if os.getenv("VORTOONE_CRON", "").strip().lower() in ("1", "true", "yes", "on"):
-                from src.agents.tools.cron import build_cron_tools
-                tools += build_cron_tools(repo_root, gated_confirm)
+                from src.agents.tools.cron import build_legacy_cron_tools
+                tools += build_legacy_cron_tools(repo_root, gated_confirm)
             # Read-only continuity remains useful even when this host does not run cron.
             from src.scheduling.assistant_watch import build_status_tools
             tools += [tool for tool in build_status_tools(repo_root) if tool.name != "list_dispatches"]
@@ -346,15 +347,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                      "不额外先查后查。证据不足时仍须继续读取或澄清，不能省掉确认和核验。"
                      "任务是否执行、是否验收以任务台账为依据，不额外搜索长期记忆或聊天来证明验收。"
                      "不要重复同条件查询来重述已有结论；确实缺少必要信息时，允许调整查询继续检索。")
-    if workspace_scope == GENERAL and any(tool.name == "cron_add" for tool in tools):
-        parts.append("【定时事项】用 cron_add 交代的事会在无人值守下自动跑：不联网的只能看今天的动态、"
-                     "任务单进度、定时事项列表，并带着关于用户的资料；联网的（allow_web）能搜索/抓网页，"
-                     "但看不到关于用户的资料与记忆。都**不能**读文件、跑命令、查 Git。"
-                     "写作业内容时只要求这些能拿到的东西，别要求做不到的事。")
-    if workspace_scope == GENERAL and any(tool.name == "propose_task" for tool in tools):
-        parts.append("【派活】你是常驻助理：要改代码或在项目里干的活，用 propose_task 写成任务单交给常驻电脑上的"
-                     "项目去做（用户确认后才执行），不要调用 request_workspace，也不要自己动手。"
-                     "汇报进度前先用 list_dispatches 查最新状态，如实说明哪些还在等用户确认。")
+    if any(tool.name == 'staff_assign' for tool in tools):
+        parts.append('【派活与例行工作】新任务用 staff_assign 指定已登记专员；改代码只能交给固定绑定登记项目的开发专员。'
+                     '没有合适专员时先提议岗位和专员，等主人批准，不能临时加项目、目录或外发权限。'
+                     '新定时事项用 routine_propose；旧任务用 task_status/task_review/task_followup 或 list_dispatches 核对和收尾。')
     if allow_local_files and kind == "web":
         if workspace_scope == GENERAL:
             parts[0] = (
@@ -379,11 +375,6 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         catalog = skill_catalog(repo_root)                 # 技能目录进系统提示（模型才知道能 use_skill 什么）
         if catalog:
             parts.append(f"{_SKILL_HEADER}\n{catalog}")
-        from src.agents.subagents import subagent_catalog
-        agents_cat = subagent_catalog(repo_root)           # 自定义角色目录（task 工具的 agent 参数按名委派）
-        if agents_cat:
-            parts.append("【可用子 agent】(用 task/research_parallel 的 agent 参数按名委派；"
-                         "dev 型角色经隔离流水线写代码、需确认)\n" + agents_cat)
     if any(tool.name == "staff_list" for tool in tools):
         from src.agents.staff import staff_catalog
         parts.append(staff_catalog(repo_root))  # Static for this session; staff_list reads current busy/state.

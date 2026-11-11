@@ -1,4 +1,7 @@
-"""助理派活台账：常驻助理把要办的事写成任务单，**你点了「下发」才**交给常驻电脑上的项目运行时执行。
+"""助理派活台账：新任务经主人下发后交给固定项目的开发专员；旧任务保留原运行时收尾。
+
+任务单卡片是兼容投影，新执行复用 staff 的协作任务与共享池，不复制任务或迁移旧批准。
+以下项目运行时提交合同仅用于既有旧记录：
 
 分工（参考 Muse）：助理负责收、派、跟、报，不自己改代码；活由工作台（项目运行时的后台开发任务，
 隔离 worktree、对外操作一律拒绝、交付一个分支）去做。
@@ -189,7 +192,7 @@ def _retry_context(previous: Dict[str, Any]) -> str:
 
 def propose(root: str, *, project: str, title: str, goal: str, criteria: Optional[List[str]] = None,
             session: str = "", tainted: bool = False, retry_of: str = "", retry_note: str = "",
-            goal_id: str = "", criterion_id: str = "") -> Dict[str, Any]:
+            goal_id: str = "", criterion_id: str = "", _staff_binding=None) -> Dict[str, Any]:
     """助理提出一张任务单（只记账，不执行）。``retry_of``：接着一张没做成的单子再来一次，自动带上它的错误。
 
     ``retry_note``：助理复盘上次失败后拟的「这次换什么做法」，会写进目标，也单独显示在确认通知里。
@@ -229,6 +232,9 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
         "created_at": _now(),
         "updated_at": _now(),
     }
+    if _staff_binding is not None:
+        from src.gateway.main_conversation import main_chat_key
+        entry.update(staff_binding=_staff_binding, staff_owner=main_chat_key(root) or str(session or ''))
     with _transaction(root):
         items = _load(root)
         if retry_of:
@@ -263,6 +269,16 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
         items.append(entry)
         _save(root, items)
     return entry
+
+
+def propose_staff(root: str, *, project: str, **fields) -> Dict[str, Any]:
+    """All new callers use registered developer authority; propose remains a legacy adapter."""
+    from src.workflow.staff.dispatch import binding
+    try:
+        frozen = binding(root, project)
+        return propose(root, project=project, _staff_binding=frozen, **fields)
+    except (ValueError, OSError) as error:
+        raise DispatchError(str(error)) from error
 
 
 def _goal_link(root: str, goal_id: str, criterion_id: str = "") -> Dict[str, str]:
@@ -505,6 +521,8 @@ async def _http(method: str, url: str, payload: Optional[dict] = None, *, second
 async def approve(root: str, dispatch_id: str, *, http=_http, origin: str = "unknown", decision_source: str = "unknown") -> Dict[str, Any]:
     """人点了「下发」：把任务单交给项目运行时，记下远端任务 id。"""
     def claim(item: Dict[str, Any]) -> None:
+        if item.get('staff_binding') and decision_source != 'user':
+            raise DispatchError('开发专员任务须主人明确批准；自动审核保持关闭')
         if item.get("legacy_submission"):
             raise DispatchError("旧运行时未确认幂等提交，请到项目工作台核对；未再次下发")
         if item.get("status") not in {"proposed", "send_failed", "submission_unknown", "sending"}:
@@ -535,6 +553,11 @@ async def _send(root: str, dispatch_id: str, claim, http) -> Dict[str, Any]:
     entry = _update(root, dispatch_id, claim)
     attempted = bool(entry.get("submission_attempted"))
     try:
+        if entry.get('staff_binding'):
+            from src.workflow.staff.dispatch import send
+            task = send(root, entry)
+            return _update(root, dispatch_id, lambda item: item.update(status='running', staff_task_id=task.id,
+                sent_at=_now(), last_checked_at=_now(), sync_state='current', error='', sync_error=''))
         project = _find_project(entry["project"])
         target = _target(project)
         if entry.get("proposed_target") and entry["proposed_target"] != target:
@@ -595,7 +618,7 @@ async def refresh(root: str, *, http=_http, dispatch_id: str | None = None) -> L
     candidates = [entry for entry in entries if entry.get("remote_task_id")
                   and entry.get("status") != "cancelled"
                   and (entry["id"] == dispatch_id if dispatch_id else entry.get("status") not in _TERMINAL
-                       or isinstance(entry.get("recovery_task"), dict))]
+                       or isinstance(entry.get("recovery_task"), dict) or entry.get('staff_task_id'))]
     candidates.sort(key=lambda entry: entry.get("last_sync_attempt_at") or entry.get("last_checked_at") or "")
     # Keep a routine poll bounded; subsequent rounds prioritize older snapshots.
     semaphore = asyncio.Semaphore(4)
@@ -617,6 +640,14 @@ async def refresh(root: str, *, http=_http, dispatch_id: str | None = None) -> L
 
 async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool = False) -> None:
     try:
+        if entry.get('staff_binding'):
+            from src.workflow.staff.dispatch import snapshot
+            current = snapshot(root, entry)
+            if current['status'] in {'done', 'failed', 'stopped'} and not entry.get('finished_at'):
+                current['finished_at'] = _now()
+            _update(root, entry['id'], lambda item: item.update(**current, last_checked_at=_now(),
+                last_sync_attempt_at=_now(), sync_state='current', sync_error=''))
+            return
         project = _find_project(entry["project"])
         if entry.get("submission_target") and entry["submission_target"] != _target(project):
             raise DispatchError("项目登记已变化，无法核实原任务；未读取其它项目")
@@ -805,6 +836,15 @@ async def open_pr(root: str, dispatch_id: str, *, http=None) -> Dict[str, Any]:
     if entry.get("pr_url"):
         return entry
     _check_pr_ready(entry)
+    if entry.get('staff_binding'):
+        from src.workflow.staff.dispatch import publish
+        try:
+            result = await asyncio.to_thread(publish, root, entry)
+        except (ValueError, OSError) as error:
+            raise DispatchError(str(error)) from error
+        if not result.get('ok') or not result.get('url'):
+            raise DispatchError(str(result.get('error') or '未返回 PR 地址')[:300])
+        return _update(root, dispatch_id, lambda item: item.update(pr_url=result['url'], pr_state='opened', pr_error=''))
     project = _find_project(entry["project"])
     if http is None:
         async def http(method, url, payload=None, *, expected_identity=None):
@@ -887,23 +927,6 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
     if not load_resident_projects():
         return []
     names = "、".join(project["name"] for project in load_resident_projects())
-
-    async def _propose(args: dict) -> str:
-        criteria = args.get("criteria") or []
-        if isinstance(criteria, str):
-            criteria = [line.strip("-• ").strip() for line in criteria.splitlines() if line.strip()]
-        try:
-            entry = propose(root, project=str(args.get("project") or ""), title=str(args.get("title") or ""),
-                            goal=str(args.get("goal") or ""), criteria=list(criteria),
-                            # 记下是哪段对话提的：Desktop 据此把任务单卡片放进那段对话里
-                            session=str((session() if callable(session) else session) or ""),
-                            tainted=is_tainted(), retry_of=str(args.get("retry_of") or "").strip(),
-                            goal_id=str(args.get("goal_id") or "").strip(),
-                            criterion_id=str(args.get("criterion_id") or "").strip())
-        except DispatchError as error:
-            return f"没有提出任务单：{error}"
-        return (f"已写好任务单 {entry['id']}（{entry['project']}：{entry['title']}），卡片会出现在这段对话里，"
-                "手机通知上也能批准。**还没有执行**——要等用户确认下发。告诉用户在卡片上确认，不要声称已经开始做。")
 
     async def _list(_args: dict) -> str:
         items = await refresh(root)
@@ -1004,19 +1027,6 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
              "只转述用户在这段对话里明确说的答案，不要自己替用户拿主意；用户没答就先把问题和选项告诉用户。",
              {"dispatch_id": "任务单 id（dsp-…）", "answer": "用户的回答，原意转述，写清楚"},
              _answer, read_only=False, serial=True, operation_kind='write'),
-        Tool("propose_task",
-             "把一件开发/修改代码的活写成任务单，交给常驻电脑上的项目去做（隔离分支交付）。"
-             f"只是提议：用户在 Desktop 确认后才会执行。可派活的项目：{names}。"
-             "目标要写清楚背景、要改什么、范围边界；验收标准写成可检查的几条。"
-             "用户让你推进某个个人目标时：先用 personal_goals 看它的验收标准，对还没通过、靠改代码能达成的每一条"
-             "各写一张任务单并填 goal_id / criterion_id（一条标准一张，不要合并）；不靠改代码的标准告诉用户要他自己做什么。",
-             {"project": f"项目名，只能是：{names}", "title": "一句话标题（不超过 30 字）",
-              "goal": "要做成什么、为什么、范围边界", "criteria": "验收标准，每行一条",
-              "retry_of": "可选：接着哪张失败 / 没做完的任务单再来（dsp-…）。会自动带上它的错误和输出，"
-                          "goal 里只写这次要怎么改做法；同一件事最多 3 次",
-              "goal_id": "可选：这件活是为哪个个人目标做的（personal-…，用 personal_goals 查）",
-              "criterion_id": "可选：对应目标里的哪条验收标准；做完后会问用户算不算达成这一条"},
-             _propose, read_only=False, serial=True, operation_kind='draft'),
         Tool("list_dispatches",
              "查看派出去的任务单：哪些等用户确认、在做、做完了（含结果和分支）、失败了。向用户汇报进度时先调它。",
              {}, _list, untrusted_source=True, operation_kind='read'),

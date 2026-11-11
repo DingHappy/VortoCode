@@ -1,5 +1,6 @@
 """Owner administration only. Mobile grants never authenticate these Desktop routes."""
 import os
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, Field
@@ -61,6 +62,15 @@ class RoutineChange(BaseModel):
     data: dict
 
 
+class DevelopmentProposal(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    kind: Literal['role', 'member']
+    id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=80)
+    project: str = ''
+    role: str = ''
+
+
 def _apply(action):
     try:
         return action()
@@ -89,6 +99,19 @@ def decide(proposal_id: str, body: Decision):
             body.digest, nonce=body.nonce, round=body.round, instance=body.instance))
     _wake_limits()
     return result
+
+
+@router.post('/api/staff/development-proposals')
+def propose_development(body: DevelopmentProposal):
+    _owner_write()
+    from src.gateway.main_conversation import main_chat_key
+    from src.workflow.staff.projects import propose_development as propose
+    def apply():
+        owner = main_chat_key(os.getcwd())
+        if not owner:
+            raise ValueError('先在 Desktop 登记主要聊天，再提议开发专员')
+        return propose(os.getcwd(), owner, **body.model_dump())
+    return _apply(apply)
 
 
 @router.put('/api/staff/members/{member_id}/status')

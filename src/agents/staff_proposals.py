@@ -26,7 +26,7 @@ def build_staff_proposal_tool(root, *, confirm, owner):
                    + '\n这次只保留待批提议；尚不授予权限，仍需主人在 Desktop 核对后批准。')
         return PreparedToolCall(apply, message, 'execute')
     return Tool.prepared('staff_propose', '提议岗位、专员或部门；只保留待批记录，主人须在 Desktop 核对后批准。污点回合禁止。',
-        {'kind': 'role、member 或 department', 'data': '完整登记对象；预置常设岗位首次安装用 {id, install:true}；旧内置岗位升级用 {id, revision, upgrade:true}，须主人批准；department 不附带权限或笔记', 'reason': '为什么需要登记或调整'},
+        {'kind': 'role、member 或 department', 'data': '完整登记对象；开发岗位复制内置 developer 的隔离权限，另设 id 与 project=已登记项目名，目标由宿主锁定，须主人确认；预置常设岗位首次安装用 {id, install:true}；旧内置岗位升级用 {id, revision, upgrade:true}，须主人批准；department 不附带权限或笔记', 'reason': '为什么需要登记或调整'},
         prepare, operation_kind='execute', always_confirm=True, serial=True, confirm=confirm,
         required_args=('kind', 'data', 'reason'), argument_schema={'kind': {'type': 'string', 'enum': ['role', 'member', 'department']},
         'data': {'type': 'object'}, 'reason': {'type': 'string', 'minLength': 1, 'maxLength': 2000}})

@@ -279,8 +279,7 @@ def resume(root: str, goal_id: str) -> bool:
 
 async def _dispatch(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], now: datetime, *,
                     paused: Dict[str, str], llm: Any) -> Optional[str]:
-    """拟任务单 → 自动审核：放行就下发（每天有上限），拒绝就撤回并暂停这个目标，拿不准就等主人。"""
-    from src.scheduling import auto_review
+    """拟开发专员任务单，等待主人下发；不沿用旧自动审核授权。"""
     from src.workflow.tasks import assistant_dispatch
     from src.workflow.workbench.personal_goals import has_external_text
 
@@ -289,34 +288,14 @@ async def _dispatch(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], no
     criterion_ids = {c.get("id") for c in goal.get("acceptance_criteria") or []}
     try:
         entry = await asyncio.to_thread(
-            assistant_dispatch.propose, root, project=verdict["project"], title=verdict["title"],
+            assistant_dispatch.propose_staff, root, project=verdict["project"], title=verdict["title"],
             goal=verdict["goal"], criteria=verdict["criteria"], session="goal-advancer", tainted=tainted,
             goal_id=goal["id"], criterion_id=verdict["criterion_id"] if verdict["criterion_id"] in criterion_ids else "")
     except (assistant_dispatch.DispatchError, OSError, ValueError) as error:
         logger.warning("推进目标拟任务单失败：%s", str(error)[:120])
         return None
-    review = await auto_review.review(root, kind=auto_review.DISPATCH, proposal=verdict, goal=goal,
-                                      tainted=tainted, now=now, llm=llm)
-    if review["verdict"] == auto_review.APPROVE:
-        try:
-            await assistant_dispatch.approve(root, entry["id"], origin="runtime", decision_source="automatic_review")
-        except Exception as error:  # noqa: BLE001 —— 下发失败就留给主人，任务单还在
-            logger.warning("自动下发失败：%s", str(error)[:120])
-        else:
-            return (f"🎯 为「{objective}」拟了任务单「{entry['title']}」（{verdict['project']}），自动审核通过，已下发："
-                    f"{review['reason']} 只会开分支和 PR，合并仍要你点。")
-    if review["verdict"] == auto_review.DENY:
-        try:
-            await asyncio.to_thread(assistant_dispatch.cancel, root, entry["id"])
-        except Exception:  # noqa: BLE001
-            pass
-        until = (now + PAUSE).isoformat()
-        await asyncio.to_thread(pause_goal, root, goal["id"], until)
-        paused[goal["id"]] = until
-        return (f"⏸ 为「{objective}」拟的任务单「{entry['title']}」没通过自动审核，已撤回：{review['reason']}。"
-                "这个目标暂停自动推进 24 小时；需要的话你可以直接在对话里交代。")
-    return (f"🎯 为「{objective}」拟了下一步任务单：{entry['title']}（{verdict['project']}）。"
-            f"{verdict['reason']} 需要你看一下（{review['reason']}），在「动态 → 等你决定」里下发或撤回。")
+    return (f"🎯 为「{objective}」拟了开发专员任务：{entry['title']}（{verdict['project']}）。"
+            "尚未执行；请核对后下发或撤回，自动审核保持关闭。交付本地分支，不自动推送或开 PR。")
 
 
 async def _suggest(root: str, goal: Dict[str, Any], verdict: Dict[str, Any], now: datetime, *, llm: Any) -> str:

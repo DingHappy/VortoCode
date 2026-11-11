@@ -29,6 +29,15 @@ def test_builtin_roles_are_persisted_and_obey_the_operation_contract(tmp_path):
     assert json.loads(path.read_text())['roles'] == entries
 
 
+@pytest.mark.parametrize('kind', ['web', 'cli', 'im'])
+@pytest.mark.parametrize('scope', ['general', 'project'])
+def test_s9_session_uses_registered_staff_for_new_work_and_keeps_old_lifecycle(tmp_path, kind, scope):
+    from src.gateway.agent_session import build_session
+    agent = build_session(str(tmp_path), kind=kind, workspace_scope=scope)
+    assert {'staff_list', 'staff_assign', 'task_status', 'task_review', 'task_followup'} <= set(agent.tools)
+    assert not {'task', 'research_parallel', 'propose_task', 'cron_add'} & set(agent.tools)
+
+
 @pytest.mark.parametrize('grants,rule', [
     ({'operations': ['read', 'execute'], 'sees': ['plugin:mail']}, '5.2.1'),
     ({'web': True, 'sees': ['memory']}, '5.2.2'),
@@ -152,7 +161,7 @@ def staff_setup(tmp_path, *, tools=(), **grants):
     return registry, member, pool, StaffService(str(tmp_path), pool, execute=execute)
 
 
-@pytest.mark.parametrize('field', ['grants', 'operations', 'tools', 'sees', 'web', 'project', 'permissions', 'role', 'engine', 'model', 'max_steps'])
+@pytest.mark.parametrize('field', ['grants', 'operations', 'tools', 'sees', 'web', 'project', 'project_binding', 'repo_root', 'port', 'permissions', 'role', 'engine', 'model', 'max_steps'])
 def test_assignment_cannot_carry_any_authority_fields(tmp_path, field):
     registry, member, pool, service = staff_setup(tmp_path)
     with pytest.raises(ValueError, match='字段'):

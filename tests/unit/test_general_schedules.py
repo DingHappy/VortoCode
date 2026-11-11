@@ -89,7 +89,7 @@ def test_assistant_prompt_explains_what_schedules_can_reach(tmp_path, monkeypatc
 
     monkeypatch.setenv("VORTOONE_CRON", "1")
     system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan")
-    assert "【定时事项】" in system and "不能**读文件、跑命令、查 Git" in system
+    assert '新定时事项用 routine_propose' in system and '权限只能来自登记' in system
 
 
 @pytest.mark.parametrize("scheduler", ["0", "1"])
@@ -99,7 +99,8 @@ def test_interactive_general_has_readonly_continuity_even_without_scheduler(tmp_
     agent = build_session(str(tmp_path), kind="web", workspace_scope="general")
     assert {"today_activity", "schedule_list", "schedule_history"} <= set(agent.tools)
     assert all(agent.tools[name].read_only for name in ("today_activity", "schedule_list", "schedule_history"))
-    assert ("cron_add" in agent.tools) is (scheduler == "1")
+    assert 'routine_propose' in agent.tools and 'cron_add' not in agent.tools
+    assert ('cron_list' in agent.tools) is (scheduler == '1')
     assert not {"read_file", "run_command", "git_status"} & set(agent.tools)
 
 

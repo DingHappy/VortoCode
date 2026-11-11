@@ -1,8 +1,6 @@
 """小智语音端点：专用令牌、只在常驻助理开放、三个工具、语音提议只记账且限流。"""
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from src.workflow.tasks import assistant_dispatch as dispatch
@@ -15,9 +13,8 @@ MAIN = "main-secret"
 def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    registry = tmp_path / "resident_projects.json"
-    registry.write_text(json.dumps({"projects": [{"name": "VortoOne", "repo_root": "/srv/VortoCode", "port": 8082}]}))
-    monkeypatch.setenv("VORTOONE_RESIDENT_PROJECTS", str(registry))
+    from tests.staff_setup import registered_developer
+    registered_developer(tmp_path, monkeypatch, 'VortoOne')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     monkeypatch.setenv("VORTOONE_VOICE_MCP_TOKEN", VOICE)
@@ -91,6 +88,7 @@ def test_voice_proposal_is_only_recorded_tainted_notified_and_rate_limited(clien
     [entry] = dispatch.list_dispatches(str(tmp_path))
     assert entry["status"] == "proposed" and entry["tainted"] is True and entry["session"] == "voice"
     assert "来自小智语音" in entry["goal"] and entry["project"] == "VortoOne"
+    assert entry['staff_binding']['member']['id'] == 'fixture-dev'
     assert len(client.sent) == 1 and "小智记下一张任务提议" in client.sent[0]
 
     for _ in range(2):

@@ -126,9 +126,11 @@ async def test_completed_review_is_not_reused_after_material_or_commit_changes(t
     assert llm.calls == 1  # 展示失效不会触发第二次模型复盘。
 
 
-async def test_failure_is_diagnosed_and_the_next_attempt_is_drafted_for_approval(tmp_path):
+async def test_failure_is_diagnosed_and_the_next_attempt_is_drafted_for_approval(tmp_path, monkeypatch):
     root = str(tmp_path)
     failed = _ended(root, "failed", error="ImportError: starlette", result="集成测试红")
+    from tests.staff_setup import registered_developer
+    registered_developer(tmp_path, monkeypatch, 'VortoOne')
     llm = FakeLLM(json.dumps({"diagnosis": "测试环境缺 starlette", "retry": True, "change": "先装测试依赖再跑集成测试"}))
     item = await review.follow_up(root, failed, lambda item: review.review_outcome(item, llm=llm))
     assert item["outcome"]["draft_id"]
@@ -371,7 +373,7 @@ async def test_retry_draft_save_failure_is_visible_and_never_replayed(tmp_path, 
     def broken(*args, **kwargs):
         raise OSError("private path")
 
-    monkeypatch.setattr(dispatch, "propose", broken)
+    monkeypatch.setattr(dispatch, "propose_staff", broken)
     latest = await review.follow_up(root, item, reviewer)
     assert latest["outcome"]["retry"] is False
     assert "尚未确认生成" in watch.status_message(latest)

@@ -187,12 +187,13 @@ async def test_default_task_unchanged_without_agent(tmp_path):
 
 
 # ------------------------------------------------------------ 装配层目录注入 + 示例模板守门
-def test_build_session_injects_agent_catalog(tmp_path, monkeypatch):
+def test_build_session_uses_staff_catalog_without_importing_legacy_role_authority(tmp_path, monkeypatch):
     _write_agent(tmp_path, "pm.md", _PM)
     from src.gateway.agent_session import build_session
     agent = build_session(str(tmp_path), kind="cli", confirm=None)
     sysmsg = agent._system("plan")
-    assert "【可用子 agent】" in sysmsg and "product-manager" in sysmsg
+    assert '【专员名录' in sysmsg and 'product-manager' not in sysmsg
+    assert 'task' not in agent.tools and 'staff_assign' in agent.tools
 
 
 def test_examples_parse_with_real_parser():

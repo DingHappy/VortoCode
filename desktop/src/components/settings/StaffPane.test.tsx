@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StaffView, StaffPane } from "./StaffPane";
+import { DevelopmentStaff } from './DevelopmentStaff';
 import type { StaffSnapshot } from "../../lib/staff";
 const noop = () => {};
 const role = { id: "calendar", title: "日历只读", brief: "只查看日程", builtin: false, enabled: true, revision: 1, grants: { operations: ["read"], tools: ["calendar_events"], sees: ["plugin:calendar"], web: false, project: false }, engine: ["vortocode"], max_steps: 12, timeout_seconds: 600 };
@@ -37,4 +38,16 @@ it('escapes text in standing suggestions and preserves the guidance when disconn
   value.standing_specialists = [{ id: 'fixture', title: '<script>fixture</script>', scope: '合成', guide: '待核对' }];
   const html = renderToStaticMarkup(<StaffView state={{ value, busy: false, error: '离线' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
   expect(html).not.toContain('<script>'); expect(html).toContain('&lt;script&gt;'); expect(html).toContain('上次读取的数据');
+});
+
+it('shows fixed project boundaries and separates proposing from owner confirmation', () => {
+  const value = structuredClone(snapshot);
+  value.development_projects = [{ name: 'Example' }];
+  value.roles.push({ ...role, id: 'developer-example', title: '项目开发', project: 'Example',
+    project_binding: { name: 'Example', repo_root: '/fixture/project', port: 8099 }, grants: { ...role.grants, project: true } });
+  const html = renderToStaticMarkup(<DevelopmentStaff value={value} disabled={false} onPropose={noop} />);
+  expect(html).toContain('固定项目'); expect(html).toContain('选择已登记项目');
+  expect(html).toContain('提交岗位提议'); expect(html).toContain('提交专员提议');
+  expect(html).toContain('每一步都由主人核对后确认'); expect(html).toContain('换项目须重新批准');
+  expect(html).not.toContain('批准钥匙'); expect(html).not.toContain('type="file"');
 });

@@ -4,6 +4,8 @@ import { GatewayClient } from "../../gateway";
 import { staffController, type StaffClient, type StaffState, type StaffRole, type StaffMember, type StaffProposal, type StaffBudgetSettings } from "../../lib/staff";
 import { StaffBudgets } from "./StaffBudgets";
 import { RoutinesPane } from './RoutinesPane';
+import { DevelopmentStaff } from './DevelopmentStaff';
+import type { DevelopmentProposal } from '../../lib/staff';
 import type { RoutinesClient } from '../../lib/routines';
 import "./StaffPane.css";
 
@@ -17,15 +19,17 @@ export function RoleGrants({ role }: { role: StaffRole }) {
     <dt>工具</dt><dd>{role.grants.tools.join("、") || "无工具，只阅读交给它的材料"}</dd>
     <dt>私人来源</dt><dd>{role.grants.sees.join("、") || "无"}</dd>
     <dt>联网</dt><dd>{role.grants.web ? "允许查公开资料" : "不联网"}</dd>
-    <dt>项目副本</dt><dd>{role.grants.project ? "已登记权限，本批暂不派发" : "不访问"}</dd>
+    <dt>项目副本</dt><dd>{role.project_binding ? `固定项目：${role.project} · ${role.project_binding.repo_root}；只改一次性副本，交回本地分支；换项目须重新批准`
+      : role.grants.project ? "尚未绑定项目，不能单独派活" : "不访问"}</dd>
     <dt>执行框架</dt><dd>{role.engine.join("、")}</dd>
     <dt>单轮限制</dt><dd>{role.max_steps} 步 · {role.timeout_seconds} 秒</dd>
   </dl>;
 }
-export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets }: {
+export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onDevelopment }: {
   state: StaffState; onRefresh: () => void; onStatus: (member: StaffMember, status: StaffMember["status"]) => void;
   onDecide: (proposal: StaffProposal, approve: boolean) => void;
   onBudgets?: (settings: StaffBudgetSettings) => void;
+  onDevelopment?: (data: DevelopmentProposal) => void;
 }) {
   const { value, busy, error } = state;
   const disabled = busy || Boolean(error);
@@ -35,6 +39,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets }: {
     {error && <p role="alert">{error}。当前显示上次读取的数据，刷新核对后才能继续操作。</p>}
     {!value && !error && <p role="status">{busy ? "正在读取常驻助理的名录…" : "尚未核对名录，请刷新。"}</p>}
     {value && <>
+      {onDevelopment && <DevelopmentStaff value={value} disabled={disabled} onPropose={onDevelopment} />}
       {Boolean(value.standing_specialists?.length) && <details className="staff-section">
         <summary>查看三个常设专员的设置建议</summary>
         <div className="staff-section">
@@ -103,6 +108,7 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
   }, [client]);
   if (!client) return <p>请先在“电脑与连接”中登记常驻电脑。专员登记保存在常驻助理，不跟随本机项目切换。</p>;
   return <><StaffView state={state} onRefresh={() => void controller.current?.refresh()} onDecide={(proposal, approve) => void controller.current?.decide(proposal, approve)}
+    onDevelopment={client.proposeDevelopment ? data => void controller.current?.proposeDevelopment(data) : undefined}
     onBudgets={settings => void controller.current?.budgets(settings)}
     onStatus={(member, status) => {
       const current = controller.current;

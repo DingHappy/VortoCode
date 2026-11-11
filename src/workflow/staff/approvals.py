@@ -54,7 +54,8 @@ class StaffApprovals:
                 return {'kind': kind, 'data': normalized, 'previous': previous}
             if previous and data.get('revision') != previous['revision']:
                 raise ValueError('岗位版本变化')
-            normalized = self.registry.validate_role(data)
+            from src.workflow.staff.projects import bind
+            normalized = self.registry.validate_role(bind(data))
             return {'kind': kind, 'data': normalized, 'previous': previous}
         if kind == 'member':
             if set(data) - {'id', 'name', 'role', 'engine', 'model', 'department', 'limits', 'revision'}:
