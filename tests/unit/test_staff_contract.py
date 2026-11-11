@@ -357,6 +357,121 @@ async def test_real_pool_executes_staff_and_rework_with_original_contract(tmp_pa
         await pool.shutdown()
 
 
+@pytest.mark.parametrize('parallel', [1, 2])
+async def test_staff_waiting_for_member_capacity_does_not_block_other_members(tmp_path, parallel):
+    import asyncio
+    from src.workflow.tasks.tasks import TaskRunner
+    from src.workflow.staff.service import StaffService
+    registry, member, _, _ = staff_setup(tmp_path)
+    member = registry.register_member({**member, 'limits': {'parallel': parallel, 'daily_tokens': 0}})
+    other = registry.register_member({'id': 'staff-other', 'name': '另一专员', 'role': 'reader', 'engine': 'vortocode'})
+    pool = TaskRunner(str(tmp_path), None, max_concurrent=parallel + 1)
+    release, completed = asyncio.Event(), asyncio.Event()
+    started, finished = [], []
+    def update(task):
+        if task.status == 'done':
+            finished.append(task.id)
+            if len(finished) == parallel + 2:
+                completed.set()
+    async def execute(task, work, assigned, person, check):
+        check()
+        started.append(task.id)
+        await release.wait()
+        return '已核对'
+    service = StaffService(str(tmp_path), pool, execute=execute, on_update=update)
+    try:
+        own = [service.assign('owner', {'member': member['id'], 'prompt': f'核对第 {n} 份材料'})
+               for n in range(parallel + 1)]
+        independent = service.assign('owner', {'member': other['id'], 'prompt': '核对另一份材料'})
+        # Every enqueued worker gets its first timeslice; execution stays blocked on an event.
+        await asyncio.sleep(0)
+        assert started == [*[task.id for task in own[:parallel]], independent.id]
+        assert service.collaboration('owner').get(own[-1].id).status == 'queued'
+        release.set()
+        await asyncio.wait_for(completed.wait(), 2)
+        assert len(started) == len(set(started)) == parallel + 2
+    finally:
+        await pool.shutdown()
+
+
+@pytest.mark.parametrize('rejection', ['shutdown', 'false', 'exception'])
+async def test_staff_followup_enqueue_failure_has_a_durable_failed_receipt(tmp_path, monkeypatch, rejection):
+    import asyncio
+    from src.workflow.tasks.tasks import TaskRunner
+    from src.workflow.staff.service import StaffService
+    registry, member, _, _ = staff_setup(tmp_path)
+    pool = TaskRunner(str(tmp_path), None)
+    completed = asyncio.Event()
+    async def execute(*args):
+        return '上一轮的完整结果'
+    service = StaffService(str(tmp_path), pool, execute=execute,
+        on_update=lambda task: completed.set() if task.status == 'done' else None)
+    try:
+        task = service.assign('owner', {'member': member['id'], 'prompt': '核对材料'})
+        await asyncio.wait_for(completed.wait(), 2)
+        await asyncio.sleep(0)
+        work = service.collaboration('owner')
+        work.review(task.id, 1, 'rework', '补充来源')
+        if rejection == 'shutdown':
+            await pool.shutdown()
+        else:
+            def reject(*args, **kwargs):
+                if rejection == 'exception':
+                    raise RuntimeError('synthetic enqueue failure')
+                return False
+            monkeypatch.setattr(pool, 'enqueue_existing', reject)
+        with pytest.raises((RuntimeError, ValueError)):
+            service.followup('owner', task.id, 1, '补充来源')
+        current = work.get(task.id)
+        assert current.collaboration['round'] == 2
+        assert current.status == 'failed' and current.error
+        assert current.collaboration['review'] == 'not_submitted'
+        assert not pool.is_active(task.id)
+        assert any('上一轮的完整结果' in item['body'] for item in current.collaboration['messages'])
+    finally:
+        await pool.shutdown()
+
+
+@pytest.mark.parametrize('waiting_for', ['member', 'global'])
+async def test_cancelled_staff_waiter_releases_capacity_for_later_work(tmp_path, waiting_for):
+    import asyncio
+    from src.workflow.tasks.tasks import TaskRunner
+    from src.workflow.staff.service import StaffService
+    registry, member, _, _ = staff_setup(tmp_path)
+    release, started = asyncio.Event(), asyncio.Event()
+    seen = []
+    async def ordinary_worker(task, progress):
+        started.set()
+        await release.wait()
+        return '普通任务完成'
+    async def execute(task, *args):
+        seen.append(task.id)
+        started.set()
+        await release.wait()
+        return '专员任务完成'
+    pool = TaskRunner(str(tmp_path), ordinary_worker, max_concurrent=1)
+    service = StaffService(str(tmp_path), pool, execute=execute)
+    try:
+        if waiting_for == 'global':
+            first = await pool.submit('占用共享名额')
+        else:
+            first = service.assign('owner', {'member': member['id'], 'prompt': '占用专员名额'})
+        await asyncio.wait_for(started.wait(), 2)
+        waiting = service.assign('owner', {'member': member['id'], 'prompt': '等待后取消'})
+        await asyncio.sleep(0)
+        assert pool.cancel(waiting.id)
+        await asyncio.wait_for(pool.join(waiting.id), 2)
+        assert service.collaboration('owner').get(waiting.id).status == 'cancelled'
+        later = service.assign('owner', {'member': member['id'], 'prompt': '后续任务'})
+        release.set()
+        await asyncio.wait_for(pool.join(first.id), 2)
+        await asyncio.wait_for(pool.join(later.id), 2)
+        assert waiting.id not in seen and later.id in seen
+        assert service.collaboration('owner').get(later.id).status == 'done'
+    finally:
+        await pool.shutdown()
+
+
 async def test_actual_member_assembly_runs_without_inheriting_owner_memory(tmp_path, monkeypatch):
     from src.agents import staff
     from src.workflow.tasks.collaboration import CollaborationService
