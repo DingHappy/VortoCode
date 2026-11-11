@@ -64,18 +64,20 @@ class StaffBudgets:
         dispatch = task.collaboration['dispatch']
         current = TaskLedger(self.root).load(task.id)
         spent = (current.collaboration.get('usage') or {}).get('tokens', 0) if current else 0
+        department = self.registry.department(dispatch['department']) if dispatch['department'] else None
+        department_limit = department['limits']['daily_tokens'] if department else 0
+        limits_on = settings['daily_tokens'] or settings['task_tokens'] or member['limits']['daily_tokens'] or department_limit
         unknown = [t for t in TaskLedger(self.root).list() if (t.collaboration.get('usage') or {}).get('complete') is False
                    and (t.collaboration.get('usage') or {}).get('day') == usage['day']
-                   and t.collaboration.get('dispatch', {}).get('source') == 'staff']
-        if unknown and (settings['daily_tokens'] or settings['task_tokens'] and current and current in unknown
+                   and t.collaboration.get('dispatch', {}).get('source') == 'staff'] if limits_on else []
+        task_unknown = settings['task_tokens'] and current and (current.collaboration.get('usage') or {}).get('complete') is False
+        if task_unknown or unknown and (settings['daily_tokens']
                         or member['limits']['daily_tokens'] and any(t.collaboration['dispatch']['member'] == member['id'] for t in unknown)
-                        or dispatch['department'] and self.registry.department(dispatch['department'])['limits']['daily_tokens']
-                        and any(t.collaboration['dispatch']['department'] == dispatch['department'] for t in unknown)):
+                        or department_limit and any(t.collaboration['dispatch']['department'] == dispatch['department'] for t in unknown)):
             return {'scope': 'accounting', 'reason': '相关模型用量不完整，先核对用量或明确调整额度，不能按零放行', 'day': usage['day']}
         checks = [('task', spent, settings['task_tokens']), ('global', usage['total'], settings['daily_tokens']),
                   ('member', usage['members'].get(member['id'], 0), member['limits']['daily_tokens'])]
-        if dispatch['department']:
-            department = self.registry.department(dispatch['department'])
+        if department:
             if department['status'] != 'active':
                 return {'scope': 'department', 'reason': '部门已暂停', 'day': usage['day']}
             checks.append(('department', usage['departments'].get(department['id'], 0), department['limits']['daily_tokens']))

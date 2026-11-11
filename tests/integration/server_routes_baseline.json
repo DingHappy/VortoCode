@@ -1728,5 +1728,23 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/staff/departments/{department_id}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/staff/departments/{department_id}/notes/decision",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/staff/budgets",
+    "methods": [
+      "PUT"
+    ]
   }
 ]

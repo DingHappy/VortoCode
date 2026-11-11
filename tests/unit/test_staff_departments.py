@@ -174,6 +174,30 @@ async def test_task_freezes_note_version_and_agent_only_proposes_changes(tmp_pat
         await pool.shutdown()
 
 
+async def test_followup_cannot_cross_departments_after_member_moves(tmp_path):
+    registry = StaffRegistry(str(tmp_path)); member = specialist(registry, 'reader')
+    original = department(registry, 'first', [member])
+    pool = TaskRunner(str(tmp_path), None)
+    seen = []
+    async def execute(task, *args):
+        seen.append(task.collaboration['dispatch']['department'])
+        return '已交回'
+    service = StaffService(str(tmp_path), pool, execute=execute)
+    try:
+        task = service.assign('owner', {'member': member['id'], 'prompt': '整理公开材料'})
+        await pool.join(task.id)
+        registry.register_department({**original, 'members': []})
+        department(registry, 'second', [member])
+        with pytest.raises(ValueError, match='部门.*变化'):
+            service.followup('owner', task.id, 1, '补充来源')
+        current = TaskLedger(tmp_path).load(task.id)
+        assert current.collaboration['round'] == 1
+        assert current.collaboration['dispatch']['department'] == original['id']
+        assert seen == [original['id']]
+    finally:
+        await pool.shutdown()
+
+
 async def test_department_capacity_does_not_take_global_slots_while_waiting(tmp_path):
     registry = StaffRegistry(str(tmp_path))
     one = specialist(registry, 'one'); two = specialist(registry, 'two'); other = specialist(registry, 'other')
@@ -199,3 +223,109 @@ async def test_department_capacity_does_not_take_global_slots_while_waiting(tmp_
         assert '第二项' in seen
     finally:
         release.set(); await pool.shutdown()
+
+
+def test_department_notes_and_budget_routes_require_owner_credentials_and_strict_versions(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.web.server import app
+    registry = StaffRegistry(str(tmp_path)); member = specialist(registry, 'reader')
+    dept = department(registry, 'public', [member])
+    monkeypatch.chdir(tmp_path); monkeypatch.setenv('VORTOONE_API_TOKEN', 'offline-owner-fixture')
+    monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
+    client = TestClient(app); headers = {'Authorization': 'Bearer offline-owner-fixture'}
+    path = f"/api/staff/departments/{dept['id']}"
+    for method, endpoint, body in [('GET', path, None), ('POST', path + '/notes/decision', {'owner_text': '公开偏好', 'public': True}),
+        ('PUT', '/api/staff/budgets', {'revision': 1, 'daily_tokens': 100, 'task_tokens': 50})]:
+        assert client.request(method, endpoint, json=body).status_code == 401
+        assert client.request(method, endpoint, json=body, headers={'Authorization': 'Bearer device-fixture'}).status_code == 401
+    detail = client.get(path, headers=headers)
+    assert detail.status_code == 200 and detail.json()['notes']['snapshot']['revision'] == 0
+    assert detail.json()['tasks_complete']
+    result = client.post(path + '/notes/decision', headers=headers, json={'revision': 0, 'owner_text': '每条附出处', 'public': True})
+    assert result.status_code == 200 and result.json()['revision'] == 1
+    assert client.post(path + '/notes/decision', headers=headers, json={'revision': 0, 'owner_text': '新条目', 'public': True}).status_code == 409
+    assert client.post(path + '/notes/decision', headers=headers, json={'revision': 1, 'owner_text': '条目', 'sources': []}).status_code == 422
+    settings = client.get('/api/staff', headers=headers).json()['budget_settings']
+    assert client.put('/api/staff/budgets', headers=headers,
+        json={'revision': settings['revision'], 'daily_tokens': True, 'task_tokens': 0}).status_code == 422
+    assert client.put('/api/staff/budgets', headers=headers,
+        json={'revision': settings['revision'], 'daily_tokens': -1, 'task_tokens': 0}).status_code == 409
+    assert client.put('/api/staff/budgets', headers=headers,
+        json={'revision': settings['revision'], 'daily_tokens': 100, 'task_tokens': 50}).status_code == 200
+    assert client.put('/api/staff/budgets', headers=headers,
+        json={'revision': settings['revision'], 'daily_tokens': 0, 'task_tokens': 0}).status_code == 409
+
+
+def test_note_digest_tampering_and_fulltext_changes_never_expand_saved_authority(tmp_path):
+    registry = StaffRegistry(str(tmp_path)); member = specialist(registry, 'reader')
+    dept = department(registry, 'public', [member]); notes = StaffNotes(str(tmp_path))
+    notes.propose(dept['id'], ['原条目'], task_id='task-0123456789', round=1, member=member['id'], sources=[])
+    item = notes.pending(dept['id'])[0]
+    path = registry.directory / ('notes-' + dept['id'] + '.json')
+    state = json.loads(path.read_text()); state['pending'][0]['text'] = '替换后的条目'; path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match='摘要'):
+        notes.decide(dept['id'], {item['id']: {'approve': True, 'digest': item['digest']}}, 0, public=True)
+
+
+async def test_real_staff_assembly_freezes_notes_and_keeps_external_notes_tainted(tmp_path, monkeypatch):
+    from src.agents import staff
+    from src.agents.taint import is_tainted, reset_taint
+    from src.llm.client import add_usage
+    registry = StaffRegistry(str(tmp_path)); member = specialist(registry, 'reader')
+    dept = department(registry, 'public', [member]); notes = StaffNotes(str(tmp_path))
+    notes.propose(dept['id'], ['外部资料须核对出处'], task_id='task-0123456789', round=1, member=member['id'], sources=[])
+    suggestion = notes.pending(dept['id'])[0]
+    notes.decide(dept['id'], {suggestion['id']: {'approve': True, 'digest': suggestion['digest']}}, 0, public=True)
+    observed = []
+    class FakeLLM:
+        async def chat(self, messages, **kwargs):
+            observed.append((is_tainted(), str(messages)))
+            add_usage(10, 2, model='offline-fixture')
+            return {'content': '按已确认笔记交回结论', 'tool_calls': []}
+        async def close(self): pass
+    build = staff.build_staff_member
+    def factory(root, role, member, **kwargs):
+        return build(root, role, member, **kwargs, llm=FakeLLM())
+    monkeypatch.setattr(staff, 'build_staff_member', factory)
+    pool = TaskRunner(str(tmp_path), None)
+    service = StaffService(str(tmp_path), pool, execute=None)
+    service.execute = lambda task, work, role, member, check: staff.execute_staff(str(tmp_path), task, work, role, member, check, approval_service=service)
+    try:
+        reset_taint()
+        task = service.assign('owner', {'member': member['id'], 'prompt': '整理公开材料'})
+        await pool.join(task.id)
+        current = TaskLedger(tmp_path).load(task.id)
+        assert current.status == 'done', current.error
+        assert observed and all(tainted and '外部资料须核对出处' in prompt for tainted, prompt in observed)
+        assert current.collaboration['dispatch']['notes']['revision'] == 1
+    finally:
+        reset_taint(); await pool.shutdown()
+
+
+def test_owner_can_cancel_interrupted_save_after_member_retirement_without_granting_it(tmp_path, monkeypatch):
+    registry = StaffRegistry(str(tmp_path)); member = specialist(registry, 'reader')
+    dept = department(registry, 'public', [member]); notes = StaffNotes(str(tmp_path))
+    with monkeypatch.context() as patch:
+        patch.setattr(notes, '_markdown', lambda *args: (_ for _ in ()).throw(OSError('fixture')))
+        with pytest.raises(OSError):
+            notes.decide(dept['id'], {}, 0, owner_text='原目标内容', public=True)
+    request = notes.inspect(dept['id'])['applying']['request']
+    registry.set_member_status(member['id'], 'retired', member['revision'])
+    with pytest.raises(ValueError, match='撤掉'):
+        notes.resume(dept['id'], request)
+    result = notes.cancel_save(dept['id'], request)
+    assert result['text'] == '' and result['revision'] == 1
+    with pytest.raises(ValueError):
+        notes.resume(dept['id'], request)
+
+
+def test_role_change_cannot_turn_private_external_notes_into_execution_permission(tmp_path):
+    registry = StaffRegistry(str(tmp_path)); member = specialist(registry, 'memory', sees=['memory'])
+    dept = department(registry, 'private', [member]); notes = StaffNotes(str(tmp_path))
+    notes.propose(dept['id'], ['待核对资料'], task_id='task-0123456789', round=1, member=member['id'], sources=['memory'])
+    item = notes.pending(dept['id'])[0]
+    notes.decide(dept['id'], {item['id']: {'approve': True, 'digest': item['digest']}}, 0)
+    role = registry.role(member['role']); role['grants']['operations'].append('execute')
+    with pytest.raises(ValueError, match='5.2'):
+        registry.register_role(role)
+    assert registry.role(member['role'])['grants']['operations'] == ['read']

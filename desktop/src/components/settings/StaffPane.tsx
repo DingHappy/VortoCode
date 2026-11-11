@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { confirmAction } from "../../lib/confirm";
 import { GatewayClient } from "../../gateway";
-import { staffController, type StaffClient, type StaffState, type StaffRole, type StaffMember, type StaffProposal } from "../../lib/staff";
+import { staffController, type StaffClient, type StaffState, type StaffRole, type StaffMember, type StaffProposal, type StaffBudgetSettings } from "../../lib/staff";
+import { StaffBudgets } from "./StaffBudgets";
 import "./StaffPane.css";
 
 const statuses = { active: "可接活", paused: "已暂停", retired: "已撤掉" };
@@ -19,10 +20,10 @@ export function RoleGrants({ role }: { role: StaffRole }) {
     <dt>单轮限制</dt><dd>{role.max_steps} 步 · {role.timeout_seconds} 秒</dd>
   </dl>;
 }
-export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll }: {
+export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll, onBudgets }: {
   state: StaffState; onRefresh: () => void; onStatus: (member: StaffMember, status: StaffMember["status"]) => void;
   onDecide: (proposal: StaffProposal, approve: boolean) => void;
-  onEnroll?: (authorization: string) => void;
+  onEnroll?: (authorization: string) => void; onBudgets?: (settings: StaffBudgetSettings) => void;
 }) {
   const { value, busy, error } = state;
   const [authorization, setAuthorization] = useState("");
@@ -30,10 +31,11 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll }: {
   const disabled = busy || Boolean(error);
   return <div className="staff-pane">
     <div className="settings-card-head"><strong>专员与岗位</strong><button disabled={busy} onClick={onRefresh}>{busy ? "正在核对…" : "刷新名录"}</button></div>
-    <p className="settings-card-note">在对话里请助理提议专员。权限来自已批准岗位，派活不能临时加权限。本批先开放只读任务。</p>
+    <p className="settings-card-note">在对话里请助理提议专员或部门。权限来自已批准岗位，派活不能临时加权限；需要确认的动作会等待主人审批。</p>
     {error && <p role="alert">{error}。当前显示上次读取的数据，刷新核对后才能继续操作。</p>}
     {!value && !error && <p role="status">{busy ? "正在读取常驻助理的名录…" : "尚未核对名录，请刷新。"}</p>}
     {value && <>
+      {value.budget_settings && <StaffBudgets value={value.budget_settings} usage={value.usage} disabled={disabled} onSave={onBudgets} />}
       {!value.approval_key.key && <section aria-label="首次登记批准钥匙" className="settings-card">
         <h3>首次登记批准钥匙</h3>
         <p>在后台所在电脑的服务工作目录运行 <code>vc staff-key-authorize</code>，确认后将一次性授权码填在这里。授权码 5 分钟有效，登记后失效。</p>
@@ -54,6 +56,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll }: {
             <p>{proposal.reason}</p>
             <p className="settings-card-note">{proposal.status === "applying" ? "已有主人批准记录，登记结果待核对；可核对后继续完成。" : "待你批准，尚未登记或授予权限。"}</p>
             {role && <><p>{role.brief}</p><RoleGrants role={role} /></>}
+            {proposal.snapshot.members_snapshot?.map(member => <div key={member.id}><strong>{member.name}</strong><RoleGrants role={member.role_snapshot} /></div>)}
             <details><summary>提议原文与变更前记录</summary><pre className="staff-record">{JSON.stringify(proposal.snapshot, null, 2)}</pre></details>
             <p className="settings-card-note">{proposal.requires_desktop_key ? "此提议涉及联网、私人来源或写入，必须在这台 Mac 用 Touch ID 批准。" : "只读、不联网、没有私人来源的登记。"}</p>
             <div className="settings-card-actions">
@@ -102,6 +105,7 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
   }, [client]);
   if (!client) return <p>请先在“电脑与连接”中登记常驻电脑。专员登记保存在常驻助理，不跟随本机项目切换。</p>;
   return <StaffView state={state} onRefresh={() => void controller.current?.refresh()} onDecide={(proposal, approve) => void controller.current?.decide(proposal, approve)}
+    onBudgets={settings => void controller.current?.budgets(settings)}
     onEnroll={authorization => void controller.current?.enroll(authorization)}
     onStatus={(member, status) => {
       const current = controller.current;

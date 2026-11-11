@@ -9,7 +9,7 @@ type Identity = NonNullable<ReturnType<typeof taskQuestionIdentity>>;
 
 export function TaskQuestionActions({ task, getClient, onUpdated }: Props) {
   const identity = taskQuestionIdentity(task);
-  if (task.status !== "blocked" || task.dependencies?.result_valid === false || task.collaboration?.approval) return null;
+  if (task.status !== "blocked" || task.dependencies?.result_valid === false || task.collaboration?.approval || task.collaboration?.quota?.status === "waiting") return null;
   if (!identity) return <div className="task-question-actions">
     <p>当前问题已过期或无法回答，请刷新任务后检查。</p>
     <button onClick={onUpdated}>刷新任务</button>

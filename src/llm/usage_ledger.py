@@ -101,7 +101,11 @@ def day_usage(day: date, *, strict: bool = False) -> Dict[str, Dict[str, int]]:
     """某天各来源的用量。"""
     if strict:
         path = _path()
+        if path.is_symlink():
+            raise ValueError('用量台账不可核对')
         if not path.exists():
+            if path.parent.exists() and not path.parent.is_dir():
+                raise ValueError('用量台账目录不可读取')
             return {}
         if path.is_symlink() or path.stat().st_size > 8 * 1024 * 1024:
             raise ValueError('用量台账不可核对')

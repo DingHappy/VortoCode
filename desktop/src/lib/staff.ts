@@ -8,14 +8,24 @@ export interface StaffRole {
 export interface StaffMember {
   id: string; name: string; role: string; engine: string; model: string; revision: number;
   status: "active" | "paused" | "retired"; busy: number;
+  department?: string;
   recent_tasks: Array<{ id: string; status: string; review: string; delivery: string; prompt?: string }>;
 }
 export interface StaffProposal {
   id: string; digest: string; nonce: string; status: string; reason: string; requires_desktop_key: boolean;
-  snapshot: { kind: "role" | "member"; data: Record<string, unknown>; previous: unknown; role_snapshot?: StaffRole };
+  snapshot: { kind: "role" | "member" | "department"; data: Record<string, unknown>; previous: unknown; role_snapshot?: StaffRole;
+    members_snapshot?: Array<StaffMember & { role_snapshot: StaffRole }> };
 }
+export interface StaffDepartment {
+  id: string; name: string; duty: string; members: string[]; lead: string; revision: number;
+  status: "active" | "paused" | "retired"; limits: { parallel: number; daily_tokens: number };
+  notes_revision: number; pending_notes?: number; notes_pending_save?: boolean; busy?: number;
+}
+export interface StaffBudgetSettings { revision: number; daily_tokens: number; task_tokens: number }
+export interface StaffUsage { day?: string; total?: number; departments?: Record<string, number>; members?: Record<string, number>; error?: string }
 export interface StaffSnapshot {
   roles: StaffRole[]; members: StaffMember[]; proposals: StaffProposal[];
+  departments?: StaffDepartment[]; budget_settings?: StaffBudgetSettings; usage?: StaffUsage;
   approval_key: { instance: string; key: { id: string; public_key: string } | null };
 }
 export interface StaffProof { public_key: string; signature: string }
@@ -25,6 +35,7 @@ export interface StaffClient {
   decideStaff(id: string, approve: boolean, digest: string, signature?: string): Promise<unknown>;
   bindStaffKey(proof: StaffProof, authorization: string): Promise<unknown>;
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown>;
+  setStaffBudgets?(settings: StaffBudgetSettings): Promise<StaffBudgetSettings>;
 }
 export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string }
 export function signStaff(request: StaffSignRequest): Promise<StaffProof> {
@@ -64,6 +75,13 @@ export function staffController(client: StaffClient, publish: (state: StaffState
   }
   return {
     refresh,
+    budgets(settings: StaffBudgetSettings) {
+      return change(async fresh => {
+        if (!client.setStaffBudgets || fresh.budget_settings?.revision !== settings.revision)
+          throw new Error("额度设置已变化或当前服务不支持，请刷新");
+        await client.setStaffBudgets(settings);
+      });
+    },
     dispose() { active = false; ++serial; },
     status(member: StaffMember, status: StaffMember["status"]) {
       return change(async fresh => {

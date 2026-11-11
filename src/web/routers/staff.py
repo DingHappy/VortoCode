@@ -35,6 +35,7 @@ class NotesDecision(BaseModel):
     owner_text: str = ''
     public: StrictBool = False
     resume: str | None = None
+    cancel_save: str | None = None
 
 
 class Budgets(BaseModel):
@@ -137,9 +138,12 @@ def department_detail(department_id: str):
     def read():
         registry = StaffRegistry(os.getcwd())
         department = registry.department(department_id)
-        tasks = [t for t in TaskLedger(os.getcwd()).list(limit=500)
+        records = TaskLedger(os.getcwd()).list(limit=501)
+        tasks = [t for t in records[:500]
                  if t.collaboration.get('dispatch', {}).get('department') == department_id]
         budgets = StaffBudgets(os.getcwd())
+        notes = StaffNotes(os.getcwd()).inspect(department_id)
+        department['notes_revision'] = notes['current']['revision']
         try:
             usage = budgets.usage()
         except (OSError, ValueError):
@@ -147,7 +151,8 @@ def department_detail(department_id: str):
         return {'department': department, 'members': [registry.member(x) for x in department['members']],
             'roles': [registry.role(registry.member(x)['role']) for x in department['members']],
             'tasks': [{**t.to_dict(), 'created_at': t.created, 'updated_at': t.updated} for t in tasks],
-            'notes': StaffNotes(os.getcwd()).inspect(department_id), 'usage': usage,
+            'tasks_complete': len(records) < 501,
+            'notes': notes, 'usage': usage,
             'budget_settings': budgets.settings()}
     return _apply(read)
 
@@ -158,9 +163,13 @@ def notes_decision(department_id: str, body: NotesDecision):
     _owner_write()
     def apply():
         notes = StaffNotes(os.getcwd())
-        if body.resume:
+        if body.resume or body.cancel_save:
             if body.selected or body.owner_text or body.public or body.revision:
                 raise ValueError('完成原保存时不能附加新决定')
+            if body.resume and body.cancel_save:
+                raise ValueError('完成和取消不能同时选择')
+            if body.cancel_save:
+                return notes.cancel_save(department_id, body.cancel_save)
             return notes.resume(department_id, body.resume)
         return notes.decide(department_id, {key: value.model_dump() for key, value in body.selected.items()},
             body.revision, owner_text=body.owner_text, public=body.public)

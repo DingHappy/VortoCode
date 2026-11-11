@@ -106,27 +106,32 @@ class StaffService:
         self._loop = asyncio.get_running_loop()
         work = self.collaboration(task.owner_session)
         def waiting(current):
-            if current.status != 'running':
+            if current.status != 'running' and not (current.status == 'blocked' and current.collaboration.get('quota', {}).get('status') == 'waiting'):
                 raise ValueError('任务不在运行中，不能等待额度')
             current.status = 'blocked'
             current.collaboration['quota'] = {**reason, 'status': 'waiting'}
         budget.pause()
         try:
-            async with self.runner.waiting_for_owner(task.id):
-                work.update_staff_action(task.id, task.collaboration['round'], waiting)
-                while True:
-                    self._budget_changed.clear()
-                    self.check(member, role)
-                    reason = self.budgets.status(task, member)
-                    if reason is None:
-                        break
-                    now = datetime.now().astimezone()
-                    tomorrow = datetime.combine(now.date() + timedelta(days=1), time.min).astimezone()
-                    try:
-                        await asyncio.wait_for(self._budget_changed.wait(), max(1, (tomorrow - now).total_seconds()))
-                    except asyncio.TimeoutError:
-                        pass
-            self.check(member, role)
+            while True:
+                async with self.runner.waiting_for_owner(task.id):
+                    work.update_staff_action(task.id, task.collaboration['round'], waiting)
+                    while True:
+                        self._budget_changed.clear()
+                        self.check(member, role)
+                        reason = self.budgets.status(task, member)
+                        if reason is None:
+                            break
+                        now = datetime.now().astimezone()
+                        tomorrow = datetime.combine(now.date() + timedelta(days=1), time.min).astimezone()
+                        try:
+                            await asyncio.wait_for(self._budget_changed.wait(), max(1, (tomorrow - now).total_seconds()))
+                        except asyncio.TimeoutError:
+                            pass
+                self.check(member, role)
+                # A peer request may settle while this worker waits to re-enter the pool.
+                reason = self.budgets.status(task, member)
+                if reason is None:
+                    break
             def resume(current):
                 if current.status != 'blocked' or current.collaboration.get('quota', {}).get('status') != 'waiting':
                     raise ValueError('额度等待已失效')
@@ -296,6 +301,8 @@ class StaffService:
             self.executable(role)
             if role['revision'] != dispatch['role_revision'] or member['revision'] != dispatch['member_revision']:
                 raise ValueError('原岗位或专员已变化，须重新派活，不能扩大原任务权限')
+            if member['department'] != dispatch.get('department', ''):
+                raise ValueError('原部门已变化，须重新派活，不能跨部门续用原任务')
             task = work.followup(task_id, number, message)
             if member['department']:
                 from src.workflow.staff.notes import StaffNotes

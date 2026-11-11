@@ -614,7 +614,11 @@ export interface TaskItem {
     tainted: boolean;
     questions?: TaskQuestion[];
     approval?: import("./lib/staffAction").StaffAction;
-    dispatch?: { source: "api" | "staff"; fingerprint?: string; max_steps: number; timeout_seconds: number };
+    quota?: { status: string; scope: string; reason: string; day: string };
+    usage?: { tokens: number; calls: number; complete: boolean; day: string };
+    notes_error?: string; note_suggestions?: string[];
+    dispatch?: { source: "api" | "staff"; fingerprint?: string; max_steps: number; timeout_seconds: number;
+      department?: string; notes?: import("./lib/departments").DepartmentNoteSnapshot };
     messages: Array<{ id: string; kind: string; sender: string; round: number; body: string; created: string }>;
   };
   development?: { version: 1; round: number; owner_session: string; plan_id: string; root_task_id: string; questions: TaskQuestion[] };

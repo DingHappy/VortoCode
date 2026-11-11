@@ -98,6 +98,8 @@ class StaffNotes:
             state = self._read(department)
             request = digest({'selected': selected, 'revision': expected_revision, 'owner_text': owner_text, 'public': public})
             if state['history'] and state['history'][-1].get('request') == request:
+                if state['history'][-1].get('cancelled'):
+                    raise ValueError('原保存已取消，不能重新执行旧决定')
                 return self.snapshot(department)
             applying = state.get('applying')
             if applying and applying['request'] != request:
@@ -146,12 +148,26 @@ class StaffNotes:
         with TASK_STATE_LOCK:
             state = self._read(department)
             if not state.get('applying'):
-                if state['history'] and state['history'][-1].get('request') == request:
+                if state['history'] and state['history'][-1].get('request') == request and not state['history'][-1].get('cancelled'):
                     return self.snapshot(department)
                 raise ValueError('没有匹配的已批准保存')
             if state['applying']['request'] != request:
                 raise ValueError('保存决定摘要不匹配')
             return self._complete(department, self.registry.department(department), state)
+
+    def cancel_save(self, department, request):
+        """Owner cancels an interrupted write; restore only the previous approved Markdown."""
+        with TASK_STATE_LOCK:
+            state = self._read(department)
+            if not state.get('applying') or state['applying']['request'] != request:
+                raise ValueError('没有匹配的待完成保存')
+            current = deepcopy(state['current'])
+            current['revision'] += 1
+            self._markdown(department, current['text'])
+            state['current'], state['applying'] = current, None
+            state['history'] = [*state['history'], {'request': request, 'cancelled': True}][-256:]
+            self.registry._write(self._name(department), state)
+            return self.snapshot(department)
 
     def inspect(self, department):
         state = deepcopy(self._read(department))

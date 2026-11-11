@@ -31,6 +31,7 @@ export interface FeedItem {
   at: string;
   session?: string;
   taskId?: string;
+  departmentId?: string;
   /** An explicit open question stays with the owner, even inside a team. */
   requiresReply?: boolean;
   teamContext?: { id: string; objective: string; member: string };
@@ -72,6 +73,7 @@ function openQuestion(task: TaskItem) {
 }
 
 export function feedStatus(task: TaskItem): FeedStatus {
+  if (task.status === "blocked" && task.collaboration?.quota?.status === "waiting") return "stopped";
   if (task.collaboration?.dispatch?.source === "staff" && task.status === "blocked" && task.collaboration.approval) {
     const state = task.collaboration.approval.status;
     return state === "pending" ? "waiting" : ["approved", "denied"].includes(state) ? "running" : "stopped";
@@ -91,7 +93,8 @@ export function taskFeedItem(task: TaskItem): FeedItem {
   const status = feedStatus(task);
   const question = openQuestion(task);
   const approval = task.collaboration?.dispatch?.source === "staff" && task.status === "blocked" ? task.collaboration.approval : undefined;
-  const summary = approval?.status === "pending" ? `专员等你批准：${firstSentence(approval.payload.message, MAX_SUMMARY - 7)}`
+  const summary = task.status === "blocked" && task.collaboration?.quota?.status === "waiting" ? task.collaboration.quota.reason
+    : approval?.status === "pending" ? `专员等你批准：${firstSentence(approval.payload.message, MAX_SUMMARY - 7)}`
     : approval && ["approved", "denied"].includes(approval.status) ? "审批决定已保存，等待继续执行"
     : approval ? "审批等待已中断或过期，请核对任务历史"
     : question ? `等你回复：${firstSentence(question.question, MAX_SUMMARY - 5)}`
@@ -110,7 +113,7 @@ export function taskFeedItem(task: TaskItem): FeedItem {
     summary,
     detail: approval?.payload.message || task.result || task.error || summary,
     status,
-    sourceLabel: task.collaboration?.dispatch?.source === "staff" ? "专员" : "后台任务",
+    sourceLabel: task.collaboration?.dispatch?.source === "staff" ? (task.collaboration.dispatch.department || "专员") : "后台任务",
     statusLabel: task.status === "cancelled" && status === "stopped" ? "已取消" : status === "done" ? "执行结束" : status === "running" && task.status === "queued" ? "排队中" : undefined,
     at: task.updated_at || task.created_at || "",
     session: task.owner_session || undefined,
