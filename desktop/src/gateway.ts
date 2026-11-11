@@ -1,4 +1,5 @@
-import type { StaffSnapshot, StaffProof, StaffMember } from "./lib/staff";
+import type { StaffSnapshot, StaffProof, StaffMember, StaffBudgetSettings } from "./lib/staff";
+import type { DepartmentDetail, DepartmentNoteSnapshot, NotesDecision } from "./lib/departments";
 import type { StaffAction } from "./lib/staffAction";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { ownerAccessSnapshot, type OwnerAccessSnapshot } from "./lib/ownerAccess";
@@ -389,6 +390,15 @@ export class GatewayClient {
   }
 
   readStaff(): Promise<StaffSnapshot> { return this.request("/api/staff"); }
+  readDepartment(id: string): Promise<DepartmentDetail> {
+    return this.request(`/api/staff/departments/${encodeURIComponent(id)}`);
+  }
+  decideDepartmentNotes(id: string, body: NotesDecision): Promise<DepartmentNoteSnapshot> {
+    return this.request(`/api/staff/departments/${encodeURIComponent(id)}/notes/decision`, { method: "POST", body: JSON.stringify(body) });
+  }
+  setStaffBudgets(settings: StaffBudgetSettings): Promise<StaffBudgetSettings> {
+    return this.request("/api/staff/budgets", { method: "PUT", body: JSON.stringify(settings) });
+  }
   readStaffAction(task: string): Promise<StaffAction> {
     return this.request(`/api/staff/actions/${encodeURIComponent(task)}`);
   }

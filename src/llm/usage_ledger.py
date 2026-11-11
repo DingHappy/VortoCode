@@ -27,6 +27,18 @@ RUNAWAY_FLOOR = 2_000_000        # 一天低于这么多 token 不算失控，�
 RUNAWAY_FACTOR = 3               # 比前 7 天日均多这么多倍才算
 
 _source: "contextvars.ContextVar[str]" = contextvars.ContextVar("vc_usage_source", default="")
+_receipts: contextvars.ContextVar = contextvars.ContextVar('usage_record_receipts', default=None)
+
+
+@contextmanager
+def recording_receipts():
+    """Trusted budget adapters may stop on missing accounting; ordinary callers keep best effort."""
+    result = []
+    token = _receipts.set(result)
+    try:
+        yield result
+    finally:
+        _receipts.reset(token)
 
 
 @contextmanager
@@ -77,13 +89,36 @@ def record(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0, *
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(data, handle, ensure_ascii=False, sort_keys=True)
             os.replace(tmp, path)
+        if _receipts.get() is not None:
+            _receipts.get().append(True)
     except (OSError, ValueError, TypeError) as error:
         logger.debug("用量台账没记上：%s", type(error).__name__)
+        if _receipts.get() is not None:
+            _receipts.get().append(False)
 
 
-def day_usage(day: date) -> Dict[str, Dict[str, int]]:
+def day_usage(day: date, *, strict: bool = False) -> Dict[str, Dict[str, int]]:
     """某天各来源的用量。"""
-    sources = _read(_path()).get(day.isoformat()) or {}
+    if strict:
+        path = _path()
+        if path.is_symlink():
+            raise ValueError('用量台账不可核对')
+        if not path.exists():
+            if path.parent.exists() and not path.parent.is_dir():
+                raise ValueError('用量台账目录不可读取')
+            return {}
+        if path.is_symlink() or path.stat().st_size > 8 * 1024 * 1024:
+            raise ValueError('用量台账不可核对')
+        data = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(data, dict):
+            raise ValueError('用量台账格式无效')
+        sources = data.get(day.isoformat(), {})
+        if not isinstance(sources, dict) or any(not isinstance(bucket, dict) or
+            any(type(bucket.get(key)) is not int or bucket[key] < 0 for key in ('calls', 'prompt', 'completion', 'cached'))
+            for bucket in sources.values()):
+            raise ValueError('用量台账数字无效')
+    else:
+        sources = _read(_path()).get(day.isoformat()) or {}
     return {name: bucket for name, bucket in sources.items() if isinstance(bucket, dict)}
 
 

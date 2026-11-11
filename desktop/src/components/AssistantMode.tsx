@@ -51,7 +51,8 @@ export const SIDE_CHAT_LIMIT = 5;
 
 /** 助理模式左侧（ADR-016）：只放会话。新对话、搜索；主要聊天置顶（角标 = 等你的件数）；任务小组；旁聊（含手机、本机的）。 */
 export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
-  search, query = "", onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam }: {
+  search, query = "", onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam,
+  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
   /** 手机上和助理的聊天：点开只读查看 */
@@ -78,6 +79,10 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   teams?: Array<{ id: string; title: string; status: string }>;
   currentTeam?: string;
   onOpenTeam?: (id: string) => void;
+  departments?: Array<{ id: string; title: string; status: string; pending: number }>;
+  currentDepartment?: string;
+  departmentError?: string;
+  onOpenDepartment?: (id: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
   const chatsId = useId(), moreButton = useRef<HTMLButtonElement>(null), scrollToggle = useRef(false);
@@ -88,8 +93,9 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   }, [showAll]);
   const keyword = query.trim();
   const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
-  const inChat = !page && !currentTeam;
+  const inChat = !page && !currentTeam && !currentDepartment;
   const groups = teams.filter((team) => matches(team.title, query));
+  const departmentGroups = departments.filter(item => matches(item.title, query));
   const others = [
     ...sideChats.map(chat => ({ ...chat, title: chat.title.trim() || "新的旁聊" })).filter(chat => matches(chat.title, query)).map((chat) => <NavItem key={chat.sid} className="vc-nav-item--recent"
       label={chat.title} title={chat.title} current={inChat && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />),
@@ -103,7 +109,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   const collapsedLimit = Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
   const limit = keyword || showAll ? others.length : collapsedLimit;
   const mainMatches = matches("主要聊天", query);
-  const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !others.length;
+  const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !departmentGroups.length && !others.length;
   return <>
     <nav className="vc-side-nav" aria-label="助理">
       <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
@@ -115,6 +121,12 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
         meta={badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
           aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span>
           : mainChat.busy ? <LiveDot /> : undefined} />}
+      {(departmentGroups.length > 0 || departmentError) && <GroupTitle>部门</GroupTitle>}
+      {departmentError && <p role="status">{departmentError}</p>}
+      {departmentGroups.map(department => <NavItem key={department.id} className="vc-nav-item--recent"
+        label={department.title} title={`部门：${department.title}`} current={currentDepartment === department.id}
+        onClick={() => onOpenDepartment?.(department.id)} meta={department.pending > 0 ? <span className="vc-count" aria-label="有笔记等主人核对">•</span>
+          : department.status === "paused" ? "暂停" : undefined} />)}
       {groups.length > 0 && <GroupTitle>任务小组</GroupTitle>}
       {groups.map((team) => <NavItem key={team.id} className="vc-nav-item--recent vc-nav-item--team" icon={<Users aria-hidden="true" />}
         label={team.title} title={`任务小组：${team.title}`} current={currentTeam === team.id} onClick={() => onOpenTeam?.(team.id)}

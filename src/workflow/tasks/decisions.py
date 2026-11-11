@@ -158,6 +158,13 @@ def build_decision_queue(
             continue
         collaboration = getattr(task, "collaboration", {}) or {}
         review = collaboration.get("review")
+        quota = collaboration.get('quota') or {}
+        if status == 'blocked' and quota.get('status') == 'waiting':
+            decision_id = f"task:{task.id}:quota:{quota.get('scope')}:{quota.get('day')}"
+            if decision_id not in hidden:
+                output.append(_item(decision_id, 'task', 'medium', '专员额度已到，任务已暂停',
+                    quota.get('reason', ''), created=getattr(task, 'updated', ''), target_id=task.id, action='open_task'))
+            continue
         approval = collaboration.get('approval') or {}
         if status == 'blocked' and collaboration.get('dispatch', {}).get('source') == 'staff' and approval:
             if approval.get('status') == 'pending':

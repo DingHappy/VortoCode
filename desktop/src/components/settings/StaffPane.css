@@ -9,3 +9,5 @@
 .staff-pane [role="alert"] { color: var(--vc-danger-text); }
 .staff-enrollment { display: grid; gap: var(--vc-space-2); font-size: var(--vc-size-small); }
 .staff-enrollment input { min-width: 0; width: 100%; box-sizing: border-box; font: inherit; padding: var(--vc-space-2) var(--vc-space-3); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); color: var(--vc-text); background: var(--vc-surface); }
+.staff-budget-settings { display: grid; gap: var(--vc-space-2); }
+.staff-budget-settings input { min-width: 0; padding: var(--vc-space-2); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-inner); background: var(--vc-fill); color: var(--vc-text); font: inherit; }

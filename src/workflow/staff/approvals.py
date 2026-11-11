@@ -161,10 +161,26 @@ class StaffApprovals:
                 normalized.pop(key, None)
             return {'kind': kind, 'data': normalized, 'previous': previous,
                     'role_snapshot': self.registry.role(normalized['role'])}
-        raise ValueError('本批只支持 role / member 提议；部门在 S5 开放')
+        if kind == 'department':
+            from src.workflow.staff.departments import Departments
+            from src.workflow.staff.notes import StaffNotes
+            if set(data) - {'id', 'name', 'duty', 'members', 'lead', 'limits', 'revision', 'status'}:
+                raise ValueError('部门提议不能附带权限、笔记版本或例行工作')
+            previous = next((x for x in self.registry.departments() if x['id'] == data.get('id')), None)
+            if previous and (previous['status'] == 'retired' or data.get('revision') != previous['revision']):
+                raise ValueError('部门已撤掉或版本变化')
+            normalized = Departments(self.registry).validate(data)
+            return {'kind': kind, 'data': normalized, 'previous': previous,
+                'members_snapshot': [{**self.registry.member(member), 'role_snapshot': self.registry.role(self.registry.member(member)['role'])}
+                                     for member in normalized['members']],
+                'notes_snapshot': StaffNotes(self.registry.root).snapshot(normalized['id'])}
+        raise ValueError('登记提议只支持 role / member / department')
 
     @staticmethod
     def needs_key(snapshot):
+        if snapshot['kind'] == 'department':
+            return any(StaffApprovals.needs_key({'kind': 'role', 'data': member['role_snapshot']})
+                       for member in snapshot['members_snapshot'])
         assigned = snapshot['data'] if snapshot['kind'] == 'role' else snapshot['role_snapshot']
         grants = assigned['grants']
         return not (set(grants['operations']) == {'read'} and not grants['web'] and not grants['sees'])
@@ -223,11 +239,14 @@ class StaffApprovals:
         previous = snapshot['previous']
         if snapshot['kind'] == 'role':
             target = self.registry.validate_role(data)
-        else:
+        elif snapshot['kind'] == 'member':
             data['approved_at'] = item['decision']['at']
             if previous:
                 data['status'] = previous['status']
             target = self.registry.validate_member(data)
+        else:
+            from src.workflow.staff.departments import Departments
+            target = Departments(self.registry).validate(data)
         target['revision'] = previous['revision'] + 1 if previous else 1
         return target
 
@@ -249,6 +268,8 @@ class StaffApprovals:
                 if kind == 'member':
                     allowed = {'id', 'name', 'role', 'engine', 'model', 'department', 'limits', 'revision'}
                     data = {key: value for key, value in data.items() if key in allowed}
+                elif kind == 'department':
+                    data = {key: value for key, value in data.items() if key not in {'notes_revision', 'routines'}}
                 if self.snapshot(kind, data) != snapshot:
                     raise ValueError('岗位或专员版本已变化，旧提议不能批准')
                 if approve and item['requires_desktop_key']:
@@ -274,7 +295,8 @@ class StaffApprovals:
                 if self._target(item) != item['target']:
                     raise ValueError('批准后的登记目标已变化')
                 snapshot = item['snapshot']
-                entries = self.registry.roles() if snapshot['kind'] == 'role' else self.registry.members()
+                entries = (self.registry.roles() if snapshot['kind'] == 'role' else self.registry.members()
+                           if snapshot['kind'] == 'member' else self.registry.departments())
                 current = next((x for x in entries if x['id'] == item['target']['id']), None)
                 if current != item['target']:
                     if current != snapshot['previous']:
@@ -283,9 +305,19 @@ class StaffApprovals:
                         raise ValueError('所属岗位已变化，请重新提议')
                     if snapshot['kind'] == 'role':
                         self.registry.register_role(snapshot['data'])
-                    else:
+                    elif snapshot['kind'] == 'member':
                         payload = {**item['target'], 'revision': snapshot['data']['revision']}
                         self.registry.register_member(payload)
+                    else:
+                        # Recheck the exact member/role and note snapshots before joining any group.
+                        from src.workflow.staff.notes import StaffNotes
+                        if StaffNotes(self.registry.root).snapshot(snapshot['data']['id']) != snapshot['notes_snapshot']:
+                            raise ValueError('部门笔记已变化，请重新提议')
+                        current_members = [{**self.registry.member(member['id']), 'role_snapshot': self.registry.role(member['role'])}
+                                           for member in snapshot['members_snapshot']]
+                        if current_members != snapshot['members_snapshot']:
+                            raise ValueError('部门成员或岗位已变化，请重新提议')
+                        self.registry.register_department({**item['target'], 'revision': snapshot['data']['revision']})
                 item['status'] = 'approved'
                 self._save(item)
             return deepcopy(item)

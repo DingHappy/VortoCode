@@ -11,6 +11,9 @@ import { CodexActionCard } from "./components/CodexActionCard";
 import { chatCodexActions } from "./lib/codexActionOutcome";
 import { AssistantWorkday } from "./components/AssistantWorkday";
 import { TeamChat } from "./components/TeamChat";
+import { DepartmentPage } from "./components/DepartmentPage";
+import { useStaffDirectory } from "./hooks/useStaffDirectory";
+import { departmentItems } from "./lib/departments";
 import { TeamNoteActions } from "./components/TeamNoteActions";
 import { WaitingInbox, waitingTeams } from "./components/WaitingInbox";
 import { currentTeams } from "./lib/teamAttention";
@@ -242,11 +245,12 @@ function App() {
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
   // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
-  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team">("chat");
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team" | "department">("chat");
   // 任务小组（ADR-014 S3）：侧栏「最近」里每个小组一条，点开在中间看群聊
   const [teamList, setTeamList] = useState<TeamSummary[]>([]);
   const [teamReadSource, setTeamReadSource] = useState<{ client: GatewayClient; scope: string } | null>(null);
   const [openTeamId, setOpenTeamId] = useState<string | null>(null);
+  const [openDepartment, setOpenDepartment] = useState<{ id: string; scope: string; client: GatewayClient | null } | null>(null);
   useStickToBottom(conversationScrollRef, autoScrollRef, mainView);
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
@@ -2434,12 +2438,15 @@ function App() {
 
   // 会话侧栏的工具：标签栏与工具列表共用。点击动作沿用原标签按钮的（含变更/上下文的刷新）。
   const planDone = plan.filter((item) => item.status === "completed").length;
+  const residentConnected = appMode === "assistant" && connection === "connected" && onAssistantHost();
+  const departmentDirectory = useStaffDirectory(clientRef, assistantScope, residentConnected);
+  const activeDepartment = openDepartment?.client === clientRef.current && openDepartment?.scope === assistantScope ? openDepartment : null;
   const scoped = activeScope !== "general";
   // 任务动态：后台任务台账的投影（useTasks 已随 task_update 推送实时更新）。
   const feedItems = tasks.map(taskFeedItem);
   const feedWaiting = feedItems.filter(item => item.status === "waiting").length;
-  const assistantFeedItems = assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
-    confirmation: pendingConfirm });
+  const assistantFeedItems = [...assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
+    confirmation: pendingConfirm }), ...departmentItems(departmentDirectory.value)];
   const attentionTeams = currentTeams(teamList, teamReadSource, clientRef.current, assistantScope);
   const assistantSummary = assistantAttention(assistantFeedItems, attentionTeams);
   const assistantWaiting = assistantSummary.decisions.length + waitingTeams(attentionTeams).length;
@@ -2447,7 +2454,7 @@ function App() {
   const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
     .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
   if (activeScope !== "general") activitySources.push({ name: "tasks", ...taskRead });
-  const activityComplete = activityCoverage(activitySources, connection === "connected", Date.now()).complete;
+  const activityComplete = activityCoverage(activitySources, connection === "connected", Date.now()).complete && !departmentDirectory.error;
   const refreshActivity = useCallback(async () => {
     await Promise.allSettled([refreshAgentTurns(), refreshNotices(), ...(activeScope !== "general" ? [refreshTasks()] : [])]);
   }, [refreshAgentTurns, refreshNotices, refreshTasks, activeScope]);
@@ -2505,9 +2512,13 @@ function App() {
   const openTeamChat = (id: string) => {
     setOpenTeamId(id); setMainView("team"); setInspectorOpen(false);
   };
+  const openDepartmentChat = (id: string) => {
+    setOpenDepartment({ id, scope: assistantScope, client: clientRef.current }); setMainView("department"); setInspectorOpen(false);
+  };
 
   // 动态里点一条：确认卡、Codex 动作、任务单、后台任务、原对话位置。面板与主要聊天顶部的「等你处理」共用。
   const openFeedItem = (item: FeedItem) => {
+    if (item.departmentId) { openDepartmentChat(item.departmentId); return; }
     if (item.teamContext && !item.requiresReply) { openTeamChat(item.teamContext.id); return; }
     if (item.confirmationId) { focusConfirmation(item.confirmationId); return; }
     if (item.codexActionId) {
@@ -2665,7 +2676,6 @@ function App() {
   }, [appMode, connection, busy, activeSid, refreshActivity]);
 
   // 任务小组列表（侧栏「最近」）：只在常驻助理上有；读不到就保持上次的列表，不当成「没有小组」
-  const residentConnected = appMode === "assistant" && connection === "connected" && onAssistantHost();
   useEffect(() => {
     if (!residentConnected) { setTeamList([]); return; }
     let alive = true;
@@ -2723,6 +2733,11 @@ function App() {
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
+              departments={(departmentDirectory.value?.departments ?? []).filter(item => item.status !== "retired").map(item => ({ id: item.id,
+                title: item.members.length === 1 ? departmentDirectory.value?.members.find(member => member.id === item.members[0])?.name || item.name : item.name,
+                status: item.status, pending: (item.pending_notes ?? 0) + (item.notes_pending_save ? 1 : 0) }))}
+              currentDepartment={mainView === "department" ? activeDepartment?.id ?? "" : ""}
+              departmentError={departmentDirectory.error} onOpenDepartment={openDepartmentChat}
               teams={attentionTeams.map(team => ({ id: team.id, title: team.objective, status: team.status }))}
               currentTeam={mainView === "team" ? openTeamId ?? "" : ""}
               onOpenTeam={openTeamChat}
@@ -2843,6 +2858,14 @@ function App() {
             onChooseProject={() => void chooseRepo()}
             onOpenBrowserSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }}
           />
+        ) : mainView === "department" && appMode === "assistant" && activeDepartment ? (
+          <DepartmentPage key={`${assistantScope}:${activeDepartment.id}`} id={activeDepartment.id} client={clientRef.current}
+            getClient={() => clientRef.current} connected={connection === "connected"} onUpdated={departmentDirectory.refresh}
+            onOpenTask={focusTask} onDraft={text => {
+              const client = clientRef.current, scope = assistantScopeRef.current;
+              setMainView("chat"); setInspectorOpen(false);
+              void openMainChat().then(() => { if (clientRef.current === client && assistantScopeRef.current === scope) setPrompt(text); });
+            }} />
         ) : mainView === "team" && appMode === "assistant" && openTeamId && clientRef.current ? (
           <section className="team-chat-page">
             <TeamChat key={openTeamId} id={openTeamId} client={clientRef.current} connected={connection === "connected"}

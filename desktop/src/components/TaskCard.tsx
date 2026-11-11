@@ -42,7 +42,7 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
       id={`task-card-${task.id}`}
     >
       <div className="task-card-head">
-        <span className={`task-status ${task.status}`}>{task.status === "blocked" ? (task.collaboration?.approval ? (task.collaboration.approval.status === "pending" ? "等待审批" : "等待继续") : "等待回答") : statusLabel(task.status)}</span>
+        <span className={`task-status ${task.status}`}>{task.status === "blocked" ? (task.collaboration?.quota?.status === "waiting" ? "等待额度" : task.collaboration?.approval ? (task.collaboration.approval.status === "pending" ? "等待审批" : "等待继续") : "等待回答") : statusLabel(task.status)}</span>
         <small>{task.id.slice(0, 8)}</small>
       </div>
       <p className="task-readable-title">{firstSentence(task.prompt, 100) || "后台任务"}</p>
@@ -102,6 +102,9 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
         </div>
       )}
       {task.error && <div className="task-error">{task.error}</div>}
+      {task.status === "blocked" && task.collaboration?.quota?.status === "waiting" && <p>{task.collaboration.quota.reason}。在“设置 → 团队与权限”调整全局/单任务额度，或在部门中提议调整部门上限。</p>}
+      {task.collaboration?.usage && <p>本任务已记录 {task.collaboration.usage.tokens} token · {task.collaboration.usage.calls} 次调用{!task.collaboration.usage.complete ? "（用量不完整，不能作为完整账单）" : ""}</p>}
+      {task.collaboration?.notes_error && <p role="alert">{task.collaboration.notes_error}</p>}
       {task.kind === "delegation" && task.collaboration && (
         <div className="task-collaboration">
           <p>执行 Agent：{task.collaboration.assignee || "研究员"} · 第 {task.collaboration.round} 轮</p>
