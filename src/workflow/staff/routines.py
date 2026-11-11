@@ -245,9 +245,9 @@ class Routines:
                         routine={'id': item['id'], 'revision': item['revision'], 'slot': slot, 'legacy': item['legacy'],
                                  'token_budget': item['token_budget'], 'manual': manual}, after=self.settle)
                     started.append(task.id)
-                except (ValueError, OSError) as error:
+                except Exception as error:  # noqa: BLE001 - park this claim, then dispatch the other routines.
                     value = self.read(); item = next(x for x in value['routines'] if x['id'] == original['id'])
-                    item['state']['error'] = str(error)
+                    item['state']['error'] = f'{type(error).__name__}: {error}'
                     self.registry._write('routines.json', value)
         return started
 

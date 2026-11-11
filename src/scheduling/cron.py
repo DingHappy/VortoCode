@@ -35,10 +35,12 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+from time import sleep as _state_lock_sleep
 from src.utils.state_dir import state_dir
 
 _STATE_FILE = "cron_state.json"
 _CRON_STATE_LOCK = threading.RLock()
+_STATE_LOCK_BACKOFF = (0.05, 0.1, 0.2, 0.3, 0.35)  # Six acquisition attempts, at most one second of waits.
 
 
 class TokenBudgetTripped(RuntimeError):
@@ -291,8 +293,18 @@ def _state_change(operation):
     from functools import wraps
     @wraps(operation)
     def update(self, *args, **kwargs):
-        from src.workflow.pipeline.pipeline_storage import pipeline_lock
-        with _CRON_STATE_LOCK, pipeline_lock(self._repo_root, 'cron-state', kind='edit'):
+        from contextlib import ExitStack
+        from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock
+        with _CRON_STATE_LOCK, ExitStack() as locks:
+            for attempt in range(len(_STATE_LOCK_BACKOFF) + 1):
+                try:
+                    locks.enter_context(pipeline_lock(self._repo_root, 'cron-state', kind='edit'))
+                except PipelineBusy:
+                    if attempt == len(_STATE_LOCK_BACKOFF):
+                        raise
+                    _state_lock_sleep(_STATE_LOCK_BACKOFF[attempt])
+                else:
+                    break
             if self._path.exists():
                 try:
                     self._data = json.loads(self._path.read_text(encoding='utf-8'))
@@ -1065,9 +1077,13 @@ async def _run_job(repo_root: str, job: CronJob, *, run_session=None, notify=Non
         heal_note = outcome.note()
         if heal_note:
             detail = f"{detail}\n{heal_note}"
-        streak = CronState(repo_root).record_result(job.name, False)
+        streak = 0
+        try:
+            streak = CronState(repo_root).record_result(job.name, False)
+            _mark_ran(repo_root, job, now)
+        except Exception as state_error:  # noqa: BLE001 - the independent run/notice lanes must still report failure.
+            detail += f'\n定时结果状态未保存（{type(state_error).__name__}）；请核对原任务和已生效动作，未重跑执行。'
         escalation = _escalate_streak(repo_root, job, streak)
-        _mark_ran(repo_root, job, now)
         record_outcome(repo_root, job.name, ok=False, summary=detail, command=job.command,
                        code=-1, error=f"cron [{job.name}] 执行异常：{detail}"
                        + (f"\n{escalation}" if escalation else ""))
