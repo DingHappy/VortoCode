@@ -23,7 +23,7 @@ export interface StaffSignRequest { instance: string; proposalId?: string; diges
 export interface StaffClient {
   readStaff(): Promise<StaffSnapshot>;
   decideStaff(id: string, approve: boolean, digest: string, signature?: string): Promise<unknown>;
-  bindStaffKey(proof: StaffProof): Promise<unknown>;
+  bindStaffKey(proof: StaffProof, authorization: string): Promise<unknown>;
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown>;
 }
 export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string }
@@ -72,6 +72,20 @@ export function staffController(client: StaffClient, publish: (state: StaffState
         await client.setStaffStatus(member.id, status, member.revision);
       });
     },
+    enroll(authorization: string) {
+      return change(async fresh => {
+        if (fresh.approval_key.key) throw new Error("已登记批准钥匙，请刷新核对");
+        if (!authorization.trim()) throw new Error("请先取得主机本地一次性授权码");
+        const instance = fresh.approval_key.instance;
+        const proof = await sign({ instance });
+        if (!active) return;
+        await client.bindStaffKey(proof, authorization.trim());
+        if (!active) return;
+        const bound = await client.readStaff();
+        if (bound.approval_key.instance !== instance || bound.approval_key.key?.public_key !== proof.public_key)
+          throw new Error("批准钥匙登记结果待核对，请刷新");
+      });
+    },
     decide(proposal: StaffProposal, approve: boolean) {
       return change(async fresh => {
         const current = fresh.proposals.find(item => item.id === proposal.id);
@@ -80,15 +94,7 @@ export function staffController(client: StaffClient, publish: (state: StaffState
         let signature: string | undefined;
         if (approve && current.requires_desktop_key) {
           const instance = fresh.approval_key.instance;
-          if (!fresh.approval_key.key) {
-            const enrollment = await sign({ instance });
-            if (!active) return;
-            await client.bindStaffKey(enrollment);
-            if (!active) return;
-            fresh = await client.readStaff();
-            if (!active) return;
-            if (fresh.approval_key.instance !== instance) throw new Error("运行实例已变化，未批准");
-          }
+          if (!fresh.approval_key.key) throw new Error("请先用主机本地一次性授权码登记批准钥匙，提议保持待批");
           const proof = await sign({ instance, proposalId: current.id, digest: current.digest, nonce: current.nonce });
           if (!active) return;
           if (proof.public_key !== fresh.approval_key.key?.public_key) throw new Error("批准钥匙与登记不一致，未批准");

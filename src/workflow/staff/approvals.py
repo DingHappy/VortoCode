@@ -4,7 +4,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
+import secrets
+import time
 import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -39,39 +43,93 @@ def _verify(public, message, signature):
 
 
 class StaffApprovals:
-    def __init__(self, root):
+    def __init__(self, root, *, clock=None):
         self.registry = StaffRegistry(root)
+        self.clock = clock or time.time
+
+    @contextmanager
+    def _key_lock(self):
+        # The local authorization CLI and the server are separate processes.
+        with TASK_STATE_LOCK:
+            directory = self.registry.directory
+            if directory.is_symlink():
+                raise ValueError('批准钥匙登记目录不能是符号链接')
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / '.approval-key.lock'
+            if path.is_symlink():
+                raise ValueError('批准钥匙登记锁无效')
+            if os.name != 'posix':
+                raise ValueError('此平台尚未支持批准钥匙登记')
+            import fcntl
+            fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+            with os.fdopen(fd, 'r+b') as handle:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as error:
+                    raise ValueError('批准钥匙正在更新，请重试') from error
+                yield
 
     def key_info(self):
-        with TASK_STATE_LOCK:
-            path = self.registry.directory / 'approval-key.json'
-            if not path.exists():
-                self.registry._write('approval-key.json', {'version': 1, 'instance': uuid.uuid4().hex, 'key': None})
-            state = self.registry._read('approval-key.json', {})
-            instance, key = state.get('instance'), state.get('key')
-            if (set(state) != {'version', 'instance', 'key'} or not isinstance(instance, str)
-                    or len(instance) != 32 or any(x not in '0123456789abcdef' for x in instance)):
-                raise ValueError('批准钥匙登记损坏，未重新生成身份')
-            if key is not None and (not isinstance(key, dict) or set(key) != {'id', 'public_key', 'enrolled_at'}
-                    or _public(key.get('public_key')) != key['public_key'] or digest(key['public_key']) != key.get('id')):
-                raise ValueError('批准钥匙登记损坏，未恢复默认授权')
-            return state
+        with self._key_lock():
+            return self._key_state()
+
+    def _key_state(self):
+        path = self.registry.directory / 'approval-key.json'
+        if not path.exists():
+            self.registry._write('approval-key.json', {'version': 1, 'instance': uuid.uuid4().hex, 'key': None})
+        state = self.registry._read('approval-key.json', {})
+        instance, key = state.get('instance'), state.get('key')
+        if (set(state) not in ({'version', 'instance', 'key'}, {'version', 'instance', 'key', 'enrollment'}) or not isinstance(instance, str)
+                or len(instance) != 32 or any(x not in '0123456789abcdef' for x in instance)):
+            raise ValueError('批准钥匙登记损坏，未重新生成身份')
+        if key is not None and (not isinstance(key, dict) or set(key) != {'id', 'public_key', 'enrolled_at'}
+                or _public(key.get('public_key')) != key['public_key'] or digest(key['public_key']) != key.get('id')):
+            raise ValueError('批准钥匙登记损坏，未恢复默认授权')
+        enrollment = state.get('enrollment')
+        if 'enrollment' in state and (key is not None or not isinstance(enrollment, dict)
+                or set(enrollment) != {'digest', 'expires_at'}
+                or not isinstance(enrollment.get('digest'), str) or len(enrollment['digest']) != 64
+                or any(x not in '0123456789abcdef' for x in enrollment['digest'])
+                or type(enrollment.get('expires_at')) is not int or enrollment['expires_at'] <= 0):
+            raise ValueError('本地一次性授权记录损坏，未开放绑定')
+        return state
+
+    @staticmethod
+    def _enrollment_message(state, public):
+        return f"vortoone-staff-key-v1\n{state['instance']}\n{_public(public)}".encode()
 
     def enrollment_message(self, public):
-        return f"vortoone-staff-key-v1\n{self.key_info()['instance']}\n{_public(public)}".encode()
+        return self._enrollment_message(self.key_info(), public)
 
-    def bind_key(self, public, signature):
+    def authorize_enrollment(self):
+        """Local interactive CLI only; deliberately absent from every HTTP/tool surface."""
+        with self._key_lock():
+            state = self._key_state()
+            if state.get('key'):
+                raise ValueError('此实例已有批准钥匙；本批不支持替换或自动重置')
+            authorization = secrets.token_urlsafe(32)
+            state['enrollment'] = {'digest': digest(authorization), 'expires_at': int(self.clock()) + 300}
+            self.registry._write('approval-key.json', state)
+            return authorization
+
+    def bind_key(self, public, signature, *, authorization=''):
         """Only the authenticated Desktop enrollment route may call this."""
-        with TASK_STATE_LOCK:
+        with self._key_lock():
             public = _public(public)
-            state = self.key_info()
-            _verify(public, self.enrollment_message(public), signature)
+            state = self._key_state()
+            _verify(public, self._enrollment_message(state, public), signature)
             previous = state.get('key')
             if previous and previous['public_key'] != public:
                 raise ValueError('此实例已有批准钥匙；本批不支持替换或自动重置')
             if not previous:
+                enrollment = state.get('enrollment')
+                if (not enrollment or not isinstance(authorization, str) or not 1 <= len(authorization) <= 128
+                        or self.clock() >= enrollment['expires_at']
+                        or not secrets.compare_digest(digest(authorization), enrollment['digest'])):
+                    raise ValueError('首次绑定需要有效的主机本地一次性授权码')
                 state['key'] = {'id': digest(public), 'public_key': public,
                                 'enrolled_at': datetime.now(timezone.utc).isoformat()}
+                state.pop('enrollment', None)
                 self.registry._write('approval-key.json', state)
             return deepcopy(state['key'])
 

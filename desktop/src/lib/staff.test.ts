@@ -18,9 +18,33 @@ describe("staff owner controls", () => {
     const f = fixture(); f.snapshot.approval_key.key = null;
     vi.mocked(f.client.bindStaffKey).mockImplementation(async () => { f.snapshot.approval_key.key = { id: "key", public_key: "public" }; return {}; });
     await f.controller.refresh(); expect(f.sign).not.toHaveBeenCalled();
+    await f.controller.enroll("local-code-fixture");
+    expect(f.client.decideStaff).not.toHaveBeenCalled();
     await f.controller.decide(f.snapshot.proposals[0], true);
     expect(f.sign).toHaveBeenNthCalledWith(1, { instance: "instance" }); expect(f.sign).toHaveBeenCalledTimes(2);
-    expect(f.client.bindStaffKey).toHaveBeenCalledWith({ public_key: "public", signature: "signed" }); expect(f.client.decideStaff).toHaveBeenCalledTimes(1);
+    expect(f.client.bindStaffKey).toHaveBeenCalledWith({ public_key: "public", signature: "signed" }, "local-code-fixture"); expect(f.client.decideStaff).toHaveBeenCalledTimes(1);
+  });
+  it("keeps high privilege proposals pending without locally authorized enrollment", async () => {
+    const f = fixture(); f.snapshot.approval_key.key = null;
+    await f.controller.refresh(); await f.controller.decide(f.snapshot.proposals[0], true);
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.client.bindStaffKey).not.toHaveBeenCalled();
+    expect(f.client.decideStaff).not.toHaveBeenCalled(); expect(f.states[f.states.length - 1]?.error).toContain("主机本地");
+  });
+  it("does not approve proposals when local enrollment is rejected", async () => {
+    const f = fixture(); f.snapshot.approval_key.key = null;
+    vi.mocked(f.client.bindStaffKey).mockRejectedValueOnce(new Error("本地一次性授权码无效"));
+    await f.controller.refresh(); await f.controller.enroll("expired-code-fixture");
+    expect(f.client.decideStaff).not.toHaveBeenCalled(); expect(f.states[f.states.length - 1]?.value?.approval_key.key).toBeNull();
+    expect(f.states[f.states.length - 1]?.error).toContain("授权码无效");
+  });
+  it("discards a late enrollment signature after disposal", async () => {
+    const f = fixture(); f.snapshot.approval_key.key = null; await f.controller.refresh();
+    let finish!: (value: { public_key: string; signature: string }) => void;
+    f.sign.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const pending = f.controller.enroll("local-code-fixture");
+    await Promise.resolve(); await Promise.resolve(); f.controller.dispose();
+    finish({ public_key: "public", signature: "signed" }); await pending;
+    expect(f.client.bindStaffKey).not.toHaveBeenCalled(); expect(f.client.decideStaff).not.toHaveBeenCalled();
   });
   it("never grants when the hardware signer fails or returns another key", async () => {
     const f = fixture(); await f.controller.refresh(); f.sign.mockRejectedValueOnce(new Error("Touch ID 未批准"));

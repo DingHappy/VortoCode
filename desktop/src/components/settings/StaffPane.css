@@ -7,3 +7,5 @@
 .staff-record { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vc-font-mono); font-size: var(--vc-size-caption); border-radius: var(--vc-radius-control); padding: var(--vc-space-3); background: var(--vc-fill); color: var(--vc-text); }
 .staff-pane summary { cursor: pointer; color: var(--vc-text-secondary); }
 .staff-pane [role="alert"] { color: var(--vc-danger-text); }
+.staff-enrollment { display: grid; gap: var(--vc-space-2); font-size: var(--vc-size-small); }
+.staff-enrollment input { min-width: 0; width: 100%; box-sizing: border-box; font: inherit; padding: var(--vc-space-2) var(--vc-space-3); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); color: var(--vc-text); background: var(--vc-surface); }

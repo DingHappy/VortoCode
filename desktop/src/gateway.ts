@@ -392,8 +392,8 @@ export class GatewayClient {
     return this.request(`/api/staff/proposals/${encodeURIComponent(id)}/decision`,
       { method: "POST", body: JSON.stringify({ approve, digest, ...(signature ? { signature } : {}) }) });
   }
-  bindStaffKey(proof: StaffProof): Promise<unknown> {
-    return this.request("/api/staff/approval-key", { method: "POST", body: JSON.stringify(proof) });
+  bindStaffKey(proof: StaffProof, authorization: string): Promise<unknown> {
+    return this.request("/api/staff/approval-key", { method: "POST", body: JSON.stringify({ ...proof, authorization }) });
   }
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown> {
     return this.request(`/api/staff/members/${encodeURIComponent(id)}/status`,

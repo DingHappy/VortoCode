@@ -28,6 +28,7 @@ class Key(BaseModel):
     model_config = ConfigDict(extra='forbid')
     public_key: str
     signature: str
+    authorization: str = ''
 
 
 def _apply(action):
@@ -58,9 +59,10 @@ def set_status(member_id: str, body: Status):
 
 @router.post('/api/staff/approval-key')
 def bind_key(body: Key):
-    # First-use trust is the existing administrator credential, never a device grant.
-    # Do not permit unauthenticated local bootstrap or silently replace an existing key.
+    # First use needs both the administrator credential and a local one-time grant.
+    # The grant is never issued by HTTP or exposed in the directory response.
     from src.web.auth import get_api_token
     if not get_api_token():
         raise HTTPException(status_code=403, detail='先通过 Desktop 的已认证引擎连接登记批准钥匙')
-    return _apply(lambda: StaffApprovals(os.getcwd()).bind_key(body.public_key, body.signature))
+    return _apply(lambda: StaffApprovals(os.getcwd()).bind_key(body.public_key, body.signature,
+        authorization=body.authorization))

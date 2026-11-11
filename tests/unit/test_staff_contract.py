@@ -521,7 +521,7 @@ def test_private_or_network_roles_require_registered_desktop_approval_key(tmp_pa
             approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
 
 
-def staff_key(approvals):
+def staff_identity():
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     from cryptography.hazmat.primitives import hashes
@@ -529,7 +529,13 @@ def staff_key(approvals):
     public = private.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
     def sign(message):
         return private.sign(message, ec.ECDSA(hashes.SHA256())).hex()
-    approvals.bind_key(public, sign(approvals.enrollment_message(public)))
+    return public, sign
+
+
+def staff_key(approvals):
+    public, sign = staff_identity()
+    authorization = approvals.authorize_enrollment()
+    approvals.bind_key(public, sign(approvals.enrollment_message(public)), authorization=authorization)
     return public, sign
 
 
@@ -654,6 +660,135 @@ def test_staff_admin_routes_reject_device_credentials_and_enforce_key_and_revisi
     assert client.put(endpoint, headers=headers, json={'status': 'active', 'revision': 3, 'grants': {}}).status_code == 422
 
 
+def test_admin_token_alone_cannot_enroll_the_first_staff_approval_key(tmp_path, monkeypatch):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    from fastapi.testclient import TestClient
+    from src.web.server import app
+    from src.workflow.staff.approvals import StaffApprovals
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('VORTOONE_API_TOKEN', 'staff-admin-fixture')
+    approvals = StaffApprovals(str(tmp_path))
+    private = ec.generate_private_key(ec.SECP256R1())
+    public = private.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
+    signature = private.sign(approvals.enrollment_message(public), ec.ECDSA(hashes.SHA256())).hex()
+    client = TestClient(app)
+    response = client.post('/api/staff/approval-key', headers={'Authorization': 'Bearer staff-admin-fixture'},
+        json={'public_key': public, 'signature': signature})
+    assert response.status_code == 409
+    assert approvals.key_info()['key'] is None
+
+
+def test_local_enrollment_authorization_expires_and_renewal_revokes_the_old_code(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    now = [1000]
+    approvals = StaffApprovals(str(tmp_path), clock=lambda: now[0])
+    public, sign = staff_identity()
+    old = approvals.authorize_enrollment()
+    proof = sign(approvals.enrollment_message(public))
+    now[0] += 300
+    with pytest.raises(ValueError, match='本地一次性授权'):
+        approvals.bind_key(public, proof, authorization=old)
+    current = approvals.authorize_enrollment()
+    with pytest.raises(ValueError, match='本地一次性授权'):
+        approvals.bind_key(public, proof, authorization=old)
+    assert old != current
+    assert approvals.key_info()['key'] is None
+    assert approvals.bind_key(public, proof, authorization=current)['public_key'] == public
+    assert 'enrollment' not in approvals.key_info()
+    assert approvals.bind_key(public, proof, authorization=current)['public_key'] == public
+    with pytest.raises(ValueError, match='已有批准钥匙'):
+        approvals.authorize_enrollment()
+    another, sign_other = staff_identity()
+    with pytest.raises(ValueError, match='已有批准钥匙'):
+        approvals.bind_key(another, sign_other(approvals.enrollment_message(another)), authorization=current)
+
+
+def test_local_authorization_is_instance_bound_and_bad_proofs_do_not_consume_it(tmp_path):
+    from src.workflow.staff.approvals import StaffApprovals
+    first, other = StaffApprovals(str(tmp_path / 'first')), StaffApprovals(str(tmp_path / 'other'))
+    public, sign = staff_identity()
+    authorization = first.authorize_enrollment()
+    proof = sign(first.enrollment_message(public))
+    with pytest.raises(ValueError, match='签名'):
+        first.bind_key(public, '00', authorization=authorization)
+    with pytest.raises(ValueError, match='本地一次性授权'):
+        first.bind_key(public, proof, authorization='wrong-fixture')
+    with pytest.raises(ValueError, match='本地一次性授权'):
+        other.bind_key(public, sign(other.enrollment_message(public)), authorization=authorization)
+    assert first.bind_key(public, proof, authorization=authorization)['public_key'] == public
+    assert other.key_info()['key'] is None
+
+
+def test_api_enrollment_needs_local_grant_and_never_exposes_it(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.web.server import app
+    from src.workflow.staff.approvals import StaffApprovals, digest
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('VORTOONE_API_TOKEN', 'staff-admin-fixture')
+    approvals = StaffApprovals(str(tmp_path))
+    public, sign = staff_identity()
+    authorization = approvals.authorize_enrollment()
+    saved = (approvals.registry.directory / 'approval-key.json').read_text()
+    assert authorization not in saved and digest(authorization) in saved
+    client = TestClient(app)
+    headers = {'Authorization': 'Bearer staff-admin-fixture'}
+    directory = client.get('/api/staff', headers=headers)
+    assert authorization not in directory.text and digest(authorization) not in directory.text
+    body = {'public_key': public, 'signature': sign(approvals.enrollment_message(public))}
+    assert client.post('/api/staff/approval-key', headers=headers, json=body).status_code == 409
+    assert client.post('/api/staff/approval-key', headers=headers,
+        json={**body, 'authorization': authorization}).status_code == 200
+    proposal = approvals.propose('owner', 'role', role(web=True), '查公开资料')
+    response = client.post(f"/api/staff/proposals/{proposal['id']}/decision", headers=headers,
+        json={'approve': True, 'digest': proposal['digest'], 'signature': sign(approvals.approval_message(proposal))})
+    assert response.status_code == 200 and response.json()['status'] == 'approved'
+    assert authorization not in response.text
+
+
+def test_failed_enrollment_save_keeps_grant_for_retry_and_local_updates_serialize(tmp_path, monkeypatch):
+    from src.workflow.staff.approvals import StaffApprovals
+    approvals = StaffApprovals(str(tmp_path))
+    other = StaffApprovals(str(tmp_path))
+    public, sign = staff_identity()
+    authorization = approvals.authorize_enrollment()
+    proof = sign(approvals.enrollment_message(public))
+    with approvals._key_lock():
+        with pytest.raises(ValueError, match='正在更新'):
+            other.authorize_enrollment()
+    with monkeypatch.context() as patch:
+        def fail(name, value):
+            raise OSError('synthetic save failure')
+        patch.setattr(approvals.registry, '_write', fail)
+        with pytest.raises(OSError):
+            approvals.bind_key(public, proof, authorization=authorization)
+    assert approvals.key_info()['key'] is None
+    assert approvals.bind_key(public, proof, authorization=authorization)['public_key'] == public
+
+
+@pytest.mark.parametrize('interactive,answer,expected', [(False, '绑定', 2), (True, '取消', 1), (True, '绑定', 0)])
+def test_local_authorization_cli_requires_an_interactive_owner_action(tmp_path, monkeypatch, capsys, interactive, answer, expected):
+    import sys
+    from src.cli import main
+    from src.workflow.staff.approvals import StaffApprovals, digest
+    monkeypatch.setattr(sys, 'argv', ['vc', 'staff-key-authorize', '--root', str(tmp_path)])
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: interactive)
+    monkeypatch.setattr(sys.stdout, 'isatty', lambda: interactive)
+    monkeypatch.setattr('builtins.input', lambda _: answer)
+    with pytest.raises(SystemExit) as result:
+        main()
+    assert result.value.code == expected
+    output = capsys.readouterr().out
+    if expected == 0:
+        authorization = output.strip().splitlines()[-1]
+        state = StaffApprovals(str(tmp_path)).key_info()
+        assert state['key'] is None and state['enrollment']['digest'] == digest(authorization)
+        assert len(authorization) >= 43
+    else:
+        assert not (tmp_path / '.vortoone' / 'staff').exists()
+
+
 @pytest.mark.parametrize('profile', ['local', 'external', 'owner_device'])
 async def test_low_risk_registration_uses_the_real_shared_confirmation_on_all_ends(tmp_path, profile):
     from src.gateway.agent_session import build_session
@@ -685,7 +820,7 @@ def test_enrollment_proof_cannot_be_replayed_on_another_instance(tmp_path):
     key = ec.generate_private_key(ec.SECP256R1())
     public = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
     proof = key.sign(first.enrollment_message(public), ec.ECDSA(hashes.SHA256())).hex()
-    first.bind_key(public, proof)
+    first.bind_key(public, proof, authorization=first.authorize_enrollment())
     with pytest.raises(ValueError, match='签名'):
         other.bind_key(public, proof)
     assert other.key_info()['key'] is None
