@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from copy import deepcopy
 
 from src.workflow.staff.registry import StaffRegistry
@@ -89,17 +90,18 @@ class StaffService:
                 self.execute(current, work, deepcopy(role), deepcopy(member), lambda: self.check(member, role)),
                 timeout=role['timeout_seconds'])
             work.finish(task.id, number, str(result or ''), tainted=True)
-        async def job():
+        @asynccontextmanager
+        async def admission():
             async with condition:
                 await condition.wait_for(lambda: running[0] < member['limits']['parallel'])
                 running[0] += 1
             try:
-                await execute()
+                yield
             finally:
                 async with condition:
                     running[0] -= 1
                     condition.notify_all()
-        queued = self.runner.enqueue_existing(task.id, job,
+        queued = self.runner.enqueue_existing(task.id, execute, admission=admission(),
             on_cancel=lambda: work.abort(task.id, number, cancelled=True),
             on_failure=lambda error: work.abort(task.id, number, error=f'专员执行失败：{type(error).__name__}: {str(error)[:240]}'))
         if not queued:
@@ -117,7 +119,11 @@ class StaffService:
             if role['revision'] != dispatch['role_revision'] or member['revision'] != dispatch['member_revision']:
                 raise ValueError('原岗位或专员已变化，须重新派活，不能扩大原任务权限')
             task = work.followup(task_id, number, message)
-            self.schedule(task, member, role)
+            try:
+                self.schedule(task, member, role)
+            except Exception:
+                work.abort(task.id, task.collaboration['round'], error='返工未能进入现有执行池')
+                raise
             return task
 
     def directory(self):

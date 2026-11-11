@@ -19,6 +19,7 @@ import os
 import time
 import threading
 import uuid
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -477,10 +478,12 @@ class TaskRunner:
         return sum(not task.done() for task in self._running.values())
 
     def enqueue_existing(self, tid: str, execute: Callable[[], Awaitable[None]], *,
-                         on_cancel: Callable[[], None], on_failure: Callable[[Exception], None]) -> bool:
+                         on_cancel: Callable[[], None], on_failure: Callable[[Exception], None],
+                         admission: AbstractAsyncContextManager | None = None) -> bool:
         """Use the shared pool for durable work whose lifecycle is owned by another service.
 
         The runner owns concurrency/cancellation; injected callbacks own state.
+        Optional member admission precedes shared capacity, so waiting consumes no global slot.
         Register synchronously so two callers cannot schedule the same task.
         """
         if self._closing:
@@ -492,8 +495,9 @@ class TaskRunner:
 
         async def run():
             try:
-                async with self._sem:
-                    await execute()
+                async with admission if admission is not None else nullcontext():
+                    async with self._sem:
+                        await execute()
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # noqa: BLE001
