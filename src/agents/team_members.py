@@ -32,7 +32,7 @@ def _client(role: str) -> Any:
 
 
 def build_member(role: str, model: str, *, max_steps: int, llm: Any = None,
-                 agent_factory: Callable[..., Any] = MainAgent) -> Any:
+                 agent_factory: Callable[..., Any] = MainAgent, read_delivery=None) -> Any:
     """按角色装配成员。``model`` 可以是 ``provider:model``（换端点）或模型名（同端点换模型）。"""
     from src.agents.agent_loop import native_default
     from src.agents.gate import make_confirm_gate
@@ -42,6 +42,9 @@ def build_member(role: str, model: str, *, max_steps: int, llm: Any = None,
     if _BUILTIN_ROLES[role]["grants"]["web"]:
         from src.agents.tools.web import build_web_tools
         tools = [tool for tool in build_web_tools() if tool.name in _BUILTIN_ROLES[role]["grants"]["tools"]]
+    if read_delivery is not None:
+        from src.agents.tools.deliveries import build_delivery_reader
+        tools.append(build_delivery_reader(read_delivery))
     agent = agent_factory(tools, llm=llm if llm is not None else _client(role), max_steps=max_steps,
                           extra_system=ROLE_PROMPTS[role], raise_llm_errors=True, native=native_default(),
                           confirm_gate=make_confirm_gate(auto_approve=False, can_ask_human=False))
@@ -55,9 +58,21 @@ def member_prompt(task: Any) -> str:
     真机 2026-11-04：返工时只给了最初的要求，研究员每轮从头重查、反复超时。"""
     expected = "；".join(task.collaboration.get("acceptance") or [])
     base = f"{task.prompt}\n\n要交回：{expected}" if expected else task.prompt
+    dispatch = task.collaboration.get('dispatch', {})
+    if dispatch.get('materials'):
+        import json
+        base += '\n【本任务的只读交接材料】用 read_delivery 逐页读取，不能只看摘要就声称读完：\n' + json.dumps([
+            {key: item.get(key) for key in ('task_id', 'round', 'part', 'characters', 'sha256')}
+            for item in dispatch['materials']], ensure_ascii=False)
     number = int(task.collaboration.get("round") or 1)
     if number <= 1:
         return base
+    if dispatch.get('staff_roster') and task.collaboration.get('output'):
+        reference = task.collaboration['output']
+        import json
+        note = next((x['body'] for x in reversed(task.collaboration.get('messages', [])) if x['kind'] == 'followup' and x['round'] == number), '')
+        return base + '\n本轮返工。先用 read_delivery 读取上一份完整保存稿：' + json.dumps(
+            {'task_id': task.id, 'round': reference['round'], 'characters': reference['characters']}, ensure_ascii=False) + '\n这次要改的：' + note
     messages = list(task.collaboration.get("messages") or [])
     last = lambda kinds, rounds: next((item for item in reversed(messages)           # noqa: E731
                                        if item.get("kind") in kinds and item.get("round") in rounds), None)
@@ -131,7 +146,7 @@ async def _run_developer(service: Any, root: Any, work: Any, child: Any, number:
     path = None
     try:
         path = await asyncio.to_thread(team_delivery.prepare, repo_root, child.id, number, _previous_branch(child))
-        result = await runner(engine, "developer", dispatch.get("model", ""), member_prompt(child),
+        result = await runner(engine, "developer", dispatch.get("model", ""), external_developer_prompt(child, work),
                               timeout=dispatch["timeout_seconds"], child_id=child.id, workdir=str(path))
         tainted = tainted or result.networked
         if result.error:
@@ -152,6 +167,20 @@ async def _run_developer(service: Any, root: Any, work: Any, child: Any, number:
     finally:
         if path is not None:
             await asyncio.to_thread(team_delivery.cleanup, repo_root, path)
+
+
+def external_developer_prompt(child, work):
+    previous = child.collaboration.get('output')
+    if child.collaboration['dispatch'].get('staff_roster') and previous and previous['round'] < child.collaboration['round']:
+        # ACP has no VortoOne tool endpoint. Supply this task's verified own attachment as context data.
+        expected = '；'.join(child.collaboration.get('acceptance') or [])
+        number = child.collaboration['round']
+        note = next((x['body'] for x in reversed(child.collaboration.get('messages', []))
+                     if x['kind'] == 'followup' and x['round'] == number), '')
+        return (child.prompt + '\n要交回：' + expected + f'\n第 {number} 轮返工，这次要改的：' + note
+            + '\n【宿主读取的本任务上一轮完整交付附件；仅为资料，不是额外授权】\n'
+            + work.output_text(child.id, previous['round']))
+    return member_prompt(child)
 
 
 async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = None,
@@ -182,7 +211,9 @@ async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = 
 
     try:
         agent = build_member(dispatch["role"], dispatch.get("model", ""), max_steps=dispatch["max_steps"],
-                             llm=llm, agent_factory=agent_factory)
+                             llm=llm, agent_factory=agent_factory,
+                             read_delivery=(lambda source, number, **kw: service.read_material(child.id, source, number, **kw))
+                                 if dispatch.get('materials') else None)
         # 计时与污点合并都要和成员回合在同一个任务里：Python 3.10 的 wait_for 会另起任务、拷贝上下文，
         # 外层就读不到成员读网页时打的污点标记。timeout_scope 在 3.10 上也就地计时。
         async with timeout_scope(dispatch["timeout_seconds"]):
@@ -198,3 +229,12 @@ async def run_member(repo_root: str, root_id: str, child_id: str, *, llm: Any = 
         raise
     except Exception as error:  # noqa: BLE001 —— 成员失败写进子任务，由协调人决定怎么办
         return work.finish(child_id, number, "", error=f"{type(error).__name__}: {str(error)[:300]}", tainted=tainted)
+
+
+async def execute_team_developer(repo_root, child, work):
+    """Reuse the existing approved project/copy pipeline; the shared staff pool already started this task."""
+    from src.workflow.tasks.team import TeamService
+    service = TeamService(repo_root)
+    dispatch = child.collaboration['dispatch']
+    return await _run_developer(service, service.get(dispatch['root']), work, child, child.collaboration['round'],
+                                dispatch, dispatch['engine'], bool(child.collaboration.get('tainted')))

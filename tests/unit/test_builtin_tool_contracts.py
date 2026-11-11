@@ -47,7 +47,6 @@ def test_builtin_contracts_advertise_executable_types_and_only_existing_required
     from src.agents.tools.team import build_team_tools
     from src.agents.tools.skills import build_skill_tools
     from src.agents.delegation import build_research_tools
-    from src.workflow.tasks.team import MAX_LIMITS
 
     root = str(tmp_path)
     tools = (build_read_tools(root) + build_write_tools(root)
@@ -72,12 +71,16 @@ def test_builtin_contracts_advertise_executable_types_and_only_existing_required
     assert schemas["read_conversation_excerpt"]["properties"]["offset"]["minimum"] == 0
     assert schemas["cron_add"]["properties"]["budget"]["minimum"] == 0
     member = schemas["team_propose"]["properties"]["members"]["items"]
-    assert member["required"] == ["name", "role"]
+    # Either a registered member reference or a temporary name/role; the service
+    # validates these exclusive forms before asking for approval.
+    assert member.get("required", []) == []
+    assert member["properties"]["member"]["type"] == "string"
+    assert "reason" in schemas["team_propose"]["required"]
     assert member["properties"]["engine"]["enum"] == ["vortocode", "opencode", "deepseek-harness"]
     limits = schemas["team_propose"]["properties"]["limits"]
-    assert set(limits["properties"]) == set(MAX_LIMITS)
+    assert set(limits["properties"]) == {"parallel"}
     assert all(spec["type"] == "integer" for spec in limits["properties"].values())
-    assert {key: spec["maximum"] for key, spec in limits["properties"].items()} == MAX_LIMITS
+    assert limits["properties"]["parallel"]["maximum"] == 4
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("native", [True, False])

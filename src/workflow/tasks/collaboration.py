@@ -59,7 +59,8 @@ class CollaborationService:
         """Trusted staff approval adapter: mutate the existing owned task in one transaction."""
         with _LOCK:
             task = self._load(task_id, expected_round)
-            if task.collaboration.get('dispatch', {}).get('source') != 'staff':
+            from src.workflow.staff.team_roster import is_managed
+            if not is_managed(task):
                 raise CollaborationConflict('不是专员任务，不能写入审批状态')
             update(task)
             return self._save(task)
@@ -91,6 +92,8 @@ class CollaborationService:
             "id": f"{task.id}-message-{seq}", "kind": kind, "sender": sender,
             "round": state["round"], "body": _text(body, limit), "created": _now(),
             **({"truncated": len(body) > limit} if kind == "submitted" else {}),
+            **({'output': dict(state['output'])} if kind in {'submitted', 'failed', 'cancelled', 'interrupted'}
+               and state.get('output', {}).get('round') == state['round'] else {}),
         }])[-_MAX_MESSAGES:]
 
     def create(self, prompt: str, assignee: str = "", acceptance: list[str] | None = None, *,
@@ -132,6 +135,27 @@ class CollaborationService:
     def get(self, task_id: str) -> BackgroundTask:
         with _LOCK:
             return self._load(task_id)
+
+    def read_output(self, task_id: str, number: int, *, offset=0, limit=8000) -> dict:
+        """Read only a saved output belonging to this caller's original task and round."""
+        from src.workflow.tasks.task_outputs import TaskOutputs
+        with _LOCK:
+            task = self._load(task_id)
+            if type(number) is not int or number < 1:
+                raise CollaborationConflict('交付轮次无效')
+            references = [task.collaboration.get('output'),
+                          *(item.get('output') for item in task.collaboration.get('messages', []))]
+            reference = next((item for item in references if isinstance(item, dict) and item.get('round') == number), None)
+            if reference is None:
+                raise CollaborationConflict('此轮没有完整交付文件；旧截断稿不会被当成全文')
+            return TaskOutputs(self.ledger.repo_root).read(task_id, reference, offset=offset, limit=limit)
+
+    def output_text(self, task_id: str, number: int) -> str:
+        """Trusted context assembly only; the model-facing reader remains paginated."""
+        from src.workflow.tasks.task_outputs import TaskOutputs
+        with _LOCK:
+            page = self.read_output(task_id, number, limit=1)
+            return TaskOutputs(self.ledger.repo_root).text(task_id, page['output'])
 
     def list(self) -> list[BackgroundTask]:
         with _LOCK:
@@ -180,6 +204,10 @@ class CollaborationService:
                 invalidate(task, self.ledger)
                 if task.dependencies["resolution"] == "invalidated":
                     result, error, cancelled = "", task.dependencies["invalidation"]["reason"], False
+            if result and task.collaboration.get('dispatch', {}).get('source') == 'team':
+                from src.workflow.tasks.task_outputs import TaskOutputs
+                task.collaboration['output'] = TaskOutputs(self.ledger.repo_root).store(task.id, expected_round, result,
+                    tainted=task.collaboration.get('tainted', False) or tainted)
             task.status = "cancelled" if cancelled else "failed" if error or not result.strip() else "done"
             task.result, task.error = _text(result, 8000), _text(error, 1000)
             task.collaboration["tainted"] = task.collaboration.get("tainted", False) or tainted

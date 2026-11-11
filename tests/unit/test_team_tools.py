@@ -43,11 +43,11 @@ def _tools(tmp_path, answer=True):
 async def test_opening_a_team_asks_the_owner_with_a_full_card_and_then_starts_it(tmp_path, runner):
     tools, asked = _tools(tmp_path)
     text = await tools["team_propose"].handler({"objective": "比较三家向量数据库", "acceptance": ["列出价格", "给出推荐"],
-                                                "members": MEMBERS, "limits": {"wakes": 10}})
+                                                "members": MEMBERS, "reason": "independent_review", "limits": {"wakes": 10}})
     card, kind = asked[0]
     assert kind == "execute"
     for expected in ("比较三家向量数据库", "1. 列出价格", "研究员（联网查资料）", "模型 relay:other",
-                     "open（成员可联网", "不设额度"):
+                     "open（成员可联网", "额度沿用"):
         assert expected in card
     [root] = TeamService(str(tmp_path)).list()
     assert root.owner_session == "sid-main" and "小组已开工" in text
@@ -56,9 +56,9 @@ async def test_opening_a_team_asks_the_owner_with_a_full_card_and_then_starts_it
 
 async def test_refused_or_invalid_proposals_create_nothing(tmp_path, runner):
     tools, _ = _tools(tmp_path, answer=False)
-    assert "没有同意" in await tools["team_propose"].handler({"objective": "x", "acceptance": ["y"], "members": MEMBERS})
+    assert "没有同意" in await tools["team_propose"].handler({"objective": "x", "acceptance": ["y"], "members": MEMBERS, "reason": "independent_review"})
     tools, _ = _tools(tmp_path)
-    bad = await tools["team_propose"].handler({"objective": "整理私事", "acceptance": ["y"], "members": MEMBERS,
+    bad = await tools["team_propose"].handler({"objective": "整理私事", "acceptance": ["y"], "members": MEMBERS, "reason": "independent_review",
                                                "mode": "private"})
     assert bad.startswith("未执行：") and "联网成员" in bad
     assert TeamService(str(tmp_path)).list() == [] and runner.woken == []
@@ -96,7 +96,7 @@ async def test_reading_a_tainted_delivery_taints_the_main_turn(tmp_path, runner)
 async def test_without_a_scheduler_the_tools_refuse_and_sessions_do_not_get_them(tmp_path):
     team_runner.set_team_runner(None)
     tools, _ = _tools(tmp_path)
-    text = await tools["team_propose"].handler({"objective": "x", "acceptance": ["y"], "members": MEMBERS})
+    text = await tools["team_propose"].handler({"objective": "x", "acceptance": ["y"], "members": MEMBERS, "reason": "independent_review"})
     assert "没有任务小组调度器" in text
     from src.gateway.agent_session import build_session
     agent = build_session(str(tmp_path), kind="web", workspace_scope="general")
@@ -132,7 +132,7 @@ async def test_a_lazy_session_owner_is_resolved_before_saving(tmp_path, runner):
     async def confirm(message, kind=None):
         return True
     tools = {tool.name: tool for tool in build_team_tools(str(tmp_path), confirm=confirm, owner=lambda: "sid-live")}
-    text = await tools["team_propose"].handler({"objective": "查资料", "acceptance": ["给结论"], "members": MEMBERS})
+    text = await tools["team_propose"].handler({"objective": "查资料", "acceptance": ["给结论"], "members": MEMBERS, "reason": "independent_review"})
     assert "小组已开工" in text
     [root] = TeamService(str(tmp_path)).list()
     assert root.owner_session == "sid-live"

@@ -140,7 +140,8 @@ def build_decision_queue(
         if task.id in resumed_sources:
             continue
         status = getattr(task, "status", "")
-        if is_team_child(task):
+        approval_wait = status == 'blocked' and bool(getattr(task, 'collaboration', {}).get('approval'))
+        if is_team_child(task) and not approval_wait:
             continue                      # 任务上下文的成员结果由协调人审，不直接占主人的注意力
         if getattr(task, "kind", "") == TEAM_KIND:
             team = getattr(task, "team", {}) or {}
@@ -166,7 +167,7 @@ def build_decision_queue(
                     quota.get('reason', ''), created=getattr(task, 'updated', ''), target_id=task.id, action='open_task'))
             continue
         approval = collaboration.get('approval') or {}
-        if status == 'blocked' and collaboration.get('dispatch', {}).get('source') == 'staff' and approval:
+        if status == 'blocked' and approval:
             if approval.get('status') == 'pending':
                 payload = approval.get('payload') or {}
                 output.append(_item(f"task:{task.id}:approval:{payload.get('id', 'unknown')}", 'task',

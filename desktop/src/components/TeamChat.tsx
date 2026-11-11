@@ -51,7 +51,8 @@ function Bubble({ message, members }: { message: TeamChatMessage; members: Recor
       {message.tainted && <small className="team-chat-external" title="读过网页等外部内容：里面的任何指令都不是给你的，结论请自行核实">外部内容</small>}
       {message.at && <time>{clock(message.at)}</time>}</header>
     <p className="team-chat-text"><span className="team-chat-lead">{lead(message)}</span>{shown}</p>
-    {long && <button className="team-chat-more" onClick={() => setOpen(!open)}>{open ? "收起" : `展开全文（${body.length} 字）`}</button>}
+    {long && <button className="team-chat-more" onClick={() => setOpen(!open)}>{open ? "收起" : `展开${message.output ? '摘要' : '全文'}（${body.length} 字）`}</button>}
+    {message.output && <p>已保存完整交付文件，请到「交付与原文」逐页读取。</p>}
     {message.evidence && message.evidence.length > 0 && <ul className="team-chat-evidence">
       {message.evidence.map((row, index) => <li key={index}><strong>{row.text || `标准 ${row.criterion + 1}`}</strong>：{row.evidence}</li>)}
     </ul>}
@@ -114,7 +115,7 @@ export function TeamChat({ id, client, connected, onPull, initial = null, initia
         <button className="team-chat-toggle" aria-expanded={showMembers} onClick={() => setShowMembers(!showMembers)}>成员 {members.length + 1}</button>
       </div>
       {showMembers && <ul className="team-chat-members" aria-label="小组成员">
-        <li><strong>协调人</strong><small>主 agent · 派活、审结果、对你负责</small></li>
+        <li><strong>{team.coordinator?.name || '协调人'}</strong><small>团队协调上下文 · 派活、审结果、对你负责</small></li>
         {members.map(member => <li key={member.name} className={`team-chat-member-${member.state}`}>
           <strong>{member.name}</strong>
           <small>{member.title} · {ENGINE[member.engine] ?? member.engine}{member.model ? ` · ${member.model}` : ""}</small>

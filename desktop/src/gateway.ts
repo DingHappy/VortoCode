@@ -794,6 +794,10 @@ export class GatewayClient {
     return this.request(`/api/teams/${encodeURIComponent(id)}`);
   }
 
+  async getTeamOutput(team: string, task: string, round: number, offset: number, sha256: string): Promise<import('./types').TeamOutputPage> {
+    return this.request(`/api/teams/${encodeURIComponent(team)}/outputs/${encodeURIComponent(task)}/${round}?offset=${offset}&sha256=${encodeURIComponent(sha256)}`);
+  }
+
   async decideTeam(id: string, accept: boolean, note = ""): Promise<TeamDetail> {
     return this.request(`/api/teams/${encodeURIComponent(id)}/decide`, {
       method: "POST", body: JSON.stringify({ accept, note }),

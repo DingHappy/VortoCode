@@ -346,13 +346,17 @@ export interface TeamDelivery {
 export interface TeamChild {
   id: string; member: string; status: string; review?: string; round?: number; tainted: boolean;
   delivery?: TeamDelivery; request?: string; result?: string; error?: string; updated_at?: string;
+  output?: TeamOutput; outputs?: TeamOutput[];
 }
+export interface TeamOutput { version: 1; task_id: string; round: number; sha256: string; characters: number; bytes: number; tainted: boolean }
+export interface TeamOutputPage { output: TeamOutput; text: string; offset: number; next_offset: number | null; complete: boolean; external_content: boolean }
 export interface TeamMember { name: string; role: string; engine: string; model?: string }
 export interface TeamSummary {
   id: string; objective: string; status: TeamStatus; mode: string; waiting_reason: string;
   /** 用量只计数（不设额度）；limits 只剩并发 parallel */
   used: Record<string, number>; limits: Record<string, number>; project?: string | null;
   members: TeamMember[]; children: TeamChild[]; tainted: boolean; updated_at?: string;
+  coordinator?: { kind: string; name: string; member?: string }; department?: string;
 }
 /** 群聊视图（/api/teams/{id}/transcript）：成员名单 + 按时间排的经过。text 可能含外部内容，只当纯文本显示。 */
 export interface TeamChatMember {
@@ -363,10 +367,12 @@ export interface TeamChatMessage {
   at: string; speaker: "coordinator" | "member" | "owner" | "system"; kind: string; text: string;
   member?: string; mention?: string; role?: string; engine?: string; child_id?: string; round?: number; tainted?: boolean;
   evidence?: Array<{ criterion: number; text?: string; evidence: string }>;
+  output?: TeamOutput;
 }
 export interface TeamTranscript {
   team: { id: string; objective: string; status: TeamStatus; mode: string; waiting_reason: string; used: Record<string, number>;
-    project?: string | null; tainted: boolean; acceptance: string[]; updated_at?: string };
+    project?: string | null; tainted: boolean; acceptance: string[]; updated_at?: string;
+    coordinator?: { kind: string; name: string; member?: string }; department?: string };
   members: TeamChatMember[]; messages: TeamChatMessage[];
 }
 
@@ -617,7 +623,7 @@ export interface TaskItem {
     quota?: { status: string; scope: string; reason: string; day: string };
     usage?: { tokens: number; calls: number; complete: boolean; day: string };
     notes_error?: string; note_suggestions?: string[];
-    dispatch?: { source: "api" | "staff"; fingerprint?: string; max_steps: number; timeout_seconds: number;
+    dispatch?: { source: "api" | "staff" | "team"; staff_roster?: boolean; root?: string; fingerprint?: string; max_steps: number; timeout_seconds: number;
       department?: string; notes?: import("./lib/departments").DepartmentNoteSnapshot };
     messages: Array<{ id: string; kind: string; sender: string; round: number; body: string; created: string }>;
   };

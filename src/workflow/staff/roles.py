@@ -23,8 +23,17 @@ _BUILTINS = [
 ]
 
 
-def builtin_roles() -> list[dict]:
-    return [{**deepcopy(item), 'builtin': True, 'enabled': True, 'revision': 1} for item in _BUILTINS]
+def builtin_roles(*, legacy=False) -> list[dict]:
+    records = [{**deepcopy(item), 'builtin': True, 'enabled': True, 'revision': 1} for item in _BUILTINS]
+    if not legacy:
+        for role in records:
+            if role['id'] in {'web-researcher', 'reviewer'}:
+                role['grants']['tools'].append('read_delivery')
+                role['brief'] = role['brief'].replace('不调用工具。', '只用 read_delivery 读明确交给本任务的交付文件。')
+                role['brief'] += ' read_delivery 只读取本任务收到的材料，不是主机文件读取权限。'
+                if role['id'] == 'reviewer':
+                    role['max_steps'] = 12
+    return records
 
 
 def team_role_view(records: list[dict]) -> dict:
@@ -36,6 +45,8 @@ def team_role_view(records: list[dict]) -> dict:
         item = {'title': role['title'], 'tools': 'code_write' if role['grants']['project'] else
                 'web_read' if role['grants']['web'] else 'none', 'web': role['grants']['web'],
                 'max_steps': role['max_steps'], 'timeout_seconds': role['timeout_seconds']}
+        if role['id'] == 'reviewer':
+            item['max_steps'] = 2  # Old teams retain the S1 compatibility contract.
         if role['id'] == 'developer':
             item['engines'] = tuple(role['engine'])
         result[role['id']] = item

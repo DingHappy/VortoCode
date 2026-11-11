@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -58,6 +58,8 @@ def _detail(root) -> Dict[str, Any]:
             continue
         item.update(request=child.prompt[:_RESULT_LIMIT], result=(child.result or "")[:_RESULT_LIMIT],
                     error=child.error or "", updated_at=child.updated)
+        item['outputs'] = list({(ref['round'], ref['sha256']): ref for ref in [child.collaboration.get('output'),
+            *(message.get('output') for message in child.collaboration.get('messages', []))] if isinstance(ref, dict)}.values())
     project = team.get("project")
     submission = team.get("submission")
     return {**view, "acceptance": list(team["acceptance"]), "created_at": root.created, "updated_at": root.updated,
@@ -92,6 +94,17 @@ async def list_teams():
 @router.get("/api/teams/{team_id}")
 async def team_detail(team_id: str):
     return _detail(_get(team_id))
+
+
+@router.get('/api/teams/{team_id}/outputs/{task_id}/{number}')
+async def team_output(team_id: str, task_id: str, number: int, offset: int = Query(0, ge=0), sha256: str = ''):
+    root = _get(team_id)
+    if task_id not in root.team['children']:
+        raise HTTPException(status_code=404, detail='交付不属于本团队')
+    page = _conflict(lambda: _service().collaboration(root).read_output(task_id, number, offset=offset))
+    if sha256 and page['output']['sha256'] != sha256:
+        raise HTTPException(status_code=409, detail='交付版本已变化，请重新核对')
+    return page
 
 
 class TeamDecision(BaseModel):
@@ -172,7 +185,7 @@ async def team_transcript(team_id: str):
     service = _service()
     view = service.view(root)
     return {"team": {key: view[key] for key in ("id", "objective", "status", "mode", "waiting_reason", "used", "project", "tainted")}
-            | {"acceptance": list(root.team["acceptance"]), "updated_at": root.updated},
+            | {"acceptance": list(root.team["acceptance"]), "updated_at": root.updated, 'coordinator': view['coordinator'], 'department': view['department']},
             "members": member_states(service, root), "messages": transcript(service, root)}
 
 

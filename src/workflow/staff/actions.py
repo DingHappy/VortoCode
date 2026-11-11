@@ -29,7 +29,8 @@ class StaffActions:
 
     def _task(self, task_id):
         task = TaskLedger(self.service.root).load(task_id)
-        if task is None or task.collaboration.get('dispatch', {}).get('source') != 'staff':
+        from src.workflow.staff.team_roster import is_managed
+        if task is None or not is_managed(task):
             raise ValueError('专员任务不存在')
         return task
 
@@ -145,7 +146,7 @@ class StaffActions:
                     or future is None or future.done() or p['expires_at'] <= self.clock()):
                 raise ValueError('审批卡已中断、处理或过期，不能执行旧动作')
             if approve:
-                member, role = self.service.assignment({'member': p['member'], 'prompt': task.prompt})
+                member, role = self.service.execution_identity(task)
                 self.service.check(member, role)
                 if member['revision'] != p['member_revision'] or role['revision'] != p['role_revision']:
                     raise ValueError('岗位或专员权限已变化，旧卡不能批准')
@@ -178,7 +179,8 @@ class StaffActions:
     def recover(self):
         """A process cannot recover a Python continuation; never replay an old approved action."""
         for task in TaskLedger(self.service.root).list():
-            if task.collaboration.get('dispatch', {}).get('source') != 'staff':
+            from src.workflow.staff.team_roster import is_managed
+            if not is_managed(task):
                 continue
             card = task.collaboration.get('approval') or {}
             if task.status not in {'blocked', 'running', 'interrupted'} or card.get('status') not in {'pending', 'approved', 'denied'}:

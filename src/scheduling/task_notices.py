@@ -45,7 +45,8 @@ def _key(task: Any) -> Optional[str]:
         if not isinstance(team, dict) or task.status not in _TEAM_LABELS:
             return None
         return f"team:{task.id}:{task.status}:{team.get('events', 0)}"
-    if is_team_child(task):
+    approval_wait = (getattr(task, 'status', '') == 'blocked' and bool(getattr(task, 'collaboration', {}).get('approval')))
+    if is_team_child(task) and not approval_wait:
         return None                        # 任务上下文的成员结果由协调人处理，不直接推给主人
     if not isinstance(getattr(task, "collaboration", None), dict) or not task.collaboration:
         return None
@@ -55,7 +56,7 @@ def _key(task: Any) -> Optional[str]:
     if task.status == 'blocked' and quota.get('status') == 'waiting':
         return f"quota:{quota.get('scope')}:{task.collaboration.get('dispatch', {}).get('department', '')}:{quota.get('day')}"
     approval = task.collaboration.get('approval') or {}
-    if task.status == 'blocked' and task.collaboration.get('dispatch', {}).get('source') == 'staff' and approval:
+    if task.status == 'blocked' and approval:
         return (f"{task.id}:approval:{approval['payload']['id']}" if approval.get('status') == 'pending' else None)
     return f"{task.id}:{task.collaboration.get('round', 0)}:{task.status}"
 
@@ -86,7 +87,7 @@ def message(task: Any) -> Optional[str]:
     quota = task.collaboration.get('quota') or {}
     if task.status == 'blocked' and quota.get('status') == 'waiting':
         return '🧩 专员后台工作因额度暂停。对话不受影响；到 Desktop 核对用量、调整额度或等待每日额度重置。'
-    if task.status == 'blocked' and dispatch.get('source') == 'staff' and task.collaboration.get('approval'):
+    if task.status == 'blocked' and task.collaboration.get('approval'):
         return '🧩 一个专员正在等待你批准这一步。到 Desktop「等你处理」核对完整动作后批准或拒绝。'
     label = ("交回了汇报" if task.status == "done" and dispatch.get("source") == "staff"
              and dispatch.get("delivery") == "notify" else _LABELS[task.status])

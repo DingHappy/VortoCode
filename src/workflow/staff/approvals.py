@@ -145,7 +145,14 @@ class StaffApprovals:
         if kind == 'role':
             previous = next((x for x in self.registry.roles() if x['id'] == data.get('id')), None)
             if previous and previous['builtin']:
-                raise ValueError('内置岗位不能改写')
+                if set(data) != {'id', 'revision', 'upgrade'} or data['upgrade'] is not True or data['revision'] != previous['revision']:
+                    raise ValueError('内置岗位不能改写；升级须明确给原版本与 upgrade=true')
+                from src.workflow.staff.roles import builtin_roles
+                normalized = {**next(x for x in builtin_roles() if x['id'] == previous['id']),
+                              'enabled': previous['enabled'], 'revision': previous['revision']}
+                if normalized == previous:
+                    raise ValueError('内置岗位已是当前定义')
+                return {'kind': kind, 'data': normalized, 'previous': previous}
             if previous and data.get('revision') != previous['revision']:
                 raise ValueError('岗位版本变化')
             normalized = self.registry.validate_role(data)
@@ -238,7 +245,7 @@ class StaffApprovals:
         data = deepcopy(snapshot['data'])
         previous = snapshot['previous']
         if snapshot['kind'] == 'role':
-            target = self.registry.validate_role(data)
+            target = self.registry.validate_role(data, builtin=bool(data.get('builtin')))
         elif snapshot['kind'] == 'member':
             data['approved_at'] = item['decision']['at']
             if previous:
@@ -268,6 +275,8 @@ class StaffApprovals:
                 if kind == 'member':
                     allowed = {'id', 'name', 'role', 'engine', 'model', 'department', 'limits', 'revision'}
                     data = {key: value for key, value in data.items() if key in allowed}
+                elif kind == 'role' and data.get('builtin'):
+                    data = {'id': data['id'], 'revision': data['revision'], 'upgrade': True}
                 elif kind == 'department':
                     data = {key: value for key, value in data.items() if key not in {'notes_revision', 'routines'}}
                 if self.snapshot(kind, data) != snapshot:
@@ -304,7 +313,10 @@ class StaffApprovals:
                     if snapshot['kind'] == 'member' and self.registry.role(snapshot['data']['role']) != snapshot['role_snapshot']:
                         raise ValueError('所属岗位已变化，请重新提议')
                     if snapshot['kind'] == 'role':
-                        self.registry.register_role(snapshot['data'])
+                        if snapshot['data'].get('builtin'):
+                            self.registry.upgrade_builtin(snapshot['data'])
+                        else:
+                            self.registry.register_role(snapshot['data'])
                     elif snapshot['kind'] == 'member':
                         payload = {**item['target'], 'revision': snapshot['data']['revision']}
                         self.registry.register_member(payload)

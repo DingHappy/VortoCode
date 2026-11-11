@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, time, timedelta
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 from contextvars import ContextVar
 from copy import deepcopy
 
@@ -190,12 +190,56 @@ class StaffService:
         return await self.actions.request(task, role, member, call, budget)
 
     def check(self, member, role):
+        if member.get('team_task'):
+            from src.workflow.tasks.team import TeamService
+            from src.workflow.staff.team_roster import check
+            check(self.root, TeamService(self.root).get(member['team_task']), member, role)
+            return
         latest = self.registry.member(member['id'])
         current = self.registry.role(role['id'])
         if latest != member or current != role or latest['status'] != 'active' or not current['enabled']:
             raise ValueError('专员或岗位已变化，请重新读取并批准派活')
         self.executable(current)
         self._check_department(latest, current)
+
+    def execution_identity(self, task):
+        if task.collaboration['dispatch']['source'] == 'team':
+            from src.workflow.tasks.team import TeamService
+            return TeamService(self.root).execution_identity(task.id)
+        return self.assignment({'member': task.collaboration['dispatch']['member'], 'prompt': task.prompt})
+
+    @asynccontextmanager
+    async def department_admission(self, department):
+        if not department:
+            yield
+            return
+        condition, count = self._department_slots.setdefault(department, (asyncio.Condition(), [0]))
+        async with condition:
+            await condition.wait_for(lambda: count[0] < self.registry.department(department)['limits']['parallel'])
+            count[0] += 1
+        try:
+            yield
+        finally:
+            async with condition:
+                count[0] -= 1
+                condition.notify_all()
+
+    @asynccontextmanager
+    async def coordinator_admission(self, root):
+        lead = root.team['coordinator'].get('member_snapshot')
+        if lead:
+            condition, count = self._slots.setdefault(lead['id'], (asyncio.Condition(), [0]))
+            async with condition:
+                await condition.wait_for(lambda: count[0] < lead['limits']['parallel'])
+                count[0] += 1
+        try:
+            async with self.department_admission(root.team.get('department', '')):
+                yield
+        finally:
+            if lead:
+                async with condition:
+                    count[0] -= 1
+                    condition.notify_all()
 
     def assign(self, owner, args, *, expected=None):
         with TASK_STATE_LOCK:
@@ -220,7 +264,7 @@ class StaffService:
                 raise
             return task
 
-    def schedule(self, task, member, role):
+    def schedule(self, task, member, role, *, after=None, extra_admission=None):
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -249,8 +293,14 @@ class StaffService:
                 budget.pause()
                 _BUDGET.reset(token)
             from src.workflow.staff.notes import StaffNotes, split_staff_result
-            text, suggestions = split_staff_result(result)
-            work.finish(task.id, number, text, tainted=True)
+            from src.workflow.tasks.tasks import BackgroundTask
+            if isinstance(result, BackgroundTask) and result.id == task.id:
+                text, suggestions = result.result, []
+                if member['engine'] != 'vortocode':
+                    self.record_usage(task, {'total_tokens': 0, 'calls': 0}, complete=False)
+            else:
+                text, suggestions = split_staff_result(result)
+                work.finish(task.id, number, text, tainted=True)
             if suggestions and member['department']:
                 try:
                     StaffNotes(self.root).propose(member['department'], suggestions, task_id=task.id,
@@ -261,32 +311,34 @@ class StaffService:
                         if isinstance(suggestions, list) and len(suggestions) <= 8 and all(isinstance(x, str) and len(x) <= 2000 for x in suggestions):
                             current.collaboration['note_suggestions'] = suggestions
                     work.update_staff_action(task.id, number, warn)
+            if after is not None:
+                after(work.get(task.id))
         @asynccontextmanager
-        async def admission():
+        async def staff_admission():
             async with condition:
                 await condition.wait_for(lambda: running[0] < member['limits']['parallel'])
                 running[0] += 1
             try:
-                if member['department']:
-                    condition2, count = self._department_slots.setdefault(member['department'], (asyncio.Condition(), [0]))
-                    async with condition2:
-                        await condition2.wait_for(lambda: count[0] < self.registry.department(member['department'])['limits']['parallel'])
-                        count[0] += 1
-                    try:
-                        yield
-                    finally:
-                        async with condition2:
-                            count[0] -= 1
-                            condition2.notify_all()
-                else:
+                async with self.department_admission(member['department']):
                     yield
             finally:
                 async with condition:
                     running[0] -= 1
                     condition.notify_all()
+        @asynccontextmanager
+        async def admission():
+            async with AsyncExitStack() as stack:
+                if extra_admission is not None:
+                    await stack.enter_async_context(extra_admission())
+                await stack.enter_async_context(staff_admission())
+                yield
+        def stopped(error='', cancelled=False):
+            current = work.abort(task.id, number, cancelled=cancelled, error=error)
+            if after is not None:
+                after(current)
         queued = self.runner.enqueue_existing(task.id, execute, admission=admission,
-            on_cancel=lambda: work.abort(task.id, number, cancelled=True),
-            on_failure=lambda error: work.abort(task.id, number, error=f'专员执行失败：{type(error).__name__}: {str(error)[:240]}'))
+            on_cancel=lambda: stopped(cancelled=True),
+            on_failure=lambda error: stopped(error=f'专员执行失败：{type(error).__name__}: {str(error)[:240]}'))
         if not queued:
             raise ValueError('任务未能排入执行池')
 
@@ -324,7 +376,8 @@ def staff_directory(root, *, include_prompts=False):
     tasks = TaskLedger(root).list(limit=500)
     members = StaffRegistry(root).members()
     for member in members:
-        own = [t for t in tasks if t.collaboration.get('dispatch', {}).get('source') == 'staff'
+        from src.workflow.staff.team_roster import is_managed
+        own = [t for t in tasks if is_managed(t)
                and t.collaboration['dispatch'].get('member') == member['id']]
         member['busy'] = sum(t.status in {'queued', 'running', 'blocked'} for t in own)
         member['recent_tasks'] = [{'id': t.id, 'status': t.status, 'review': t.collaboration.get('review'),
