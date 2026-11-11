@@ -97,6 +97,7 @@ def tool_summary(name: str, args: Dict[str, Any]) -> str:
         "staff_propose": "提议岗位与专员",
         "routine_propose": "提议例行工作",
         "staff_list": "查看专员与岗位",
+        "staff_plan": "准备常设专员登记建议",
         "staff_assign": _with("交给专员：", str(args.get("member") or ""), 50),
         "research_parallel": _with("并行调研：", task, 50),
         "task_status": _with("查看任务：", str(args.get("task_id") or ""), 50),

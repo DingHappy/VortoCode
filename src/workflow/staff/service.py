@@ -406,6 +406,7 @@ def staff_directory(root, *, include_prompts=False):
             t.collaboration.get('dispatch', {}).get('department') == department['id'] for t in tasks)
     budgets = StaffBudgets(root)
     from src.workflow.staff.routines import Routines
+    from src.workflow.staff.standing import standing_catalog
     routine_rows = Routines(root).list()
     for department in departments:
         department['routines'] = [item['id'] for item in routine_rows if not item['retired']
@@ -415,6 +416,7 @@ def staff_directory(root, *, include_prompts=False):
     except (OSError, ValueError):
         usage = {'error': '用量暂不可核对，不能据此推断为零'}
     return {'roles': StaffRegistry(root).roles(), 'members': members, 'departments': departments,
+            'standing_specialists': standing_catalog(),
             'routines': [{k: row[k] for k in ('id', 'name', 'member', 'schedule', 'timezone', 'enabled', 'revision', 'delivery', 'token_budget')}
                          for row in routine_rows if not row['retired']],
             'routine_timezone': Routines(root).read()['timezone'],

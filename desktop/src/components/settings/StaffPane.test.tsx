@@ -21,3 +21,19 @@ it("renders proposal content as text without executing HTML", () => {
   expect(markup).toContain("&lt;script&gt;"); expect(markup).not.toContain("<script>");
 });
 it("does not treat the local project as the resident registry", () => { expect(renderToStaticMarkup(<StaffPane />)).toContain("登记常驻电脑"); });
+it('shows standing suggestions as unapproved guidance without adding activation controls', () => {
+  const value = structuredClone(snapshot);
+  value.standing_specialists = [{ id: 'calendar', title: '日程专员建议', scope: '只读日历', guide: '说明每天的时间和时区' },
+    { id: 'mail', title: '邮件专员建议', scope: '逐次审批后存草稿，不发送', guide: '说明两个汇报时间' },
+    { id: 'research', title: '资料专员建议', scope: '只查公开资料', guide: '说明公开研究话题' }];
+  const html = renderToStaticMarkup(<StaffView state={{ value, busy: false, error: '' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
+  expect(html).toContain('登记建议，尚未开通'); expect(html).toContain('再逐项核对并批准');
+  expect(html).toContain('邮件专员建议'); expect(html).toContain('资料专员建议');
+  expect(html).not.toContain('一键开通'); expect(html).toContain('本步不改为实时提醒');
+});
+it('escapes text in standing suggestions and preserves the guidance when disconnected', () => {
+  const value = structuredClone(snapshot);
+  value.standing_specialists = [{ id: 'fixture', title: '<script>fixture</script>', scope: '合成', guide: '待核对' }];
+  const html = renderToStaticMarkup(<StaffView state={{ value, busy: false, error: '离线' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
+  expect(html).not.toContain('<script>'); expect(html).toContain('&lt;script&gt;'); expect(html).toContain('上次读取的数据');
+});

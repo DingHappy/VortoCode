@@ -31,7 +31,7 @@ def build_staff_proposal_tool(root, *, confirm, owner):
                       else '\n这是不联网、无私人来源的只读登记；确认后生效。'))
         return PreparedToolCall(apply, message, 'execute')
     return Tool.prepared('staff_propose', '提议岗位、专员或部门；只读且不联网/无私人来源可当场批准，其余只保留待批记录。污点回合禁止。',
-        {'kind': 'role、member 或 department', 'data': '完整登记对象；旧内置岗位升级用 {id, revision, upgrade:true}，须主人批准；department 不附带权限或笔记', 'reason': '为什么需要登记或调整'},
+        {'kind': 'role、member 或 department', 'data': '完整登记对象；预置常设岗位首次安装用 {id, install:true}；旧内置岗位升级用 {id, revision, upgrade:true}，须主人批准；department 不附带权限或笔记', 'reason': '为什么需要登记或调整'},
         prepare, operation_kind='execute', always_confirm=True, serial=True, confirm=confirm,
         required_args=('kind', 'data', 'reason'), argument_schema={'kind': {'type': 'string', 'enum': ['role', 'member', 'department']},
         'data': {'type': 'object'}, 'reason': {'type': 'string', 'minLength': 1, 'maxLength': 2000}})

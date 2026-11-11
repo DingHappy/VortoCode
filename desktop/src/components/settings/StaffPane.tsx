@@ -37,6 +37,16 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll, onBu
     {error && <p role="alert">{error}。当前显示上次读取的数据，刷新核对后才能继续操作。</p>}
     {!value && !error && <p role="status">{busy ? "正在读取常驻助理的名录…" : "尚未核对名录，请刷新。"}</p>}
     {value && <>
+      {Boolean(value.standing_specialists?.length) && <details className="staff-section">
+        <summary>查看三个常设专员的设置建议</summary>
+        <div className="staff-section">
+        <p className="settings-card-note">这些是登记建议，尚未开通。先在主要聊天说明汇报时间、时区和公开研究话题，再逐项核对并批准岗位、专员、部门和例行工作。</p>
+        {value.standing_specialists?.map(item => <article className="settings-card" key={item.id}>
+          <strong>{item.title}</strong><p>{item.scope}</p><p className="settings-card-note">{item.guide}</p>
+        </article>)}
+        <p className="settings-card-note">日程保持只读。原会前和新邮件提醒沿用现有规则，本步不改为实时提醒。</p>
+        </div>
+      </details>}
       {value.budget_settings && <StaffBudgets value={value.budget_settings} usage={value.usage} disabled={disabled} onSave={onBudgets} />}
       {!value.approval_key.key && <section aria-label="首次登记批准钥匙" className="settings-card">
         <h3>首次登记批准钥匙</h3>

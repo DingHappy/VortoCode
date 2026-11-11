@@ -9,12 +9,12 @@ from copy import deepcopy
 from src.agents.trust import KINDS, INTERNAL, DELIVER, IRREVERSIBLE
 from src.utils.state_dir import state_dir
 from src.workflow.tasks.tasks import TASK_STATE_LOCK
-from src.workflow.staff.roles import builtin_roles, canonical_roles, team_role_view
+from src.workflow.staff.roles import builtin_roles, canonical_roles, published_roles, standing_roles, team_role_view
 
 _ID = re.compile(r'^[a-z0-9][a-z0-9._-]{0,63}$')
 _ENGINES = {'vortocode', 'opencode', 'deepseek-harness'}
 _FIELDS = {'id', 'title', 'brief', 'grants', 'engine', 'max_steps', 'timeout_seconds', 'builtin', 'revision', 'enabled'}
-_FORBIDDEN_TOOLS = {'staff_assign', 'staff_propose', 'routine_propose', 'task', 'research_parallel',
+_FORBIDDEN_TOOLS = {'staff_assign', 'staff_propose', 'staff_plan', 'routine_propose', 'task', 'research_parallel',
     'team_propose', 'team_assign', 'task_followup', 'task_release', 'cron_add', 'cron_run', 'cron_toggle',
     'cron_set_web', 'cron_set_prompt', 'send_file', 'send_image', 'send_document', 'open_pr', 'pr_fix',
     'publish_artifact', 'delete_artifact', 'run_command', 'stop_command', 'review_memory_proposal'}
@@ -177,13 +177,13 @@ class StaffRegistry:
             records = payload.get('roles')
             if not isinstance(records, list):
                 raise ValueError('岗位登记格式无效')
-            builtins = {x['id']: x for x in canonical_roles()}
+            builtins = {x['id']: x for x in published_roles()}
             catalog = self.tool_catalog()
             output, ids = [], set()
             for row in records:
                 if not isinstance(row, dict) or not isinstance(row.get('id'), str) or row['id'] in ids:
                     raise ValueError('岗位重复或格式无效')
-                expected = builtins.get(row.get('id'))
+                expected = builtins.get(row.get('id')) if row.get('builtin') else None
                 legacy = next((x for x in builtin_roles(legacy=True) if x['id'] == row['id']), None)
                 matches = lambda target: target is not None and all(row.get(k) == v for k, v in target.items() if k not in {'enabled', 'revision'})
                 if expected and not (matches(expected) or matches(legacy)):
@@ -231,12 +231,25 @@ class StaffRegistry:
         with TASK_STATE_LOCK:
             entries = self.roles()
             previous = self.role(data['id'])
-            canonical = next((x for x in canonical_roles() if x['id'] == data['id']), None)
+            canonical = next((x for x in published_roles() if x['id'] == data['id']), None)
             target = {**(canonical or {}), 'enabled': previous['enabled'], 'revision': previous['revision']}
             if not previous['builtin'] or data != target:
                 raise ValueError('内置岗位升级只能使用当前发布的完整定义和原版本')
             item = {**target, 'revision': previous['revision'] + 1}
             self._write('roles.json', {'version': 1, 'roles': [item if x['id'] == item['id'] else x for x in entries]})
+            return deepcopy(item)
+
+    def install_builtin(self, data):
+        """Trusted, receipt-backed S8 install; conflicts never turn custom roles into built-ins."""
+        with TASK_STATE_LOCK:
+            expected = next((x for x in standing_roles() if x['id'] == data.get('id')), None)
+            if data != expected or expected is None:
+                raise ValueError('只能安装当前发布的完整常设岗位定义')
+            entries = self.roles()
+            if any(x['id'] == data['id'] for x in entries):
+                raise ValueError('同名岗位已存在，不能覆盖或扩大权限')
+            item = self.validate_role(data, builtin=True)
+            self._write('roles.json', {'version': 1, 'roles': [*entries, item]})
             return deepcopy(item)
 
     def set_role_enabled(self, role_id: str, enabled: bool) -> dict:
