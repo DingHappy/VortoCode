@@ -132,8 +132,8 @@ def finish_round(repo_root: str, path: Any, *, child_id: str, number: int, objec
 
 
 def branch_diff(repo_root: str, branch: str, limit: Optional[int] = 12000) -> str:
-    """分支相对项目当前 HEAD 的改动（给审查员看）。过长截断并注明。"""
-    diff = _git(repo_root, "diff", f"HEAD...{branch}", check=False).stdout
+    """默认保留旧预览；完整文件读取必须成功，不能把读取失败报告成没有改动。"""
+    diff = _git(repo_root, "diff", f"HEAD...{branch}", check=limit is None).stdout
     if limit is None or len(diff) <= limit:
         return diff or "（没有改动）"
     return diff[:limit] + f"\n…（改动太长，只给了前 {limit} 个字符）"

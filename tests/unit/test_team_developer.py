@@ -106,6 +106,24 @@ def _team(tmp_path, repo):
     return service, root
 
 
+def test_complete_review_diff_keeps_the_tail_beyond_the_legacy_preview(project):
+    def git(*args):
+        return subprocess.run(['git', '-C', str(project), *args], check=True, capture_output=True, text=True).stdout
+    baseline = git('rev-parse', 'HEAD').strip()
+    git('checkout', '-b', 'fixture-full-review')
+    (project / 'report.txt').write_text('公开改动证据🙂\n' * 3000 + '最后一条改动证据\n')
+    git('add', 'report.txt'); git('commit', '-m', 'fixture')
+    git('checkout', '--detach', baseline)
+    result = team_delivery.branch_diff(str(project), 'fixture-full-review', None)
+    assert len(result) > 16000 and '+最后一条改动证据' in result
+    assert result == git('diff', 'HEAD...fixture-full-review')
+
+
+def test_missing_complete_review_diff_is_not_reported_as_no_changes(project):
+    with pytest.raises(RuntimeError, match='git diff 失败'):
+        team_delivery.branch_diff(str(project), 'fixture-missing-branch', None)
+
+
 def test_developer_teams_are_private_need_a_project_and_only_opencode(tmp_path, project):
     service = TeamService(str(tmp_path / "assistant"))
     dev = [{"name": "开发", "role": "developer", "engine": "opencode"}]
