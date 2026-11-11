@@ -38,7 +38,7 @@ async def scheduler_loop(stop_event, *, cwd, runner, notify):
                     from src.scheduling.staff_runner import get_staff_service
                     from src.workflow.staff.routines import Routines
                     Routines(cwd).dispatch(get_staff_service(cwd), datetime.now(timezone.utc))
-                except (ValueError, OSError) as error:
+                except Exception as error:  # noqa: BLE001 - one routine tick must not stop cron/heartbeat.
                     logger.warning('Routine dispatch unavailable (%s)', type(error).__name__)
                 cron_tasks.add(asyncio.create_task(cron_tick(now)))
                 # Give immediate failures/cancellation their original semantics, while
