@@ -203,6 +203,15 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         # General 是无目录的信任域：只给联网检索、制品和显式范围升级。不能因为进程 cwd
         # 位于应用管理目录，就顺带暴露 read/shell/git/memory/skill/dev/pr。
         tools = build_web_tools() + [workspace_tool]
+        import uuid
+        from src.agents.staff import build_staff_tools
+        from src.agents.delegation import build_research_tools
+        from src.workflow.tasks.collaboration import CollaborationService
+        staff_owner = task_owner or f"staff-{uuid.uuid4().hex}"
+        tools += build_staff_tools(repo_root, confirm=gated_confirm, owner=staff_owner, capabilities=capabilities)
+        staff_work = CollaborationService(repo_root, staff_owner, on_update=on_task_update)
+        tools += [tool for tool in build_research_tools(repo_root, confirm=gated_confirm, collaboration=staff_work)
+                  if tool.name in {"task_status", "task_review", "task_followup"}]
         if kind == "web":
             from src.agents.tools.artifacts import build_artifact_tools
 
@@ -375,6 +384,9 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         if agents_cat:
             parts.append("【可用子 agent】(用 task/research_parallel 的 agent 参数按名委派；"
                          "dev 型角色经隔离流水线写代码、需确认)\n" + agents_cat)
+    if any(tool.name == "staff_list" for tool in tools):
+        from src.agents.staff import staff_catalog
+        parts.append(staff_catalog(repo_root))  # Static for this session; staff_list reads current busy/state.
     if extra_system:
         # 调用方注入的**静态**片段（如"服务对象是谁"的人设）。必须静态：system prompt 要在
         # 同一会话内字节级稳定，否则破坏上游前缀缓存命中（见 MainAgent._system 的说明）。

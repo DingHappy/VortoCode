@@ -298,7 +298,23 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                            and task.owner_session == collaboration.owner_identity()]
             return "\n".join(_response(task) for task in [*collaboration.list(), *development]) or "当前 Agent 没有委派任务。"
 
-        async def _review(args: dict) -> str:
+        def review_kind(args):
+            task = collaboration.get(str(args.get("task_id") or ""))
+            dispatch = task.collaboration.get("dispatch", {})
+            return ("irreversible" if dispatch.get("source") == "staff" and dispatch.get("delivery") == "review"
+                    and args.get("verdict") == "accept" else "internal")
+
+        async def _review(args: dict) -> object:
+            if review_kind(args) == "irreversible":
+                from src.agents.tool import PreparedToolCall
+                task = collaboration.get(str(args.get("task_id") or ""))
+                number = args.get("round")
+                note = str(args.get("note") or "")
+                async def apply():
+                    accepted = collaboration.review(task.id, number, "accept", note, owner_approved=True)
+                    return _response(accepted)
+                return PreparedToolCall(apply, f"主人验收专员任务 {task.id} 第 {number} 轮？\n"
+                                        + task.prompt + "\n审查意见：" + note, "irreversible")
             task = collaboration.review(str(args.get("task_id") or ""), args.get("round"),
                                         str(args.get("verdict") or ""), str(args.get("note") or ""))
             return _response(task)
@@ -306,6 +322,17 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         async def _followup(args: dict) -> object:
             previous = collaboration.get(str(args.get("task_id") or ""))
             dispatch = previous.collaboration.get("dispatch")
+            if isinstance(dispatch, dict) and dispatch.get("source") == "staff":
+                from src.agents.tool import PreparedToolCall
+                from src.scheduling.staff_runner import get_staff_service
+                owner = collaboration.owner_identity()
+                async def resume_staff():
+                    if collaboration.owner_identity() != owner:
+                        raise ValueError("会话已变化，未继续任务")
+                    task = get_staff_service(repo_root).followup(owner, previous.id, args.get("round"),
+                                                               str(args.get("message") or ""))
+                    return _response(task)
+                return PreparedToolCall(resume_staff, f"继续原专员任务 {previous.id}？\n{args.get('message') or ''}", "execute")
             if isinstance(dispatch, dict) and dispatch.get("source") == "api":
                 from src.workflow.tasks.errors import CollaborationConflict
                 raise CollaborationConflict("服务下派任务请通过原下派入口补充要求，以保留步骤、超时和并发限制")
@@ -336,11 +363,11 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                  {"task_id": "任务 ID", "revision": "task_inbox 返回的精确结果版本",
                   "note": "处理结论、证据或阻塞说明"}, _acknowledge, operation_kind='internal', internal_scope=InternalToolScope('collaboration', frozenset({'task_acknowledge'}), owned_record), confirm=confirm),
             Tool("task_status", "读取当前发起 Agent 的任务、结果和任务消息；省略 ID 列出最近任务。",
-                 {"task_id": "可选任务 ID"}, _status, operation_kind='read', confirm=confirm),
+                 {"task_id": "可选任务 ID"}, _status, untrusted_source=True, operation_kind='read', confirm=confirm),
             Tool("task_review", "主 Agent 检查子任务结果与证据后接受或请求返工；只记录审查，不替代测试或 Goal 验收。",
                  {"task_id": "任务 ID", "round": "当前执行轮次整数", "verdict": "accept 或 rework",
-                  "note": "具体审查理由与证据引用"}, _review,
-                 argument_schema={"round": {"type": "integer"}, "verdict": {"type": "string", "enum": ["accept", "rework"]}}, operation_kind='internal', internal_scope=InternalToolScope('collaboration', frozenset({'task_review'}), lambda _name, args: collaboration.get(str(args.get('task_id') or ''))), confirm=confirm),
+                  "note": "具体审查理由与证据引用"}, _review, untrusted_source=True,
+                 argument_schema={"round": {"type": "integer"}, "verdict": {"type": "string", "enum": ["accept", "rework"]}}, operation_kind='internal', possible_operations=('irreversible',), prepare=_review, classify=review_kind, internal_scope=InternalToolScope('collaboration', frozenset({'task_review'}), lambda _name, args: collaboration.get(str(args.get('task_id') or ''))), confirm=confirm),
             Tool.prepared("task_followup", "给原执行 Agent 补充信息或返工要求并继续同一任务；继续前可用 task_model_assess 核对原模型收益，最多 3 轮，dev 仍需确认。",
                  {"task_id": "任务 ID", "round": "当前执行轮次整数", "message": "补充信息或具体返工要求"}, _followup,
                  argument_schema={"round": {"type": "integer"}}, operation_kind='execute', confirm=confirm),

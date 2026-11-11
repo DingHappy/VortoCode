@@ -146,15 +146,18 @@ async def invoke_tool_handler(tool: Tool, args: dict) -> object:
                 return ToolResult(f"[能力拦截] {reason}", "blocked")
         if ctx.permissions is not None and (reason := ctx.permissions.denied(tool.name, args)):
             return ToolResult(f"[权限拦截] {reason}", "blocked")
+    classified = tool.classify(args) if tool.classify is not None else None
+    if classified is not None and classified not in {tool.operation_kind, *tool.possible_operations}:
+        return ToolResult("工具分类函数返回了未声明的操作类别，未执行。", "blocked")
     if tool.operation_kind == INTERNAL:
         scope = tool.internal_scope
         if scope is None or tool.name not in scope.tools or (ctx is not None and scope not in ctx.internal_scopes):
             return ToolResult("内部协作作用域不匹配，未执行。", "blocked")
         scope.check(tool.name, args)
-        return await tool._implementation(args)
-    classified = tool.classify(args) if tool.classify is not None else None
-    if classified is not None and classified not in {tool.operation_kind, *tool.possible_operations}:
-        return ToolResult("工具分类函数返回了未声明的操作类别，未执行。", "blocked")
+        if classified in {None, INTERNAL}:
+            return await tool._implementation(args)
+        # A scoped tool may declare a heavier owner action. It uses this same
+        # runtime guard; the internal scope never authorizes that action.
     if tool.prepare is not None:
         action = await tool.prepare(args)
         if not isinstance(action, PreparedToolCall):

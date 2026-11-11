@@ -204,6 +204,8 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
              + build_memory_tools(repo_root, confirm, source=memory_source,
                                   session_id=memory_session_id)
              + build_skill_tools(repo_root, confirm))
+    from src.agents.staff import build_staff_tools
+    tools += build_staff_tools(repo_root, confirm=confirm, owner=owner, capabilities=capabilities)
     if with_web:
         tools += build_web_tools() + build_screenshot_tool(repo_root)
     if with_artifacts:
