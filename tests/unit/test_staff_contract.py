@@ -48,7 +48,7 @@ def test_owner_only_actions_cannot_be_granted(tmp_path, operations):
         StaffRegistry(str(tmp_path)).register_role(role(operations=operations))
 
 
-@pytest.mark.parametrize('name', ['staff_assign', 'staff_propose', 'routine_propose', 'cron_add',
+@pytest.mark.parametrize('name', ['staff_assign', 'staff_propose', 'staff_plan', 'routine_propose', 'cron_add',
                                   'task', 'send_file', 'open_pr', 'delete_artifact', 'run_command', 'browser_click'])
 def test_roles_cannot_acquire_dispatch_or_owner_only_tools(tmp_path, name):
     from src.workflow.staff.registry import StaffRegistry

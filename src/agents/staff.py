@@ -134,6 +134,10 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None, 
         from src.workflow.staff.service import staff_directory
         return json.dumps(service.directory() if service is not None else staff_directory(root), ensure_ascii=False)
 
+    async def plan(args):
+        from src.workflow.staff.standing import standing_plan
+        return json.dumps(standing_plan(root, args), ensure_ascii=False)
+
     def classify(args):
         _, assigned = host().assignment(args)
         return operation(assigned)
@@ -158,6 +162,14 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None, 
 
     from src.agents.staff_proposals import build_staff_proposal_tool, build_routine_proposal_tool
     return [build_staff_proposal_tool(root, confirm=confirm, owner=owner),
+            Tool('staff_plan', '只读准备日程、邮件、资料三个常设专员的登记建议；先取得主人指定的时间、时区与公开话题。不会登记、批准或开始执行。',
+                 {'specialist': 'calendar / mail / research', 'timezone': '主人确认的 IANA 时区',
+                  'times': 'HH:MM 字符串数组：邮件两个不同时间，其余一个', 'weekday': '资料每周汇报日，1 周一到 7 周日',
+                  'topic': '资料专员的公开研究话题，不填私人资料'}, plan, operation_kind=READ,
+                 required_args=('specialist', 'timezone', 'times'), argument_schema={
+                     'specialist': {'type': 'string', 'enum': ['calendar', 'mail', 'research']},
+                     'timezone': {'type': 'string'}, 'times': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1, 'maxItems': 2},
+                     'weekday': {'type': 'integer', 'minimum': 1, 'maximum': 7}, 'topic': {'type': 'string', 'maxLength': 500}}),
             *([build_routine_proposal_tool(root, confirm=confirm, owner=owner)] if with_routines else []), Tool('staff_list', '读取已登记的专员、岗位、权限和忙闲；没有合适专员时先提议，不临时授予权限。',
                  {}, directory, operation_kind=READ),
             Tool.prepared('staff_assign', '交给一个已登记专员独立完成；权限只取岗位，不接受任何权限字段。默认交给主人验收。',
@@ -185,6 +197,7 @@ def staff_catalog(root):
                        for item in registry.departments()]
         return ("【专员名录（会话开始时快照）】小事自己做；独立工作交给职责匹配的专员。"
                 "用 staff_list 核对当前忙闲和版本；无合适专员先提议。权限只能来自登记。\n"
+                "可用 staff_plan 准备日程只读、邮件、公开资料三个常设方案；先问清时间、时区和公开话题，逐步提议并等主人批准，不自动开通。\n"
                 + json.dumps({'members': rows, 'departments': departments}, ensure_ascii=False))
     except (ValueError, OSError):
         return '【专员名录】登记暂不可读取；核对问题前不能派活。'

@@ -26,6 +26,7 @@ export interface StaffUsage { day?: string; total?: number; departments?: Record
 export interface StaffSnapshot {
   roles: StaffRole[]; members: StaffMember[]; proposals: StaffProposal[];
   departments?: StaffDepartment[]; budget_settings?: StaffBudgetSettings; usage?: StaffUsage;
+  standing_specialists?: Array<{ id: string; title: string; scope: string; guide: string }>;
   approval_key: { instance: string; key: { id: string; public_key: string } | null };
 }
 export interface StaffProof { public_key: string; signature: string }

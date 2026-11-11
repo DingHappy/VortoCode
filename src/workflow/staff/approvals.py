@@ -150,11 +150,17 @@ class StaffApprovals:
             return RoutineMigration(self.registry.root).snapshot(data)
         if kind == 'role':
             previous = next((x for x in self.registry.roles() if x['id'] == data.get('id')), None)
+            if 'install' in data:
+                from src.workflow.staff.roles import standing_roles
+                definition = next((x for x in standing_roles() if x['id'] == data.get('id')), None)
+                if set(data) != {'id', 'install'} or data['install'] is not True or previous is not None or definition is None:
+                    raise ValueError('常设岗位安装须使用未占用的预置 id 和 install=true，不能附带权限')
+                return {'kind': kind, 'data': self.registry.validate_role(definition, builtin=True), 'previous': None}
             if previous and previous['builtin']:
                 if set(data) != {'id', 'revision', 'upgrade'} or data['upgrade'] is not True or data['revision'] != previous['revision']:
                     raise ValueError('内置岗位不能改写；升级须明确给原版本与 upgrade=true')
-                from src.workflow.staff.roles import canonical_roles
-                normalized = {**next(x for x in canonical_roles() if x['id'] == previous['id']),
+                from src.workflow.staff.roles import published_roles
+                normalized = {**next(x for x in published_roles() if x['id'] == previous['id']),
                               'enabled': previous['enabled'], 'revision': previous['revision']}
                 if normalized == previous:
                     raise ValueError('内置岗位已是当前定义')
@@ -290,7 +296,8 @@ class StaffApprovals:
                     allowed = {'id', 'name', 'role', 'engine', 'model', 'department', 'limits', 'revision'}
                     data = {key: value for key, value in data.items() if key in allowed}
                 elif kind == 'role' and data.get('builtin'):
-                    data = {'id': data['id'], 'revision': data['revision'], 'upgrade': True}
+                    data = ({'id': data['id'], 'install': True} if snapshot['previous'] is None else
+                            {'id': data['id'], 'revision': data['revision'], 'upgrade': True})
                 elif kind == 'department':
                     data = {key: value for key, value in data.items() if key not in {'notes_revision', 'routines'}}
                 if self.snapshot(kind, data) != snapshot:
@@ -339,7 +346,10 @@ class StaffApprovals:
                         Routines(self.registry.root).apply(item['target'], snapshot['previous'])
                     elif snapshot['kind'] == 'role':
                         if snapshot['data'].get('builtin'):
-                            self.registry.upgrade_builtin(snapshot['data'])
+                            if snapshot['previous'] is None:
+                                self.registry.install_builtin(item['target'])
+                            else:
+                                self.registry.upgrade_builtin(snapshot['data'])
                         else:
                             self.registry.register_role(snapshot['data'])
                     elif snapshot['kind'] == 'member':

@@ -1,0 +1,3 @@
+html,body,#root{min-width:0;min-height:100%;height:auto;overflow:visible;margin:0;background:var(--vc-bg);color:var(--vc-text);font:var(--vc-size-body) var(--vc-font-sans)}
+.qa-standing-staff{max-width:64rem;margin:auto;padding:var(--vc-space-4);line-height:1.6}
+.qa-standing-staff nav{display:flex;gap:var(--vc-space-3);flex-wrap:wrap;align-items:center;margin-bottom:var(--vc-space-4);padding-bottom:var(--vc-space-3);border-bottom:1px solid var(--vc-border)}
