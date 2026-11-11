@@ -375,3 +375,39 @@ async def test_real_mail_drafts_require_separate_cards_and_never_save_before_app
         assert len(saved) == 1 and saved[0]['body'] == '完整草稿正文0'
     finally:
         await pool.shutdown()
+
+
+async def test_owner_wait_and_final_result_reach_the_existing_pool_subscribers(tmp_path, monkeypatch):
+    service, member, waiting, _, _, _, _ = live_staff(tmp_path, monkeypatch)
+    seen = []
+    def subscriber(task):
+        persisted = TaskLedger(tmp_path).load(task.id)
+        assert persisted.status == task.status  # Saved state precedes delivery.
+        seen.append((task.status, (task.collaboration.get('approval') or {}).get('status')))
+    service.runner.subscribe(subscriber)
+    try:
+        task = service.assign('owner', {'member': member['id'], 'prompt': '等待批准并交付'})
+        _, card = await next_card(waiting)
+        assert ('blocked', 'pending') in seen
+        decide(service, task, card)
+        await service.runner.join(task.id)
+        assert ('running', 'approved') in seen and ('done', 'approved') in seen
+    finally:
+        await service.runner.shutdown()
+
+
+async def test_http_thread_decision_notifies_subscribers_on_the_execution_loop(tmp_path, monkeypatch):
+    service, member, waiting, _, _, _, _ = live_staff(tmp_path, monkeypatch)
+    loop = asyncio.get_running_loop()
+    delivered = []
+    service.runner.subscribe(lambda task: delivered.append((asyncio.get_running_loop(),
+        (task.collaboration.get('approval') or {}).get('status'))))
+    try:
+        task = service.assign('owner', {'member': member['id'], 'prompt': '从 HTTP 批准'})
+        _, card = await next_card(waiting)
+        await asyncio.to_thread(decide, service, task, card)
+        await service.runner.join(task.id)
+        assert any(status == 'approved' for _, status in delivered)
+        assert all(actual is loop for actual, _ in delivered)
+    finally:
+        await service.runner.shutdown()

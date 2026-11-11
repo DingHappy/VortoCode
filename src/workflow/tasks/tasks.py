@@ -421,6 +421,10 @@ class TaskRunner:
         self._closing = False
         self._pause_requested: set[str] = set()
         self._subs: set = set()
+        try:
+            self._notification_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._notification_loop = None
         if on_update is not None:
             self._subs.add(on_update)
 
@@ -435,6 +439,19 @@ class TaskRunner:
                 cb(task)
             except Exception:  # noqa: BLE001 —— 订阅者出错不拖垮任务
                 pass
+
+    def notify_existing(self, task: BackgroundTask) -> None:
+        """Deliver an independently saved collaboration update through the same host subscribers."""
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        loop = self._notification_loop
+        if loop is not None and current is not loop:
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(self._notify, task)
+            return
+        self._notify(task)
 
     # -------- 生命周期
     async def shutdown(self):
@@ -528,6 +545,7 @@ class TaskRunner:
             return False
         if self.ledger.load(tid) is None:
             raise ValueError("任务必须先持久化")
+        self._notification_loop = asyncio.get_running_loop()
 
         async def run():
             capacity = _ExecutionCapacity(self._sem, admission)
