@@ -195,7 +195,7 @@ class TeamService:
             fixed = fixed_project(roster)
             if fixed:
                 fixed = {key: fixed[key] for key in ('name', 'repo_root')}
-                if project and project != fixed:
+                if project and {key: project.get(key) for key in ('name', 'repo_root')} != fixed:
                     raise CollaborationConflict('团队不能覆盖开发岗位的固定项目')
                 project = fixed
         if developers and mode != "private":

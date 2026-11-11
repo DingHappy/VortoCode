@@ -108,7 +108,7 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
                 if name and name != fixed['name']:
                     raise CollaborationConflict('团队不能覆盖开发岗位的固定项目')
                 name = fixed['name']
-            project = _resident_project(name) if name else None
+            project = fixed or (_resident_project(name) if name else None)
             if project is None:
                 from src.workflow.workbench.resident_projects import load_resident_projects
                 names = "、".join(item["name"] for item in load_resident_projects()) or "（没有登记任何项目）"

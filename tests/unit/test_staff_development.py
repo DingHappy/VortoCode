@@ -315,7 +315,8 @@ async def test_staff_branch_is_only_published_by_separate_owner_action_and_curre
         assert len(calls) == 1 and calls[0][0][:2] == (str(project), 'vorto/fixture') and calls[0][1]['draft'] is True
 
 
-def test_team_cannot_override_a_registered_developers_fixed_project(development):
+@pytest.mark.parametrize('explicit', [False, True])
+def test_team_cannot_override_a_registered_developers_fixed_project(development, explicit):
     root, project, config, data = development
     registry, role, member, pool, service = registered(development)
     reviewer = registry.register_member({'id': 'review-staff', 'name': '审查', 'role': 'reviewer', 'engine': 'vortocode'})
@@ -326,9 +327,25 @@ def test_team_cannot_override_a_registered_developers_fixed_project(development)
             'mode': 'private', 'reason': 'independent_review'}
     with pytest.raises(CollaborationConflict, match='固定项目'):
         teams.create('owner', **args, project={'name': 'Other', 'repo_root': str(project)})
-    team = teams.create('owner', **args)
+    team = teams.create('owner', **args, **({'project': role['project_binding']} if explicit else {}))
     assert team.team['project'] == {'name': 'Example', 'repo_root': str(project)}
     child = teams.assign(team.id, member['name'], '改说明', '交回分支')
     identity, assigned = teams.execution_identity(child.id)
     service.check(identity, assigned, task=child)
     assert assigned['project_binding'] == role['project_binding']
+
+
+def test_unbound_legacy_project_proposal_keeps_its_original_confirmation_class(development):
+    from tests.unit.test_staff_contract import role as read_role
+    from src.workflow.staff.approvals import digest
+    root, project, config, data = development
+    approvals = StaffApprovals(root)
+    proposal = approvals.propose('owner', 'role', read_role(project=True, tools=['read_file']), '旧的未接入项目岗位')
+    # Existing S3 records classified an unbound read-only role as low risk; it still cannot execute.
+    proposal['requires_desktop_key'] = False
+    proposal.pop('digest')
+    proposal['digest'] = digest(proposal)
+    approvals.registry._write('proposals.json', {'version': 1, 'proposals': [proposal]})
+    assert approvals.get(proposal['id'])['status'] == 'pending'
+    with pytest.raises(ValueError, match='尚未接入'):
+        StaffService.executable(proposal['snapshot']['data'])
