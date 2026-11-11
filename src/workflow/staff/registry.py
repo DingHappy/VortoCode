@@ -199,6 +199,12 @@ class StaffRegistry:
                 raise ValueError('岗位版本已变化，请重新核对')
             item = self.validate_role(data)
             item['revision'] = previous['revision'] + 1 if previous else 1
+            from src.workflow.staff.departments import Departments
+            from src.workflow.staff.notes import StaffNotes
+            departments = Departments(self)
+            for department in departments.list():
+                if department['status'] != 'retired':
+                    departments.check_notes(department, StaffNotes(self.root).snapshot(department['id']), replacement=item)
             entries = [item if x['id'] == item['id'] else x for x in entries] if previous else [*entries, item]
             self._write('roles.json', {'version': 1, 'roles': entries})
             return deepcopy(item)
@@ -239,16 +245,18 @@ class StaffRegistry:
             raise ValueError('D10：新专员只有开发岗允许外部框架')
         if not isinstance(item.get('model', ''), str) or len(item.get('model', '')) > 160:
             raise ValueError('模型名称无效')
-        if item.get('department', ''):
-            raise ValueError('部门登记在 S5 开放')
+        from src.workflow.staff.departments import Departments
+        department = Departments(self).membership(item['id'])
+        if item.get('department', '') not in {'', department}:
+            raise ValueError('部门成员由已批准的部门登记管理，请提议调整部门')
         limits = item.get('limits', {'parallel': 1, 'daily_tokens': 0})
         if (not isinstance(limits, dict) or set(limits) != {'parallel', 'daily_tokens'}
                 or type(limits['parallel']) is not int or limits['parallel'] < 1
-                or type(limits['daily_tokens']) is not int or limits['daily_tokens'] != 0):
-            raise ValueError('专员 parallel 必须为正整数；每日额度在 S5 开放')
+                or type(limits['daily_tokens']) is not int or limits['daily_tokens'] < 0):
+            raise ValueError('专员 parallel 必须为正整数；每日额度为非负整数')
         if item.get('status', 'active') not in {'active', 'paused', 'retired'}:
             raise ValueError('专员状态无效')
-        item.update(model=item.get('model', ''), department='', status=item.get('status', 'active'),
+        item.update(model=item.get('model', ''), department=department, status=item.get('status', 'active'),
                     limits=limits, revision=item.get('revision', 1), created_by='owner',
                     approved_at=item.get('approved_at') or datetime.now(timezone.utc).isoformat())
         if type(item['revision']) is not int or item['revision'] < 1:
@@ -264,7 +272,23 @@ class StaffRegistry:
             ids = [x.get('id') for x in records]
             if any(not isinstance(x, str) or not _ID.fullmatch(x) for x in ids) or len(ids) != len(set(ids)):
                 raise ValueError('专员登记重复或无效')
-            return deepcopy(records)
+            from src.workflow.staff.departments import Departments
+            result = deepcopy(records)
+            for item in result:
+                item['department'] = Departments(self).membership(item['id'])
+            return result
+
+    def departments(self):
+        from src.workflow.staff.departments import Departments
+        return Departments(self).list()
+
+    def department(self, department_id):
+        from src.workflow.staff.departments import Departments
+        return Departments(self).get(department_id)
+
+    def register_department(self, data):
+        from src.workflow.staff.departments import Departments
+        return Departments(self).register(data)
 
     def member(self, member_id: str) -> dict:
         return next((x for x in self.members() if x['id'] == member_id), None) or self._missing('专员不存在')
@@ -278,6 +302,8 @@ class StaffRegistry:
                 raise ValueError('专员已撤掉或版本变化')
             item = self.validate_member(data)
             item['revision'] = previous['revision'] + 1 if previous else 1
+            if previous and previous['department'] and item['role'] != previous['role']:
+                raise ValueError('先在部门提议中移出专员，再批准更换岗位；不能绕过笔记资料边界')
             entries = [item if x['id'] == item['id'] else x for x in entries] if previous else [*entries, item]
             self._write('members.json', {'version': 1, 'members': entries})
             return deepcopy(item)

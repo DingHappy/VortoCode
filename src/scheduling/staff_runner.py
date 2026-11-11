@@ -15,6 +15,7 @@ def set_staff_service(root, runner=None, *, on_update=None):
     service = StaffService(key, runner, execute=None, on_update=on_update)
     service.execute = partial(execute_staff, key, approval_service=service)
     service.actions.recover()
+    service.recover_quotas()
     _SERVICES[key] = service
     return service
 

@@ -203,6 +203,17 @@ async def test_s4_registered_owner_data_role_can_enter_the_existing_execution_po
     assert task.id in pool.jobs
 
 
+def test_s5_owner_registered_department_is_persisted_in_staff_files(tmp_path):
+    registry, member, _, _ = staff_setup(tmp_path)
+    department = registry.register_department({'id': 'dept-reading', 'name': '资料整理',
+        'duty': '只整理主人交给它的公开材料', 'members': [member['id']], 'lead': '',
+        'limits': {'parallel': 1, 'daily_tokens': 0}})
+    assert department['revision'] == 1
+    assert registry.department('dept-reading')['members'] == [member['id']]
+    path = tmp_path / '.vortoone' / 'staff' / 'departments.json'
+    assert json.loads(path.read_text())['departments'] == [department]
+
+
 @pytest.fixture(autouse=True)
 def staff_clean_taint():
     from src.agents.taint import reset_taint
