@@ -26,10 +26,12 @@ char *vorto_staff_approval(const char *tagValue, const char *messageValue) {
         if (!tag || !message) return response(@{@"error": @"批准请求无效"});
         LAContext *context = [LAContext new];
         context.touchIDAuthenticationAllowableReuseDuration = 0;
-        context.localizedReason = @"批准专员登记，请核对 Desktop 上的完整权限清单";
+        context.localizedReason = [message hasPrefix:@"vortoone-staff-action-v1\n"]
+            ? @"批准专员的这一步操作，请核对 Desktop 上的动作与完整内容"
+            : @"批准专员登记，请核对 Desktop 上的完整权限清单";
         NSError *availability = nil;
         if (![context canEvaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&availability])
-            return response(@{@"error": @"此 Mac 没有可用的 Touch ID，提议仍保持待批"});
+            return response(@{@"error": @"此 Mac 没有可用的 Touch ID，请求仍保持待批"});
         NSData *applicationTag = [tag dataUsingEncoding:NSUTF8StringEncoding];
         NSDictionary *query = @{
             (__bridge id)kSecClass: (__bridge id)kSecClassKey,
@@ -89,7 +91,7 @@ char *vorto_staff_approval(const char *tagValue, const char *messageValue) {
             if (!signedData) {
                 if (failure) CFRelease(failure);
                 CFRelease(key);
-                return response(@{@"error": @"Touch ID 未批准；提议保持待批"});
+                return response(@{@"error": @"Touch ID 未批准；请求保持待批"});
             }
             result[@"signature"] = hex(signedData);
         }

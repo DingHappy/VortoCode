@@ -158,6 +158,16 @@ def build_decision_queue(
             continue
         collaboration = getattr(task, "collaboration", {}) or {}
         review = collaboration.get("review")
+        approval = collaboration.get('approval') or {}
+        if status == 'blocked' and collaboration.get('dispatch', {}).get('source') == 'staff' and approval:
+            if approval.get('status') == 'pending':
+                payload = approval.get('payload') or {}
+                output.append(_item(f"task:{task.id}:approval:{payload.get('id', 'unknown')}", 'task',
+                    'high' if payload.get('risk') == 'high' else 'medium', '专员等待你批准这一步',
+                    payload.get('message') or '核对完整动作后批准或拒绝',
+                    created=getattr(task, 'updated', ''), target_id=task.id, action='open_task',
+                    tainted=payload.get('tainted', False), can_dismiss=False))
+            continue
         if status == "waiting" and getattr(task, "dependencies", {}):
             decision_id = f"task:{task.id}:dependencies"
             if decision_id not in hidden:

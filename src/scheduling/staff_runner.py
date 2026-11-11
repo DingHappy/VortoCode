@@ -12,7 +12,9 @@ def set_staff_service(root, runner=None, *, on_update=None):
         return None
     from src.agents.staff import execute_staff
     from src.workflow.staff.service import StaffService
-    service = StaffService(key, runner, execute=partial(execute_staff, key), on_update=on_update)
+    service = StaffService(key, runner, execute=None, on_update=on_update)
+    service.execute = partial(execute_staff, key, approval_service=service)
+    service.actions.recover()
     _SERVICES[key] = service
     return service
 

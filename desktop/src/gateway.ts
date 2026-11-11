@@ -1,4 +1,5 @@
 import type { StaffSnapshot, StaffProof, StaffMember } from "./lib/staff";
+import type { StaffAction } from "./lib/staffAction";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { ownerAccessSnapshot, type OwnerAccessSnapshot } from "./lib/ownerAccess";
 import { invoke } from "@tauri-apps/api/core";
@@ -388,6 +389,13 @@ export class GatewayClient {
   }
 
   readStaff(): Promise<StaffSnapshot> { return this.request("/api/staff"); }
+  readStaffAction(task: string): Promise<StaffAction> {
+    return this.request(`/api/staff/actions/${encodeURIComponent(task)}`);
+  }
+  decideStaffAction(task: string, action: string, approve: boolean, digest: string, reason: string, signature?: string): Promise<{ status: string; replayed: boolean }> {
+    return this.request(`/api/staff/actions/${encodeURIComponent(task)}/${encodeURIComponent(action)}/decision`,
+      { method: "POST", body: JSON.stringify({ approve, digest, reason, ...(signature ? { signature } : {}) }) });
+  }
   decideStaff(id: string, approve: boolean, digest: string, signature?: string): Promise<unknown> {
     return this.request(`/api/staff/proposals/${encodeURIComponent(id)}/decision`,
       { method: "POST", body: JSON.stringify({ approve, digest, ...(signature ? { signature } : {}) }) });

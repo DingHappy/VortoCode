@@ -101,6 +101,12 @@ class StaffApprovals:
     def enrollment_message(self, public):
         return self._enrollment_message(self.key_info(), public)
 
+    def verify_action(self, message, signature):
+        key = self.key_info().get('key')
+        if not key or not signature:
+            raise ValueError('此动作需要 Desktop 批准钥匙')
+        _verify(key['public_key'], message, signature)
+
     def authorize_enrollment(self):
         """Local interactive CLI only; deliberately absent from every HTTP/tool surface."""
         with self._key_lock():

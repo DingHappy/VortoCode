@@ -27,7 +27,7 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/agents/bounded_check.py` | 单次只读检查装配与结构化预算结果 | 自动调度、回执或任务验收 |
 | `src/workflow/tasks/goal_submission.py` / `workbench/goals.py` | 原 Goal/Task 台账的确认快照、固定提交身份、持久关联与保存失败处理；[提交合同](GOAL_SUBMISSION.md) | 新执行池、自动重放、自动批准或以任务结束推导目标达成 |
 | `src/agents/agent_loop.py` | 模型回合、历史、上下文和媒体消息，接入共享工具运行层 | 客户端导航、任务持久化 |
-| `workflow/staff` / `agents/staff.py` | 岗位与专员登记、组合规则、共享协作任务派活和主人批准；[设计与实施边界](STAFF_DESIGN.md) | 新数据库、第二执行池、后台动作审批卡（S4）、部门/例行工作、替换主人保留动作 |
+| `workflow/staff` / `agents/staff.py` | 岗位与专员登记、组合规则、共享协作任务派活、后台动作人工审批和主人批准；[设计与实施边界](STAFF_DESIGN.md) | 新数据库、第二执行池、自动审核、部门/例行工作、替换主人保留动作 |
 | `src/agents/tool.py` / `tool_runtime.py` | Agent 无关的工具定义、声明适配、能力/权限检查、调度、Hook/审计与污点传播；[接入合同](TOOL_RUNTIME.md) | 模型调用、会话存储、外部 Agent 自带工具的执行权限 |
 | `src/agents/tool_results.py` | 原模型历史文本的版本化结果编解码、调用顺序核对和旧格式读取 | 工具执行、真实性证明、权限、状态台账或模型请求 |
 | `src/agents/tool_calls.py` | 模型调用信封、批次与参数对象的纯解析，坏调用整体拒绝，兼容原解析入口 | 工具执行、权限批准、模型请求或完整业务参数校验 |

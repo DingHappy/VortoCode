@@ -55,6 +55,15 @@ class CollaborationService:
             except Exception:  # noqa: BLE001 - transport failures do not undo durable state.
                 pass
 
+    def update_staff_action(self, task_id: str, expected_round: int, update: Callable) -> BackgroundTask:
+        """Trusted staff approval adapter: mutate the existing owned task in one transaction."""
+        with _LOCK:
+            task = self._load(task_id, expected_round)
+            if task.collaboration.get('dispatch', {}).get('source') != 'staff':
+                raise CollaborationConflict('不是专员任务，不能写入审批状态')
+            update(task)
+            return self._save(task)
+
     def _load(self, task_id: str, expected_round: int | None = None) -> BackgroundTask:
         if not typed_id(task_id, "task"):
             raise CollaborationConflict("无效任务 ID")
