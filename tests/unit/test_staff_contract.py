@@ -366,7 +366,7 @@ async def test_staff_waiting_for_member_capacity_does_not_block_other_members(tm
     member = registry.register_member({**member, 'limits': {'parallel': parallel, 'daily_tokens': 0}})
     other = registry.register_member({'id': 'staff-other', 'name': '另一专员', 'role': 'reader', 'engine': 'vortocode'})
     pool = TaskRunner(str(tmp_path), None, max_concurrent=parallel + 1)
-    release, completed = asyncio.Event(), asyncio.Event()
+    release, completed, other_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
     started, finished = [], []
     def update(task):
         if task.status == 'done':
@@ -376,6 +376,8 @@ async def test_staff_waiting_for_member_capacity_does_not_block_other_members(tm
     async def execute(task, work, assigned, person, check):
         check()
         started.append(task.id)
+        if person['id'] == other['id']:
+            other_started.set()
         await release.wait()
         return '已核对'
     service = StaffService(str(tmp_path), pool, execute=execute, on_update=update)
@@ -383,9 +385,9 @@ async def test_staff_waiting_for_member_capacity_does_not_block_other_members(tm
         own = [service.assign('owner', {'member': member['id'], 'prompt': f'核对第 {n} 份材料'})
                for n in range(parallel + 1)]
         independent = service.assign('owner', {'member': other['id'], 'prompt': '核对另一份材料'})
-        # Every enqueued worker gets its first timeslice; execution stays blocked on an event.
-        await asyncio.sleep(0)
-        assert started == [*[task.id for task in own[:parallel]], independent.id]
+        # Synchronize on execution, independent of wait_for's Python-version scheduling.
+        await asyncio.wait_for(other_started.wait(), 2)
+        assert set(started) == {*[task.id for task in own[:parallel]], independent.id}
         assert service.collaboration('owner').get(own[-1].id).status == 'queued'
         release.set()
         await asyncio.wait_for(completed.wait(), 2)
