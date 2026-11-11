@@ -1,6 +1,8 @@
 """常驻助理派活：助理只能提议，人点下发才交给项目运行时；状态从项目运行时刷新回来。"""
 from __future__ import annotations
 
+from tests.tool_authorization import authorized_tools
+
 import json
 
 import pytest
@@ -152,7 +154,7 @@ async def test_refresh_maps_remote_status_and_keeps_unreachable_entries(tmp_path
 
 
 async def test_tools_only_propose_and_say_it_is_not_running_yet(tmp_path):
-    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(str(tmp_path), is_tainted=lambda: True)}
+    tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(str(tmp_path), is_tainted=lambda: True))}
     assert set(tools) == {"propose_task", "list_dispatches", "answer_dispatch_question", "dispatch_answer_memory", "dispatch_stats"} and not tools["propose_task"].read_only
     reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "修登录", "goal": "改超时",
                                                  "criteria": "- 单测\n- 不改接口"})

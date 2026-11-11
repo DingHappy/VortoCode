@@ -16,7 +16,7 @@ class Manager:
 def agent(profile='external'):
     a=MainAgent([]);a._capabilities=SimpleNamespace(profile=profile);return a
 
-def tool(name):return Tool(name,'fixture',{},lambda _:None)
+def tool(name):return Tool(name,'fixture',{},lambda _:None, operation_kind='read')
 
 @pytest.mark.asyncio
 async def test_retry_replaces_owned_tools_and_closes_old_manager(monkeypatch):

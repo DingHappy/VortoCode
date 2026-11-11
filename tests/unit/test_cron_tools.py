@@ -111,13 +111,13 @@ def test_owner_ends_do_have_cron_tools(tmp_path):
 
 
 # ---------------------------------------------------------------- 2. 写面过确认门
-async def test_add_lands_disabled_when_owner_declines(tmp_path):
+async def test_declining_creation_keeps_configuration_unchanged(tmp_path):
     """拒绝启用 → 作业留在表里但**不会跑**。fail-closed 的方向是"不跑"，不是"不写"。"""
     _seed(tmp_path)
     out = await _tools(tmp_path, _no())["cron_add"].handler(
         {"name": "daily_news", "schedule": "at 09:00", "prompt": "搜今天的新闻给我"})
-    job = {j.name: j for j in load_jobs(tmp_path)}["daily_news"]
-    assert job.enabled is False and "停用" in out
+    assert "daily_news" not in {j.name for j in load_jobs(tmp_path)}
+    assert "拒绝" in out
 
 
 async def test_add_enables_only_after_approval(tmp_path):
@@ -154,7 +154,7 @@ async def test_no_confirm_callback_means_never_enabled(tmp_path):
     _seed(tmp_path)
     await _tools(tmp_path, None)["cron_add"].handler(
         {"name": "x", "schedule": "every 5m", "prompt": "干活"})
-    assert {j.name: j for j in load_jobs(tmp_path)}["x"].enabled is False
+    assert "x" not in {j.name for j in load_jobs(tmp_path)}
 
 
 async def test_toggle_enable_asks_but_disable_does_not(tmp_path):

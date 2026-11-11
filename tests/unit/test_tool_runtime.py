@@ -47,7 +47,7 @@ def test_schema_adapters_preserve_types_required_fields_and_private_policy():
         "items": {"type": "array", "items": {"type": "boolean"}}},
         "required": ["count"], "additionalProperties": False}
     tool = Tool("inspect", "Inspect", {}, echo, input_schema=parameters,
-                required_capabilities=(HOST_PROCESS,), read_only=False)
+                required_capabilities=(HOST_PROCESS,), read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))
     declaration = tool_definitions([tool])[0]
     wire = function_schemas([tool])[0]
     assert wire["function"]["parameters"] == declaration["input_schema"] == parameters
@@ -60,7 +60,7 @@ def test_schema_adapters_preserve_types_required_fields_and_private_policy():
 
 def test_legacy_schema_export_is_also_a_deep_copy():
     tool = Tool("legacy", "Old contract", {"limit": "Maximum"}, echo,
-                argument_schema={"limit": {"type": "integer", "enum": [1, 2]}})
+                argument_schema={"limit": {"type": "integer", "enum": [1, 2]}}, operation_kind='read')
     exported = tool_definitions([tool])[0]["input_schema"]
     assert exported["required"] == []
     assert exported["properties"]["limit"]["description"] == "Maximum"
@@ -69,7 +69,7 @@ def test_legacy_schema_export_is_also_a_deep_copy():
 
 
 async def test_foreign_core_can_execute_schema_calls_without_constructing_main_agent():
-    runtime, registry = host([Tool("echo", "Echo", {"text": "Text"}, echo)])
+    runtime, registry = host([Tool("echo", "Echo", {"text": "Text"}, echo, operation_kind='read')])
     # A foreign core owns model messages; only tool name/arguments enter the host.
     call = {"name": runtime.definitions()[0]["name"], "arguments": {"text": "hello"}}
     outcome = await runtime.execute(call["name"], call["arguments"])
@@ -86,7 +86,7 @@ async def test_writes_require_explicit_mode_and_escalation(mode):
     async def write(args):
         ran.append(args)
         return "written"
-    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False)])
+    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))])
     assert (await runtime.execute("write", {}, mode)).status == "blocked"
     assert ran == []
 
@@ -96,11 +96,11 @@ async def test_mode_escalation_is_shared_with_the_callers_turn_state():
     async def approve(name, args):
         asked.append(name)
         return True
-    runtime, _ = host([Tool("write", "Write", {}, echo, read_only=False)], on_escalate=approve)
+    runtime, _ = host([Tool("write", "Write", {}, echo, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))], on_escalate=approve)
     assert (await runtime.execute("write", {})).status == "succeeded"
     assert (await runtime.execute("write", {})).status == "succeeded"
     assert runtime.context.state.escalated and asked == ["write"]
-    other, _ = host([Tool("write", "Write", {}, echo, read_only=False)])
+    other, _ = host([Tool("write", "Write", {}, echo, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))])
     assert (await other.execute("write", {})).status == "blocked"
 
 
@@ -120,7 +120,7 @@ async def test_confirmation_causes_stay_distinct_and_do_not_repeat_within_a_turn
     async def write(args):
         ran.append(args)
         return "written"
-    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False), Tool("read", "Read", {}, echo)],
+    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True)), Tool("read", "Read", {}, echo, operation_kind='read')],
                       on_escalate=confirm if failure is not None else None,
                       on_event=lambda stage, event: events.append((stage, event)))
     for _ in range(2):
@@ -140,12 +140,12 @@ async def test_concurrent_mode_requests_ask_once_and_cancellation_is_not_a_refus
         asked.append(name)
         await asyncio.sleep(0)
         return True
-    runtime, _ = host([Tool("write", "Write", {}, echo, read_only=False)], on_escalate=approve)
+    runtime, _ = host([Tool("write", "Write", {}, echo, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))], on_escalate=approve)
     results = await asyncio.gather(runtime.execute("write", {}), runtime.execute("write", {}))
     assert len(asked) == 1 and all(result.status == "succeeded" for result in results)
     async def cancel(name, args):
         raise asyncio.CancelledError()
-    other, _ = host([Tool("write", "Write", {}, echo, read_only=False)], on_escalate=cancel)
+    other, _ = host([Tool("write", "Write", {}, echo, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))], on_escalate=cancel)
     with pytest.raises(asyncio.CancelledError):
         await other.execute("write", {})
     assert other.context.state.escalation_result is None and not other.context.state.escalated
@@ -164,7 +164,7 @@ async def test_old_pending_confirmation_cannot_authorize_a_new_turn():
     async def write(args):
         ran.append(args)
         return "written"
-    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False)], on_escalate=confirm)
+    runtime, _ = host([Tool("write", "Write", {}, write, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))], on_escalate=confirm)
     old = asyncio.create_task(runtime.execute("write", {}))
     await started.wait()
     runtime.context.state.reset_escalation()
@@ -194,7 +194,7 @@ async def test_guards_block_before_handlers_or_escalation(restriction):
     if restriction == "hook":
         options["on_hook"] = hook
     runtime, _ = host([Tool("protected", "Protected", {}, handler,
-        read_only=restriction == "hook", required_capabilities=required)], **options)
+        read_only=restriction == "hook", required_capabilities=required, operation_kind='read')], **options)
     outcome = await runtime.execute("protected", {})
     assert outcome.status == "blocked" and calls == []
 
@@ -207,12 +207,12 @@ async def test_single_external_call_taints_subsequent_shared_confirmation_gate()
             return {"ok": False, "text": "denied"}
         ran.append(True)
         return "written"
-    runtime, _ = host([Tool("external", "External data", {}, echo, untrusted_source=True),
-        Tool("protected", "Write", {}, protected, read_only=False)])
+    runtime, _ = host([Tool("external", "External data", {}, echo, untrusted_source=True, operation_kind='read'),
+        Tool("protected", "Write", {}, protected, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))])
     await runtime.execute("external", {})
     assert is_tainted()
     outcome = await runtime.execute("protected", {}, "build")
-    assert outcome.status == "failed" and outcome.text == "denied" and ran == []
+    assert outcome.status == "blocked" and "没有确认" in outcome.text and ran == []
 
 
 async def test_separate_request_tasks_retain_the_same_turns_taint_before_confirmation():
@@ -220,14 +220,14 @@ async def test_separate_request_tasks_retain_the_same_turns_taint_before_confirm
     async def protected(args):
         approved = await gate("write")
         return {"ok": approved, "text": "written" if approved else "denied"}
-    runtime, _ = host([Tool("external", "Read", {}, echo, untrusted_source=True),
-        Tool("protected", "Write", {}, protected, read_only=False)])
+    runtime, _ = host([Tool("external", "Read", {}, echo, untrusted_source=True, operation_kind='read'),
+        Tool("protected", "Write", {}, protected, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))])
     # RPC adapters may service each call in a separate asyncio task. A child's
     # ContextVar never flows back to the request dispatcher, but turn state does.
     await asyncio.create_task(runtime.execute("external", {}))
     assert not is_tainted()
     outcome = await asyncio.create_task(runtime.execute("protected", {}, "build"))
-    assert outcome.status == "failed" and outcome.text == "denied"
+    assert outcome.status == "blocked" and "没有确认" in outcome.text
 
 
 async def test_parallel_external_reads_propagate_taint_to_parent_turn():
@@ -239,7 +239,7 @@ async def test_parallel_external_reads_propagate_taint_to_parent_turn():
             ready.set()
         await asyncio.wait_for(ready.wait(), timeout=1)
         return str(args["id"])
-    runtime, _ = host([Tool("external", "Read", {}, read, untrusted_source=True)])
+    runtime, _ = host([Tool("external", "Read", {}, read, untrusted_source=True, operation_kind='read')])
     result = await runtime.execute_batch([("external", {"id": 1}), ("external", {"id": 2})])
     assert [outcome.text for _, outcome in result] == ["1", "2"]
     assert is_tainted()
@@ -256,7 +256,7 @@ async def test_revoking_an_external_tool_during_parallel_reads_does_not_erase_ta
         await ready.wait()
         registry.pop("external", None)
         return "already ingested external data"
-    runtime, registry = host([Tool("external", "Read", {}, read, untrusted_source=True)])
+    runtime, registry = host([Tool("external", "Read", {}, read, untrusted_source=True, operation_kind='read')])
     await runtime.execute_batch([("external", {}), ("external", {})])
     assert "external" not in registry and is_tainted()
 
@@ -270,7 +270,7 @@ async def test_serial_reads_never_overlap_confirmation_callbacks():
         await asyncio.sleep(0)
         running -= 1
         return "read"
-    runtime, _ = host([Tool("read", "Approval may be needed", {}, read, serial=True)])
+    runtime, _ = host([Tool("read", "Approval may be needed", {}, read, serial=True, operation_kind='read')])
     await runtime.execute_batch([("read", {}), ("read", {})])
     assert peak == 1
 
@@ -282,8 +282,8 @@ async def test_yield_stops_the_rest_of_a_batch():
     async def later(args):
         ran.append(True)
         return "unexpected"
-    runtime, _ = host([Tool("suspend", "Suspend", {}, suspend, yields_turn=True),
-                       Tool("later", "Later", {}, later)])
+    runtime, _ = host([Tool("suspend", "Suspend", {}, suspend, yields_turn=True, operation_kind='read'),
+                       Tool("later", "Later", {}, later, operation_kind='read')])
     with pytest.raises(ToolTurnYield, match="durably suspended"):
         await runtime.execute_batch([("suspend", {}), ("later", {})])
     assert ran == []
@@ -294,7 +294,7 @@ async def test_cancellation_is_not_converted_into_success_or_failure_text(batch)
     events = []
     async def cancelled(args):
         raise asyncio.CancelledError()
-    runtime, _ = host([Tool("cancel", "Cancel", {}, cancelled)],
+    runtime, _ = host([Tool("cancel", "Cancel", {}, cancelled, operation_kind='read')],
         on_event=lambda stage, payload: events.append((stage, payload)))
     with pytest.raises(asyncio.CancelledError):
         if batch:
@@ -309,7 +309,7 @@ async def test_explicit_failures_and_observer_errors_do_not_become_successes():
         return {"ok": False, "text": "test failed"}
     def broken_observer(*args):
         raise RuntimeError("UI disconnected")
-    runtime, _ = host([Tool("test", "Test", {}, failed)],
+    runtime, _ = host([Tool("test", "Test", {}, failed, operation_kind='read')],
                       on_event=broken_observer, on_result=broken_observer)
     outcome = await runtime.execute("test", {})
     assert outcome.status == "failed" and outcome.text == "test failed"
@@ -321,7 +321,7 @@ async def test_typed_outcomes_preserve_text_and_only_success_runs_success_callba
     async def handler(args):
         # Prose must not be used to guess outcome, in either direction.
         return ToolResult("失败字样只是数据；退出信息保留", status)
-    runtime, _ = host([Tool("test", "Test", {}, handler)],
+    runtime, _ = host([Tool("test", "Test", {}, handler, operation_kind='read')],
         on_event=lambda stage, payload: events.append((stage, payload)),
         consume_result=lambda raw: consumed.append(raw) or raw,
         on_success=lambda *args: successes.append(True))
@@ -346,7 +346,8 @@ async def test_command_and_test_results_keep_real_exit_outcomes(tmp_path, monkey
     monkeypatch.setattr(worktree, "run_tests", lambda *args, **kwargs:
         {"ok": ok, "cmd": "fixture tests", "output": "diagnostic tail"})
     tools = build_command_tool(str(tmp_path), approve) + [build_test_tool(str(tmp_path), ["fixture"])]
-    runtime, _ = host(tools, capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE, str(tmp_path)))
+    runtime, _ = host(tools, capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE, str(tmp_path)),
+        confirm=make_confirm_gate(approve, can_ask_human=True))
     command = await runtime.execute("run_command", {"command": "fixture"}, "build")
     tests = await runtime.execute("run_tests", {}, "build")
     assert command.status == tests.status == ("succeeded" if ok else "failed")
@@ -377,7 +378,7 @@ async def test_command_missing_args_policy_denial_and_confirmation_are_blocked(t
 async def test_a_core_without_media_support_cannot_silently_discard_images():
     async def image(args):
         return {"text": "screenshot", "images": ["/tmp/example.png"]}
-    runtime, _ = host([Tool("image", "Image", {}, image)])
+    runtime, _ = host([Tool("image", "Image", {}, image, operation_kind='read')])
     outcome = await runtime.execute("image", {})
     assert outcome.status == "failed" and "图片结果处理" in outcome.text and is_tainted()
 
@@ -389,14 +390,14 @@ async def test_execution_revocation_is_checked_before_the_handler():
         return "bad"
     def revoked():
         raise RuntimeError("execution revoked")
-    runtime, _ = host([Tool("run", "Run", {}, handler)], check_execution=revoked)
+    runtime, _ = host([Tool("run", "Run", {}, handler, operation_kind='read')], check_execution=revoked)
     with pytest.raises(RuntimeError, match="execution revoked"):
         await runtime.execute("run", {})
     assert ran == []
 
 
 async def test_supervised_sensitive_file_denial_survives_a_local_profile(tmp_path):
-    runtime, _ = host([Tool("read_file", "Read", {"path": "Path"}, echo)],
+    runtime, _ = host([Tool("read_file", "Read", {"path": "Path"}, echo, operation_kind='read')],
         supervised=True, capabilities=SessionCapabilities.for_profile("local", str(tmp_path)))
     outcome = await runtime.execute("read_file", {"path": ".env"})
     assert outcome.status == "blocked" and "监管拦截" in outcome.text
@@ -410,7 +411,7 @@ async def test_audit_and_hook_failures_keep_the_result_but_are_logged(caplog):
     async def broken_hook(stage, payload, stoppable=False):
         raise RuntimeError("hook system crashed")
 
-    runtime, _ = host([Tool("echo", "Echo", {}, echo, read_only=True)], on_result=broken_audit, on_hook=broken_hook)
+    runtime, _ = host([Tool("echo", "Echo", {}, echo, read_only=True, operation_kind='read')], on_result=broken_audit, on_hook=broken_hook)
     with caplog.at_level("WARNING", logger="src.agents.tool_runtime"):
         outcome = await runtime.execute("echo", {"text": "hi"})
     assert outcome.text == "hi"

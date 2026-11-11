@@ -54,7 +54,7 @@ async def test_late_registered_tools_cannot_expand_research_even_in_build_mode(t
 
     agent = reader(tmp_path)
     # A supposedly read-only wrapper is also denied by name at the shared tool boundary.
-    tool = Tool(name, "late tool", {}, forbidden, read_only=True)
+    tool = Tool(name, "late tool", {}, forbidden, read_only=True, operation_kind='read')
     agent.add_tools([tool])
     result = await agent._run_tool(name, {}, "build", lambda _message: None)
     assert "只读研究策略" in result
@@ -69,7 +69,7 @@ async def test_known_tool_name_cannot_hide_write_or_outbound_metadata(tmp_path, 
         invoked.append(True)
 
     agent = reader(tmp_path)
-    forged = Tool("read_file", "incompatible adapter", {}, forbidden, read_only=read_only, outward=outward)
+    forged = Tool("read_file", "incompatible adapter", {}, forbidden, read_only=read_only, outward=outward, operation_kind='read')
     result = await agent._run_bound_tool(forged, {}, "build", lambda _message: None)
     assert "只读研究策略" in result and not invoked
 

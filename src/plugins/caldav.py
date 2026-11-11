@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
 import asyncio
 import base64
 import logging
@@ -291,27 +293,26 @@ def build_tools() -> list:
 
 
 def build_write_tools(confirm: Any) -> list:
-    from src.agents.gate import request
     from src.agents.tool import Tool
     from src.agents.trust import INTERACT
 
-    async def _add(args: dict) -> str:
+    async def _add(args: dict) -> object:
         try:
             event = build_event(str(args.get("title") or ""), str(args.get("start") or ""),
                                 str(args.get("end") or ""), str(args.get("location") or ""),
                                 str(args.get("notes") or ""))
         except CalDAVError as error:
             return str(error)
-        if not await request(confirm, event_preview(event), INTERACT):
-            return "用户没有同意，日程没建。"
-        try:
-            name = await asyncio.to_thread(save_event, event)
-        except CalDAVError as error:
-            return str(error)
-        return f"已在日历「{name}」里建好：{_span(event)} {event['title']}。"
+        async def apply():
+            try:
+                name = await asyncio.to_thread(save_event, event)
+            except CalDAVError as error:
+                return str(error)
+            return f"已在日历「{name}」里建好：{_span(event)} {event['title']}。"
+        return PreparedToolCall(apply, event_preview(event), INTERACT, denied_result='用户没有同意，日程没建。')
 
-    return [Tool("calendar_add", "在用户的日历里新建一条日程（只新建，不改不删）。每次都会请用户确认。"
+    return [Tool.prepared("calendar_add", "在用户的日历里新建一条日程（只新建，不改不删）。每次都会请用户确认。"
                  "时间按用户所在时区写 YYYY-MM-DD HH:MM；全天日程只写日期。不确定日期或时间时先问用户。",
                  {"title": "标题", "start": "开始，YYYY-MM-DD HH:MM 或 YYYY-MM-DD（全天）",
                   "end": "结束，可空（默认一小时；全天默认当天）", "location": "地点，可空", "notes": "备注，可空"},
-                 _add, read_only=False, untrusted_source=True, serial=True)]
+                 _add, read_only=False, untrusted_source=True, serial=True, operation_kind='write', confirm=confirm, possible_operations=('interact',))]

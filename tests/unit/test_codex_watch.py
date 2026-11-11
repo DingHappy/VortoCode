@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from tests.tool_authorization import authorized_tools
 
 from src.scheduling import codex_observer as observer
 from src.scheduling import codex_watch as watch
@@ -222,7 +223,7 @@ async def test_action_tool_only_proposes_and_notifies_with_buttons(tmp_path, mon
         return notify
     import src.scheduling.notices as notices
     monkeypatch.setattr(notices, "make_notifier", fake_notifier)
-    tools = {tool.name: tool for tool in watch.build_codex_action_tools(root, is_tainted=lambda: True, session=lambda: "sid-x")}
+    tools = {tool.name: tool for tool in authorized_tools(watch.build_codex_action_tools(root, is_tainted=lambda: True, session=lambda: "sid-x"))}
     reply = await tools["propose_codex_message"].handler({"thread": "改登录超时", "text": "跑一下全量测试"})
     assert "还没有发给 Codex" in reply and not tools["propose_codex_message"].read_only
     action = watch.load_actions(root)[0]

@@ -4,6 +4,8 @@
 不调用 run_*（那些需 LLM/网络），所以这里只测“解析与分发前”的行为。
 """
 
+from src.agents.gate import make_confirm_gate
+
 import sys
 
 import pytest
@@ -496,13 +498,13 @@ async def test_headless_mcp_connects_adds_tools_and_shuts_down(monkeypatch, tmp_
             calls["shutdown"] += 1
 
     async def fake_connect(repo_root, **kwargs):
-        return FakeMgr(), [Tool("mcp__srv__ping", "[MCP:srv] ping", {}, ping_handler, read_only=False)]
+        return FakeMgr(), [Tool("mcp__srv__ping", "[MCP:srv] ping", {}, ping_handler, read_only=False, operation_kind='write', confirm=make_confirm_gate(auto_approve=True))]
     monkeypatch.setattr(mt, "connect_mcp", fake_connect)
     monkeypatch.chdir(tmp_path)
 
     llm = _ScriptedLLM('{"tool":"mcp__srv__ping","args":{}}', "调用完成。")
     reply = await cli.run_agent_headless(
-        "用 ping", build=True, use_mcp=True, quiet=True, llm=llm,
+        "用 ping", build=True, use_mcp=True, quiet=True, llm=llm, auto_yes=True,
         capability_profile="external",
     )
     assert reply == "调用完成。"

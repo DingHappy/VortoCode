@@ -8,6 +8,10 @@
 """
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
+
+
 import json
 from typing import Any, Callable, List, Optional
 
@@ -44,7 +48,6 @@ def _resident_project(name: str) -> Optional[dict]:
 def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[], Any]",
                      allow_developers: bool = False) -> List[Tool]:
     """``allow_developers``：只有 Desktop 会话能开带开发成员的小组（批准钥匙 #723 合并前，手机与 IM 都不行）。"""
-    from src.agents.gate import request
     from src.agents.taint import mark_tainted
     from src.agents.trust import EXECUTE, IRREVERSIBLE, OWN_DATA
     from src.scheduling.task_notices import notify_transition
@@ -64,12 +67,22 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
     def guarded(action):
         async def handler(args: dict) -> str:
             try:
-                return await action(args)
+                result = await action(args)
+                if isinstance(result, PreparedToolCall):
+                    original = result.invoke
+                    async def invoke():
+                        try:
+                            return await original()
+                        except CollaborationConflict as error:
+                            return f"未执行：{error}"
+                    from dataclasses import replace
+                    return replace(result, invoke=invoke)
+                return result
             except CollaborationConflict as error:
                 return f"未执行：{error}"
         return handler
 
-    async def propose(args: dict) -> str:
+    async def propose(args: dict) -> object:
         runner()
         objective = str(args.get("objective") or "").strip()
         acceptance = [str(item) for item in args.get("acceptance") or []]
@@ -87,15 +100,14 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
                 names = "、".join(item["name"] for item in load_resident_projects()) or "（没有登记任何项目）"
                 return f"未执行：开发成员要指定一个登记过的常驻项目 project。可选：{names}"
         card = _card(objective, acceptance, members, mode, limits, project)
-        if not await request(confirm, card, EXECUTE):
-            return "主人没有同意开这个小组；不要重复提议同一内容，问清楚要怎么改。"
-        # Desktop 会话传进来的是取当前会话 ID 的函数（同派活工具）；真机 2026-11-04 曾把函数原样存盘，存不进去
-        session = str((owner() if callable(owner) else owner) or "")
-        root = service().create(session, objective=objective, acceptance=acceptance, members=members, mode=mode,
-                                limits=limits, project=project)
-        runner().wake(root.id, "任务刚开始：先拆解，再给成员派活")
-        return (f"小组已开工：{root.id}。成员交回结果时由小组自己推进；需要主人决定、交付验收或失败时会通知。"
-                "现在简短告诉主人小组开工了，不要替小组做研究。")
+        async def apply():
+            session = str((owner() if callable(owner) else owner) or "")
+            root = service().create(session, objective=objective, acceptance=acceptance, members=members, mode=mode,
+                                    limits=limits, project=project)
+            runner().wake(root.id, "任务刚开始：先拆解，再给成员派活")
+            return (f"小组已开工：{root.id}。成员交回结果时由小组自己推进；需要主人决定、交付验收或失败时会通知。"
+                    "现在简短告诉主人小组开工了，不要替小组做研究。")
+        return PreparedToolCall(apply, card, EXECUTE, denied_result='主人没有同意开这个小组；不要重复提议同一内容，问清楚要怎么改。')
 
     async def overview(_args: dict) -> str:
         live = service()
@@ -116,30 +128,34 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
             view["submission_external_content"] = view["tainted"]
         return json.dumps(view, ensure_ascii=False)
 
-    async def reply(args: dict) -> str:
+    async def reply(args: dict) -> object:
         team_id, text = str(args.get("team_id") or ""), str(args.get("text") or "").strip()
-        if not await request(confirm, f"把这句话转给任务小组 {team_id}：{text}", OWN_DATA):
-            return "主人没有同意转达。"
-        service().owner_reply(team_id, text)
-        runner().wake(team_id, "主人回复了")
-        return "已转给小组，小组会接着做。"
+        async def apply():
+            service().owner_reply(team_id, text)
+            runner().wake(team_id, "主人回复了")
+            return "已转给小组，小组会接着做。"
+        return PreparedToolCall(apply, f'把这句话转给任务小组 {team_id}：{text}', OWN_DATA, denied_result='主人没有同意转达。')
 
-    async def decide(args: dict) -> str:
+    async def decide(args: dict) -> object:
         team_id, accept, note = str(args.get("team_id") or ""), bool(args.get("accept")), str(args.get("note") or "")
         verb = "验收通过" if accept else f"退回（{note}）"
-        if not await request(confirm, f"任务小组 {team_id}：{verb}？", IRREVERSIBLE if accept else OWN_DATA):
-            return "主人没有确认。"
-        root = service().decide(team_id, accept, note)
-        if not accept:
-            runner().wake(team_id, "主人退回了交付，按意见继续")
-        return f"小组 {team_id} 已{'完成' if root.status == 'done' else '退回，继续进行'}。"
+        async def apply():
+            root = service().decide(team_id, accept, note)
+            if not accept:
+                runner().wake(team_id, "主人退回了交付，按意见继续")
+            return f"小组 {team_id} 已{'完成' if root.status == 'done' else '退回，继续进行'}。"
+        return PreparedToolCall(apply, f'任务小组 {team_id}：{verb}？', IRREVERSIBLE if accept else OWN_DATA, denied_result='主人没有确认。')
 
-    async def stop(args: dict) -> str:
-        root = runner().stop(str(args.get("team_id") or ""), str(args.get("reason") or "主人停止"))
-        return f"已停止小组 {root.id}；在跑的成员已请求取消。"
+    async def stop(args: dict) -> object:
+        team_id = str(args.get("team_id") or "")
+        service().get(team_id)
+        async def apply():
+            root = runner().stop(team_id, str(args.get("reason") or "主人停止"))
+            return f"已停止小组 {root.id}；在跑的成员已请求取消。"
+        return PreparedToolCall(apply, f"停止任务小组 {team_id}？", EXECUTE, protective=True)
 
     return [
-        Tool("team_propose",
+        Tool.prepared("team_propose",
              "大任务（需要多个角色、多轮，例如先查资料再审查、比较方案）时提议开一个任务小组，由主人确认后开工。"
              "成员角色可选：web-researcher（联网查资料）、reviewer（审查材料）、developer（在登记项目里改代码，"
              "只能由 opencode 担任，小组须为 private、要给 project，只能在 Desktop 上开）。"
@@ -167,15 +183,15 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
                                    'required': ['name', 'role']}},
              'limits': {'type': 'object',
                         'properties': {'parallel': {'type': 'integer', 'minimum': 1, 'maximum': 4}}},
-             'mode': {'type': 'string', 'enum': ['open', 'private']}}, required_args=('objective', 'acceptance', 'members')),
-        Tool("team_list", "列出进行中的任务小组：状态、成员、子任务和用量。", {}, guarded(overview), read_only=True),
+             'mode': {'type': 'string', 'enum': ['open', 'private']}}, required_args=('objective', 'acceptance', 'members'), operation_kind='execute', confirm=confirm),
+        Tool("team_list", "列出进行中的任务小组：状态、成员、子任务和用量。", {}, guarded(overview), read_only=True, operation_kind='read', confirm=confirm),
         Tool("team_open", "查看一个任务小组的详情；交付了的会带上协调人的总结和逐条证据。",
-             {"team_id": "小组 ID"}, guarded(open_one), read_only=True, required_args=('team_id',), argument_schema={'team_id': {'type': 'string'}}),
-        Tool("team_reply", "把主人的回答转给正在等主人的任务小组。", {"team_id": "小组 ID", "text": "主人的原话"},
-             guarded(reply), read_only=False, serial=True, required_args=('team_id', 'text'), argument_schema={'team_id': {'type': 'string'}, 'text': {'type': 'string'}}),
-        Tool("team_decide", "主人对小组的交付做决定：accept=true 验收通过，false 退回并写明原因。",
+             {"team_id": "小组 ID"}, guarded(open_one), read_only=True, required_args=('team_id',), argument_schema={'team_id': {'type': 'string'}}, operation_kind='read', confirm=confirm),
+        Tool.prepared("team_reply", "把主人的回答转给正在等主人的任务小组。", {"team_id": "小组 ID", "text": "主人的原话"},
+             guarded(reply), read_only=False, serial=True, required_args=('team_id', 'text'), argument_schema={'team_id': {'type': 'string'}, 'text': {'type': 'string'}}, operation_kind='own_data', confirm=confirm),
+        Tool.prepared("team_decide", "主人对小组的交付做决定：accept=true 验收通过，false 退回并写明原因。",
              {"team_id": "小组 ID", "accept": "true/false", "note": "退回原因"}, guarded(decide), read_only=False, serial=True,
-             argument_schema={'team_id': {'type': 'string'}, 'accept': {'type': 'boolean'}}, required_args=('team_id', 'accept')),
-        Tool("team_stop", "停止一个任务小组，取消在跑的成员。", {"team_id": "小组 ID", "reason": "可选原因"},
-             guarded(stop), read_only=False, serial=True, required_args=('team_id',), argument_schema={'team_id': {'type': 'string'}}),
+             argument_schema={'team_id': {'type': 'string'}, 'accept': {'type': 'boolean'}}, required_args=('team_id', 'accept'), operation_kind='irreversible', confirm=confirm, possible_operations=('own_data',), classify=lambda a: IRREVERSIBLE if a.get('accept') else OWN_DATA),
+        Tool.prepared("team_stop", "停止一个任务小组，取消在跑的成员。", {"team_id": "小组 ID", "reason": "可选原因"},
+             guarded(stop), read_only=False, serial=True, required_args=('team_id',), argument_schema={'team_id': {'type': 'string'}}, operation_kind='execute', protective=True, confirm=confirm),
     ]

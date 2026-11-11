@@ -54,7 +54,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 - **记忆写入策略** `src/memory/write_policy.py`：durable/proposal/quarantine/reject 四级；污点回合的指令性文本与疑似凭据不进长期记忆。
 - **前缀缓存稳定**：system prompt 在**同一会话内必须字节级稳定**（静态注入，装配时读一次），否则破坏 relay 侧前缀缓存命中。仓库记忆（`src/agents/repo_memory.py`）等静态注入项都遵守这条。
 
-**运行循环、工具执行与能力装配分离**：`agents/agent_loop.py` 负责模型回合、历史、上下文预算和媒体消息；`agents/tool_runtime.py` 独立承担工具能力/权限检查、plan 升级、Hook/审计、串并行调度和污点传播。`agents/tool.py` 提供共享 Tool 合同与声明/schema 导出。其它 Agent 核心可通过可信宿主适配调用同一个工具运行层，不需要构造 MainAgent；外部核心自带的工具仍由其原生权限系统执行。接入合同见 `docs/TOOL_RUNTIME.md`。`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。
+**运行循环、工具执行与能力装配分离**：`agents/agent_loop.py` 负责模型回合、历史、上下文预算和媒体消息；`agents/tool_runtime.py` 独立承担工具能力/权限检查、plan 升级、Hook/审计、串并行调度和污点传播。`agents/tool.py` 提供必填操作类别的 Tool 合同与声明/schema 导出；确认由 `tool_runtime` 统一调用内核，工具准备具体预览与待执行动作。其它 Agent 核心可通过可信宿主适配调用同一个工具运行层，不需要构造 MainAgent；外部核心自带的工具仍由其原生权限系统执行。接入合同见 `docs/TOOL_RUNTIME.md`。`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。
 
 **外部核心控制**：`agents/backends/control.py` 定义现有会话的状态/启动新轮次/补充指令/请求停止合同；`backends/codex.py` 通过注入的 RPC 连接适配 Codex。观察员的已批准动作实际使用此层，执行前读取最新状态，自动建议与停止绑定原轮次。回执只代表受理，不代表完成；不自动重试、不调整外部核心的权限/模型/沙箱。Gateway 主会话仍使用 MainAgent，尚未实现整会话自由切换。边界见 `docs/AGENT_BACKENDS.md`。这些适配模块同样不得导入 workflow/gateway/scheduling/web/im，分层测试覆盖。
 

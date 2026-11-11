@@ -147,17 +147,21 @@ def make_confirm_gate(
         except Exception:  # noqa: BLE001 —— 交代/审计失败不该影响决定本身，但不能无声地丢掉审计
             logger.warning("确认决定的审计回调失败：%s", operation[:200], exc_info=True)
 
-    async def gated(message: str, kind: Optional[str] = None) -> bool:
+    async def gated(message: str, kind: Optional[str] = None, *, force_prompt: bool = False,
+                    _task_authorized: bool = False, _protective_authorized: bool = False) -> bool:
         operation = str(message)                   # 原始操作文案（端展示"拒了什么"用这个）
         tainted = is_tainted()
         from src.agents.scoped_approval import consume_scope, make_offer, offering
         offer = make_offer(kind, enabled=enable_turn_scope, profile=capability_profile, can_ask=can_ask_human and ask_human is not None)
-        scoped = not tainted and consume_scope(offer)
-        verdict = decide(tainted=tainted, pre_authorized=scoped or pre_authorized(_level(), kind),
+        scoped = not force_prompt and not tainted and consume_scope(offer)
+        task_authorized = _task_authorized and kind in {"write", "execute"}
+        protective = (_protective_authorized and can_ask_human and capability_profile != "unattended"
+                      and kind in {"write", "execute"})
+        verdict = decide(tainted=tainted, pre_authorized=not force_prompt and (protective or task_authorized or scoped or pre_authorized(_level(), kind)),
                          can_ask_human=can_ask_human)
         from src.agents.confirmation_context import approval_context, presenting_approval, record_approval_outcome
         source = "preauthorized" if verdict == ALLOW else "system" if verdict == DENY or ask_human is None else "user"
-        scope = "turn" if scoped else "existing_trust" if verdict == ALLOW else "none" if source == "system" else "once"
+        scope = "protective" if protective and verdict == ALLOW else "task_workspace" if task_authorized and verdict == ALLOW else "turn" if scoped else "existing_trust" if verdict == ALLOW else "none" if source == "system" else "once"
         with presenting_approval(kind, source=source, scope=scope), offering(offer if not tainted else None):
             if verdict == ALLOW:
                 _tell(operation, True, tainted)        # 自动放行也要留痕，不能静默

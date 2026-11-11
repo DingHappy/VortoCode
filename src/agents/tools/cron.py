@@ -9,6 +9,11 @@ plan 模式改得动 cron.yaml、跑得动作业——绕过 plan/build 门。�
 
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
+
+
+
 from typing import Callable, Optional
 
 from src.agents.tool import Tool
@@ -46,8 +51,6 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
     - **无人值守档不给这组工具**（build_agent_tools 的 with_cron=False）：cron 作业能创建
       cron 作业就是自我复制驻留——那是把"周期性无人值守执行"变成 agent 可自授的权限。
     """
-    async def _ask(msg: str) -> bool:
-        return bool(await confirm(msg)) if confirm is not None else False
 
     async def _list(_args: dict) -> str:
         from datetime import datetime as _dt
@@ -76,82 +79,65 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
                 f"    内容 {' '.join((j.command or j.prompt).split())[:100]}")
         return "\n".join(lines)
 
-    async def _add(args: dict) -> str:
-        from src.scheduling.cron import CronEditError, add_job
-
+    async def _add(args: dict) -> object:
+        from src.scheduling.cron import CronEditError, add_job, preview_new_job
         name = str(args.get("name") or "").strip()
         schedule = str(args.get("schedule") or "").strip()
         prompt = str(args.get("prompt") or "").strip()
-        announce = str(args.get("announce") or "im").strip().lower()
         want_web = _truthy(args.get("allow_web", False))
-        # 出网许可**单独问一次**，不许混在"要不要启用"里一起蒙过去：这两件事的风险不是一个量级，
-        # 合成一句话就等于让人在不知情下顺手交出无人值守的外传通道。先问许可、再问启用；
-        # 许可被拒就按不出网建（作业仍然有用，只是这一档能力没有），而不是整个作业不建。
-        allow_web = False
-        if want_web:
-            allow_web = await _ask(
-                f"作业「{name}」申请**出网许可**（web_search / web_fetch / 截图）。\n"
-                f"注意：它在**无人盯屏**时运行，出网请求的 URL 本身就是一条数据外带通道——"
-                f"若这台机器上的文件被人做过手脚、诱导它去访问某个地址，没有人会拦。\n"
-                f"仅在你确实需要它联网（如查新闻/行情）时批准。要给吗？")
-        try:                                       # 先校验再问人：别拿一个注定失败的操作烦主人
-            block = add_job(repo_root, name=name, schedule=schedule, prompt=prompt,
-                            announce=announce, enabled=False, model=str(args.get("model") or ""),
-                            allow_web=allow_web,
-                            budget=int(args.get("budget") or 0) if str(args.get("budget") or "").strip().isdigit() else 0)
-        except CronEditError as e:
-            return f"未创建：{e}"
-        except (OSError, ValueError) as e:
-            return f"未创建：写 cron.yaml 失败 {type(e).__name__}: {e}"
-        # 先以**停用**态落盘，再问要不要启用：确认被拒时留下的是一条不会跑的记录，
-        # 而不是一个已经在排期里的作业。fail-closed 的方向永远是"不跑"。
-        net = "可联网" if allow_web else "**不能联网**"
-        ok = await _ask(f"新建定时作业「{name}」并**启用**？它会在无人盯屏时按 {schedule} 自动跑（{net}）：\n"
-                        f"{' '.join(prompt.split())[:300]}" + ("" if _scheduler_on() else _SCHEDULER_OFF))
-        if not ok:
-            return (f"已写入作业 {name}，但保持**停用**（你拒绝了启用）。"
-                    f"想跑再说一声，或 cron_run 手动跑一次试试。\n{block}")
+        values = {"name": name, "schedule": schedule, "prompt": prompt,
+                  "announce": str(args.get("announce") or "im").strip().lower(),
+                  "model": str(args.get("model") or ""),
+                  "budget": int(args.get("budget") or 0) if str(args.get("budget") or "").strip().isdigit() else 0}
         try:
-            from src.scheduling.cron import set_job_enabled
-            set_job_enabled(repo_root, name, True)
-        except Exception as e:  # noqa: BLE001
-            return f"作业 {name} 已写入但启用失败：{type(e).__name__}: {e}（现为停用态）"
-        # 回执必须反映**最终**状态：`block` 是落盘那一刻生成的（enabled: false，因为要先停用再问），
-        # 直接贴出来就会出现"已启用"和 `enabled: false` 同框——工具自己跟自己矛盾。真机
-        # 2026-07-27 模型信了更具体的那半，回报"已创建但默认停用"，用户于是又说一次"启用"。
-        # 别让人去分辨工具话里哪半是真的。
-        from src.scheduling.cron import job_block
-        note = ("" if allow_web else
-                ("\n⚠️ 你拒绝了出网许可，该作业**不能联网**——若它的内容需要搜索/抓网页，"
-                 "到点会如实报告缺工具。要改请人工编辑 cron.yaml 加 `allow_web: true`。"
-                 if want_web else
-                 "\n提示：该作业**不能联网**（无人值守默认不出网）。需要联网请在创建时申报 allow_web。"))
-        return (f"✅ 定时作业 {name} 已创建并**已启用**（{schedule}）。无需再启用一次。\n"
-                + (job_block(repo_root, name) or block) + note + ("" if _scheduler_on() else _SCHEDULER_OFF))
+            preview_new_job(repo_root, **values)
+        except (CronEditError, OSError, ValueError) as error:
+            return f"未创建：{error}"
+        def creation(allow_web):
+            async def apply():
+                try:
+                    block = add_job(repo_root, **values, enabled=True, allow_web=allow_web)
+                except (CronEditError, OSError, ValueError) as error:
+                    return f"未创建：{error}"
+                note = "" if allow_web else "\n提示：该作业不能联网（无人值守默认不出网）。"
+                return (f"✅ 定时作业 {name} 已创建并已启用（{schedule}）。无需再启用一次。\n"
+                        + block + note + ("" if _scheduler_on() else _SCHEDULER_OFF))
+            net = "可联网" if allow_web else "不能联网"
+            return PreparedToolCall(apply,
+                f"新建定时作业「{name}」并启用？它会在无人盯屏时按 {schedule} 自动跑（{net}）：\n{prompt}"
+                + ("" if _scheduler_on() else _SCHEDULER_OFF), "execute",
+                denied_result=f"未创建 {name}（你拒绝了创建和启用）。")
+        if not want_web:
+            return creation(False)
+        async def with_web():
+            return creation(True)
+        return PreparedToolCall(with_web,
+            f"作业「{name}」申请出网许可：它会在无人盯屏时联网，URL 可能成为数据外带通道。\n任务原文：{prompt}",
+            "execute", denied_result=creation(False))
 
-    async def _toggle(args: dict) -> str:
+    async def _toggle(args: dict) -> object:
         from src.scheduling.cron import CronEditError, set_job_enabled
 
         name = str(args.get("name") or "").strip()
         enabled = _truthy(args.get("enabled", True))
-        if enabled and not await _ask(f"启用定时作业「{name}」？启用后它会在无人盯屏时自动跑。"):
-            return f"未启用 {name}（你拒绝了）。"
-        try:
-            done = "✅ " + set_job_enabled(repo_root, name, enabled) + ("" if not enabled or _scheduler_on() else _SCHEDULER_OFF)
-        except CronEditError as e:
-            return f"未改动：{e}"
-        except (OSError, ValueError) as e:
-            return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
-        if not enabled:
-            from src.scheduling.notices import make_notifier
+        async def apply():
             try:
-                await make_notifier(repo_root, source=f"cron:{name}:disabled")(
-                    f"⏸ 定时作业「{name}」已被停用，重新启用前不会再自动跑。不是你的意思的话，回复「启用 {name}」。")
-            except Exception:  # noqa: BLE001 —— 通知是旁路，停用本身已经生效
-                pass
-        return done
+                done = "✅ " + set_job_enabled(repo_root, name, enabled) + ("" if not enabled or _scheduler_on() else _SCHEDULER_OFF)
+            except CronEditError as e:
+                return f"未改动：{e}"
+            except (OSError, ValueError) as e:
+                return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
+            if not enabled:
+                from src.scheduling.notices import make_notifier
+                try:
+                    await make_notifier(repo_root, source=f"cron:{name}:disabled")(
+                        f"⏸ 定时作业「{name}」已被停用，重新启用前不会再自动跑。不是你的意思的话，回复「启用 {name}」。")
+                except Exception:  # noqa: BLE001 —— 通知是旁路，停用本身已经生效
+                    pass
+            return done
+        return PreparedToolCall(apply, f"{'启用' if enabled else '停用'}定时作业「{name}」？", 'execute', protective=not enabled, denied_result=f'未启用 {name}（你拒绝了）。')
 
-    async def _set_prompt(args: dict) -> str:
+    async def _set_prompt(args: dict) -> object:
         from src.scheduling.cron import CronEditError, job_block, load_jobs, set_job_prompt
 
         name = str(args.get("name") or "").strip()
@@ -172,22 +158,19 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         # 看见具体差异，而不是只看见一个熟悉的名字。启用态也要说明白：改完下次到点就生效。
         state = (f"⚠️ 它当前是**启用**的（{job.schedule.raw}），改完下次到点就按新内容跑"
                  if job.enabled else f"它当前是停用的（{job.schedule.raw}）")
-        if not await _ask(
-                f"改定时作业「{name}」的内容？\n{state}\n\n"
-                f"── 改前 ──\n{' '.join((job.prompt or '').split())[:400]}\n\n"
-                f"── 改后 ──\n{' '.join(new.split())[:400]}"):
-            return f"未改动 {name}（你拒绝了）。"
-        try:
-            note = set_job_prompt(repo_root, name, new)
-        except CronEditError as e:
-            return f"未改动：{e}"
-        except (OSError, ValueError) as e:
-            return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
-        # 回执按**盘上实际内容**重新渲染，不复述我以为写进去的东西
-        # （2026-07-27 的教训：cron_add 的回执自相矛盾，模型信了更具体的那半边）。
-        return f"✅ {note}。当前该作业在 cron.yaml 里是：\n{job_block(repo_root, name)}"
+        async def apply():
+            try:
+                note = set_job_prompt(repo_root, name, new)
+            except CronEditError as e:
+                return f"未改动：{e}"
+            except (OSError, ValueError) as e:
+                return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
+            # 回执按**盘上实际内容**重新渲染，不复述我以为写进去的东西
+            # （2026-07-27 的教训：cron_add 的回执自相矛盾，模型信了更具体的那半边）。
+            return f"✅ {note}。当前该作业在 cron.yaml 里是：\n{job_block(repo_root, name)}"
+        return PreparedToolCall(apply, f"改定时作业「{name}」的内容？\n{state}\n\n── 改前 ──\n{' '.join((job.prompt or '').split())[:400]}\n\n── 改后 ──\n{' '.join(new.split())[:400]}", 'execute', denied_result=f'未改动 {name}（你拒绝了）。')
 
-    async def _set_web(args: dict) -> str:
+    async def _set_web(args: dict) -> object:
         from src.scheduling.cron import CronEditError, load_jobs, set_job_web
 
         name = str(args.get("name") or "").strip()
@@ -197,20 +180,16 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
             return f"未改动：无此作业 {name}。用 cron_list 看现有作业。"
         if job.allow_web is want:
             return f"作业 {name} 的出网许可本来就是 {str(want).lower()}，无需改动。"
-        if want and not await _ask(
-                f"给已有作业「{name}」**出网许可**（web_search / web_fetch / 截图）？\n"
-                f"它在**无人盯屏**时按 {job.schedule.raw} 运行，出网请求的 URL 本身就是一条数据"
-                f"外带通道——若这台机器上的文件被人做过手脚、诱导它去访问某个地址，没有人会拦。\n"
-                f"该作业到点会做的事：{' '.join((job.command or job.prompt).split())[:200]}"):
-            return f"未改动 {name}（你拒绝了出网许可）。"
-        try:
-            return "✅ " + set_job_web(repo_root, name, want)
-        except CronEditError as e:
-            return f"未改动：{e}"
-        except (OSError, ValueError) as e:
-            return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
+        async def apply():
+            try:
+                return "✅ " + set_job_web(repo_root, name, want)
+            except CronEditError as e:
+                return f"未改动：{e}"
+            except (OSError, ValueError) as e:
+                return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
+        return PreparedToolCall(apply, f"{'给予' if want else '撤销'}已有作业「{name}」**出网许可**（web_search / web_fetch / 截图）？\n它在**无人盯屏**时按 {job.schedule.raw} 运行，出网请求的 URL 本身就是一条数据外带通道——若这台机器上的文件被人做过手脚、诱导它去访问某个地址，没有人会拦。\n该作业到点会做的事：{' '.join((job.command or job.prompt).split())[:200]}", 'execute', protective=not want, denied_result=f'未改动 {name}（你拒绝了出网许可）。')
 
-    async def _run(args: dict) -> str:
+    async def _run(args: dict) -> object:
         import asyncio as _aio
 
         from src.scheduling.cron import check_trigger, run_job_by_name, track_trigger
@@ -219,23 +198,20 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         reason, _code, job = check_trigger(repo_root, name)
         if reason is not None:
             return f"未触发：{reason}"
-        if not await _ask(f"立刻手动跑一次定时作业「{name}」（{job.kind}）？"):
-            return f"未触发 {name}（你拒绝了）。"
-        # 后台跑：夜跑评测这类作业可长达小时级，挂在回合上会把对话卡死。
-        # **必须传 notify**：不传的话 `_announce` 只会 record_notice 写盘，人手机上收不到任何东西——
-        # 真机 2026-07-27 就是这样，主人在钉钉等了半天，而这里的注释当时还写着"announce 推 IM"。
-        from src.scheduling.notices import make_notifier
-        task = _aio.get_running_loop().create_task(
-            run_job_by_name(repo_root, name, notify=make_notifier(repo_root)))
-        track_trigger(name, task)
-        return (f"✅ 已在后台触发 {name}。结果会按它的 announce 设置推给你，"
-                f"也会落进 runs 台账；手动触发不占用它的正常排期。")
+        async def apply():
+            from src.scheduling.notices import make_notifier
+            task = _aio.get_running_loop().create_task(
+                run_job_by_name(repo_root, name, notify=make_notifier(repo_root)))
+            track_trigger(name, task)
+            return (f"✅ 已在后台触发 {name}。结果会按它的 announce 设置推给你，"
+                    f"也会落进 runs 台账；手动触发不占用它的正常排期。")
+        return PreparedToolCall(apply, f'立刻手动跑一次定时作业「{name}」（{job.kind}）？', 'execute', denied_result=f'未触发 {name}（你拒绝了）。')
 
     return [
         Tool("cron_list", "列出本仓库的定时作业：排期/下次应跑/上次跑过/连败次数/内容，"
              "以及调度总开关是否打开。只读、无需确认",
-             {}, _list, read_only=True),
-        Tool("cron_add",
+             {}, _list, read_only=True, operation_kind='read', confirm=confirm),
+        Tool.prepared("cron_add",
              "新建一个定时作业（写进 .vortoone/cron.yaml）。**只支持 prompt 作业**——要定时跑"
              "命令，就把命令写进 prompt 交给无人值守 agent 执行。作业先以停用态落盘、经主人确认"
              "后才启用。重名会被拒（改已有作业请人工编辑 cron.yaml）。需确认",
@@ -252,23 +228,23 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
              'prompt': {'type': 'string'},
              'allow_web': {'type': 'boolean'},
              'budget': {'type': 'integer', 'minimum': 0},
-             'announce': {'type': 'string', 'enum': ['im', 'silent']}}),
-        Tool("cron_toggle", "启用或停用一个已有定时作业（停用后调度器不跑它，可随时再启用）。"
+             'announce': {'type': 'string', 'enum': ['im', 'silent']}}, operation_kind='write', possible_operations=('execute',), confirm=confirm),
+        Tool.prepared("cron_toggle", "启用或停用一个已有定时作业（停用后调度器不跑它，可随时再启用）。"
              "本工具刻意不提供删除——停用可逆可见，误删主人的巡检作业不可逆。需确认",
-             {"name": "作业名", "enabled": "true=启用 / false=停用"}, _toggle, read_only=False, required_args=('name', 'enabled'), argument_schema={'name': {'type': 'string'}, 'enabled': {'type': 'boolean'}}),
+             {"name": "作业名", "enabled": "true=启用 / false=停用"}, _toggle, read_only=False, required_args=('name', 'enabled'), argument_schema={'name': {'type': 'string'}, 'enabled': {'type': 'boolean'}}, operation_kind='write', possible_operations=('execute',), protective=True, confirm=confirm),
         # read_only=False 三处都必须显式写：Tool 的默认是 True，漏了就等于让 plan 模式改得动
         # cron.yaml、跑得动作业——绕过 plan/build 门。这是自测逮到的真洞，不是形式主义。
-        Tool("cron_set_web", "给一个**已有**作业开/关联网许可（web_search/web_fetch/截图）。"
+        Tool.prepared("cron_set_web", "给一个**已有**作业开/关联网许可（web_search/web_fetch/截图）。"
              "开时会单独向主人要一次授权。只改这一个开关——作业的 prompt/命令/排期都不会被动，"
              "要换内容请另建一个作业。需确认",
              {"name": "作业名", "allow_web": "true=给出网许可 / false=收回"},
-             _set_web, read_only=False, required_args=('name', 'allow_web'), argument_schema={'name': {'type': 'string'}, 'allow_web': {'type': 'boolean'}}),
-        Tool("cron_set_prompt",
+             _set_web, read_only=False, required_args=('name', 'allow_web'), argument_schema={'name': {'type': 'string'}, 'allow_web': {'type': 'boolean'}}, operation_kind='write', possible_operations=('execute',), protective=True, confirm=confirm),
+        Tool.prepared("cron_set_prompt",
              "改一个**已有 prompt 作业**要做的事（整块替换它的 prompt，排期/开关/出网许可都不动）。"
              "确认时会把改前改后摆给你看。command 作业（跑确定性命令的）拒绝修改。需确认",
              {"name": "作业名", "prompt": "这个作业到点要做的事（完整新内容，不是补丁）"},
-             _set_prompt, read_only=False, required_args=('name', 'prompt'), argument_schema={'name': {'type': 'string'}, 'prompt': {'type': 'string'}}),
-        Tool("cron_run", "立刻手动跑一次某个已有定时作业（不占用它的正常排期）。已停用的作业拒绝"
+             _set_prompt, read_only=False, required_args=('name', 'prompt'), argument_schema={'name': {'type': 'string'}, 'prompt': {'type': 'string'}}, operation_kind='write', possible_operations=('execute',), confirm=confirm),
+        Tool.prepared("cron_run", "立刻手动跑一次某个已有定时作业（不占用它的正常排期）。已停用的作业拒绝"
              "触发、同名作业在跑时拒绝重复触发。结果走通知台账，不在这里返回。需确认",
-             {"name": "作业名"}, _run, read_only=False, required_args=('name',), argument_schema={'name': {'type': 'string'}}),
+             {"name": "作业名"}, _run, read_only=False, required_args=('name',), argument_schema={'name': {'type': 'string'}}, operation_kind='execute', confirm=confirm),
     ]

@@ -1,6 +1,8 @@
 """助理每半小时监管一次 Codex：有进展才汇报、卡住 / 失败 / 要拿主意时找你、做完后拟下一步等你批。全部离线。"""
 from __future__ import annotations
 
+from tests.tool_authorization import authorized_tools
+
 import json
 from datetime import datetime, timedelta, timezone
 import asyncio
@@ -133,7 +135,7 @@ async def test_corrupt_supervisor_ledger_does_not_run_or_overwrite_itself(tmp_pa
     with pytest.raises(OSError, match="监管记录"):
         await _check(root, _m(30), notes, model)
     assert model.calls == 0 and not notes.sent and path.read_text() == "{broken"
-    tool = sup.build_supervisor_tools(root)[0]
+    tool = authorized_tools(sup.build_supervisor_tools(root))[0]
     reply = await tool.handler({"nudge": True})
     assert "暂不可用" in reply and path.read_text() == "{broken"
 
@@ -281,7 +283,7 @@ async def test_failed_review_is_visible_durable_and_not_automatically_retried(tm
     _report(root, _done(), _m(59))
     await _check(root, _m(60), notes, model)
     assert model.calls == 1 and len(notes.sent) == previous
-    [tool] = sup.build_supervisor_tools(root)
+    [tool] = authorized_tools(sup.build_supervisor_tools(root))
     assert "推进判断待核对" in await tool.handler({})
 
 
@@ -342,7 +344,7 @@ async def test_a_failed_proposal_is_visible_and_is_not_redrafted(tmp_path, monke
     assert mark["review_status"] == "failed" and mark["review_error_code"] == "proposal_failed"
     assert "下一步建议未能保存，尚未发送" in notes.texts()[-1]
     assert "private path" not in notes.texts()[-1]
-    [tool] = sup.build_supervisor_tools(root)
+    [tool] = authorized_tools(sup.build_supervisor_tools(root))
     assert "下一步建议未能保存，尚未发送" in await tool.handler({})
     count = len(notes.sent)
     _report(root, _done(), _m(59))
@@ -642,7 +644,7 @@ async def test_no_codex_reports_means_nothing_happens(tmp_path):
 
 @pytest.mark.asyncio
 async def test_owner_can_tune_the_rhythm_by_chat(tmp_path):
-    tool = sup.build_supervisor_tools(str(tmp_path))[0]
+    tool = authorized_tools(sup.build_supervisor_tools(str(tmp_path)))[0]
     reply = await tool.handler({"interval_minutes": "60", "nudge": "false"})
     assert "每 60 分钟" in reply and "不主动" in reply
     assert sup.load_config(str(tmp_path))["interval_minutes"] == 60

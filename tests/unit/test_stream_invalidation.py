@@ -253,7 +253,7 @@ async def test_agent_filtered_tool_fragments_never_execute_or_retry(monkeypatch,
         delta = SimpleNamespace(content='{"tool":"read_file","args":{}}')
     stream = FilteredStream([filter_chunk(delta), filter_chunk(filtered=True)])
     client, calls = sdk_client(monkeypatch, stream)
-    agent = MainAgent([Tool('read_file', 'read', {}, handler, read_only=True)], llm=client,
+    agent = MainAgent([Tool('read_file', 'read', {}, handler, read_only=True, operation_kind='read')], llm=client,
                       native=native, raise_llm_errors=strict)
     emitted, shown = [], []
     if strict:

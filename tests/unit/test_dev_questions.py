@@ -1,4 +1,6 @@
 """Durable development questions and real isolated execution with a fake model."""
+
+from tests.tool_authorization import authorized_tools
 import asyncio
 import json
 import subprocess
@@ -343,7 +345,7 @@ async def test_plan_change_after_answer_before_execution_fails_without_model(tmp
 async def test_direct_dev_resume_cannot_bypass_open_question(tmp_path):
     from src.agents.dev_tools import build_dev_tools
     runner, service, task, plan, qid = blocked(tmp_path)
-    tool = next(tool for tool in build_dev_tools(str(tmp_path)) if tool.name == "dev_resume")
+    tool = next(tool for tool in authorized_tools(build_dev_tools(str(tmp_path)), human=False) if tool.name == "dev_resume")
     with pytest.raises(ValueError, match="等待回答"):
         await tool.handler({"plan_id": plan.plan_id})
 
@@ -367,8 +369,8 @@ async def test_parent_reads_and_answers_development_under_shared_pool(tmp_path, 
         return "完成"
 
     runner._worker = worker
-    tools = build_research_tools(str(tmp_path), collaboration=CollaborationService(str(tmp_path), "sid-owner"),
-                                answer_task_question=lambda *args: task_dispatch.answer_task_question(str(tmp_path), *args))
+    tools = authorized_tools(build_research_tools(str(tmp_path), collaboration=CollaborationService(str(tmp_path), "sid-owner"),
+                                answer_task_question=lambda *args: task_dispatch.answer_task_question(str(tmp_path), *args)), human=False)
     assert "会话问题提示" in task_dispatch.task_turn_hint(str(tmp_path), "sid-owner", {t.name for t in tools})
     assert task_dispatch.task_turn_hint(str(tmp_path), "sid-other", {t.name for t in tools}) == ""
 

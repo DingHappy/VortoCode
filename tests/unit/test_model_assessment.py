@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from tests.tool_authorization import approve_fixture
 from src.agents.delegation import build_research_tools
 from src.agents.tools.model_assessment import build_model_assessment_tools, parse_forecasts
 from src.llm.client import LLMClient, LLMConfig, _account, new_usage, usage_meter
@@ -63,7 +64,7 @@ async def test_real_worker_accounting_rounds_and_parent_acceptance(tmp_path, mon
         return {"content": "入口为 main"}
     monkeypatch.setattr(LLMClient, "chat", chat)
     service = CollaborationService(str(tmp_path), "owner")
-    by = {t.name: t for t in build_research_tools(str(tmp_path), collaboration=service)}
+    by = {t.name: t for t in build_research_tools(str(tmp_path), collaboration=service, confirm=lambda _m: approve_fixture(_m))}
     first = json.loads(await by["task"].handler({"description": "说明入口", "acceptance": ["说明入口"], "task_type": "analysis"}))
     assert first["model_observations"][0]["tokens"] == 120
     assert first["model_observations"][0]["cost_estimate"] == pytest.approx(.00014)
@@ -257,7 +258,7 @@ async def test_failed_worker_keeps_partial_usage_and_never_claims_zero_bill(tmp_
         raise RuntimeError("下一步失败")
     monkeypatch.setattr(LLMClient, "chat", chat)
     service = CollaborationService(str(tmp_path), "owner")
-    by = {t.name: t for t in build_research_tools(str(tmp_path), collaboration=service)}
+    by = {t.name: t for t in build_research_tools(str(tmp_path), collaboration=service, confirm=lambda _m: approve_fixture(_m))}
     result = json.loads(await by["task"].handler({"description": "分析入口"}))
     assert result["status"] == "failed"
     metrics = result["model_observations"][0]

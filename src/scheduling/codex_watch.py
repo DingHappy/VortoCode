@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from src.agents.tool import PreparedToolCall
+
 import json
 import hashlib
 import os
@@ -557,7 +559,7 @@ def build_codex_tools(root: str) -> list:
                  "查看用户 Mac 上 Codex（OpenAI 的编码助手）在做什么：每个打开的会话的任务、状态"
                  "（正在做 / 空闲 / 在等批准 / 在问问题）、跑的命令、改的文件、最后的说明，以及哪些会话已交给助理。"
                  "用户问 Codex 进度、或让你检查 / 提醒 Codex 的活时先调它。",
-                 {}, _status, untrusted_source=True)]
+                 {}, _status, untrusted_source=True, operation_kind='read')]
 
 
 # ── ③ 代你接管：助理拟一条给 Codex 的消息（或叫停），你批准后由 Mac 上的观察员执行 ──────────────
@@ -1094,14 +1096,16 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
     只对交接过的会话；交接过确认门（扩大助理能插手的范围），收回不问。"""
     from src.agents.tool import Tool
 
-    async def _handover(args: dict) -> str:
+    async def _handover(args: dict) -> object:
         try:
             target = _find_thread(root, str(args.get("thread") or ""))
         except CodexActionError as error:
             return f"没有交接：{error}"
         label = thread_label(target)
         if str(args.get("take_back") or "").strip().lower() in {"1", "true", "yes", "on", "是", "收回"}:
-            return f"已收回 {label}：之后只看不插手。" if take_back(root, target["id"]) else f"{label}本来就没交接。"
+            async def revoke():
+                return f"已收回 {label}：之后只看不插手。" if take_back(root, target["id"]) else f"{label}本来就没交接。"
+            return PreparedToolCall(revoke, f"收回 {label} 的助理交接权限？", "write", protective=True)
         if not args.get("goal_id") and any(key in args for key in ("goal_revision", "review_limit", "criterion_ids")):
             return "没有交接：范围和额度必须指定 goal_id，不能降级为无目标交接。"
         if is_handed_over(root, target["id"]) and not args.get("goal_id"):
@@ -1123,13 +1127,13 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
                          f"本次仅推进验收项：{', '.join(goal['criterion_ids'])}；其余留待下一次交接。"
                          f"该目标累计最多 {goal['review_limit']} 次推进判断，包含失败；重交接不清零。"
                          "相同缺口连续两轮无新验收证据会暂停；目标完成仍需逐项用户验收。")
-        if confirm is None or not await confirm(question):
-            return f"主人没同意交接 {label}，仍然只看不插手。"
-        try:
-            hand_over(root, target, goal=goal)
-        except (CodexActionError, OSError) as error:
-            return f"没有交接：{error}"
-        return f"已交接 {label}。"
+        async def apply():
+            try:
+                hand_over(root, target, goal=goal)
+            except (CodexActionError, OSError) as error:
+                return f"没有交接：{error}"
+            return f"已交接 {label}。"
+        return PreparedToolCall(apply, question, 'write', denied_result=f'主人没同意交接 {label}，仍然只看不插手。')
 
     async def _propose(kind: str, args: dict) -> str:
         try:
@@ -1157,7 +1161,7 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
         return await _propose("interrupt", args)
 
     return [
-        Tool("codex_handover",
+        Tool.prepared("codex_handover",
              "把 Mac 上某个 Codex 会话交给助理盯，或收回。默认助理对 Codex 只看不插手；只有交接过的会话才能拟话或叫停。"
              "只在主人明确要求时调用；用会话 id 指定（codex_status 里有），同名时不要猜。交接要主人确认，收回直接生效。",
              {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用）", "take_back": "true = 收回交接；不填 = 交接",
@@ -1165,13 +1169,13 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
               "goal_revision": "关联目标时必填，查询取得的当前 revision",
               "criterion_ids": "可选，英文逗号分隔的本次允许推进的未通过验收项ID；不填为全部未通过项。留到以后的项不要包含",
               "review_limit": "目标累计推进判断上限，默认4，最高12；含失败，收回/重交接不清零，增加需重新确认"},
-             _handover, read_only=False, serial=True),
+             _handover, read_only=False, serial=True, operation_kind='write', protective=True, confirm=confirm),
         Tool("propose_codex_message",
              "替用户给 Mac 上某个已交接的 Codex 会话拟一句话（下一步指令、补充要求、回答它的问题）。只是提议，"
              "用户批准后才发：Codex 空闲就开始新的一轮，正在做就作为补充插进当前这一轮。先用 codex_status 看清会话。",
              {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用），只能是 codex_status 里列出的", "text": "要发给 Codex 的话，写清楚、具体"},
-             _message, read_only=False, serial=True),
+             _message, read_only=False, serial=True, operation_kind='draft', confirm=confirm),
         Tool("propose_codex_interrupt",
              "建议叫停某个 Codex 会话正在做的这一轮（方向错了、在做危险的事、卡住了）。只是提议，用户批准后才叫停。",
-             {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用）"}, _interrupt, read_only=False, serial=True),
+             {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用）"}, _interrupt, read_only=False, serial=True, operation_kind='draft', confirm=confirm),
     ]

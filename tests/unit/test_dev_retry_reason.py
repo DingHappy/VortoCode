@@ -5,6 +5,8 @@
 因为问题根本不在任务上。播报必须按证据分：通道故障 / 自测红 / 没产出改动。
 """
 
+from tests.tool_authorization import authorized_tools
+
 import pytest
 
 from src.agents.main_agent import build_dev_tools
@@ -25,7 +27,7 @@ def _dev_tool(tmp_path, results, progress):
 
     original = worktree.run_isolated_task
     worktree.run_isolated_task = fake_run_isolated_task
-    tools = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=progress.append)}
+    tools = {t.name: t for t in authorized_tools(build_dev_tools(str(tmp_path), on_progress=progress.append), human=False)}
     return tools["dev_isolated"], lambda: setattr(worktree, "run_isolated_task", original)
 
 
@@ -70,7 +72,7 @@ async def test_capacity_rejection_stops_same_model_retry_only_for_explicit_evide
 
     monkeypatch.setattr(worktree, "run_isolated_task", fail)
     monkeypatch.setattr("asyncio.sleep", no_wait)
-    tool = next(tool for tool in build_dev_tools(str(tmp_path), on_progress=progress.append)
+    tool = next(tool for tool in authorized_tools(build_dev_tools(str(tmp_path), on_progress=progress.append), human=False)
                 if tool.name == "dev_isolated")
     result = await tool.handler({"description": "修复折扣"})
     assert result["ok"] is False
@@ -147,7 +149,7 @@ async def test_successful_tool_stays_succeeded(tmp_path):
         return "✅ 好了"
 
     events: list[tuple[str, str]] = []
-    agent = MainAgent([Tool("noop", "d", {}, handler, read_only=True)],
+    agent = MainAgent([Tool("noop", "d", {}, handler, read_only=True, operation_kind='read')],
                       on_tool_event=lambda _stage, payload: events.append((payload.get("name"), payload.get("status"))))
     await agent._run_tool("noop", {}, "build", lambda _m: None)
     assert ("noop", "succeeded") in events, events

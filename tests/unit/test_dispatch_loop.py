@@ -1,6 +1,8 @@
 """任务单下发之后的闭环：任务能问你、你在手机上答；做完带验证结论，按钮开 draft PR。全部离线。"""
 from __future__ import annotations
 
+from tests.tool_authorization import authorized_tools
+
 import json
 from datetime import datetime
 
@@ -67,7 +69,7 @@ async def test_question_reaches_the_phone_and_the_answer_goes_back(tmp_path):
     text = watch.status_message(item)
     assert "超时改成 30 秒还是 60 秒" in text and "1. 30 秒" in text and "直接回我答案" in text
 
-    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(root)}
+    tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root))}
     import src.workflow.tasks.assistant_dispatch as module
     original = module._http
     module._http = remote
@@ -89,7 +91,7 @@ async def test_answers_are_not_relayed_from_a_tainted_turn_or_for_legacy_tasks(t
     root = str(tmp_path)
     entry, remote = await _sent(root, remote_status="blocked", questions=[QUESTION])
     await dispatch.refresh(root, http=remote)
-    tainted = {tool.name: tool for tool in dispatch.build_dispatch_tools(root, is_tainted=lambda: True)}
+    tainted = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root, is_tainted=lambda: True))}
     assert "外部内容" in await tainted["answer_dispatch_question"].handler({"dispatch_id": entry["id"], "answer": "30 秒"})
     dispatch._update(root, entry["id"], lambda item: item.pop("remote_session"))
     with pytest.raises(dispatch.DispatchError, match="旧方式下发"):
@@ -156,7 +158,7 @@ async def test_retry_carries_the_last_failure_and_stops_after_three(tmp_path):
     first = dispatch.propose(root, project="VortoCode", title="补单测", goal="给 safe_id 补边界单测")
     dispatch._update(root, first["id"], lambda item: item.update(status="failed", error="自测未过：ImportError starlette",
                                                                  result="...\n集成红"))
-    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(root)}
+    tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root))}
     reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "补单测", "goal": "先装好测试依赖再补",
                                                   "retry_of": first["id"]})
     assert "已写好任务单" in reply
@@ -336,9 +338,9 @@ async def test_answers_become_project_experience_for_later_dispatches(tmp_path):
     assert "以前的任务里问过、用户答过" in post["prompt"] and "答：30 秒" in post["prompt"]
     assert dispatch.list_dispatches(root)[0]["known_answers"][-1]["answer"] == "30 秒"     # 定在单子上，重试同一份 prompt
 
-    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(root)}
+    tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root))}
     assert "1. 问：超时改成 30 秒还是 60 秒？ 答：30 秒" in await tools["dispatch_answer_memory"].handler({"project": "VortoCode"})
-    tainted = {tool.name: tool for tool in dispatch.build_dispatch_tools(root, is_tainted=lambda: True)}
+    tainted = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root, is_tainted=lambda: True))}
     assert "没有删" in await tainted["dispatch_answer_memory"].handler({"project": "VortoCode", "action": "forget"})
     assert "忘掉 VortoCode 记下的 1 条" in await tools["dispatch_answer_memory"].handler(
         {"project": "VortoCode", "action": "forget", "index": "1"})

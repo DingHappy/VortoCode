@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+
 import asyncio
 import json
 import os
@@ -555,7 +556,7 @@ class MainAgent:
                     "type": "object", "properties": {
                         "step": {"type": "string"},
                         "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
-                    }, "required": ["step", "status"]}}}))
+                    }, "required": ["step", "status"]}}}, operation_kind='read'))
             self._tool_list.append(Tool(
                 "request_build",
                 "当 plan 阶段已经分析清楚、时机成熟且下一步确实需要动手（写文件/建定时作业/跑 dev "
@@ -564,7 +565,7 @@ class MainAgent:
                 "去切模式。",
                 {"reason": "为什么现在需要动手（基于已完成的分析/计划）",
                  "next_action": "获得授权后准备执行的具体下一步"},
-                self._request_build, read_only=True))
+                self._request_build, read_only=True, operation_kind='read'))
         self.tools = {t.name: t for t in self._tool_list}
         # 上下文预算：主要按 **token** 裁剪/压缩（真正决定是否撑爆窗口的是 token，不是消息条数——
         # 少量超大消息条数虽少却能爆窗，大量小消息条数虽多却很省）。max_history 退为**硬条数上限**
@@ -1462,6 +1463,9 @@ class MainAgent:
                     self._turn_verified = True
 
         return ToolRuntime(lambda: self.tools, ToolExecutionContext(
+            confirm=self._confirm_gate,
+            internal_scopes=tuple(t.internal_scope for t in self.tools.values() if t.internal_scope is not None),
+            task_scopes=tuple(t.task_scope for t in self.tools.values() if t.task_scope is not None),
             capabilities=self._capabilities, permissions=self._permissions,
             state=self._tool_turn_state, supervised=self._supervised,
             mode_switch_hint=self._mode_switch_hint, on_escalate=self._on_escalate,

@@ -992,18 +992,18 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
         Tool("dispatch_stats",
              "派活的成绩：最近 N 天下发多少、做成多少、第一次就成的比例、重试后成的、问了用户几次、通常多久做完、"
              "验收标准对上多少。用户问「派活效果怎么样」「成功率多少」时用。",
-             {"days": "统计最近几天，默认 30"}, _stats, read_only=True),
+             {"days": "统计最近几天，默认 30"}, _stats, read_only=True, operation_kind='read'),
         Tool("dispatch_answer_memory",
              "查看或删除某个项目记下的回答：派出去的任务问过、用户答过的，会记下来，以后派同一个项目的活时自动带上，"
              "免得同样的问题再问。用户说「那个回答只是这次的」「别再按那个来」时用 forget 删掉。",
              {"project": f"项目名，只能是：{names}", "action": "list（默认）或 forget",
               "index": "forget 时：删第几条（list 里的编号）；不填删全部"},
-             _answer_memory, read_only=False, serial=True),
+             _answer_memory, read_only=False, serial=True, operation_kind='write'),
         Tool("answer_dispatch_question",
              "把**用户自己给出的**回答转交给在等回答的任务单（list_dispatches 里 status=waiting、带「在问」的那张）。"
              "只转述用户在这段对话里明确说的答案，不要自己替用户拿主意；用户没答就先把问题和选项告诉用户。",
              {"dispatch_id": "任务单 id（dsp-…）", "answer": "用户的回答，原意转述，写清楚"},
-             _answer, read_only=False, serial=True),
+             _answer, read_only=False, serial=True, operation_kind='write'),
         Tool("propose_task",
              "把一件开发/修改代码的活写成任务单，交给常驻电脑上的项目去做（隔离分支交付）。"
              f"只是提议：用户在 Desktop 确认后才会执行。可派活的项目：{names}。"
@@ -1016,8 +1016,8 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
                           "goal 里只写这次要怎么改做法；同一件事最多 3 次",
               "goal_id": "可选：这件活是为哪个个人目标做的（personal-…，用 personal_goals 查）",
               "criterion_id": "可选：对应目标里的哪条验收标准；做完后会问用户算不算达成这一条"},
-             _propose, read_only=False, serial=True),
+             _propose, read_only=False, serial=True, operation_kind='draft'),
         Tool("list_dispatches",
              "查看派出去的任务单：哪些等用户确认、在做、做完了（含结果和分支）、失败了。向用户汇报进度时先调它。",
-             {}, _list, untrusted_source=True),
+             {}, _list, untrusted_source=True, operation_kind='read'),
     ]
