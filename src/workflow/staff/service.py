@@ -56,7 +56,13 @@ class StaffService:
         self.actions = StaffActions(self)
 
     def collaboration(self, owner):
-        return CollaborationService(self.root, owner, on_update=self.on_update)
+        def updated(task):
+            notify = getattr(self.runner, 'notify_existing', None)
+            if callable(notify):
+                notify(task)
+            if self.on_update is not None:
+                self.on_update(task)
+        return CollaborationService(self.root, owner, on_update=updated)
 
     def wake_budgets(self):
         if self._loop is not None:
