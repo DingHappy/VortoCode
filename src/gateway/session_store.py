@@ -24,8 +24,10 @@ _MAX_PROMPT_QUEUE = 20
 
 def session_has_content(data: dict) -> bool:
     """Context/capability metadata alone is a draft, not a recent conversation."""
+    compression = data.get('compression_state')
     return any(data.get(key) for key in (
-        "transcript", "history", "plan", "activities", "prompt_queue", "title", "im_inputs"))
+        "transcript", "history", "plan", "activities", "prompt_queue", "title", "im_inputs")) or (
+            isinstance(compression, dict) and bool(compression.get('summary') or compression.get('task_anchor')))
 
 
 def _sid_of(key: str) -> Optional[str]:
@@ -68,7 +70,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
                  mode: Optional[str] = None,
                  prompt_queue_paused: Optional[bool] = None,
                  im_inputs: Optional[dict] = None, managed_im: Optional[bool] = None,
-                 durable: bool = False) -> bool:
+                 durable: bool = False, compression_state: Optional[dict] = None) -> bool:
     """保存一个 sid 会话。返回保存成功或新空草稿无需保存（非法键/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
@@ -84,7 +86,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     existing: Dict[str, Any] = {}
     if (title is None or context_usage is None or tool_names is None
             or behavior_fp is None or mode is None or prompt_queue_paused is None
-            or im_inputs is None or managed_im is None) and p.is_file():
+            or im_inputs is None or managed_im is None or compression_state is None) and p.is_file():
         try:
             loaded = json.loads(p.read_text(encoding="utf-8"))
             existing = loaded if isinstance(loaded, dict) else {}
@@ -111,6 +113,14 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         "context_usage": dict(context_usage or {}),
         "title": title,
     }
+    if compression_state is None:
+        compression_state = existing.get('compression_state')
+    if compression_state is not None:
+        from src.agents.conversation_state import compression_state as normalize
+        try:
+            data['compression_state'] = normalize(compression_state)
+        except ValueError:
+            return False
     if tool_names is not None:                      # 老档没有就保持没有（None=早于记录，是证据不是缺陷）
         data["tool_names"] = sorted(str(t) for t in tool_names)
     if behavior_fp is not None:
@@ -190,6 +200,7 @@ def load_session(repo_root: str, key: str, *, strict: bool = False, max_bytes: i
         "tool_names": data.get("tool_names"),
         "behavior_fp": data.get("behavior_fp"),
         "mode": data.get("mode"),
+        'compression_state': data.get('compression_state'),
     }
     for field in ("im_inputs", "managed_im"):
         if field in data:

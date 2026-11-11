@@ -251,7 +251,8 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
                            llm: Any = None, agent_factory: Callable[..., Any] = MainAgent) -> Optional[str]:
     """协调人醒来处理一次新情况。根不在进行中时 ``begin_wake`` 抛出，调用方停止。返回出错说明（没出错为 None）。"""
     from src.agents.taint import merge_nested_taint
-    from src.workflow.tasks.team import load_history, save_history
+    from src.workflow.tasks.team import load_coordinator_context, save_history
+    from src.agents.conversation_state import agent_compression, restore_agent_compression
 
     service = notifying_service(repo_root)
     root = service.begin_wake(root_id)
@@ -260,7 +261,9 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
     said, tainted = "", False
     try:
         agent = build_coordinator(repo_root, root, kick=kick, llm=llm, agent_factory=agent_factory)
-        agent.history = load_history(repo_root, root_id)
+        context = load_coordinator_context(repo_root, root_id)
+        agent.history = context['history']
+        restore_agent_compression(agent, context['compression_state'])
         history_loaded = True
         inbox = service.checkout_inbox(root_id)
         # The exact receipt identities acknowledged below are included in this
@@ -285,7 +288,8 @@ async def coordinator_turn(repo_root: str, root_id: str, events: List[str], *, k
     finally:
         try:
             if agent is not None and history_loaded:
-                save_history(repo_root, root_id, list(getattr(agent, "history", []) or []))
+                save_history(repo_root, root_id, list(getattr(agent, "history", []) or []),
+                             compression_state=agent_compression(agent))
                 if completed:
                     service.acknowledge_inbox(root_id, [item["id"] for item in inbox],
                                              seen_results=root.team["wake"].get("result_snapshot", {}))
