@@ -25,10 +25,10 @@ ROLES_WITH_WEB = {name: _BUILTIN_ROLES[name]['grants']['web'] for name in ROLE_P
 
 def _client(role: str) -> Any:
     """角色路由的客户端复制一份再用：后面按成员指定的模型 ``set_model`` 时，不能改到共享的缓存客户端。"""
-    from src.llm.client import LLMClient
+    from src.llm.background import background_client
     from src.llm.providers import client_for_role
     shared = client_for_role(_ROLE_MODEL_ROUTE.get(role, "research"))
-    return LLMClient(shared.config.model_copy(deep=True)) if shared is not None else LLMClient()
+    return background_client(shared.config if shared is not None else None)
 
 
 def build_member(role: str, model: str, *, max_steps: int, llm: Any = None,

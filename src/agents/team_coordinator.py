@@ -226,11 +226,11 @@ def build_coordinator(repo_root: str, root: Any, *, kick: Callable[[str], None],
                       agent_factory: Callable[..., Any] = MainAgent) -> Any:
     from src.agents.agent_loop import native_default
     from src.agents.gate import make_confirm_gate
-    from src.llm.client import LLMClient
+    from src.llm.background import background_client
     def check():
         from src.workflow.tasks.team import TeamService
         TeamService(repo_root).check_coordinator(root.id)
-    agent = agent_factory(build_tools(repo_root, root.id, kick=kick), llm=llm if llm is not None else LLMClient(),
+    agent = agent_factory(build_tools(repo_root, root.id, kick=kick), llm=llm if llm is not None else background_client(),
                           max_steps=12, extra_system=system_prompt(root), native=native_default(),
                           raise_llm_errors=True,
                           confirm_gate=make_confirm_gate(auto_approve=False, can_ask_human=False), execution_check=check)
