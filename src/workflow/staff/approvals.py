@@ -142,13 +142,19 @@ class StaffApprovals:
     def snapshot(self, kind, data):
         if not isinstance(data, dict):
             raise ValueError('提议内容必须是对象')
+        if kind == 'routine':
+            from src.workflow.staff.routines import Routines
+            return Routines(self.registry.root).snapshot(data)
+        if kind == 'routine_migration':
+            from src.workflow.staff.routine_migration import RoutineMigration
+            return RoutineMigration(self.registry.root).snapshot(data)
         if kind == 'role':
             previous = next((x for x in self.registry.roles() if x['id'] == data.get('id')), None)
             if previous and previous['builtin']:
                 if set(data) != {'id', 'revision', 'upgrade'} or data['upgrade'] is not True or data['revision'] != previous['revision']:
                     raise ValueError('内置岗位不能改写；升级须明确给原版本与 upgrade=true')
-                from src.workflow.staff.roles import builtin_roles
-                normalized = {**next(x for x in builtin_roles() if x['id'] == previous['id']),
+                from src.workflow.staff.roles import canonical_roles
+                normalized = {**next(x for x in canonical_roles() if x['id'] == previous['id']),
                               'enabled': previous['enabled'], 'revision': previous['revision']}
                 if normalized == previous:
                     raise ValueError('内置岗位已是当前定义')
@@ -185,6 +191,8 @@ class StaffApprovals:
 
     @staticmethod
     def needs_key(snapshot):
+        if snapshot['kind'] == 'routine_migration':
+            return True
         if snapshot['kind'] == 'department':
             return any(StaffApprovals.needs_key({'kind': 'role', 'data': member['role_snapshot']})
                        for member in snapshot['members_snapshot'])
@@ -242,6 +250,12 @@ class StaffApprovals:
 
     def _target(self, item):
         snapshot = item['snapshot']
+        if snapshot['kind'] == 'routine':
+            from src.workflow.staff.routines import Routines
+            return Routines(self.registry.root).target(snapshot, item['decision']['at'], item['owner'])
+        if snapshot['kind'] == 'routine_migration':
+            from src.workflow.staff.routine_migration import RoutineMigration
+            return RoutineMigration(self.registry.root).target(snapshot, item['decision']['at'], item['owner'])
         data = deepcopy(snapshot['data'])
         previous = snapshot['previous']
         if snapshot['kind'] == 'role':
@@ -304,7 +318,15 @@ class StaffApprovals:
                 if self._target(item) != item['target']:
                     raise ValueError('批准后的登记目标已变化')
                 snapshot = item['snapshot']
-                entries = (self.registry.roles() if snapshot['kind'] == 'role' else self.registry.members()
+                if snapshot['kind'] == 'routine_migration':
+                    from src.workflow.staff.routine_migration import RoutineMigration
+                    RoutineMigration(self.registry.root).apply(item['target'], snapshot)
+                    item['status'] = 'approved'
+                    self._save(item)
+                    return deepcopy(item)
+                from src.workflow.staff.routines import Routines
+                entries = (Routines(self.registry.root).definitions() if snapshot['kind'] == 'routine' else
+                           self.registry.roles() if snapshot['kind'] == 'role' else self.registry.members()
                            if snapshot['kind'] == 'member' else self.registry.departments())
                 current = next((x for x in entries if x['id'] == item['target']['id']), None)
                 if current != item['target']:
@@ -312,7 +334,10 @@ class StaffApprovals:
                         raise ValueError('登记已变化，保留批准历史，请重新提议')
                     if snapshot['kind'] == 'member' and self.registry.role(snapshot['data']['role']) != snapshot['role_snapshot']:
                         raise ValueError('所属岗位已变化，请重新提议')
-                    if snapshot['kind'] == 'role':
+                    if snapshot['kind'] == 'routine':
+                        Routines(self.registry.root).check_binding(item['target'])
+                        Routines(self.registry.root).apply(item['target'], snapshot['previous'])
+                    elif snapshot['kind'] == 'role':
                         if snapshot['data'].get('builtin'):
                             self.registry.upgrade_builtin(snapshot['data'])
                         else:

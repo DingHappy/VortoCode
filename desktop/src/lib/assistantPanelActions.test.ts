@@ -5,6 +5,7 @@ import type { AssistantConnector, AssistantMemory, AssistantScheduleItem, Memory
 import { assistantPanelActions, type AssistantPanelDeps } from "./assistantPanelActions";
 import { AssistantActionGate } from "./assistantTask";
 import { snapshotFixture } from "../test/memorySnapshotFixture";
+import { routineFixture } from '../../qa/routine-fixture';
 
 const item = { id: "a", kind: "cron", title: "早报", schedule: "每天 9:00", enabled: true, revision: "r1" } as AssistantScheduleItem;
 
@@ -69,6 +70,21 @@ describe("memory snapshot", () => {
 });
 
 describe("schedule", () => {
+  it('reads migrated history from the preserved run ledger and dates new deliveries by their task', async () => {
+    const snapshot = routineFixture();
+    const routine = snapshot.items[0];
+    routine.state.cursor = '2026-11-20T00:00:00+00:00';
+    const calls: string[] = [];
+    const prior = [{ id: 'run-old', status: 'done', created: '2026-11-10T09:00:00+00:00', summary: '旧台账', error: '' }];
+    const h = harness({ readRoutines: async () => snapshot,
+      getScheduleHistory: async name => { calls.push(name); return prior; } });
+    const card = { ...item, routine_id: routine.id, routine_revision: routine.revision };
+    expect((await h.actions.scheduleHistory(card))[0].created).toBe('2026-11-11T09:00:00+00:00');
+    routine.legacy = { name: 'old', announce: 'im', budget: 0, timeout: 3600 };
+    expect(await h.actions.scheduleHistory(card)).toEqual(prior);
+    expect(calls).toEqual(['old']);
+  });
+
   it("drops a reply that arrives after you switched machines, and only the latest read wins", async () => {
     const slow = deferred<AssistantScheduleItem[]>();
     const { state, actions } = harness({ getAssistantSchedule: () => slow.promise });

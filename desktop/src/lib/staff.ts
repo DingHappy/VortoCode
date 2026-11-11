@@ -13,7 +13,7 @@ export interface StaffMember {
 }
 export interface StaffProposal {
   id: string; digest: string; nonce: string; status: string; reason: string; requires_desktop_key: boolean;
-  snapshot: { kind: "role" | "member" | "department"; data: Record<string, unknown>; previous: unknown; role_snapshot?: StaffRole;
+  snapshot: { kind: "role" | "member" | "department" | "routine" | "routine_migration"; data: Record<string, unknown>; previous: unknown; role_snapshot?: StaffRole;
     members_snapshot?: Array<StaffMember & { role_snapshot: StaffRole }> };
 }
 export interface StaffDepartment {

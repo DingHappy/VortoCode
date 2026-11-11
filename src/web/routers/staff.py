@@ -58,6 +58,12 @@ class Key(BaseModel):
     authorization: str = ''
 
 
+class RoutineChange(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    action: str
+    data: dict
+
+
 def _apply(action):
     try:
         return action()
@@ -120,6 +126,55 @@ def _owner_write():
     from src.web.auth import get_api_token
     if not get_api_token():
         raise HTTPException(status_code=403, detail='部门笔记和额度设置需要已认证的主人连接')
+
+
+@router.get('/api/staff/routines')
+def routine_list(migration_timezone: str = ''):
+    from datetime import datetime, timezone
+    from src.scheduling.owner_timezone import host_timezone_name
+    from src.scheduling.routine_schedule import RoutineSchedule
+    from src.workflow.staff.routines import Routines
+    from src.workflow.staff.routine_migration import RoutineMigration
+    from src.workflow.tasks.tasks import TaskLedger
+    def read():
+        routines = Routines(os.getcwd())
+        value, items = routines.read(), []
+        for item in value['routines']:
+            following = RoutineSchedule(item['schedule'], item['timezone']).next(datetime.now(timezone.utc), item['state']['cursor'])
+            previous = TaskLedger(os.getcwd()).load(item['state']['last_task']) if item['state'].get('last_task') else None
+            items.append({**{k: v for k, v in item.items() if k not in {'binding', 'owner'}},
+                'member_name': item['binding']['member']['name'], 'role_title': item['binding']['role']['title'],
+                'next': following.isoformat() if following and item['enabled'] and not item['retired'] and not item['state'].get('error') else None,
+                'last_delivery': {'id': previous.id, 'status': previous.status, 'created': previous.created,
+                                  'result': previous.result, 'error': previous.error} if previous else None})
+        return {'revision': value['revision'], 'timezone': value['timezone'], 'host_timezone': host_timezone_name(),
+                'items': items, 'migrations': value['migrations'],
+                'migration': RoutineMigration(os.getcwd()).plan(migration_timezone) if migration_timezone else None,
+                'scheduler_enabled': os.getenv('VORTOONE_CRON', '').lower() in {'1', 'true', 'yes', 'on'}}
+    return _apply(read)
+
+
+@router.put('/api/staff/routines')
+def change_routine(body: RoutineChange):
+    _owner_write()
+    from src.workflow.staff.routines import Routines
+    from src.gateway.main_conversation import main_chat_key
+    routines, data = Routines(os.getcwd()), body.data
+    def apply():
+        if body.action == 'timezone' and set(data) == {'timezone', 'revision'}:
+            return routines.configure_timezone(data['timezone'], data['revision'])
+        if body.action == 'status' and set(data) == {'id', 'revision', 'enabled'}:
+            return routines.control(data['id'], data['revision'], enabled=data['enabled'])
+        if body.action == 'delete' and set(data) == {'id', 'revision'}:
+            return routines.control(data['id'], data['revision'], retire=True)
+        if body.action in {'propose', 'migration'} and set(data) == {'definition', 'reason'}:
+            owner = main_chat_key(os.getcwd())
+            if owner is None:
+                raise ValueError('先在 Desktop 登记主要聊天，再提议例行工作')
+            return StaffApprovals(os.getcwd()).propose(owner,
+                'routine' if body.action == 'propose' else 'routine_migration', data['definition'], data['reason'])
+        raise ValueError('操作或参数不匹配；不能经管理接口直接增加权限或跳过批准')
+    return _apply(apply)
 
 
 def _wake_limits():

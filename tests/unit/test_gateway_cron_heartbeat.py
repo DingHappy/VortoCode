@@ -292,7 +292,7 @@ async def test_scheduler_loop_wires_notify_to_cron_and_heartbeat(tmp_path, monke
     monkeypatch.setenv("VORTOONE_HEARTBEAT_EVERY", "1s")
     captured = {}
 
-    async def fake_run_due(cwd, now, notify=None):
+    async def fake_run_due(cwd, now, notify=None, capacity=None):
         captured["cron_notify"] = notify
         if notify:
             await notify("⏰ cron [nightly] 跑完：全绿")
@@ -508,6 +508,8 @@ async def test_run_lane_writes_nothing_outside_the_lane(tmp_path):
     after = snapshot()
     touched = {name for name in after if before.get(name) != after[name]}
     assert touched, "run lane 一条记录都没落，那才是真丢了"
-    allowed = {"runs", "logs", "cron_state.json", ".gitignore"}
+    allowed = {"runs", "logs", "cron_state.json", ".gitignore", "pipeline_runs"}
     assert {name.split("/", 1)[0] for name in touched} <= allowed
+    assert all(name.startswith('pipeline_runs/.locks/') and name.endswith('.lock')
+               for name in touched if name.startswith('pipeline_runs/'))
     assert set(before) <= set(after)                       # 只增不删，人的东西一样没少

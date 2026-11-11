@@ -57,6 +57,9 @@ class StaffService:
 
     def collaboration(self, owner):
         def updated(task):
+            if task.collaboration.get('dispatch', {}).get('routine'):
+                from src.workflow.staff.routines import Routines
+                Routines(self.root).settle(task)
             notify = getattr(self.runner, 'notify_existing', None)
             if callable(notify):
                 notify(task)
@@ -96,7 +99,7 @@ class StaffService:
         self.collaboration(task.owner_session).update_staff_action(task.id, task.collaboration['round'], update)
 
     async def wait_for_budget(self, task, role, member):
-        self.check(member, role)
+        self.check(member, role, task=task)
         reason = self.budgets.status(task, member)
         if reason is None:
             return
@@ -117,7 +120,7 @@ class StaffService:
                     work.update_staff_action(task.id, task.collaboration['round'], waiting)
                     while True:
                         self._budget_changed.clear()
-                        self.check(member, role)
+                        self.check(member, role, task=task)
                         reason = self.budgets.status(task, member)
                         if reason is None:
                             break
@@ -127,7 +130,7 @@ class StaffService:
                             await asyncio.wait_for(self._budget_changed.wait(), max(1, (tomorrow - now).total_seconds()))
                         except asyncio.TimeoutError:
                             pass
-                self.check(member, role)
+                self.check(member, role, task=task)
                 # A peer request may settle while this worker waits to re-enter the pool.
                 reason = self.budgets.status(task, member)
                 if reason is None:
@@ -189,7 +192,10 @@ class StaffService:
             raise ValueError('只有执行中的所属专员任务可以提出审批')
         return await self.actions.request(task, role, member, call, budget)
 
-    def check(self, member, role):
+    def check(self, member, role, *, task=None):
+        if task is not None and task.collaboration.get('dispatch', {}).get('routine'):
+            from src.workflow.staff.routines import Routines
+            Routines(self.root).check_task(task)
         if member.get('team_task'):
             from src.workflow.tasks.team import TeamService
             from src.workflow.staff.team_roster import check
@@ -203,6 +209,9 @@ class StaffService:
         self._check_department(latest, current)
 
     def execution_identity(self, task):
+        if task.collaboration['dispatch'].get('routine'):
+            from src.workflow.staff.routines import Routines
+            Routines(self.root).check_task(task)
         if task.collaboration['dispatch']['source'] == 'team':
             from src.workflow.tasks.team import TeamService
             return TeamService(self.root).execution_identity(task.id)
@@ -241,7 +250,7 @@ class StaffService:
                     count[0] -= 1
                     condition.notify_all()
 
-    def assign(self, owner, args, *, expected=None):
+    def assign(self, owner, args, *, expected=None, task_id=None, routine=None, after=None):
         with TASK_STATE_LOCK:
             member, role = self.assignment(args)
             self.executable(role)
@@ -252,13 +261,14 @@ class StaffService:
                 from src.workflow.staff.notes import StaffNotes
                 notes = StaffNotes(self.root).snapshot(member['department'])
             task = self.collaboration(owner).create(args['prompt'], member['id'], args.get('acceptance'),
+                task_id=task_id,
                 dispatch={'source': 'staff', 'member': member['id'], 'member_revision': member['revision'],
                           'role': role['id'], 'role_revision': role['revision'], 'department': member['department'],
                           **({'notes': notes} if notes is not None else {}),
                           'delivery': args.get('delivery', 'review'), 'max_steps': role['max_steps'],
-                          'timeout_seconds': role['timeout_seconds']})
+                          'timeout_seconds': role['timeout_seconds'], **({'routine': routine} if routine else {})})
             try:
-                self.schedule(task, member, role)
+                self.schedule(task, member, role, after=after)
             except Exception:
                 self.collaboration(owner).abort(task.id, 1, error='未能进入现有执行池')
                 raise
@@ -274,17 +284,18 @@ class StaffService:
         # A slot is local scheduling state; durable work remains the existing task record.
         condition, running = self._slots.setdefault(member['id'], (asyncio.Condition(), [0]))
         async def execute():
-            self.check(member, role)
+            self.check(member, role, task=task)
             current = work.get(task.id)
             if current.collaboration['round'] != number:
                 raise ValueError('任务轮次已变化')
             work.start(task.id, number)
-            budget = _ActiveBudget(task.id, role['timeout_seconds'])
+            legacy = ((current.collaboration['dispatch'].get('routine') or {}).get('legacy') or {})
+            budget = _ActiveBudget(task.id, min(role['timeout_seconds'], legacy.get('timeout', role['timeout_seconds'])))
             token = _BUDGET.set(budget)
             try:
                 budget.resume()
                 await self.wait_for_budget(current, role, member)
-                result = await self.execute(current, work, deepcopy(role), deepcopy(member), lambda: self.check(member, role))
+                result = await self.execute(current, work, deepcopy(role), deepcopy(member), lambda: self.check(member, role, task=task))
             except asyncio.CancelledError:
                 if budget.expired:
                     raise TimeoutError('专员执行超过登记时限') from None
@@ -394,9 +405,17 @@ def staff_directory(root, *, include_prompts=False):
         department['busy'] = sum(t.status in {'queued', 'running', 'blocked'} and
             t.collaboration.get('dispatch', {}).get('department') == department['id'] for t in tasks)
     budgets = StaffBudgets(root)
+    from src.workflow.staff.routines import Routines
+    routine_rows = Routines(root).list()
+    for department in departments:
+        department['routines'] = [item['id'] for item in routine_rows if not item['retired']
+                                  and item['binding']['member']['department'] == department['id']]
     try:
         usage = budgets.usage()
     except (OSError, ValueError):
         usage = {'error': '用量暂不可核对，不能据此推断为零'}
     return {'roles': StaffRegistry(root).roles(), 'members': members, 'departments': departments,
+            'routines': [{k: row[k] for k in ('id', 'name', 'member', 'schedule', 'timezone', 'enabled', 'revision', 'delivery', 'token_budget')}
+                         for row in routine_rows if not row['retired']],
+            'routine_timezone': Routines(root).read()['timezone'],
             'budget_settings': budgets.settings(), 'usage': usage}

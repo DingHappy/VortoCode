@@ -161,6 +161,8 @@ export interface AssistantScheduleItem {
   next?: string | null;
   last?: string | null;
   revision?: string;
+  routine_id?: string;
+  routine_revision?: number;
   scheduler_enabled?: boolean;
   failures?: number;
   last_status?: "running" | "done" | "failed" | "timed_out" | "cancelled" | null;
