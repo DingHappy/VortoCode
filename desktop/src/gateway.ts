@@ -1,3 +1,4 @@
+import type { StaffSnapshot, StaffProof, StaffMember } from "./lib/staff";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { ownerAccessSnapshot, type OwnerAccessSnapshot } from "./lib/ownerAccess";
 import { invoke } from "@tauri-apps/api/core";
@@ -384,6 +385,19 @@ export class GatewayClient {
     }
     if (!this.socket) throw new Error("尚未连接 runtime");
     await this.socket.send(JSON.stringify(event));
+  }
+
+  readStaff(): Promise<StaffSnapshot> { return this.request("/api/staff"); }
+  decideStaff(id: string, approve: boolean, digest: string, signature?: string): Promise<unknown> {
+    return this.request(`/api/staff/proposals/${encodeURIComponent(id)}/decision`,
+      { method: "POST", body: JSON.stringify({ approve, digest, ...(signature ? { signature } : {}) }) });
+  }
+  bindStaffKey(proof: StaffProof, authorization: string): Promise<unknown> {
+    return this.request("/api/staff/approval-key", { method: "POST", body: JSON.stringify({ ...proof, authorization }) });
+  }
+  setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown> {
+    return this.request(`/api/staff/members/${encodeURIComponent(id)}/status`,
+      { method: "PUT", body: JSON.stringify({ status, revision }) });
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

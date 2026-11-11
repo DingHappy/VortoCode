@@ -1692,5 +1692,29 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/staff",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/staff/approval-key",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/staff/members/{member_id}/status",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "path": "/api/staff/proposals/{proposal_id}/decision",
+    "methods": [
+      "POST"
+    ]
   }
 ]

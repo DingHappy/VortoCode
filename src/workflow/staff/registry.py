@@ -281,3 +281,17 @@ class StaffRegistry:
             entries = [item if x['id'] == item['id'] else x for x in entries] if previous else [*entries, item]
             self._write('members.json', {'version': 1, 'members': entries})
             return deepcopy(item)
+
+    def set_member_status(self, member_id: str, status: str, revision: int) -> dict:
+        if status not in {'active', 'paused', 'retired'} or type(revision) is not int:
+            raise ValueError('专员状态或版本无效')
+        with TASK_STATE_LOCK:
+            entries = self.members()
+            item = next((x for x in entries if x['id'] == member_id), None)
+            if item is None or item['revision'] != revision or item['status'] == 'retired':
+                raise ValueError('专员已撤掉或版本变化，请刷新')
+            if status == 'active' and not self.role(item['role'])['enabled']:
+                raise ValueError('岗位已停用，不能恢复专员')
+            item.update(status=status, revision=revision + 1)
+            self._write('members.json', {'version': 1, 'members': entries})
+            return deepcopy(item)

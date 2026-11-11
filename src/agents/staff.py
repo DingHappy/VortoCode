@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 
 from src.agents.tool import Tool, PreparedToolCall
-from src.agents.trust import READ, OWN_DATA, DRAFT, WRITE, EXECUTE
+from src.agents.trust import READ, OWN_DATA, DRAFT, WRITE, EXECUTE, INTERACT
 
 
 def operation(role):
-    order = [READ, OWN_DATA, DRAFT, WRITE, EXECUTE]
+    order = [READ, OWN_DATA, DRAFT, WRITE, EXECUTE, INTERACT]
     return max(role['grants']['operations'], key=order.index)
 
 
@@ -90,12 +90,13 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None):
                    + '\n交付：' + args.get('delivery', 'review'))
         return PreparedToolCall(apply, message, operation(assigned))
 
-    return [Tool('staff_list', '读取已登记的专员、岗位、权限和忙闲；没有合适专员时先提议，不临时授予权限。',
+    from src.agents.staff_proposals import build_staff_proposal_tool
+    return [build_staff_proposal_tool(root, confirm=confirm, owner=owner), Tool('staff_list', '读取已登记的专员、岗位、权限和忙闲；没有合适专员时先提议，不临时授予权限。',
                  {}, directory, operation_kind=READ),
             Tool.prepared('staff_assign', '交给一个已登记专员独立完成；权限只取岗位，不接受任何权限字段。默认交给主人验收。',
                 {'member': '专员 id', 'prompt': '任务原文全文，最多 4000 字符',
                  'acceptance': '可选：验收标准字符串列表', 'delivery': 'review（默认）或 notify'},
-                prepare, operation_kind=EXECUTE, possible_operations=(READ, OWN_DATA, DRAFT, WRITE),
+                prepare, operation_kind=EXECUTE, possible_operations=(READ, OWN_DATA, DRAFT, WRITE, INTERACT),
                 classify=classify, requires_confirmation=True, serial=True, confirm=confirm,
                 required_args=('member', 'prompt'), argument_schema={
                     'acceptance': {'type': 'array', 'items': {'type': 'string'}},

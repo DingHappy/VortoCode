@@ -1,3 +1,4 @@
+mod staff_approval;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -1657,6 +1658,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_websocket::init())
         .invoke_handler(tauri::generate_handler![
+            staff_approval::staff_approval_sign,
             get_llm_profile,
             get_model_configuration_state,
             set_llm_profile,

@@ -20,6 +20,8 @@ import { applyModelPreset, modelSettingsState } from "../lib/modelSettings";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
 import { isLocalModelBase, PROVIDER_PRESETS } from "../lib/providers";
+import type { StaffClient } from "../lib/staff";
+import { StaffPane } from "./settings/StaffPane";
 import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { AccountPane } from "./settings/AccountPane";
@@ -71,7 +73,7 @@ export function settingsBlockVisible(
   return relayMode(profile);
 }
 
-const NAV_ICONS = { account: UserRound, model: Cpu, computer: Monitor, permissions: ShieldCheck, tools: Blocks, personal: SlidersHorizontal, advanced: Info };
+const NAV_ICONS = { account: UserRound, model: Cpu, computer: Monitor, permissions: ShieldCheck, staff: UserRound, tools: Blocks, personal: SlidersHorizontal, advanced: Info };
 type DraftState = { dirty: boolean; busy: boolean; conflict?: boolean };
 const DRAFT_ITEMS: Record<string, { label: string; page: SettingsPage; anchor: string }> = {
   provider: { label: "模型服务", page: "model", anchor: "provider-editor" },
@@ -86,6 +88,7 @@ type SettingsModalProps = {
   onOpenPlugins?: () => void;
   /** 登记了常驻电脑（「让助理查看 Codex」要报给它） */
   hasResident?: boolean;
+  staffClient?: StaffClient;
   readCodexObserver?: () => Promise<CodexObserverRead>;
   /** 打开助理资料（名字、SOUL、关于你） */
   onEditAssistant?: () => void;
@@ -160,7 +163,7 @@ type SettingsModalProps = {
 export function SettingsModal({
   onOpenPlugins,
   hasResident = false,
-  readCodexObserver,
+  readCodexObserver, staffClient,
   onEditAssistant,
   residentName, residentAccountProjectId, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", llmProfileConflict = false, onReloadLlmProfile,
   activeScope,
@@ -635,6 +638,7 @@ export function SettingsModal({
 
 
           </div>}
+          {visited.has("staff") && <div hidden={section !== "staff"} className="settings-page"><StaffPane projectId={residentAccountProjectId} client={staffClient} /></div>}
           {visited.has("advanced") && <div hidden={section !== "advanced"} className="settings-page">
             <div id="setting-version" className={anchorClass("version")} tabIndex={-1}>
               <UpdateCard /><details className="advanced-settings settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
