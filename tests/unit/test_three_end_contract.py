@@ -25,6 +25,28 @@ from src.agents.main_agent import make_confirm_gate
 ALL_ENDS = ["cli", "web", "im"]
 
 
+@pytest.mark.parametrize('verdict,answer', [(gate.DENY, True), (gate.ASK, False), (gate.ASK, True)])
+async def test_deferred_staff_transport_still_consumes_the_single_kernel_decision(tmp_path, monkeypatch, verdict, answer):
+    from src.agents.staff import build_staff_member
+    from src.workflow.workbench.personal_goals import PersonalGoals
+    from src.agents.tool_runtime import pending_tool_approval
+    asked = []
+    async def defer(call):
+        asked.append(call)
+        return answer
+    role = {'grants': {'project': False, 'sees': ['goals'], 'tools': ['personal_goal_create'],
+                      'operations': ['read', 'own_data']}, 'brief': '整理目标', 'max_steps': 4}
+    agent = build_staff_member(str(tmp_path), role, {'model': ''}, check=lambda: None,
+        llm=object(), confirm_action=defer)
+    monkeypatch.setattr(gate, 'decide', lambda **kwargs: verdict)
+    await agent._run_tool('personal_goal_create', {'objective': '读一本书', 'acceptance_criteria': ['完成读书笔记'], 'next_action': '选一本书'}, 'build', lambda _: None)
+    assert len(asked) == int(verdict == gate.ASK)
+    assert len(PersonalGoals(str(tmp_path)).list()) == int(verdict == gate.ASK and answer)
+    if asked:
+        assert asked[0]['kind'] == 'own_data' and asked[0]['tool'] == 'personal_goal_create'
+    assert pending_tool_approval() is None
+
+
 @pytest.mark.parametrize('kind', ALL_ENDS + ['desktop', 'unattended'])
 async def test_mcp_allow_follows_each_session_kernel_gate(kind, tmp_path, mcp_permission_probe, monkeypatch):
     from src.gateway.agent_session import build_session

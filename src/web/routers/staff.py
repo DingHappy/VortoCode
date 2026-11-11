@@ -18,6 +18,10 @@ class Decision(BaseModel):
     signature: str | None = None
 
 
+class ActionDecision(Decision):
+    reason: str = ''
+
+
 class Status(BaseModel):
     model_config = ConfigDict(extra='forbid')
     status: str
@@ -66,3 +70,22 @@ def bind_key(body: Key):
         raise HTTPException(status_code=403, detail='先通过 Desktop 的已认证引擎连接登记批准钥匙')
     return _apply(lambda: StaffApprovals(os.getcwd()).bind_key(body.public_key, body.signature,
         authorization=body.authorization))
+
+
+def _actions():
+    from src.scheduling.staff_runner import get_staff_service
+    return get_staff_service(os.getcwd()).actions
+
+
+@router.get('/api/staff/actions/{task_id}')
+def action_card(task_id: str):
+    return _apply(lambda: _actions().view(task_id))
+
+
+@router.post('/api/staff/actions/{task_id}/{action_id}/decision')
+def decide_action(task_id: str, action_id: str, body: ActionDecision):
+    from src.web.auth import get_api_token
+    if not get_api_token():
+        raise HTTPException(status_code=403, detail='审批需要已认证的主人连接')
+    return _apply(lambda: _actions().decide(task_id, action_id, approve=body.approve,
+        expected_digest=body.digest, reason=body.reason, signature=body.signature))

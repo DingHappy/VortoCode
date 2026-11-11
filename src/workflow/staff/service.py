@@ -3,11 +3,39 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 
 from src.workflow.staff.registry import StaffRegistry
 from src.workflow.tasks.collaboration import CollaborationService
 from src.workflow.tasks.tasks import TASK_STATE_LOCK, TaskLedger
+
+_BUDGET: ContextVar[object | None] = ContextVar('staff_active_budget', default=None)
+
+
+class _ActiveBudget:
+    def __init__(self, task_id, seconds):
+        self.task_id, self.remaining = task_id, seconds
+        self.loop = asyncio.get_running_loop()
+        self.task = asyncio.current_task()
+        self.handle, self.started, self.expired = None, None, False
+
+    def pause(self):
+        if self.handle is not None:
+            self.handle.cancel()
+            self.handle = None
+        if self.started is not None:
+            self.remaining -= max(0, self.loop.time() - self.started)
+            self.started = None
+
+    def resume(self):
+        if self.started is not None:
+            return
+        self.started = self.loop.time()
+        def expire():
+            self.expired = True
+            self.task.cancel()
+        self.handle = self.loop.call_later(max(0, self.remaining), expire)
 
 
 class StaffService:
@@ -18,6 +46,8 @@ class StaffService:
         self.on_update = on_update
         self.registry = StaffRegistry(root)
         self._slots = {}
+        from src.workflow.staff.actions import StaffActions
+        self.actions = StaffActions(self)
 
     def collaboration(self, owner):
         return CollaborationService(self.root, owner, on_update=self.on_update)
@@ -43,12 +73,16 @@ class StaffService:
 
     @staticmethod
     def executable(role):
-        if set(role['grants']['operations']) != {'read'}:
-            raise ValueError('需要后台审批的岗位暂不派发，等待 S4；本批只开放只读任务')
         if role['grants']['project']:
             raise ValueError('登记项目副本尚未接入专员执行；不会读写主工作区')
         if any(source.startswith('files:') for source in role['grants']['sees']):
             raise ValueError('登记目录来源尚未接入；不会用主工作区代替')
+
+    async def confirm_action(self, task, role, member, call):
+        budget = _BUDGET.get()
+        if budget is None or budget.task_id != task.id:
+            raise ValueError('只有执行中的所属专员任务可以提出审批')
+        return await self.actions.request(task, role, member, call, budget)
 
     def check(self, member, role):
         latest = self.registry.member(member['id'])
@@ -86,9 +120,18 @@ class StaffService:
             if current.collaboration['round'] != number:
                 raise ValueError('任务轮次已变化')
             work.start(task.id, number)
-            result = await asyncio.wait_for(
-                self.execute(current, work, deepcopy(role), deepcopy(member), lambda: self.check(member, role)),
-                timeout=role['timeout_seconds'])
+            budget = _ActiveBudget(task.id, role['timeout_seconds'])
+            token = _BUDGET.set(budget)
+            try:
+                budget.resume()
+                result = await self.execute(current, work, deepcopy(role), deepcopy(member), lambda: self.check(member, role))
+            except asyncio.CancelledError:
+                if budget.expired:
+                    raise TimeoutError('专员执行超过登记时限') from None
+                raise
+            finally:
+                budget.pause()
+                _BUDGET.reset(token)
             work.finish(task.id, number, str(result or ''), tainted=True)
         @asynccontextmanager
         async def admission():
@@ -101,7 +144,7 @@ class StaffService:
                 async with condition:
                     running[0] -= 1
                     condition.notify_all()
-        queued = self.runner.enqueue_existing(task.id, execute, admission=admission(),
+        queued = self.runner.enqueue_existing(task.id, execute, admission=admission,
             on_cancel=lambda: work.abort(task.id, number, cancelled=True),
             on_failure=lambda error: work.abort(task.id, number, error=f'专员执行失败：{type(error).__name__}: {str(error)[:240]}'))
         if not queued:

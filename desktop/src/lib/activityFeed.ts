@@ -72,6 +72,10 @@ function openQuestion(task: TaskItem) {
 }
 
 export function feedStatus(task: TaskItem): FeedStatus {
+  if (task.collaboration?.dispatch?.source === "staff" && task.status === "blocked" && task.collaboration.approval) {
+    const state = task.collaboration.approval.status;
+    return state === "pending" ? "waiting" : ["approved", "denied"].includes(state) ? "running" : "stopped";
+  }
   if (openQuestion(task) || task.collaboration?.review === "pending") return "waiting";
   if (task.kind === "team") {
     if (task.status === "active") return "running";
@@ -86,7 +90,11 @@ export function feedStatus(task: TaskItem): FeedStatus {
 export function taskFeedItem(task: TaskItem): FeedItem {
   const status = feedStatus(task);
   const question = openQuestion(task);
-  const summary = question ? `等你回复：${firstSentence(question.question, MAX_SUMMARY - 5)}`
+  const approval = task.collaboration?.dispatch?.source === "staff" && task.status === "blocked" ? task.collaboration.approval : undefined;
+  const summary = approval?.status === "pending" ? `专员等你批准：${firstSentence(approval.payload.message, MAX_SUMMARY - 7)}`
+    : approval && ["approved", "denied"].includes(approval.status) ? "审批决定已保存，等待继续执行"
+    : approval ? "审批等待已中断或过期，请核对任务历史"
+    : question ? `等你回复：${firstSentence(question.question, MAX_SUMMARY - 5)}`
     : status === "waiting" ? "已交付，等你验收"
     : status === "running" ? firstSentence(task.log?.[task.log.length - 1], MAX_SUMMARY) || "正在执行"
     : status === "done" ? firstSentence(task.result, MAX_SUMMARY) || "执行结束，请查看结果"
@@ -100,9 +108,9 @@ export function taskFeedItem(task: TaskItem): FeedItem {
     presentation: task.status === "cancelled" ? "history" : undefined,
     title: firstSentence(task.prompt, MAX_TITLE) || "未命名任务",
     summary,
-    detail: task.result || task.error || summary,
+    detail: approval?.payload.message || task.result || task.error || summary,
     status,
-    sourceLabel: "后台任务",
+    sourceLabel: task.collaboration?.dispatch?.source === "staff" ? "专员" : "后台任务",
     statusLabel: task.status === "cancelled" && status === "stopped" ? "已取消" : status === "done" ? "执行结束" : status === "running" && task.status === "queued" ? "排队中" : undefined,
     at: task.updated_at || task.created_at || "",
     session: task.owner_session || undefined,

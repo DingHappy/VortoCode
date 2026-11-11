@@ -1,0 +1,2 @@
+.qa-staff-actions { max-width: var(--vc-chat-max-w); margin: var(--vc-space-6) auto; padding: var(--vc-space-4); color: var(--vc-text); }
+.qa-staff-actions.narrow { max-width: 360px; }

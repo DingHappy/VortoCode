@@ -51,6 +51,9 @@ def _key(task: Any) -> Optional[str]:
         return None
     if task.status not in _LABELS:
         return None
+    approval = task.collaboration.get('approval') or {}
+    if task.status == 'blocked' and task.collaboration.get('dispatch', {}).get('source') == 'staff' and approval:
+        return (f"{task.id}:approval:{approval['payload']['id']}" if approval.get('status') == 'pending' else None)
     return f"{task.id}:{task.collaboration.get('round', 0)}:{task.status}"
 
 
@@ -77,6 +80,8 @@ def message(task: Any) -> Optional[str]:
     if getattr(task, "kind", "") == "team":
         return _team_message(task)
     dispatch = task.collaboration.get("dispatch", {})
+    if task.status == 'blocked' and dispatch.get('source') == 'staff' and task.collaboration.get('approval'):
+        return '🧩 一个专员正在等待你批准这一步。到 Desktop「等你处理」核对完整动作后批准或拒绝。'
     label = ("交回了汇报" if task.status == "done" and dispatch.get("source") == "staff"
              and dispatch.get("delivery") == "notify" else _LABELS[task.status])
     if task.collaboration.get("tainted"):

@@ -187,11 +187,20 @@ async def test_role_revision_changed_while_queued_never_executes(tmp_path):
     assert CollaborationService(str(tmp_path), 'owner').get(task.id).status == 'queued'
 
 
-def test_write_roles_register_but_cannot_dispatch_before_background_approval_cards(tmp_path):
+def test_write_role_without_resident_approval_transport_still_fails_closed(tmp_path):
+    from src.agents.staff import build_staff_member
     registry, member, pool, service = staff_setup(tmp_path, operations=['read', 'draft'], tools=['mail_draft'], sees=['plugin:mail'])
-    with pytest.raises(ValueError, match='后台审批'):
-        service.assign('owner', {'member': member['id'], 'prompt': '起草邮件'})
+    with pytest.raises(ValueError, match='人工审批通道'):
+        build_staff_member(str(tmp_path), registry.role('reader'), member, check=lambda: None)
     assert not pool.jobs
+
+
+async def test_s4_registered_owner_data_role_can_enter_the_existing_execution_pool(tmp_path):
+    registry, member, pool, service = staff_setup(tmp_path, operations=['read', 'own_data'],
+        tools=['personal_goal_create'], sees=['goals'])
+    task = service.assign('owner', {'member': member['id'], 'prompt': '起草一个可撤销的个人目标'})
+    assert task.kind == 'delegation' and task.status == 'queued'
+    assert task.id in pool.jobs
 
 
 @pytest.fixture(autouse=True)
@@ -996,14 +1005,18 @@ def test_corrupt_key_registration_fails_closed_without_replacing_identity(tmp_pa
 
 
 @pytest.mark.parametrize('kind', ['own_data', 'draft', 'write', 'execute', 'interact'])
-async def test_staged_nonread_roles_declare_their_real_category_and_do_not_dispatch(tmp_path, kind):
+async def test_nonread_dispatch_still_asks_by_registered_category_before_queueing(tmp_path, kind):
     from src.agents.staff import build_staff_tools
     from src.agents.gate import make_confirm_gate
     registry, member, pool, service = staff_setup(tmp_path, operations=['read', kind])
-    tool = next(t for t in build_staff_tools(str(tmp_path), confirm=make_confirm_gate(), owner='owner', service=service)
+    asked = []
+    async def reject(message, category):
+        asked.append(category)
+        return False
+    tool = next(t for t in build_staff_tools(str(tmp_path), confirm=make_confirm_gate(reject, can_ask_human=True), owner='owner', service=service)
                 if t.name == 'staff_assign')
-    args = {'member': member['id'], 'prompt': '本批暂不执行的任务'}
+    args = {'member': member['id'], 'prompt': '需要主人确认派活的任务'}
     assert tool.classify(args) == kind
-    with pytest.raises(ValueError, match='后台审批'):
-        await tool.handler(args)
+    await tool.handler(args)
+    assert asked == [kind]
     assert not pool.jobs

@@ -5,6 +5,7 @@ import { DevPlanDagLoader } from "./DevPlanDag";
 import { DispatchTaskActions } from "./DispatchTaskActions";
 import { TaskHandoffActions } from "./TaskHandoffActions";
 import { TaskQuestionActions } from "./TaskQuestionActions";
+import { StaffActionCard } from "./StaffActionCard";
 import { TaskDependencyActions } from "./TaskDependencyActions";
 import { TaskChainBudget } from "./TaskChainBudget";
 import { TaskCoverageActions } from "./TaskCoverageActions";
@@ -41,7 +42,7 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
       id={`task-card-${task.id}`}
     >
       <div className="task-card-head">
-        <span className={`task-status ${task.status}`}>{task.status === "blocked" ? "等待回答" : statusLabel(task.status)}</span>
+        <span className={`task-status ${task.status}`}>{task.status === "blocked" ? (task.collaboration?.approval ? (task.collaboration.approval.status === "pending" ? "等待审批" : "等待继续") : "等待回答") : statusLabel(task.status)}</span>
         <small>{task.id.slice(0, 8)}</small>
       </div>
       <p className="task-readable-title">{firstSentence(task.prompt, 100) || "后台任务"}</p>
@@ -130,6 +131,7 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
         </div>
       )}
       <TaskQuestionActions task={task} getClient={getClient} onUpdated={onDispatchUpdated} />
+      <StaffActionCard task={task} getClient={getClient} onUpdated={onDispatchUpdated} />
       {task.kind !== "delegation" && task.result && <ResultDocument title="查看交付结果" text={task.result} open={focused} />}
       <TaskDependencyActions task={task} getClient={getClient} onUpdated={onDispatchUpdated} />
       <TaskChainBudget budget={task.chain_budget} />

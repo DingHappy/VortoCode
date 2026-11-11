@@ -1,0 +1,24 @@
+.staff-action-card {
+  display: grid;
+  gap: var(--vc-space-2);
+  margin-top: var(--vc-space-3);
+  padding: var(--vc-space-3);
+  border: 1px solid var(--vc-wait-dot);
+  border-radius: var(--vc-radius-control);
+  font-size: var(--vc-size-body);
+  overflow-wrap: anywhere;
+}
+.staff-action-card p { margin: 0; }
+.staff-action-card pre, .staff-action-preview { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.staff-action-card label { font-size: var(--vc-size-caption); }
+.staff-action-card textarea {
+  width: 100%;
+  min-width: 0;
+  padding: var(--vc-space-2);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-inner);
+  background: var(--vc-fill);
+  color: var(--vc-text);
+  font: inherit;
+  resize: vertical;
+}

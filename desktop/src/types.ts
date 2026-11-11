@@ -613,7 +613,8 @@ export interface TaskItem {
     acceptance: string[];
     tainted: boolean;
     questions?: TaskQuestion[];
-    dispatch?: { source: "api"; fingerprint?: string; max_steps: number; timeout_seconds: number };
+    approval?: import("./lib/staffAction").StaffAction;
+    dispatch?: { source: "api" | "staff"; fingerprint?: string; max_steps: number; timeout_seconds: number };
     messages: Array<{ id: string; kind: string; sender: string; round: number; body: string; created: string }>;
   };
   development?: { version: 1; round: number; owner_session: string; plan_id: string; root_task_id: string; questions: TaskQuestion[] };

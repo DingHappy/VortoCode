@@ -19,7 +19,8 @@ import os
 import time
 import threading
 import uuid
-from contextlib import AbstractAsyncContextManager, nullcontext
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -366,6 +367,41 @@ class TaskLedger:
 
 # --------------------------------------------------------------------- 运行时
 Worker = Callable[[BackgroundTask, Callable[[str], None]], Awaitable[str]]
+_CURRENT_CAPACITY: ContextVar[tuple | None] = ContextVar('task_execution_capacity', default=None)
+
+
+class _ExecutionCapacity:
+    """One worker's permits; only its trusted owner-wait adapter can park them."""
+    def __init__(self, semaphore, admission):
+        self.semaphore, self.admission, self.stack = semaphore, admission, None
+
+    async def acquire(self):
+        stack = AsyncExitStack()
+        try:
+            if self.admission is not None:
+                await stack.enter_async_context(self.admission() if callable(self.admission) else self.admission)
+            await stack.enter_async_context(self.semaphore)
+        except BaseException:
+            await stack.aclose()
+            raise
+        self.stack = stack
+
+    async def release(self):
+        stack, self.stack = self.stack, None
+        if stack is not None:
+            await stack.aclose()
+
+    @asynccontextmanager
+    async def waiting(self):
+        if self.stack is None or (self.admission is not None and not callable(self.admission)):
+            raise ValueError('当前执行没有可恢复的共享池准入')
+        await self.release()
+        try:
+            yield
+        except BaseException:
+            raise
+        else:
+            await self.acquire()
 
 
 class TaskRunner:
@@ -479,7 +515,7 @@ class TaskRunner:
 
     def enqueue_existing(self, tid: str, execute: Callable[[], Awaitable[None]], *,
                          on_cancel: Callable[[], None], on_failure: Callable[[Exception], None],
-                         admission: AbstractAsyncContextManager | None = None) -> bool:
+                         admission: AbstractAsyncContextManager | Callable[[], AbstractAsyncContextManager] | None = None) -> bool:
         """Use the shared pool for durable work whose lifecycle is owned by another service.
 
         The runner owns concurrency/cancellation; injected callbacks own state.
@@ -494,14 +530,20 @@ class TaskRunner:
             raise ValueError("任务必须先持久化")
 
         async def run():
+            capacity = _ExecutionCapacity(self._sem, admission)
+            token = _CURRENT_CAPACITY.set((self, tid, capacity))
             try:
-                async with admission if admission is not None else nullcontext():
-                    async with self._sem:
-                        await execute()
+                await capacity.acquire()
+                await execute()
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # noqa: BLE001
                 on_failure(error)
+            finally:
+                try:
+                    await capacity.release()
+                finally:
+                    _CURRENT_CAPACITY.reset(token)
 
         task = asyncio.create_task(run())
         self._running[tid] = task
@@ -518,6 +560,15 @@ class TaskRunner:
                     self._running.pop(tid, None)
         task.add_done_callback(done)
         return True
+
+    @asynccontextmanager
+    async def waiting_for_owner(self, tid: str):
+        """Park this exact live worker; normal/headless execution gets no new authority."""
+        current = _CURRENT_CAPACITY.get()
+        if current is None or current[0] is not self or current[1] != tid:
+            raise ValueError('只有所属执行池中的当前任务可以等待主人')
+        async with current[2].waiting():
+            yield
 
     async def _run(self, task: BackgroundTask) -> None:
         last_save = [0.0]

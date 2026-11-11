@@ -28,6 +28,21 @@ from src.llm.hard_budget import claim_check_tool
 logger = logging.getLogger(__name__)
 _EXECUTION_CONTEXT: ContextVar[ToolExecutionContext | None] = ContextVar("tool_execution_context", default=None)
 _AUTHORITY: ContextVar[tuple | None] = ContextVar("tool_authority", default=None)
+_APPROVAL_CALL: ContextVar[dict | None] = ContextVar("tool_approval_call", default=None)
+
+
+def pending_tool_approval() -> dict | None:
+    """Frozen call metadata for a trusted host's deferred human-confirmation transport."""
+    from copy import deepcopy
+    value = _APPROVAL_CALL.get()
+    return deepcopy({key: value[key] for key in ('tool', 'args', 'kind', 'message')}) if value else None
+
+
+def record_tool_rejection(reason: str) -> None:
+    """Presentation only: this cannot authorize an action or change its frozen arguments."""
+    value = _APPROVAL_CALL.get()
+    if value is not None:
+        value['rejection'] = str(reason)[:2000]
 
 
 def has_runtime_authority(owner: object, name: str, args: dict, kind: str) -> bool:
@@ -205,23 +220,33 @@ async def invoke_tool_handler(tool: Tool, args: dict) -> object:
                 confirm = make_confirm_gate(confirm, can_ask_human=confirm is not None,
                     capability_profile=getattr(ctx.capabilities, "profile", None) if ctx else None)
             from contextlib import nullcontext
-            with action.approval_context() if action.approval_context is not None else nullcontext():
-                try:
+            approval_call = {'tool': tool.name, 'args': deepcopy(args), 'kind': kind,
+                             'message': action.message, 'rejection': ''}
+            approval_token = _APPROVAL_CALL.set(approval_call)
+            try:
+                with action.approval_context() if action.approval_context is not None else nullcontext():
                     if confirm is not None and is_kernel_gate(confirm):
                         ok = await confirm(action.message, kind, force_prompt=tool.always_confirm,
                                            _task_authorized=scoped, _protective_authorized=protective)
                     else:
                         ok = await request(confirm, action.message, kind)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    ok = False
+            except asyncio.CancelledError:
+                raise
+            except ToolTurnYield:
+                raise
+            except Exception:
+                ok = False
+            finally:
+                _APPROVAL_CALL.reset(approval_token)
             if not ok:
                 if action.on_denied is not None:
                     action.on_denied()
                 if isinstance(action.denied_result, PreparedToolCall):
                     action = action.denied_result
                     continue
+                if approval_call['rejection']:
+                    return ToolResult('主人拒绝了这一步，动作未执行。理由：' + str(approval_call['rejection'])
+                                      + '\n该理由不授予任何新权限。', 'blocked')
                 if ctx is None:
                     return action.denied_result
                 denied = action.denied_result
