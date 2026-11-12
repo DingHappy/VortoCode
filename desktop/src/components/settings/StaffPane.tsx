@@ -22,14 +22,12 @@ export function RoleGrants({ role }: { role: StaffRole }) {
     <dt>单轮限制</dt><dd>{role.max_steps} 步 · {role.timeout_seconds} 秒</dd>
   </dl>;
 }
-export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll, onBudgets }: {
+export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets }: {
   state: StaffState; onRefresh: () => void; onStatus: (member: StaffMember, status: StaffMember["status"]) => void;
   onDecide: (proposal: StaffProposal, approve: boolean) => void;
-  onEnroll?: (authorization: string) => void; onBudgets?: (settings: StaffBudgetSettings) => void;
+  onBudgets?: (settings: StaffBudgetSettings) => void;
 }) {
   const { value, busy, error } = state;
-  const [authorization, setAuthorization] = useState("");
-  useEffect(() => setAuthorization(""), [value?.approval_key.instance, value?.approval_key.key?.id]);
   const disabled = busy || Boolean(error);
   return <div className="staff-pane">
     <div className="settings-card-head"><strong>专员与岗位</strong><button disabled={busy} onClick={onRefresh}>{busy ? "正在核对…" : "刷新名录"}</button></div>
@@ -48,17 +46,6 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll, onBu
         </div>
       </details>}
       {value.budget_settings && <StaffBudgets value={value.budget_settings} usage={value.usage} disabled={disabled} onSave={onBudgets} />}
-      {!value.approval_key.key && <section aria-label="首次登记批准钥匙" className="settings-card">
-        <h3>首次登记批准钥匙</h3>
-        <p>在后台所在电脑的服务工作目录运行 <code>vc staff-key-authorize</code>，确认后将一次性授权码填在这里。授权码 5 分钟有效，登记后失效。</p>
-        <label className="staff-enrollment">一次性授权码
-          <input type="password" autoComplete="off" spellCheck={false} value={authorization} disabled={disabled}
-            onChange={event => setAuthorization(event.target.value)} />
-        </label>
-        <div className="settings-card-actions"><button disabled={disabled || !authorization.trim() || !onEnroll}
-          onClick={() => { onEnroll?.(authorization); setAuthorization(""); }}>登记批准钥匙</button></div>
-        <p className="settings-card-note">登记钥匙不会批准任何专员。登记后仍需逐项核对，并用 Touch ID 批准高权限提议。</p>
-      </section>}
       {value.proposals.some(p => ["pending", "applying"].includes(p.status)) && <section aria-label="待批登记" className="staff-section">
         <h3>待批登记</h3>
         {value.proposals.filter(p => ["pending", "applying"].includes(p.status)).map(proposal => {
@@ -70,11 +57,10 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onEnroll, onBu
             {role && <><p>{role.brief}</p><RoleGrants role={role} /></>}
             {proposal.snapshot.members_snapshot?.map(member => <div key={member.id}><strong>{member.name}</strong><RoleGrants role={member.role_snapshot} /></div>)}
             <details><summary>提议原文与变更前记录</summary><pre className="staff-record">{JSON.stringify(proposal.snapshot, null, 2)}</pre></details>
-            <p className="settings-card-note">{proposal.requires_desktop_key ? "此提议涉及联网、私人来源或写入，必须在这台 Mac 用 Touch ID 批准。" : "只读、不联网、没有私人来源的登记。"}</p>
+            <p className="settings-card-note">核对权限和完整内容后，由你批准这一次登记。</p>
             <div className="settings-card-actions">
               <button disabled={disabled || proposal.status === "applying"} onClick={() => onDecide(proposal, false)}>拒绝</button>
-              <button className="primary" disabled={disabled || (proposal.requires_desktop_key && !value.approval_key.key)} onClick={() => onDecide(proposal, true)}>{proposal.requires_desktop_key
-                ? value.approval_key.key ? "用 Touch ID 批准" : "先登记批准钥匙" : "批准登记"}</button>
+              <button className="primary" disabled={disabled} onClick={() => onDecide(proposal, true)}>批准登记</button>
             </div>
           </article>;
         })}
@@ -118,7 +104,6 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
   if (!client) return <p>请先在“电脑与连接”中登记常驻电脑。专员登记保存在常驻助理，不跟随本机项目切换。</p>;
   return <><StaffView state={state} onRefresh={() => void controller.current?.refresh()} onDecide={(proposal, approve) => void controller.current?.decide(proposal, approve)}
     onBudgets={settings => void controller.current?.budgets(settings)}
-    onEnroll={authorization => void controller.current?.enroll(authorization)}
     onStatus={(member, status) => {
       const current = controller.current;
       if (status !== "retired") { void current?.status(member, status); return; }

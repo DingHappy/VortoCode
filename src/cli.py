@@ -186,8 +186,6 @@ def main():
     p.add_argument("action", choices=["run"], help="run：立刻值班一次（隔离会话、便宜模型）")
 
     sub.add_parser("doctor", help="一键自检：git/凭证/中转站/serve/权限文件/gh/IM——常驻化后'用不了'大多是管道问题")
-    p = sub.add_parser('staff-key-authorize', help='在主机本地一次性授权首次绑定 Desktop 批准钥匙')
-    p.add_argument('--root', default=None, help='后台服务的工作目录，默认当前目录')
 
     p = sub.add_parser("workers", help="外部执行者（Codex / Claude Code CLI）：查看模式与状态，或在常驻电脑上登录专用账号")
     workers_sub = p.add_subparsers(dest="workers_command")
@@ -238,9 +236,6 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(0)
-
-    if args.command == 'staff-key-authorize':
-        sys.exit(run_staff_key_authorize(args.root or str(Path.cwd())))
 
     if args.command in {"coverage-verify", "coverage-preserve", "coverage-preservation-verify", "coverage-retirement-verify"}:
         import json
@@ -410,25 +405,6 @@ async def run_canary_cli() -> int:
     ok, text = summarize(lanes)
     print(f"\n{'✅' if ok else '⛔'} {text}")
     return 0 if ok else 1
-
-
-def run_staff_key_authorize(root: str) -> int:
-    """Owner-only local setup, before logging/provider setup; never an HTTP/tool command."""
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        print('请在后台所在主机的交互终端运行此命令。', file=sys.stderr)
-        return 2
-    try:
-        if input('在本机授权首次绑定 Desktop 批准钥匙？输入“绑定”继续：').strip() != '绑定':
-            print('未授权，没有生成一次性授权码。', file=sys.stderr)
-            return 1
-        from src.workflow.staff.approvals import StaffApprovals
-        authorization = StaffApprovals(str(Path(root).resolve())).authorize_enrollment()
-    except (ValueError, OSError, EOFError) as error:
-        print(f'未授权：{error}', file=sys.stderr)
-        return 1
-    print('将以下一次性授权码填入 Desktop 的“团队与权限”；5 分钟有效，重新生成会作废旧码：')
-    print(authorization)
-    return 0
 
 
 def run_roster_cli(action: str, arg: str, roster_file: str) -> int:

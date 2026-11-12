@@ -9,7 +9,6 @@ import '../src/App.css';
 import './standing-staff.css';
 
 const snapshot: StaffSnapshot = { roles: [], members: [], proposals: [],
-  approval_key: { instance: 'offline-fixture', key: null },
   standing_specialists: [
     { id: 'calendar', title: '日程专员', scope: '只读日历，整理今日安排和时间冲突；不新建、改期、取消或回复邀请。',
       guide: '在主要聊天说明每天几点、使用哪个时区，提议日程专员整理今日安排。' },

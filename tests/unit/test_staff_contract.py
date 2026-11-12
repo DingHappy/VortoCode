@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from tests.unit.staff_owner_helpers import owner_decide, proposal_body
+
 
 def role(**grants):
     return {'id': 'reader', 'title': '阅读员', 'brief': '整理交给它的材料。',
@@ -643,59 +645,9 @@ def test_staff_proposals_do_not_grant_authority_before_owner_decision(tmp_path):
     assert proposal['status'] == 'pending'
     with pytest.raises(ValueError):
         StaffRegistry(str(tmp_path)).role('reader')
-    applied = approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    applied = owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert applied['status'] == 'approved'
     assert StaffRegistry(str(tmp_path)).role('reader')['grants']['tools'] == []
-
-
-def test_private_or_network_roles_require_registered_desktop_approval_key(tmp_path):
-    from src.workflow.staff.approvals import StaffApprovals
-    approvals = StaffApprovals(str(tmp_path))
-    for data in [role(web=True), role(sees=['plugin:calendar'], tools=['calendar_events'])]:
-        proposal = approvals.propose('owner', 'role', data, '需要专员')
-        assert proposal['requires_desktop_key']
-        with pytest.raises(ValueError, match='批准钥匙'):
-            approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
-
-
-def staff_identity():
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    from cryptography.hazmat.primitives import hashes
-    private = ec.generate_private_key(ec.SECP256R1())
-    public = private.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
-    def sign(message):
-        return private.sign(message, ec.ECDSA(hashes.SHA256())).hex()
-    return public, sign
-
-
-def staff_key(approvals):
-    public, sign = staff_identity()
-    authorization = approvals.authorize_enrollment()
-    approvals.bind_key(public, sign(approvals.enrollment_message(public)), authorization=authorization)
-    return public, sign
-
-
-def test_desktop_key_binds_exact_proposal_and_replay_is_idempotent(tmp_path):
-    from src.workflow.staff.approvals import StaffApprovals
-    from src.workflow.staff.registry import StaffRegistry
-    approvals = StaffApprovals(str(tmp_path))
-    public, sign = staff_key(approvals)
-    proposal = approvals.propose('owner', 'role', role(web=True, tools=['web_search']), '查公开资料')
-    signature = sign(approvals.approval_message(proposal))
-    with pytest.raises(ValueError, match='变化'):
-        approvals.decide(proposal['id'], True, '0' * 64, owner_confirmation=True, signature=signature)
-    with pytest.raises(ValueError, match='签名'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature='00')
-    result = approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature=signature)
-    assert result['status'] == 'approved' and result['decision']['source'] == 'desktop_key'
-    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True) == result
-    assert StaffRegistry(str(tmp_path)).role('reader')['revision'] == 1
-    other = approvals.propose('owner', 'role', {**role(web=True), 'id': 'other'}, '独立岗位')
-    with pytest.raises(ValueError, match='签名'):
-        approvals.decide(other['id'], True, other['digest'], owner_confirmation=True, signature=signature)
-    with pytest.raises(ValueError, match='已有批准钥匙'):
-        staff_key(approvals)
 
 
 def test_pending_member_approval_checks_current_role_and_retains_owner_history(tmp_path):
@@ -707,14 +659,14 @@ def test_pending_member_approval_checks_current_role_and_retains_owner_history(t
     proposal = approvals.propose('owner', 'member', {'id': 'staff-new', 'name': '独立专员', 'role': 'reader',
         'engine': 'vortocode'}, '独立整理')
     assert registry.members() == []
-    approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert registry.member('staff-new')['created_by'] == 'owner'
     assert approvals.list()[0]['decision']['approve'] is True
     pending = approvals.propose('owner', 'member', {'id': 'staff-other', 'name': '另一专员', 'role': 'reader',
         'engine': 'vortocode'}, '独立核对')
     registry.register_role({**registry.role('reader'), 'brief': '已调整职责'})
     with pytest.raises(ValueError, match='变化'):
-        approvals.decide(pending['id'], True, pending['digest'], owner_confirmation=True)
+        owner_decide(approvals, pending['id'], True, pending['digest'])
     assert len(registry.members()) == 1
 
 
@@ -727,12 +679,12 @@ def test_grant_failure_has_durable_approval_and_can_resume_without_duplicate_reg
         raise OSError('synthetic storage failure')
     monkeypatch.setattr(approvals.registry, 'register_role', fail)
     with pytest.raises(OSError):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+        owner_decide(approvals, proposal['id'], True, proposal['digest'])
     saved = approvals.get(proposal['id'])
     assert saved['status'] == 'applying' and saved['decision']['approve'] is True
     assert saved['decision']['at']
     monkeypatch.setattr(approvals.registry, 'register_role', original)
-    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)['status'] == 'approved'
+    assert owner_decide(approvals, proposal['id'], True, proposal['digest'])['status'] == 'approved'
     assert approvals.registry.role('reader')['revision'] == 1
 
 
@@ -754,7 +706,9 @@ async def test_propose_requires_owner_even_full_and_tainted_turns_cannot_propose
     await tool.handler({'kind': 'role', 'data': role(), 'reason': '只读整理'})
     assert asked == ([] if tainted else ['execute'])
     roles = StaffRegistry(str(tmp_path)).roles()
-    assert ('reader' in {x['id'] for x in roles}) == (not tainted and answer)
+    assert 'reader' not in {x['id'] for x in roles}
+    from src.workflow.staff.approvals import StaffApprovals
+    assert len(StaffApprovals(str(tmp_path)).list()) == int(not tainted and answer)
 
 
 async def test_high_privilege_proposal_remains_pending_after_normal_confirmation(tmp_path):
@@ -770,7 +724,7 @@ async def test_high_privilege_proposal_remains_pending_after_normal_confirmation
         approvals.registry.role('reader')
 
 
-def test_staff_admin_routes_reject_device_credentials_and_enforce_key_and_revision(tmp_path, monkeypatch):
+def test_staff_admin_routes_reject_device_credentials_and_enforce_owner_and_revision(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from src.web.server import app
     from src.workflow.staff.approvals import StaffApprovals
@@ -781,14 +735,13 @@ def test_staff_admin_routes_reject_device_credentials_and_enforce_key_and_revisi
     proposal = approvals.propose('owner', 'role', {**role(web=True), 'id': 'network'}, '公开资料')
     client = TestClient(app)
     for method, path, body in [('GET', '/api/staff', None),
-        ('POST', f"/api/staff/proposals/{proposal['id']}/decision", {'approve': True, 'digest': proposal['digest']}),
-        ('PUT', f"/api/staff/members/{member['id']}/status", {'status': 'paused', 'revision': 1}),
-        ('POST', '/api/staff/approval-key', {'public_key': '00', 'signature': '00'})]:
+        ('POST', f"/api/staff/proposals/{proposal['id']}/decision", proposal_body(proposal)),
+        ('PUT', f"/api/staff/members/{member['id']}/status", {'status': 'paused', 'revision': 1})]:
         assert client.request(method, path, json=body, headers={'Authorization': 'Bearer device-fixture'}).status_code == 401
     headers = {'Authorization': 'Bearer staff-admin-fixture'}
     assert client.get('/api/staff', headers=headers).status_code == 200
     assert client.post(f"/api/staff/proposals/{proposal['id']}/decision", headers=headers,
-        json={'approve': True, 'digest': proposal['digest']}).status_code == 409
+        json=proposal_body(proposal)).status_code == 200
     endpoint = f"/api/staff/members/{member['id']}/status"
     assert client.put(endpoint, headers=headers, json={'status': 'paused', 'revision': 1}).json()['status'] == 'paused'
     assert client.put(endpoint, headers=headers, json={'status': 'active', 'revision': 1}).status_code == 409
@@ -797,137 +750,8 @@ def test_staff_admin_routes_reject_device_credentials_and_enforce_key_and_revisi
     assert client.put(endpoint, headers=headers, json={'status': 'active', 'revision': 3, 'grants': {}}).status_code == 422
 
 
-def test_admin_token_alone_cannot_enroll_the_first_staff_approval_key(tmp_path, monkeypatch):
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    from fastapi.testclient import TestClient
-    from src.web.server import app
-    from src.workflow.staff.approvals import StaffApprovals
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv('VORTOONE_API_TOKEN', 'staff-admin-fixture')
-    approvals = StaffApprovals(str(tmp_path))
-    private = ec.generate_private_key(ec.SECP256R1())
-    public = private.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
-    signature = private.sign(approvals.enrollment_message(public), ec.ECDSA(hashes.SHA256())).hex()
-    client = TestClient(app)
-    response = client.post('/api/staff/approval-key', headers={'Authorization': 'Bearer staff-admin-fixture'},
-        json={'public_key': public, 'signature': signature})
-    assert response.status_code == 409
-    assert approvals.key_info()['key'] is None
-
-
-def test_local_enrollment_authorization_expires_and_renewal_revokes_the_old_code(tmp_path):
-    from src.workflow.staff.approvals import StaffApprovals
-    now = [1000]
-    approvals = StaffApprovals(str(tmp_path), clock=lambda: now[0])
-    public, sign = staff_identity()
-    old = approvals.authorize_enrollment()
-    proof = sign(approvals.enrollment_message(public))
-    now[0] += 300
-    with pytest.raises(ValueError, match='本地一次性授权'):
-        approvals.bind_key(public, proof, authorization=old)
-    current = approvals.authorize_enrollment()
-    with pytest.raises(ValueError, match='本地一次性授权'):
-        approvals.bind_key(public, proof, authorization=old)
-    assert old != current
-    assert approvals.key_info()['key'] is None
-    assert approvals.bind_key(public, proof, authorization=current)['public_key'] == public
-    assert 'enrollment' not in approvals.key_info()
-    assert approvals.bind_key(public, proof, authorization=current)['public_key'] == public
-    with pytest.raises(ValueError, match='已有批准钥匙'):
-        approvals.authorize_enrollment()
-    another, sign_other = staff_identity()
-    with pytest.raises(ValueError, match='已有批准钥匙'):
-        approvals.bind_key(another, sign_other(approvals.enrollment_message(another)), authorization=current)
-
-
-def test_local_authorization_is_instance_bound_and_bad_proofs_do_not_consume_it(tmp_path):
-    from src.workflow.staff.approvals import StaffApprovals
-    first, other = StaffApprovals(str(tmp_path / 'first')), StaffApprovals(str(tmp_path / 'other'))
-    public, sign = staff_identity()
-    authorization = first.authorize_enrollment()
-    proof = sign(first.enrollment_message(public))
-    with pytest.raises(ValueError, match='签名'):
-        first.bind_key(public, '00', authorization=authorization)
-    with pytest.raises(ValueError, match='本地一次性授权'):
-        first.bind_key(public, proof, authorization='wrong-fixture')
-    with pytest.raises(ValueError, match='本地一次性授权'):
-        other.bind_key(public, sign(other.enrollment_message(public)), authorization=authorization)
-    assert first.bind_key(public, proof, authorization=authorization)['public_key'] == public
-    assert other.key_info()['key'] is None
-
-
-def test_api_enrollment_needs_local_grant_and_never_exposes_it(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
-    from src.web.server import app
-    from src.workflow.staff.approvals import StaffApprovals, digest
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv('VORTOONE_API_TOKEN', 'staff-admin-fixture')
-    approvals = StaffApprovals(str(tmp_path))
-    public, sign = staff_identity()
-    authorization = approvals.authorize_enrollment()
-    saved = (approvals.registry.directory / 'approval-key.json').read_text()
-    assert authorization not in saved and digest(authorization) in saved
-    client = TestClient(app)
-    headers = {'Authorization': 'Bearer staff-admin-fixture'}
-    directory = client.get('/api/staff', headers=headers)
-    assert authorization not in directory.text and digest(authorization) not in directory.text
-    body = {'public_key': public, 'signature': sign(approvals.enrollment_message(public))}
-    assert client.post('/api/staff/approval-key', headers=headers, json=body).status_code == 409
-    assert client.post('/api/staff/approval-key', headers=headers,
-        json={**body, 'authorization': authorization}).status_code == 200
-    proposal = approvals.propose('owner', 'role', role(web=True), '查公开资料')
-    response = client.post(f"/api/staff/proposals/{proposal['id']}/decision", headers=headers,
-        json={'approve': True, 'digest': proposal['digest'], 'signature': sign(approvals.approval_message(proposal))})
-    assert response.status_code == 200 and response.json()['status'] == 'approved'
-    assert authorization not in response.text
-
-
-def test_failed_enrollment_save_keeps_grant_for_retry_and_local_updates_serialize(tmp_path, monkeypatch):
-    from src.workflow.staff.approvals import StaffApprovals
-    approvals = StaffApprovals(str(tmp_path))
-    other = StaffApprovals(str(tmp_path))
-    public, sign = staff_identity()
-    authorization = approvals.authorize_enrollment()
-    proof = sign(approvals.enrollment_message(public))
-    with approvals._key_lock():
-        with pytest.raises(ValueError, match='正在更新'):
-            other.authorize_enrollment()
-    with monkeypatch.context() as patch:
-        def fail(name, value):
-            raise OSError('synthetic save failure')
-        patch.setattr(approvals.registry, '_write', fail)
-        with pytest.raises(OSError):
-            approvals.bind_key(public, proof, authorization=authorization)
-    assert approvals.key_info()['key'] is None
-    assert approvals.bind_key(public, proof, authorization=authorization)['public_key'] == public
-
-
-@pytest.mark.parametrize('interactive,answer,expected', [(False, '绑定', 2), (True, '取消', 1), (True, '绑定', 0)])
-def test_local_authorization_cli_requires_an_interactive_owner_action(tmp_path, monkeypatch, capsys, interactive, answer, expected):
-    import sys
-    from src.cli import main
-    from src.workflow.staff.approvals import StaffApprovals, digest
-    monkeypatch.setattr(sys, 'argv', ['vc', 'staff-key-authorize', '--root', str(tmp_path)])
-    monkeypatch.setattr(sys.stdin, 'isatty', lambda: interactive)
-    monkeypatch.setattr(sys.stdout, 'isatty', lambda: interactive)
-    monkeypatch.setattr('builtins.input', lambda _: answer)
-    with pytest.raises(SystemExit) as result:
-        main()
-    assert result.value.code == expected
-    output = capsys.readouterr().out
-    if expected == 0:
-        authorization = output.strip().splitlines()[-1]
-        state = StaffApprovals(str(tmp_path)).key_info()
-        assert state['key'] is None and state['enrollment']['digest'] == digest(authorization)
-        assert len(authorization) >= 43
-    else:
-        assert not (tmp_path / '.vortoone' / 'staff').exists()
-
-
 @pytest.mark.parametrize('profile', ['local', 'external', 'owner_device'])
-async def test_low_risk_registration_uses_the_real_shared_confirmation_on_all_ends(tmp_path, profile):
+async def test_low_risk_proposal_stays_pending_after_shared_confirmation_on_all_ends(tmp_path, profile):
     from src.gateway.agent_session import build_session
     from src.workflow.staff.registry import StaffRegistry
     asked = []
@@ -938,29 +762,17 @@ async def test_low_risk_registration_uses_the_real_shared_confirmation_on_all_en
         workspace_scope='general', capability_profile=profile, task_owner='owner', confirm=human,
         can_ask_human=True, trust_level='full')
     await agent._run_tool('staff_propose', {'kind': 'role', 'data': role(), 'reason': '独立只读核对'}, 'plan', lambda _: None)
-    assert asked == ['execute'] and StaffRegistry(str(tmp_path)).role('reader')['revision'] == 1
+    assert asked == ['execute']
+    assert 'reader' not in {x['id'] for x in StaffRegistry(str(tmp_path)).roles()}
+    from src.workflow.staff.approvals import StaffApprovals
+    assert StaffApprovals(str(tmp_path)).list()[0]['status'] == 'pending'
 
 
 def test_staff_api_is_available_in_general_without_a_project():
     from src.gateway.workspace_scope import http_workspace_requirement
-    for path in ['/api/staff', '/api/staff/approval-key', '/api/staff/members/reader/status',
+    for path in ['/api/staff', '/api/staff/members/reader/status',
                  '/api/staff/proposals/fixture/decision']:
         assert http_workspace_requirement(path, 'general') is None
-
-
-def test_enrollment_proof_cannot_be_replayed_on_another_instance(tmp_path):
-    from src.workflow.staff.approvals import StaffApprovals
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    first, other = StaffApprovals(str(tmp_path / 'first')), StaffApprovals(str(tmp_path / 'other'))
-    key = ec.generate_private_key(ec.SECP256R1())
-    public = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint).hex()
-    proof = key.sign(first.enrollment_message(public), ec.ECDSA(hashes.SHA256())).hex()
-    first.bind_key(public, proof, authorization=first.authorize_enrollment())
-    with pytest.raises(ValueError, match='签名'):
-        other.bind_key(public, proof)
-    assert other.key_info()['key'] is None
 
 
 def test_failed_receipt_never_grants_and_failed_final_save_replays_exact_target(tmp_path, monkeypatch):
@@ -974,7 +786,7 @@ def test_failed_receipt_never_grants_and_failed_final_save_replays_exact_target(
         return original(name, value)
     monkeypatch.setattr(approvals.registry, '_write', fail_receipt)
     with pytest.raises(OSError):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+        owner_decide(approvals, proposal['id'], True, proposal['digest'])
     with pytest.raises(ValueError):
         approvals.registry.role('reader')
     def fail_final(name, value):
@@ -983,11 +795,11 @@ def test_failed_receipt_never_grants_and_failed_final_save_replays_exact_target(
         return original(name, value)
     monkeypatch.setattr(approvals.registry, '_write', fail_final)
     with pytest.raises(OSError):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+        owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert approvals.registry.role('reader')['revision'] == 1
     assert approvals.get(proposal['id'])['status'] == 'applying'
     monkeypatch.setattr(approvals.registry, '_write', original)
-    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)['status'] == 'approved'
+    assert owner_decide(approvals, proposal['id'], True, proposal['digest'])['status'] == 'approved'
     assert approvals.registry.role('reader')['revision'] == 1
 
 
@@ -1001,18 +813,6 @@ async def test_headless_auto_approve_cannot_register_staff(tmp_path):
     assert StaffApprovals(str(tmp_path)).list() == []
     with pytest.raises(ValueError):
         StaffApprovals(str(tmp_path)).registry.role('reader')
-
-
-def test_corrupt_key_registration_fails_closed_without_replacing_identity(tmp_path):
-    from src.workflow.staff.approvals import StaffApprovals
-    approvals = StaffApprovals(str(tmp_path))
-    approvals.key_info()
-    path = approvals.registry.directory / 'approval-key.json'
-    broken = {'version': 1, 'key': None}
-    path.write_text(json.dumps(broken))
-    with pytest.raises(ValueError, match='损坏'):
-        approvals.key_info()
-    assert json.loads(path.read_text()) == broken
 
 
 @pytest.mark.parametrize('kind', ['own_data', 'draft', 'write', 'execute', 'interact'])

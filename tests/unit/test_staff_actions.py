@@ -4,8 +4,10 @@ from copy import deepcopy
 
 import pytest
 
+from tests.unit.staff_owner_helpers import owner_action, action_body
+from src.workflow.staff.owner_confirmation import owner_route
+
 from src.agents.taint import reset_taint
-from src.workflow.staff.approvals import StaffApprovals
 from src.workflow.staff.registry import StaffRegistry
 from src.workflow.staff.service import StaffService
 from src.workflow.tasks.tasks import TaskLedger, TaskRunner
@@ -69,8 +71,7 @@ async def next_card(waiting):
 
 
 def decide(service, task, card, approve=True, **kwargs):
-    return service.actions.decide(task.id, card['payload']['id'], approve=approve,
-        expected_digest=card['digest'], **kwargs)
+    return owner_action(service, task, card, approve, **kwargs)
 
 
 @pytest.mark.parametrize('approve', [True, False])
@@ -193,8 +194,9 @@ async def test_restart_and_followup_invalidate_old_card_without_replaying_an_act
         recovered = StaffActions(service)
         assert recovered.view(task.id)['status'] == 'interrupted'
         recovered.recover()
-        with pytest.raises(ValueError):
-            recovered.decide(task.id, card['payload']['id'], approve=True, expected_digest=card['digest'])
+        with owner_route(str(tmp_path)), pytest.raises(ValueError, match='变化'):
+            recovered.decide(task.id, card['payload']['id'], approve=True, expected_digest=card['digest'],
+                **{key: card['payload'][key] for key in ('nonce', 'round', 'instance', 'runtime')})
         assert TaskLedger(tmp_path).load(task.id).status == 'interrupted' and not invoked
         service.runner.cancel(task.id); await service.runner.join(task.id)
         service.followup('owner', task.id, 1, '已核对，请重新检查当前状态')
@@ -209,33 +211,6 @@ async def test_restart_and_followup_invalidate_old_card_without_replaying_an_act
         await service.runner.shutdown()
 
 
-async def test_high_risk_signature_binds_instance_key_task_round_and_full_action(tmp_path, monkeypatch):
-    from src.workflow.staff.actions import action_message
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    service, member, waiting, _, invoked, _, _ = live_staff(tmp_path, monkeypatch, kind='execute')
-    approvals = StaffApprovals(str(tmp_path))
-    private = ec.generate_private_key(ec.SECP256R1())
-    public = private.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint).hex()
-    sign = lambda data: private.sign(data, ec.ECDSA(hashes.SHA256())).hex()
-    approvals.bind_key(public, sign(approvals.enrollment_message(public)), authorization=approvals.authorize_enrollment())
-    try:
-        task = service.assign('owner', {'member': member['id'], 'prompt': '需要批准钥匙的动作'})
-        _, card = await next_card(waiting)
-        assert card['payload']['required_key'] == 'approval'
-        for signature in [None, '00', sign(approvals.enrollment_message(public))]:
-            with pytest.raises(ValueError):
-                decide(service, task, card, signature=signature)
-        for field in ['instance', 'key_id', 'task_id', 'round', 'nonce']:
-            changed = deepcopy(card); changed['payload'][field] = '另一个身份'
-            with pytest.raises(ValueError):
-                decide(service, task, card, signature=sign(action_message(changed)))
-        assert not invoked
-        decide(service, task, card, signature=sign(action_message(card)))
-        await service.runner.join(task.id)
-        assert len(invoked) == 1
-    finally:
-        await service.runner.shutdown()
 
 
 async def test_permission_change_while_approved_action_reacquires_capacity_prevents_execution(tmp_path, monkeypatch):
@@ -299,7 +274,7 @@ async def test_action_routes_authenticate_owner_and_do_not_accept_model_authorit
         _, card = await next_card(waiting)
         path = f"/api/staff/actions/{task.id}"
         endpoint = f"{path}/{card['payload']['id']}/decision"
-        body = {'approve': True, 'digest': card['digest']}
+        body = action_body(card)
         assert client.get(path).status_code == 401
         assert client.post(endpoint, json=body, headers={'Authorization': 'Bearer device-fixture'}).status_code == 401
         assert client.get(path, headers=headers).json()['digest'] == card['digest']

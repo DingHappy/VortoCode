@@ -9,16 +9,11 @@ import time
 import uuid
 
 from src.agents.confirmation_context import approval_details
-from src.workflow.staff.approvals import StaffApprovals, digest
+from src.workflow.staff.approvals import digest
+from src.workflow.staff.owner_confirmation import owner_instance, require_owner_route
 from src.workflow.tasks.tasks import TASK_STATE_LOCK, TaskLedger
 
 ACTION_TTL = 24 * 60 * 60
-
-
-def action_message(card):
-    p = card['payload']
-    return (f"vortoone-staff-action-v1\n{p['instance']}\n{p['key_id']}\n{p['task_id']}\n"
-            f"{p['round']}\n{p['id']}\n{card['digest']}\n{p['nonce']}").encode()
 
 
 class StaffActions:
@@ -51,7 +46,8 @@ class StaffActions:
             task = self._task(task_id)
             card = deepcopy(self._card(task))
             p = card['payload']
-            if card['status'] == 'pending' and (p['runtime'] != self.runtime or p['id'] not in self.waiters):
+            if card['status'] == 'pending' and (p['runtime'] != self.runtime or p['instance'] != owner_instance(self.service.root)
+                                               or p['id'] not in self.waiters):
                 card['status'] = 'interrupted'
             elif card['status'] == 'pending' and p['expires_at'] <= self.clock():
                 card['status'] = 'expired'
@@ -66,15 +62,17 @@ class StaffActions:
         if len(json.dumps(call, ensure_ascii=False).encode()) > 32 * 1024:
             raise ValueError('审批内容过长，未执行或静默截断')
         from src.agents.taint import is_tainted
-        identity = StaffApprovals(self.service.root).key_info()
         now = self.clock()
+        details = approval_details(call['kind'])
+        details.pop('required_key')
+        details['approval_level'] = 'normal' if details['risk'] == 'normal' else 'desktop'
         p = {'id': 'staff-action-' + uuid.uuid4().hex, 'task_id': task.id,
              'round': task.collaboration['round'], 'member': member['id'], 'member_name': member['name'], 'member_revision': member['revision'],
              'role': role['id'], 'role_title': role['title'], 'role_revision': role['revision'], 'runtime': self.runtime,
-             'instance': identity['instance'], 'key_id': (identity.get('key') or {}).get('id', ''),
+             'instance': owner_instance(self.service.root),
              'nonce': uuid.uuid4().hex, 'created': datetime.fromtimestamp(now, timezone.utc).isoformat(),
              'expires_at': now + self.timeout, 'tainted': is_tainted(), **deepcopy(call),
-             **approval_details(call['kind'])}
+             **details}
         card = {'payload': p, 'digest': digest(p), 'status': 'pending', 'reason': '', 'decision': None}
         work = self.service.collaboration(task.owner_session)
         future = asyncio.get_running_loop().create_future()
@@ -129,13 +127,19 @@ class StaffActions:
             if not future.done():
                 future.cancel()
 
-    def decide(self, task_id, action_id, *, approve, expected_digest, reason='', signature=None):
+    def decide(self, task_id, action_id, *, approve, expected_digest, reason='', nonce=None, round=None,
+               instance=None, runtime=None):
+        require_owner_route(self.service.root)
         if type(approve) is not bool or not isinstance(reason, str) or len(reason) > 2000 or (not approve and not reason.strip()):
             raise ValueError('拒绝需要明确理由；批准必须为布尔值')
         with TASK_STATE_LOCK:
             task = self._task(task_id)
             card = self._card(task)
             p = card['payload']
+            if (nonce != p['nonce'] or type(round) is not int or round != p['round']
+                    or instance != p['instance'] or instance != owner_instance(self.service.root)
+                    or runtime != p['runtime'] or runtime != self.runtime):
+                raise ValueError('审批确认实例、一次性标识或轮次已变化')
             if p['id'] != action_id or card['digest'] != expected_digest:
                 raise ValueError('审批动作或摘要已变化')
             desired = 'approved' if approve else 'denied'
@@ -150,17 +154,12 @@ class StaffActions:
                 self.service.check(member, role)
                 if member['revision'] != p['member_revision'] or role['revision'] != p['role_revision']:
                     raise ValueError('岗位或专员权限已变化，旧卡不能批准')
-            if approve and p['required_key'] == 'approval':
-                approvals = StaffApprovals(self.service.root)
-                identity = approvals.key_info()
-                if identity['instance'] != p['instance'] or (identity.get('key') or {}).get('id') != p['key_id']:
-                    raise ValueError('批准钥匙已变化，旧卡不能批准')
-                approvals.verify_action(action_message(card), signature)
             from src.gateway.audit import append_audit
             if not append_audit(self.service.root, {'category': 'decision', 'operation': '专员审批：' + p['tool'],
                     'decision': desired, 'operation_kind': p['kind'], 'approval_scope': 'once',
                     'decision_source': 'user', 'approval_outcome': desired, 'tainted': p['tainted'],
-                    'staff_task': task.id, 'staff_action': action_id, 'action_digest': card['digest']}, durable=True):
+                    'staff_task': task.id, 'staff_action': action_id, 'action_digest': card['digest'],
+                    **{key: p[key] for key in ('nonce', 'round', 'instance', 'runtime')}}, durable=True):
                 raise OSError('审批审计保存失败，未授权执行')
             work = self.service.collaboration(task.owner_session)
             def save(current):

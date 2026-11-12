@@ -50,7 +50,7 @@ it("one department contributes one owner decision without copying private sugges
 it("budget settings use a fresh version and never silently retry a write", async () => {
   const snapshot = directoryFixture(), write = vi.fn(async settings => settings);
   const client = { readStaff: vi.fn(async () => structuredClone(snapshot)), setStaffBudgets: write,
-    decideStaff: vi.fn(), bindStaffKey: vi.fn(), setStaffStatus: vi.fn() };
+    decideStaff: vi.fn(), setStaffStatus: vi.fn() };
   const publish = vi.fn(), controller = staffController(client, publish);
   await controller.refresh();
   await controller.budgets({ revision: 99, daily_tokens: 100, task_tokens: 20 });

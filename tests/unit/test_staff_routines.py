@@ -3,6 +3,8 @@ import asyncio
 from datetime import datetime, timedelta
 import pytest
 
+from tests.unit.staff_owner_helpers import owner_decide, proposal_body
+
 from src.scheduling import cron
 
 
@@ -72,10 +74,10 @@ def test_routine_proposal_grants_nothing_before_an_explicit_owner_decision(tmp_p
     _, routines, data = registered(tmp_path)
     approvals = StaffApprovals(str(tmp_path))
     proposal = approvals.propose('owner', 'routine', data, '每天核对')
-    assert routines.list() == [] and proposal['requires_desktop_key'] is False
+    assert routines.list() == [] and proposal['approval_level'] == 'normal'
     with pytest.raises(ValueError, match='主人'):
         approvals.decide(proposal['id'], True, proposal['digest'])
-    approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert routines.get(data['id'])['member'] == data['member']
 
 
@@ -105,11 +107,10 @@ async def test_routine_dispatch_uses_one_existing_task_per_slot_and_shared_staff
         await pool.shutdown()
 
 
-def test_migration_needs_key_then_preserves_models_prompts_and_separate_permissions(tmp_path, monkeypatch):
+def test_migration_needs_owner_then_preserves_models_prompts_and_separate_permissions(tmp_path, monkeypatch):
     from src.workflow.staff.routine_migration import RoutineMigration, legacy_owner
     from src.workflow.staff.approvals import StaffApprovals
     from src.workflow.staff.registry import StaffRegistry
-    from tests.unit.test_staff_contract import staff_key
     monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     write_jobs(tmp_path, 'jobs:\n  - name: personal\n    schedule: at 09:00\n    prompt: 个人回顾\n    model: offline-model\n    announce: silent\n'
                          '  - name: public\n    schedule: every 1h\n    prompt: 查公开新闻\n    allow_web: true\n'
@@ -120,11 +121,9 @@ def test_migration_needs_key_then_preserves_models_prompts_and_separate_permissi
     approvals = StaffApprovals(str(tmp_path))
     proposal = approvals.propose('owner', 'routine_migration', {'timezone': 'UTC', 'config_revision': plan['config_revision']}, '迁移')
     assert StaffRegistry(str(tmp_path)).members() == [] and legacy_owner(str(tmp_path), 'personal') is None
-    with pytest.raises(ValueError, match='批准钥匙'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
-    _, sign = staff_key(approvals)
-    approved = approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True,
-                                signature=sign(approvals.approval_message(proposal)))
+    with pytest.raises(ValueError, match='主人写入路由'):
+        approvals.decide(proposal['id'], True, proposal['digest'])
+    approved = owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert approved['status'] == 'approved'
     assert cron.cron_path(str(tmp_path)).read_bytes() == source
     assert [j.name for j in cron.due_jobs(str(tmp_path), datetime(2026, 11, 11, 12))] == ['command']
@@ -134,7 +133,7 @@ def test_migration_needs_key_then_preserves_models_prompts_and_separate_permissi
     members = StaffRegistry(str(tmp_path)).members()
     assert next(m for m in members if m['role'] == 'routine-offline')['model'] == 'offline-model'
     assert len(migration.routines.list()) == 2 and legacy_owner(str(tmp_path), 'public')['status'] == 'complete'
-    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True) == approved
+    assert owner_decide(approvals, proposal['id'], True, proposal['digest']) == approved
 
 
 def test_project_migration_is_explicitly_deferred(tmp_path, monkeypatch):
@@ -205,15 +204,12 @@ def test_interrupted_migration_blocks_both_lanes_until_the_same_signed_decision_
     from src.workflow.staff.routine_migration import RoutineMigration, legacy_owner
     from src.workflow.staff.approvals import StaffApprovals
     from src.workflow.staff.registry import StaffRegistry
-    from tests.unit.test_staff_contract import staff_key
     monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     write_jobs(tmp_path, 'jobs:\n  - name: old\n    schedule: every 1h\n    prompt: old\n')
     migration = RoutineMigration(str(tmp_path))
     approvals = StaffApprovals(str(tmp_path))
-    _, sign = staff_key(approvals)
     plan = migration.plan('UTC')
     item = approvals.propose('owner', 'routine_migration', {'timezone': 'UTC', 'config_revision': plan['config_revision']}, '迁移')
-    signature = sign(approvals.approval_message(item))
     original, fail = StaffRegistry._write, [True]
     def interrupted(self, name, data):
         if name == 'members.json' and fail[0]:
@@ -222,12 +218,12 @@ def test_interrupted_migration_blocks_both_lanes_until_the_same_signed_decision_
         return original(self, name, data)
     monkeypatch.setattr(StaffRegistry, '_write', interrupted)
     with pytest.raises(OSError):
-        approvals.decide(item['id'], True, item['digest'], owner_confirmation=True, signature=signature)
+        owner_decide(approvals, item['id'], True, item['digest'])
     assert approvals.get(item['id'])['status'] == 'applying'
     assert legacy_owner(str(tmp_path), 'old')['status'] == 'applying'
     assert cron.due_jobs(str(tmp_path), datetime(2026, 11, 11, 10)) == []
     assert migration.routines.dispatch(None, datetime.fromisoformat('2026-11-11T10:00:00+00:00')) == []
-    approvals.decide(item['id'], True, item['digest'], owner_confirmation=True)
+    owner_decide(approvals, item['id'], True, item['digest'])
     assert len(StaffRegistry(str(tmp_path)).members()) == 1
     assert legacy_owner(str(tmp_path), 'old')['status'] == 'complete'
 
@@ -249,7 +245,7 @@ def test_routine_management_api_requires_owner_and_proposals_do_not_apply_themse
     assert proposed.status_code == 200 and routines.list() == []
     item = proposed.json()
     assert client.post(f"/api/staff/proposals/{item['id']}/decision", headers=headers,
-        json={'approve': True, 'digest': item['digest']}).status_code == 200
+        json=proposal_body(item)).status_code == 200
     current = routines.get(data['id'])
     assert current['owner'] == 'sid-owner'
     assert client.put('/api/staff/routines', headers=headers,
@@ -372,23 +368,22 @@ async def test_routine_proposal_obeys_owner_confirmation_before_registration(tmp
         mark_tainted()
     await tool.handler({'data': data, 'reason': '每天核对资料'})
     assert asked == (['execute'] if can_ask and not tainted else [])
-    assert bool(routines.list()) is (can_ask and not tainted and answer)
+    assert routines.list() == []
+    from src.workflow.staff.approvals import StaffApprovals
+    assert len(StaffApprovals(str(tmp_path)).list()) == int(can_ask and not tainted and answer)
 
 
-def test_signed_migration_cannot_apply_a_changed_source(tmp_path, monkeypatch):
+def test_approved_migration_cannot_apply_a_changed_source(tmp_path, monkeypatch):
     from src.workflow.staff.approvals import StaffApprovals
     from src.workflow.staff.routine_migration import RoutineMigration, legacy_owner
-    from tests.unit.test_staff_contract import staff_key
     monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     write_jobs(tmp_path, 'jobs:\n  - name: old\n    schedule: every 1h\n    prompt: original\n')
     migration, approvals = RoutineMigration(str(tmp_path)), StaffApprovals(str(tmp_path))
     plan = migration.plan('UTC')
     proposal = approvals.propose('owner', 'routine_migration', {'timezone': 'UTC', 'config_revision': plan['config_revision']}, '迁移')
-    _, sign = staff_key(approvals)
-    signature = sign(approvals.approval_message(proposal))
     write_jobs(tmp_path, 'jobs:\n  - name: old\n    schedule: every 1h\n    prompt: changed\n')
     with pytest.raises(ValueError, match='变化'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature=signature)
+        owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert migration.routines.list() == [] and approvals.registry.members() == []
     assert legacy_owner(str(tmp_path), 'old') is None
 
@@ -400,14 +395,12 @@ async def test_migrated_silent_work_keeps_receipts_and_never_revives_after_delet
     from src.workflow.tasks.tasks import TaskRunner
     from src.workflow.workbench.runs import RunLedger
     from src.scheduling.task_notices import message
-    from tests.unit.test_staff_contract import staff_key
     monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     write_jobs(tmp_path, 'jobs:\n  - name: old\n    schedule: every 1h\n    prompt: original\n    announce: silent\n')
     migration, approvals = RoutineMigration(str(tmp_path)), StaffApprovals(str(tmp_path))
     plan = migration.plan('UTC')
     proposal = approvals.propose('owner', 'routine_migration', {'timezone': 'UTC', 'config_revision': plan['config_revision']}, '迁移')
-    _, sign = staff_key(approvals)
-    approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature=sign(approvals.approval_message(proposal)))
+    owner_decide(approvals, proposal['id'], True, proposal['digest'])
     routines, pool = migration.routines, TaskRunner(str(tmp_path), None)
     async def execute(*args): return '已完成合成核对'
     staff = StaffService(str(tmp_path), pool, execute=execute)
