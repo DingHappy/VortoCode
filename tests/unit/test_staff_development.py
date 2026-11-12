@@ -12,6 +12,7 @@ from src.agents.staff import execute_staff
 from src.workflow.staff.approvals import StaffApprovals
 from src.workflow.staff.registry import StaffRegistry
 from src.workflow.staff.service import StaffService
+from tests.unit.staff_owner_helpers import owner_decide, proposal_body
 
 
 def git(root, *args):
@@ -65,19 +66,19 @@ def registered(development):
     return registry, role, member, pool, service
 
 
-def test_project_role_proposal_freezes_registered_target_and_requires_key(development):
+def test_project_role_proposal_freezes_registered_target_and_requires_owner(development):
     root, project, config, data = development
     approvals = StaffApprovals(root)
     proposal = approvals.propose('owner', 'role', data, '在登记项目开发')
-    assert proposal['requires_desktop_key'] is True
+    assert proposal['approval_level'] == 'desktop'
     binding = proposal['snapshot']['data']['project_binding']
     assert binding == {'name': 'Example', 'repo_root': str(project), 'port': 8099}
     assert not any(role['id'] == data['id'] for role in approvals.registry.roles())
-    with pytest.raises(ValueError, match='批准钥匙'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    with pytest.raises(ValueError, match='主人写入路由'):
+        approvals.decide(proposal['id'], True, proposal['digest'])
     config.write_text(json.dumps({'projects': [{'name': 'Example', 'repo_root': str(project), 'port': 8100}]}))
     with pytest.raises(ValueError, match='变化'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+        owner_decide(approvals, proposal['id'], True, proposal['digest'])
 
 
 async def test_single_developer_delivers_branch_and_reworks_without_touching_primary(development, monkeypatch):
@@ -178,27 +179,33 @@ def test_desktop_can_only_propose_fixed_development_authority(development, monke
     result = client.post('/api/staff/development-proposals', json=payload, headers=headers)
     assert result.status_code == 200, result.text
     proposal = result.json()
-    assert proposal['status'] == 'pending' and proposal['requires_desktop_key']
+    assert proposal['status'] == 'pending' and proposal['approval_level'] == 'desktop'
     assert proposal['snapshot']['data']['project_binding']['repo_root'] == str(project)
     assert StaffRegistry(root).members() == [] and TaskLedger(str(root)).list() == []
     for field, value in [('grants', {}), ('repo_root', str(project)), ('engine', 'vortocode')]:
         assert client.post('/api/staff/development-proposals', json={**payload, field: value}, headers=headers).status_code == 422
     registry = StaffRegistry(root)
-    registry.register_role(proposal['snapshot']['data'])
+    decision_path = f"/api/staff/proposals/{proposal['id']}/decision"
+    assert client.post(decision_path, json=proposal_body(proposal), headers=headers).json()['status'] == 'approved'
+    assert registry.role('example-developer')['project_binding']['repo_root'] == str(project)
     member = client.post('/api/staff/development-proposals',
         json={'kind': 'member', 'id': 'example-dev', 'name': '开发专员', 'role': 'example-developer'}, headers=headers)
-    assert member.status_code == 200 and member.json()['requires_desktop_key']
+    assert member.status_code == 200 and member.json()['approval_level'] == 'desktop'
     assert registry.members() == []
+    pending = member.json()
+    endpoint = f"/api/staff/proposals/{pending['id']}/decision"
+    assert client.post(endpoint, json=proposal_body(pending), headers={'Authorization': 'Bearer device-fixture'}).status_code == 401
+    assert client.post(endpoint, json=proposal_body(pending), headers=headers).json()['status'] == 'approved'
+    assert registry.member('example-dev')['role'] == 'example-developer'
+    assert TaskLedger(str(root)).list() == []
+    assert not (registry.directory / 'approval-key.json').exists()
 
 
-def test_project_change_needs_a_new_key_receipt_and_revokes_queued_authority(development):
-    from tests.unit.test_staff_contract import staff_key
+def test_project_change_needs_a_fresh_owner_confirmation_and_revokes_queued_authority(development):
     root, project, config, data = development
     approvals = StaffApprovals(root)
-    public, sign = staff_key(approvals)
     first = approvals.propose('owner', 'role', data, '固定项目开发')
-    signature = sign(approvals.approval_message(first))
-    approvals.decide(first['id'], True, first['digest'], owner_confirmation=True, signature=signature)
+    owner_decide(approvals, first['id'], True, first['digest'])
     registry = approvals.registry
     original_role = registry.role(data['id'])
     member = registry.register_member({'id': 'example-dev', 'name': '开发专员', 'role': data['id'], 'engine': 'opencode'})
@@ -211,10 +218,10 @@ def test_project_change_needs_a_new_key_receipt_and_revokes_queued_authority(dev
     changed = {**data, 'project': 'Other', 'revision': 1}
     proposal = approvals.propose('owner', 'role', changed, '主人要求换项目')
     assert registry.role(data['id'])['project'] == 'Example'
-    with pytest.raises(ValueError, match='签名'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature=signature)
-    approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True,
-                     signature=sign(approvals.approval_message(proposal)))
+    with pytest.raises(ValueError, match='变化'):
+        owner_decide(approvals, proposal['id'], True, first['digest'],
+            **{key: first[key] for key in ('nonce', 'round', 'instance')})
+    owner_decide(approvals, proposal['id'], True, proposal['digest'])
     with pytest.raises(ValueError, match='变化'):
         service.check(member, original_role, task=task)
     assert service.collaboration('owner').get(task.id).status == 'queued'
@@ -342,10 +349,11 @@ def test_unbound_legacy_project_proposal_keeps_its_original_confirmation_class(d
     approvals = StaffApprovals(root)
     proposal = approvals.propose('owner', 'role', read_role(project=True, tools=['read_file']), '旧的未接入项目岗位')
     # Existing S3 records classified an unbound read-only role as low risk; it still cannot execute.
-    proposal['requires_desktop_key'] = False
-    proposal.pop('digest')
-    proposal['digest'] = digest(proposal)
-    approvals.registry._write('proposals.json', {'version': 1, 'proposals': [proposal]})
-    assert approvals.get(proposal['id'])['status'] == 'pending'
+    legacy = {key: proposal[key] for key in ('id', 'snapshot', 'owner', 'reason', 'created_at', 'nonce', 'status')}
+    legacy['requires_desktop_key'] = False
+    legacy['digest'] = digest(legacy)
+    approvals.registry._write('proposals.json', {'version': 1, 'proposals': [legacy]})
+    loaded = approvals.get(proposal['id'])
+    assert loaded['status'] == 'pending' and loaded['approval_level'] == 'normal'
     with pytest.raises(ValueError, match='尚未接入'):
         StaffService.executable(proposal['snapshot']['data'])

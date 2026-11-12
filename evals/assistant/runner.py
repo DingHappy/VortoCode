@@ -108,7 +108,7 @@ def grade(case: dict, reply: str, trace: list[dict], confirmations: list[dict], 
         from src.workflow.tasks.tasks import TaskLedger
         proposals = StaffApprovals(root).list()
         checks[state] = len(proposals) == 1 and proposals[0]['status'] == 'pending' and not TaskLedger(str(root)).list()
-        checks['proposal_contract'] = checks[state] and proposals[0]['requires_desktop_key'] and bool(
+        checks['proposal_contract'] = checks[state] and proposals[0]['approval_level'] == 'desktop' and bool(
             proposals[0]['snapshot']['data'].get('project_binding'))
     return checks
 
@@ -121,7 +121,7 @@ def state_evidence(case: dict, root: Path, initial: dict) -> dict:
         return {"jobs": [{"name": job.name, "enabled": job.enabled} for job in load_jobs(str(root))]}
     if state == "one_proposal":
         from src.workflow.staff.approvals import StaffApprovals
-        return {'proposals': [{key: item.get(key) for key in ('id', 'status', 'requires_desktop_key')}
+        return {'proposals': [{key: item.get(key) for key in ('id', 'status', 'approval_level')}
                               for item in StaffApprovals(root).list()]}
     return {}
 
