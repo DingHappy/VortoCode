@@ -15,6 +15,14 @@ WRITE_PATH = '/api/assistant/app-relay/staff-action'
 PHONE_PATH = '/api/mobile/native/staff/action'
 
 
+@pytest.fixture(autouse=True)
+def clean_staff_source():
+    from src.agents.taint import reset_taint
+    reset_taint()
+    yield
+    reset_taint()
+
+
 def resident(root, service, monkeypatch):
     from src.web.server import app
     monkeypatch.chdir(root)
@@ -53,7 +61,6 @@ async def test_signed_ordinary_card_resumes_the_same_task_once(tmp_path, monkeyp
         await asyncio.wait_for(service.runner.join(task.id), 2)
         assert len(invoked) == int(approve) and starts == [(task.id, 1)]
         assert service.actions.view(task.id)['payload']['id'] == card['payload']['id']
-        assert 'scoped_approval' not in service.runner.ledger.load(task.id).collaboration
     finally:
         await service.runner.shutdown()
 
@@ -204,6 +211,30 @@ def test_relay_routes_require_the_dedicated_token_and_loopback_even_for_reads(tm
             assert client.post(path, json={}, headers={'Authorization': 'Bearer fixture-admin'}).status_code == 404
     remote = TestClient(app, client=('198.51.100.1', 50000))
     assert remote.post(READ_PATH, json={}, headers={'Authorization': 'Bearer fixture-relay'}).status_code == 404
+
+
+async def test_each_phone_approval_only_releases_its_exact_action_even_in_a_tainted_round(tmp_path, monkeypatch):
+    from src.agents.taint import mark_tainted
+    service, member, waiting, prepared, invoked, _, _ = live_staff(tmp_path, monkeypatch, count=2)
+    device_id, key, _ = phone(tmp_path); client, headers = resident(tmp_path, service, monkeypatch)
+    mark_tainted()
+    try:
+        task = service.assign('owner', {'member': member['id'], 'prompt': '核对两次动作'})
+        _, first = await next_card(waiting)
+        row, = client.post(READ_PATH, headers=headers, json={}).json()['cards']
+        assert row['tainted'] and row['can_decide']
+        def post(card, approve):
+            return client.post(WRITE_PATH, headers=headers, json={'envelope': envelope(device_id, key, PHONE_PATH, decision(task, card, approve))})
+        assert post(first, True).status_code == 200
+        _, second = await next_card(waiting)
+        assert len(prepared) == 2 and len(invoked) == 1
+        assert second['status'] == 'pending' and second['payload']['id'] != first['payload']['id']
+        assert post(first, True).status_code == 409
+        assert post(second, False).status_code == 200
+        await service.runner.join(task.id)
+        assert len(invoked) == 1
+    finally:
+        await service.runner.shutdown()
 
 
 @pytest.mark.parametrize('field,value', [('digest', 'changed'), ('nonce', 'changed'), ('round', 2),

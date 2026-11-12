@@ -718,20 +718,20 @@ private struct StaffActionRow: View {
                     Text("任务：\(card.taskId)\n工具：\(card.tool)").font(.caption).foregroundStyle(Palette.muted)
                 }
                 if card.canDecideOnPhone() {
-                    TextField("不执行的理由", text: $reason, axis: .vertical).font(.subheadline)
+                    TextField("不执行的理由（最多 2000 字）", text: $reason, axis: .vertical).font(.subheadline).disabled(disabled)
                 } else {
-                    Text(card.isPending ? "需要在电脑上批准，手机仅可查看。" : "这张卡已处理、中断或过期，不能在手机决定。")
+                    Text(card.requiresDesktop && card.isPending ? "需要在电脑上批准，手机仅可查看。" : "这张卡已处理、中断、过期或身份待核对，请先刷新。")
                         .font(.footnote).foregroundStyle(Palette.muted)
                 }
             } actions: {
                 if card.canDecideOnPhone() {
                     Button("不执行") { decide(false, reason) }.buttonStyle(VCSecondaryButtonStyle(danger: true))
-                        .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(disabled || reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || reason.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count > 2000)
                     Spacer()
-                    Button("批准这一次") { decide(true, "") }.buttonStyle(VCPrimaryButtonStyle())
+                    Button("批准这一次") { decide(true, "") }.buttonStyle(VCPrimaryButtonStyle()).disabled(disabled)
                 }
             }
-            .disabled(disabled)
             .accessibilityIdentifier("native-staff-action-" + card.id)
     }
 }

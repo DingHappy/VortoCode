@@ -36,9 +36,11 @@ public struct StaffActionCard: Codable, Identifiable, Equatable, Sendable {
         .init(taskId: taskId, actionId: id, digest: digest, nonce: nonce, round: round, instance: instance, runtime: runtime)
     }
     public var isPending: Bool { status == "pending" }
+    public var requiresDesktop: Bool {
+        risk != "normal" || approvalLevel != "normal" || !["read", "own_data", "draft"].contains(kind)
+    }
     public func canDecideOnPhone(at now: TimeInterval = Date().timeIntervalSince1970) -> Bool {
-        canDecide && isPending && risk == "normal" && approvalLevel == "normal"
-            && ["read", "own_data", "draft"].contains(kind) && expiresAt > now
+        canDecide && isPending && !requiresDesktop && expiresAt > now
             && !id.isEmpty && !taskId.isEmpty && !digest.isEmpty && !nonce.isEmpty
             && round > 0 && !instance.isEmpty && !runtime.isEmpty
     }

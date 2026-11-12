@@ -72,7 +72,7 @@ public struct WaitingItem: Identifiable, Equatable, Sendable {
         // 和 Desktop 一样：小组排在确认卡之后、Codex 动作和任务单之前
         let fromStaff = staff.filter(\.isPending).map { card in
             WaitingItem(id: "staff:" + card.id, kind: .staff,
-                title: card.memberName + (card.canDecideOnPhone() ? " · 需要你确认" : " · 需要在电脑上批准"),
+                title: card.memberName + (card.requiresDesktop ? " · 需要在电脑上批准" : card.canDecideOnPhone() ? " · 需要你确认" : " · 审批状态待核对"),
                 detail: firstLine(card.message), tainted: card.tainted)
         }
         return fromCards + fromStaff + fromTeams + fromDecisions + fromDispatches

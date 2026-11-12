@@ -167,7 +167,7 @@ final class OwnerSession {
         guard canWrite, !Task.isCancelled else { return }
         let epoch = timelineEpoch, request = UUID(); staffRequest = request
         do {
-            var cards: [StaffActionCard] = [], after: String?, seen = Set<String>(), complete = true
+            var cards: [StaffActionCard] = [], after: String?, seen = Set<String>(), cursors = Set<String>(), complete = true
             for _ in 0..<64 {
                 let page = try await api(entry).staffActions(credential, after: after)
                 try Task.checkCancellation()
@@ -178,7 +178,7 @@ final class OwnerSession {
                 }
                 complete = complete && page.sourceComplete
                 guard let next = page.next else { after = nil; break }
-                guard next != after else { throw MobileError.invalidResponse }
+                guard cursors.insert(next).inserted else { throw MobileError.invalidResponse }
                 after = next
             }
             guard epoch == timelineEpoch, staffRequest == request else { return }
@@ -199,6 +199,7 @@ final class OwnerSession {
         defer { if staffApprovalWork == work { staffApprovalWork = nil; working = false } }
         do {
             let fresh = try await api(entry).staffAction(credential, taskId: card.taskId)
+            guard sessionCurrent(), epoch == timelineEpoch, staffApproval.isCurrent(attempt) else { return }
             guard fresh == card else { throw OwnerWriteError.rejected("专员卡片已变化，请刷新后重新核对") }
             let receipt = try await api(entry).staffDecide(credential, signer: signer, deviceId: device,
                 card: card, approve: approve, reason: attempt.reason, beforeSend: { [weak self] in

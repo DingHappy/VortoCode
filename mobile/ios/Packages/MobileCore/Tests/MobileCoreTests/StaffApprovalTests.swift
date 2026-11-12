@@ -80,3 +80,134 @@ final class StaffApprovalTests: XCTestCase {
         XCTAssertTrue(items[1].title.contains("电脑")); XCTAssertEqual(ordinary.argsText, "{\"text\":\"完整正文\"}")
     }
 }
+
+private final class StaffRequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [URLRequest] = []
+    func reset() { lock.lock(); defer { lock.unlock() }; values = [] }
+    func add(_ request: URLRequest) { lock.lock(); defer { lock.unlock() }; values.append(request) }
+    var requests: [URLRequest] { lock.lock(); defer { lock.unlock() }; return values }
+}
+
+private final class StaffApprovalProtocol: URLProtocol, @unchecked Sendable {
+    static let log = StaffRequestLog()
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.log.add(request)
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(#"{"task_id":"task-test","action_id":"staff-action-test","digest":"digest","nonce":"nonce","round":1,"instance":"instance","runtime":"runtime","reason":"","status":"approved","replayed":false}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private actor StaffTestSigner: RequestSigner {
+    enum Stopped: Error { case beforeNetwork }
+    private let stop: Bool
+    private var continuation: CheckedContinuation<Data, Never>?
+    private var entered = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var message = Data()
+    private var approvalKey = false
+    init(stop: Bool = false) { self.stop = stop }
+    func sign(_ message: Data, with key: SigningKey) async throws -> Data {
+        self.message = message
+        if case .approval = key { approvalKey = true }
+        if stop { throw Stopped.beforeNetwork }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation; entered = true
+            waiters.forEach { $0.resume() }; waiters = []
+        }
+    }
+    func waitUntilSigning() async {
+        if entered { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func finish() { continuation?.resume(returning: Data([1])); continuation = nil }
+    func captured() -> (Data, Bool) { (message, approvalKey) }
+}
+
+private actor StaffTestIdentity {
+    private var current = true
+    private(set) var checks = 0
+    func invalidate() { current = false }
+    func check() throws {
+        checks += 1
+        guard current else { throw CancellationError() }
+    }
+}
+
+final class StaffApprovalTransportTests: XCTestCase {
+    private let device = String(repeating: "c", count: 32)
+    private var credential: NativeCredential {
+        .init(schemaVersion: 1, token: "vcn_" + String(repeating: "a", count: 43),
+            instanceId: String(repeating: "b", count: 32), name: "test", expiresAt: 4_000_000_000)
+    }
+    private func api() throws -> MobileAPI {
+        StaffApprovalProtocol.log.reset()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StaffApprovalProtocol.self]
+        return MobileAPI(entry: try AssistantEntry("https://example.invalid"), session: URLSession(configuration: config))
+    }
+    private func submit(_ api: MobileAPI, signer: StaffTestSigner, identity: StaffTestIdentity) throws -> Task<StaffActionReceipt, Error> {
+        let card = try staffCard(), credential = credential, device = device
+        return Task {
+            try await api.staffDecide(credential, signer: signer, deviceId: device, card: card, approve: true,
+                beforeSend: { try await identity.check() })
+        }
+    }
+
+    func testExactOnceChoiceAndAllBindingsAreSignedWithDeviceKey() async throws {
+        let api = try api(), card = try staffCard()
+        for approve in [true, false] {
+            let signer = StaffTestSigner(stop: true), reason = approve ? "" : "本次先不执行"
+            do {
+                _ = try await api.staffDecide(credential, signer: signer, deviceId: device, card: card, approve: approve, reason: reason)
+                XCTFail("test signer must stop before HTTP")
+            } catch StaffTestSigner.Stopped.beforeNetwork {} catch { XCTFail("unexpected: \(error)") }
+            let (message, approvalKey) = await signer.captured()
+            XCTAssertFalse(approvalKey)
+            let parts = String(decoding: message, as: UTF8.self).components(separatedBy: "\n")
+            XCTAssertEqual(parts.count, 7)
+            guard parts.count == 7 else { continue }
+            let body: [String: Any] = ["task_id": card.taskId, "action_id": card.id, "digest": card.digest, "nonce": card.nonce,
+                "round": card.round, "instance": card.instance, "runtime": card.runtime, "approve": approve, "reason": reason]
+            let expected = RequestSigning.message(method: "POST", path: "/api/mobile/native/staff/action",
+                body: try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]),
+                timestamp: parts[4], nonce: parts[5], deviceId: device)
+            XCTAssertEqual(message, expected) // No extra same-category permission in the signed request.
+        }
+        XCTAssertTrue(StaffApprovalProtocol.log.requests.isEmpty)
+    }
+
+    func testChangedIdentityOrCancellationDuringSigningPreventsHttp() async throws {
+        for cancel in [false, true] {
+            let api = try api(), signer = StaffTestSigner(), identity = StaffTestIdentity()
+            let task = try submit(api, signer: signer, identity: identity)
+            await signer.waitUntilSigning()
+            if cancel { task.cancel() } else { await identity.invalidate() }
+            await signer.finish() // A signer ignoring cancellation must still be harmless.
+            do { _ = try await task.value; XCTFail("stale decision must stop") }
+            catch is CancellationError {} catch { XCTFail("unexpected: \(error)") }
+            XCTAssertTrue(StaffApprovalProtocol.log.requests.isEmpty)
+        }
+    }
+
+    func testValidIdentityIsRecheckedAfterSigningBeforeOnePostAndReceipt() async throws {
+        let api = try api(), signer = StaffTestSigner(), identity = StaffTestIdentity()
+        let task = try submit(api, signer: signer, identity: identity)
+        await signer.waitUntilSigning()
+        XCTAssertTrue(StaffApprovalProtocol.log.requests.isEmpty)
+        await signer.finish()
+        let receipt = try await task.value, card = try staffCard()
+        XCTAssertEqual(receipt.identity, card.identity); XCTAssertEqual(receipt.status, "approved")
+        let checks = await identity.checks; XCTAssertEqual(checks, 1)
+        let requests = StaffApprovalProtocol.log.requests; XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.httpMethod, "POST")
+        XCTAssertEqual(requests.first?.url?.path, "/api/mobile/native/staff/action")
+        XCTAssertNotNil(requests.first?.value(forHTTPHeaderField: "X-VC-Signature"))
+    }
+}

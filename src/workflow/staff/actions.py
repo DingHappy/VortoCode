@@ -71,7 +71,8 @@ class StaffActions:
         """Bounded read projection; no Agent, continuation or new approval is created."""
         from src.utils.ids import typed_id
         from src.workflow.staff.team_roster import is_managed
-        if task_id is not None and not typed_id(task_id, 'task') or after and not typed_id(after, 'task'):
+        if (task_id is not None and not typed_id(task_id, 'task') or not isinstance(after, str)
+                or after and not typed_id(after, 'task')):
             raise ValueError('专员任务编号无效')
         with TASK_STATE_LOCK:
             if task_id is not None:
