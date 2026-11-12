@@ -16,6 +16,7 @@ def set_staff_service(root, runner=None, *, on_update=None):
     service.execute = partial(execute_staff, key, approval_service=service)
     service.actions.recover()
     service.recover_quotas()
+    service.recover()
     from src.workflow.staff.routines import Routines
     Routines(key).recover()
     _SERVICES[key] = service

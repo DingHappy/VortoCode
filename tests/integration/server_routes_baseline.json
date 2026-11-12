@@ -1764,5 +1764,17 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/staff/recovery",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/staff/recovery/decision",
+    "methods": [
+      "POST"
+    ]
   }
 ]

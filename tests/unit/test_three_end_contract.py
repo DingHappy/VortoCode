@@ -25,6 +25,26 @@ from src.agents.main_agent import make_confirm_gate
 ALL_ENDS = ["cli", "web", "im"]
 
 
+@pytest.mark.parametrize('kind', ALL_ENDS + ['app'])
+async def test_agent_confirmation_cannot_resume_a_restarted_staff_task(tmp_path, kind):
+    from src.gateway.agent_session import build_session
+    from src.agents.tool import Tool
+    from src.workflow.tasks.tasks import TaskLedger
+    from tests.unit.test_staff_restart_recovery import pending
+    service, _, _, _, task = pending(tmp_path)
+    task.status = 'interrupted'; TaskLedger(str(tmp_path)).save(task)
+    async def try_resume(_):
+        service.followup('owner', task.id, 1, '工具要求恢复')
+        return 'unexpected resume'
+    async def yes(*args): return True
+    agent = build_session(str(tmp_path), kind='web' if kind == 'app' else kind, confirm=yes,
+                          **({'capability_profile': 'owner_device'} if kind == 'app' else {}))
+    agent.tools['resume_probe'] = Tool('resume_probe', '恢复探针', {}, try_resume, read_only=False, operation_kind='own_data')
+    await agent._run_tool('resume_probe', {}, 'build', lambda _: None)
+    assert TaskLedger(str(tmp_path)).load(task.id).status == 'interrupted'
+    assert TaskLedger(str(tmp_path)).load(task.id).collaboration['round'] == 1
+
+
 @pytest.mark.parametrize('verdict,answer', [(gate.DENY, True), (gate.ASK, False), (gate.ASK, True)])
 async def test_deferred_staff_transport_still_consumes_the_single_kernel_decision(tmp_path, monkeypatch, verdict, answer):
     from src.agents.staff import build_staff_member
