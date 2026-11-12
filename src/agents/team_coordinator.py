@@ -53,7 +53,8 @@ def system_prompt(root: Any) -> str:
     text = ("你是主人的个人助理，现在在一个独立的任务上下文里担任协调人。主人只和你对接，你负责把这个任务做成。\n"
             f"【任务】{team['objective']}\n【验收标准】（team_submit 时按编号给证据）\n{criteria}\n"
             f"【成员】\n{members}\n{_RULES}"
-            + (_DEV_RULES if any(item["role"] == "developer" for item in team["members"]) else ""))
+            + (_DEV_RULES if any(item['role'] == 'developer' or (item.get('role_snapshot') or {}).get('grants', {}).get('project')
+                                for item in team['members']) else ""))
     if team.get('notes'):
         text += '\n已冻结的部门笔记（不授予权限）：\n' + json.dumps(team['notes'], ensure_ascii=False)
     if team.get('staff_roster'):

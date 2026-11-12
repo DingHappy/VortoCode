@@ -153,17 +153,17 @@ async def test_bridge_pr_button(tmp_path, monkeypatch):
     assert any("pull/9" in text for text in adapter.texts()) and bridge._turn_task is None
 
 
-async def test_retry_carries_the_last_failure_and_stops_after_three(tmp_path):
+async def test_retry_carries_the_last_failure_and_stops_after_three(tmp_path, monkeypatch):
     root = str(tmp_path)
     first = dispatch.propose(root, project="VortoCode", title="补单测", goal="给 safe_id 补边界单测")
     dispatch._update(root, first["id"], lambda item: item.update(status="failed", error="自测未过：ImportError starlette",
                                                                  result="...\n集成红"))
-    tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(root))}
-    reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "补单测", "goal": "先装好测试依赖再补",
-                                                  "retry_of": first["id"]})
-    assert "已写好任务单" in reply
+    from tests.staff_setup import registered_developer
+    registered_developer(tmp_path, monkeypatch, 'VortoCode')
+    dispatch.propose_staff(root, project='VortoCode', title='补单测', goal='先装好测试依赖再补', retry_of=first['id'])
     second = dispatch.list_dispatches(root)[0]
     assert second["attempt"] == 2 and second["retry_of"] == first["id"]
+    assert second['staff_binding']['member']['id'] == 'fixture-dev'
     prompt = dispatch.task_prompt(second)
     assert "先装好测试依赖再补" in prompt and "第 2 次尝试" in prompt and "ImportError starlette" in prompt and "集成红" in prompt
     with pytest.raises(dispatch.DispatchError, match="失败或没做完"):

@@ -60,7 +60,7 @@ def _normalize(root, members, mode, department, reason):
             raise CollaborationConflict('私人资料与联网成员不能同队')
         if any(x.startswith('files:') for x in role['grants']['sees']):
             raise CollaborationConflict('登记目录来源尚未接入，不能用主工作区代替')
-        if role['grants']['project'] and role['id'] != 'developer':
+        if role['grants']['project'] and role['id'] != 'developer' and not role.get('project_binding'):
             raise CollaborationConflict('本步只复用内置开发岗的既有项目副本流程')
         names.add(entry['name'])
         notes = None
@@ -116,6 +116,20 @@ def check(root_path, root, member, role):
         raise CollaborationConflict('专员版本或部门已变化，请重新批准组队')
     if entry['department'] and registry.department(entry['department'])['status'] != 'active':
         raise CollaborationConflict('部门已暂停')
+    if role.get('project_binding'):
+        from src.workflow.staff.projects import check as check_project
+        project = check_project(role)
+        if root.team.get('project') != {key: project[key] for key in ('name', 'repo_root')}:
+            raise CollaborationConflict('团队项目与开发岗位固定项目不一致')
+
+
+def fixed_project(roster):
+    from src.workflow.staff.projects import check as check_project
+    bindings = [check_project(entry['role_snapshot']) for entry in roster
+                if (entry.get('role_snapshot') or {}).get('project_binding')]
+    if bindings and any(item != bindings[0] for item in bindings):
+        raise CollaborationConflict('同一团队不能编入绑定不同项目的开发专员')
+    return bindings[0] if bindings else None
 
 
 def is_managed(task):

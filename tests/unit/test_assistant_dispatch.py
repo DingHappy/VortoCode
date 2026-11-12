@@ -153,14 +153,11 @@ async def test_refresh_maps_remote_status_and_keeps_unreachable_entries(tmp_path
     assert next(item for item in explicit if item["title"] == "a")["sync_state"] == "unreachable"
 
 
-async def test_tools_only_propose_and_say_it_is_not_running_yet(tmp_path):
+async def test_old_creation_tool_is_removed_but_legacy_status_tools_remain(tmp_path):
     tools = {tool.name: tool for tool in authorized_tools(dispatch.build_dispatch_tools(str(tmp_path), is_tainted=lambda: True))}
-    assert set(tools) == {"propose_task", "list_dispatches", "answer_dispatch_question", "dispatch_answer_memory", "dispatch_stats"} and not tools["propose_task"].read_only
-    reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "修登录", "goal": "改超时",
-                                                 "criteria": "- 单测\n- 不改接口"})
-    assert "还没有执行" in reply
-    entry = dispatch.list_dispatches(str(tmp_path))[0]
-    assert entry["status"] == "proposed" and entry["tainted"] and entry["criteria"] == ["单测", "不改接口"]
+    assert set(tools) == {'list_dispatches', 'answer_dispatch_question', 'dispatch_answer_memory', 'dispatch_stats'}
+    assert await tools['list_dispatches'].handler({}) == '还没有任务单。'
+    assert dispatch.list_dispatches(str(tmp_path)) == []
 
 
 def test_no_tools_without_registered_projects(tmp_path, monkeypatch):
@@ -173,7 +170,8 @@ def test_general_web_session_gets_dispatch_tools_but_not_workspace_tools(tmp_pat
 
     agent = build_session(str(tmp_path), kind="web", workspace_scope="general")
     names = set(agent.tools)
-    assert {"propose_task", "list_dispatches"} <= names
+    assert {'staff_assign', 'list_dispatches'} <= names
+    assert 'propose_task' not in names
     assert not names & {"run_command", "write_file", "dev_auto"}
 
 

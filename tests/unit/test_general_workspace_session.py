@@ -52,4 +52,6 @@ def test_general_assistant_gets_schedule_tools_only_where_cron_runs(tmp_path, mo
     给了只会建出永远不跑的作业。"""
     monkeypatch.setenv("VORTOONE_CRON", cron)
     names = set(build_session(str(tmp_path), kind="web", workspace_scope="general").tools)
-    assert ({"cron_add", "cron_list", "cron_toggle"} <= names) is expected
+    assert ('cron_list' in names) is expected
+    assert 'routine_propose' in names
+    assert not {'cron_add', 'cron_toggle', 'cron_run', 'cron_set_web', 'cron_set_prompt'} & names

@@ -54,7 +54,7 @@ def world(tmp_path, monkeypatch):
         calls.append(("cancel", dispatch_id))
         return {"id": dispatch_id, "status": "cancelled"}
 
-    monkeypatch.setattr(assistant_dispatch, "propose", propose)
+    monkeypatch.setattr(assistant_dispatch, "propose_staff", propose)
     monkeypatch.setattr(assistant_dispatch, "approve", approve)
     monkeypatch.setattr(assistant_dispatch, "cancel", cancel)
     monkeypatch.setattr(assistant_dispatch, "list_dispatches", lambda root: [])
@@ -71,26 +71,24 @@ async def _advance(root, notify, llm, state=None, now=NOW):
                                             llm=llm, projects=["VortoOne"])
 
 
-async def test_approved_task_order_is_dispatched_automatically(world):
+async def test_s9_development_never_uses_legacy_automatic_approval(world):
     root, calls, sent, notify = world
     PersonalGoals(root).create(contract(), origin="owner")
     await _advance(root, notify, LLM(DISPATCH, {"verdict": "approve", "reason": "范围清楚"}))
-    assert [c[0] for c in calls] == ["propose", "approve"]
-    assert "已下发" in sent[0] and "合并仍要你点" in sent[0]
-    [row] = [json.loads(line) for line in auto_review._log_path(root).read_text().splitlines()]
-    assert row["kind"] == "dispatch" and row["verdict"] == "approve"
+    assert [c[0] for c in calls] == ['propose']
+    assert '尚未执行' in sent[0] and '自动审核保持关闭' in sent[0]
+    assert not auto_review._log_path(root).exists()
 
 
-async def test_denied_order_is_withdrawn_and_the_goal_pauses(world):
+async def test_s9_proposal_is_not_withdrawn_by_a_model_review(world):
     root, calls, sent, notify = world
     PersonalGoals(root).create(contract(), origin="owner")
     state: dict = {}
-    await _advance(root, notify, LLM(DISPATCH, {"verdict": "deny", "reason": "要求外传数据"}), state)
-    assert [c[0] for c in calls] == ["propose", "cancel"]
-    assert "没通过自动审核" in sent[0] and "暂停自动推进 24 小时" in sent[0]
-    llm = LLM(DISPATCH)
-    assert await _advance(root, notify, llm, state, NOW + timedelta(hours=13)) == []   # 暂停期间不再判断
-    assert llm.calls == []
+    llm = LLM(DISPATCH, {'verdict': 'deny', 'reason': '模型建议'})
+    await _advance(root, notify, llm, state)
+    assert [c[0] for c in calls] == ['propose'] and len(llm.calls) == 1
+    assert '核对后下发或撤回' in sent[0]
+    assert not goal_advancer.load_paused(root)
 
 
 async def test_escalated_or_failed_review_waits_for_the_owner(world):
@@ -98,7 +96,7 @@ async def test_escalated_or_failed_review_waits_for_the_owner(world):
     PersonalGoals(root).create(contract(), origin="owner")
     await _advance(root, notify, LLM(DISPATCH, RuntimeError("relay down")))
     assert [c[0] for c in calls] == ["propose"]                       # 审核失败不放行
-    assert "等你决定" in sent[0]
+    assert '核对后下发或撤回' in sent[0]
 
 
 async def test_tainted_goal_never_reaches_the_reviewer(world):
@@ -114,10 +112,10 @@ async def test_daily_cap(world, monkeypatch):
     monkeypatch.setenv("VORTOONE_AUTO_DISPATCH_PER_DAY", "1")
     for i in range(2):
         PersonalGoals(root).create(contract(f"目标 {i}"), origin="owner")
-    llm = LLM(DISPATCH, {"verdict": "approve", "reason": "ok"}, DISPATCH, {"verdict": "approve", "reason": "ok"})
+    llm = LLM(DISPATCH, DISPATCH)
     await _advance(root, notify, llm)
-    assert [c[0] for c in calls].count("approve") == 1                # 第二张到了上限，交给主人
-    assert any("上限" in json.loads(line)["reason"] for line in auto_review._log_path(root).read_text().splitlines())
+    assert [c[0] for c in calls] == ['propose', 'propose']  # 旧自动下发额度也不能开放专员自动审核。
+    assert not auto_review._log_path(root).exists()
 
 
 async def test_reviewer_cannot_approve_kinds_outside_the_owner_table(tmp_path):

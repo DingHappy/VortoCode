@@ -147,7 +147,7 @@ async def follow_up(root: str, item: Dict[str, Any], review=review_outcome) -> D
             outcome["capped"] = True
         else:
             try:
-                draft = assistant_dispatch.propose(
+                draft = assistant_dispatch.propose_staff(
                     root, project=str(item.get("project")), title=str(item.get("title")),
                     goal=str(item.get("brief") or item.get("goal") or ""), criteria=list(item.get("criteria") or []),
                     session=str(item.get("session") or ""), tainted=bool(item.get("tainted")),

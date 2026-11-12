@@ -209,13 +209,22 @@ def _scratch_dir(child_id: str) -> Path:
 
 async def run_external(engine: str, role: str, model: str, prompt: str, *, timeout: float,
                        child_id: str = "member", workdir: Optional[str] = None,
-                       session_factory: Callable[..., Any] = AcpSession) -> AcpResult:
+                       session_factory: Callable[..., Any] = AcpSession, check=None) -> AcpResult:
     """跑一次外部框架回合。框架没装 / 没配端点时抛 ``EngineUnavailable``。
 
     ``workdir`` 不给就用一个专用空目录（用完即删）；开发成员传入它的一次性 worktree（由调用方清理）。"""
     if role == "developer" and engine != "opencode":
         raise EngineUnavailable("开发成员目前只能由 OpenCode 担任")
     decide = decide_for(role, workdir)
+    if check is not None:
+        check()
+        original_decide = decide
+        def decide(ask):
+            try:
+                check()
+            except ValueError:
+                return False
+            return original_decide(ask)
     env = engine_env(engine, model)
     argv = command_for(engine, role)
     binary = resolve_binary(argv[0])

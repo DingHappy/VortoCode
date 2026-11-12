@@ -60,7 +60,7 @@ def test_cli_and_web_tools_are_same_except_artifacts(tmp_path):
 def test_factory_includes_core_toolchain(tmp_path):
     names = _names(build_agent_tools(str(tmp_path), confirm=_confirm))
     # 读 + 研究 + 联网 + dev + 命令 + PR 全在（缺任一即漂移/回归）
-    for expected in ("read_file", "grep", "glob", "task", "web_fetch", "web_search",
+    for expected in ("read_file", "grep", "glob", "staff_assign", "web_fetch", "web_search",
                      "dev_isolated", "dev_parallel", "run_command", "open_pr"):
         assert expected in names, f"缺工具 {expected}"
 

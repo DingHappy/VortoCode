@@ -35,7 +35,7 @@ def world(tmp_path, monkeypatch):
         proposed.append(kwargs)
         return {"id": "dsp-0000000001", "title": kwargs["title"]}
 
-    monkeypatch.setattr(assistant_dispatch, "propose", propose)
+    monkeypatch.setattr(assistant_dispatch, "propose_staff", propose)
     monkeypatch.setattr(assistant_dispatch, "list_dispatches", lambda root: [])
     sent = []
 
@@ -56,7 +56,7 @@ async def test_dispatch_verdict_becomes_a_task_order_linked_to_the_goal(world):
     [order] = proposed
     assert order["goal_id"] == goal["id"] and order["project"] == "VortoOne" and order["tainted"] is False
     assert order["criterion_id"] == goal["acceptance_criteria"][0]["id"]
-    assert "等你决定" in sent[0]
+    assert '核对后下发或撤回' in sent[0]
     material = llm.calls[0][1]["content"]
     assert "数据" in llm.calls[0][0]["content"] and "把 VortoOne 的登录报错修好" in material
 

@@ -60,7 +60,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
 
         jobs = load_jobs(repo_root)
         if not jobs:
-            return ("cron.yaml 里还没有任何作业。用 cron_add 建一个（只建 prompt 作业）。"
+            return ("cron.yaml 里还没有任何作业。新事项用 routine_propose 交给已登记专员。"
                     "注意：调度循环要服务带 VORTOONE_CRON=1 起才转。")
         on = _scheduler_on()
         state, now = CronState(repo_root), _dt.now()
@@ -248,3 +248,23 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
              "触发、同名作业在跑时拒绝重复触发。结果走通知台账，不在这里返回。需确认",
              {"name": "作业名"}, _run, read_only=False, required_args=('name',), argument_schema={'name': {'type': 'string'}}, operation_kind='execute', confirm=confirm),
     ]
+
+
+def build_legacy_cron_tools(repo_root: str, confirm=None) -> list[Tool]:
+    """Existing unmigrated jobs may finish; no new legacy schedule can be created."""
+    from src.scheduling.cron import load_jobs
+    from src.workflow.staff.routine_migration import legacy_owner
+    names = {job.name for job in load_jobs(repo_root) if not legacy_owner(repo_root, job.name)}
+    tools = [tool for tool in build_cron_tools(repo_root, confirm)
+             if tool.name != 'cron_add' and (tool.name == 'cron_list' or names)]
+    for tool in tools:
+        if tool.name == 'cron_list':
+            continue
+        original = tool.prepare
+        async def guarded(args, original=original):
+            name = args.get('name')
+            if name not in names or legacy_owner(repo_root, name):
+                raise ValueError('这不是会话核对过的未迁移旧作业；请用例行工作入口处理')
+            return await original(args)
+        tool.prepare = guarded
+    return tools

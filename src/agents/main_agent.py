@@ -151,14 +151,15 @@ def build_subagent(repo_root, spec, *, llm=None, confirm=None, on_progress=None,
 def build_research_tools(repo_root, *, llm=None, max_steps=12, max_parallel=5,
                          default_parallel=2, confirm=None, on_progress=None,
                          capabilities=None, collaboration=None, on_child_tool=None,
-                         answer_task_question=None, release_task_dependencies=None, reconcile_task_dependencies=None):
+                         answer_task_question=None, release_task_dependencies=None, reconcile_task_dependencies=None,
+                         legacy_creation=True):
     return _delegation.build_research_tools(
         repo_root, llm=llm, max_steps=max_steps, max_parallel=max_parallel,
         default_parallel=default_parallel, confirm=confirm, on_progress=on_progress,
         capabilities=capabilities, agent_factory=MainAgent,
         subagent_factory=build_subagent, collaboration=collaboration, on_child_tool=on_child_tool,
         answer_task_question=answer_task_question, release_task_dependencies=release_task_dependencies,
-        reconcile_task_dependencies=reconcile_task_dependencies)
+        reconcile_task_dependencies=reconcile_task_dependencies, legacy_creation=legacy_creation)
 
 
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
@@ -199,6 +200,7 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     tools = (build_read_tools(repo_root)
              + build_research_tools(repo_root, confirm=confirm, on_progress=on_progress,
                                     capabilities=capabilities, collaboration=collaboration,
+                                    legacy_creation=False,
                                     answer_task_question=answer_task_question, release_task_dependencies=release_task_dependencies,
                                     reconcile_task_dependencies=reconcile_task_dependencies)
              + build_memory_tools(repo_root, confirm, source=memory_source,
@@ -216,7 +218,8 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     if with_cron:
         # **无人值守必须传 False**：cron 作业能创建 cron 作业 = 自我复制驻留，等于 agent 可以
         # 自授「周期性无人值守执行」这项权限。研究员档同样不给（那是运维面，不是资料助理的活）。
-        tools += build_cron_tools(repo_root, confirm)
+        from src.agents.tools.cron import build_legacy_cron_tools
+        tools += build_legacy_cron_tools(repo_root, confirm)
     if with_dev:
         # 直写工具（逐次确认 + 先给 diff）与隔离流水线**并存、各管一段**：小改动当场改、
         # 当场看 diff；大任务仍走 worktree 实现+自测+落 vorto 分支。此前只有后者，于是三行的

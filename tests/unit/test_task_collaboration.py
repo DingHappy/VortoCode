@@ -225,7 +225,8 @@ async def test_dev_followup_keeps_confirmation_and_role_boundary(tmp_path):
 def test_standard_factory_wires_collaboration_and_modules_do_not_import_facade(tmp_path):
     by = {t.name: t for t in build_agent_tools(str(tmp_path), confirm=None, task_owner="sid-a",
                                             with_web=False, with_cron=False, with_dev=False)}
-    assert {"task", "task_status", "task_review", "task_followup"} <= set(by)
+    assert {'staff_assign', 'task_status', 'task_review', 'task_followup'} <= set(by)
+    assert not {'task', 'research_parallel'} & set(by)
     root = Path(__file__).resolve().parents[2]
     for file in ["src/agents/dev_tools.py", "src/agents/dev_policy.py", "src/agents/delegation.py", "src/workflow/tasks/collaboration.py"]:
         tree = ast.parse((root / file).read_text())

@@ -21,6 +21,8 @@ def build_staff_member(root, role, member, *, check, llm=None, agent_factory=Non
     from src.workflow.staff.registry import tool_catalog
     from src.workflow.staff.service import StaffService
     StaffService.executable(role)
+    if role['grants']['project']:
+        raise ValueError('开发岗位只能经一次性项目副本执行，不能装配到助理工作目录')
     catalog = tool_catalog(root)
     if read_delivery is not None and 'read_delivery' in role['grants']['tools']:
         from src.agents.tools.deliveries import build_delivery_reader
@@ -94,6 +96,16 @@ async def execute_staff(root, task, work, role, member, check, *, approval_servi
     if task.collaboration['dispatch'].get('source') == 'team' and role['id'] == 'developer':
         from src.agents.team_members import execute_team_developer
         return await execute_team_developer(root, task, work)
+    if role.get('project_binding'):
+        from src.agents.team_members import execute_development
+        from src.workflow.staff.projects import check as check_project
+        def record(delivery):
+            check()
+            work.update_staff_action(task.id, task.collaboration['round'],
+                lambda current: current.collaboration.update(delivery=delivery))
+        return await execute_development(work, task,
+            {**task.collaboration['dispatch'], 'model': member['model']}, member['engine'], check_project(role),
+            bool(task.collaboration.get('tainted')), record_delivery=record, check=check)
     async def confirm(call):
         return await approval_service.confirm_action(task, role, member, call)
     options = {'confirm_action': confirm, 'notes': task.collaboration['dispatch'].get('notes'),
@@ -158,6 +170,8 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None, 
         message = (f"派给专员「{member['name']}」（{member['id']}），岗位「{assigned['title']}」？\n"
                    + args['prompt'] + '\n要交回：' + json.dumps(args.get('acceptance', []), ensure_ascii=False)
                    + '\n交付：' + args.get('delivery', 'review'))
+        if assigned.get('project_binding'):
+            message += '\n固定项目：' + assigned['project'] + '（只改一次性副本，交回本地分支；不推送、不发布）'
         return PreparedToolCall(apply, message, operation(assigned))
 
     from src.agents.staff_proposals import build_staff_proposal_tool, build_routine_proposal_tool
@@ -193,6 +207,8 @@ def staff_catalog(root):
             rows.append({'id': member['id'], 'name': member['name'], 'role': assigned['title'],
                          'duty': assigned['brief'], 'status': member['status'],
                          'web': assigned['grants']['web'], 'sees': assigned['grants']['sees']})
+            if assigned.get('project_binding'):
+                rows[-1]['project'] = assigned['project']
         departments = [{'id': item['id'], 'name': item['name'], 'duty': item['duty'], 'members': item['members'], 'status': item['status']}
                        for item in registry.departments()]
         return ("【专员名录（会话开始时快照）】小事自己做；独立工作交给职责匹配的专员。"

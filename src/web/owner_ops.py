@@ -87,8 +87,12 @@ def dispatch_view(item: Dict[str, Any]) -> Dict[str, Any]:
 
     view = {key: item.get(key) for key in ("id", "project", "title", "goal", "status", "tainted", "created_at")}
     view["criteria"] = [str(c) for c in item.get("criteria") or []][:10]
-    view["digest"] = signing.action_digest({"id": item.get("id"), "kind": "dispatch", "thread_id": item.get("project"),
-                                           "text": f"{item.get('title')}\n{item.get('goal')}"})
+    text = f"{item.get('title')}\n{item.get('goal')}"
+    if item.get('staff_binding'):
+        from src.workflow.staff.approvals import digest
+        text += '\n' + digest({'binding': item['staff_binding'], 'criteria': view['criteria']})
+        view['title'] = str(item.get('title') or '') + ' · ' + item['staff_binding']['member']['name']
+    view["digest"] = signing.action_digest({"id": item.get("id"), "kind": "dispatch", "thread_id": item.get("project"), "text": text})
     return view
 
 

@@ -188,7 +188,16 @@ class TeamService:
             roster = proposal['members']
         else:
             roster = _members(members, mode, StaffRegistry(self.repo_root).team_roles())
-        developers = [item for item in roster if item["role"] == "developer"]
+        developers = [item for item in roster if item['role'] == 'developer'
+                      or (item.get('role_snapshot') or {}).get('grants', {}).get('project')]
+        if registered:
+            from src.workflow.staff.team_roster import fixed_project
+            fixed = fixed_project(roster)
+            if fixed:
+                fixed = {key: fixed[key] for key in ('name', 'repo_root')}
+                if project and {key: project.get(key) for key in ('name', 'repo_root')} != fixed:
+                    raise CollaborationConflict('团队不能覆盖开发岗位的固定项目')
+                project = fixed
         if developers and mode != "private":
             raise CollaborationConflict("带开发成员的小组必须是 private 档位：项目代码不能和联网成员放在同一个小组")
         if developers and not (isinstance(project, dict) and project.get("name")

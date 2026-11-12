@@ -103,20 +103,19 @@ async def test_direct_write_tool_in_plan_mode_asks_instead_of_lecturing(tmp_path
     有授权通道时这里就该**问人**，而不是讲课。"""
     asked = _Asked(True)
     agent = _agent(tmp_path, "im", asked)
-    out = await agent._run_tool("cron_add", {"name": "daily-tech-news", "schedule": "at 09:00",
-                                             "prompt": "搜科技新闻"}, "plan", lambda *_a: None)
+    out = await agent._run_tool('write_file', {'path': 'notes.txt', 'content': 'fixture'}, 'plan', lambda *_a: None)
     assert asked, "plan 模式下直接调写工具，没有向用户请求授权"
-    assert "cron_add" in asked[0] and "授权" in asked[0]
+    assert 'write_file' in asked[0] and '授权' in asked[0]
     assert "Tab" not in str(out)
 
 
 async def test_declined_write_tool_says_declined_not_go_flip_a_switch(tmp_path):
     """用户刚点了拒绝，就别再劝他去开权限——那是两回事，原文却混成同一句。"""
     agent = _agent(tmp_path, "im", _Asked(False))
-    out = str(await agent._run_tool("cron_add", {"name": "x", "schedule": "at 09:00",
-                                                 "prompt": "p"}, "plan", lambda *_a: None))
+    out = str(await agent._run_tool('write_file', {'path': 'notes.txt', 'content': 'fixture'}, 'plan', lambda *_a: None))
     assert "本次未获授权" in out and "Tab" not in out
     assert "/mode build" not in out, "被拒后不该继续劝他改模式"
+    assert not (tmp_path / 'notes.txt').exists()
 
 
 async def test_no_escalation_channel_names_this_ends_own_method(tmp_path):

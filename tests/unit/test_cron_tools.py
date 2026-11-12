@@ -107,7 +107,8 @@ def test_owner_ends_do_have_cron_tools(tmp_path):
     from src.gateway.agent_session import build_session
 
     names = set(build_session(str(tmp_path), kind="im", confirm=None).tools)
-    assert {"cron_list", "cron_add", "cron_toggle", "cron_run"} <= names
+    assert {'cron_list', 'routine_propose'} <= names
+    assert 'cron_add' not in names
 
 
 # ---------------------------------------------------------------- 2. 写面过确认门

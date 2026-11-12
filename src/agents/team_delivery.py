@@ -128,6 +128,7 @@ def finish_round(repo_root: str, path: Any, *, child_id: str, number: int, objec
         delivery["error"] = f"改动没能落到分支：{landed.get('error')}"
         return delivery
     delivery["branch"] = branch
+    delivery['head'] = _git(repo_root, 'rev-parse', '--verify', f'refs/heads/{branch}').stdout.strip()
     return delivery
 
 

@@ -44,3 +44,19 @@ describe("staff owner controls", () => {
     await f.controller.decide(f.snapshot.proposals[0], false); expect(f.client.decideStaff).toHaveBeenCalledTimes(1);
   });
 });
+
+it('only creates a pending development proposal without automatically approving', async () => {
+  const f = fixture(); f.snapshot.development_projects = [{ name: 'Example' }];
+  f.client.proposeDevelopment = vi.fn(async () => ({}));
+  await f.controller.refresh();
+  await f.controller.proposeDevelopment({ kind: 'role', id: 'example-dev', name: '项目开发', project: 'Example' });
+  expect(f.client.proposeDevelopment).toHaveBeenCalledWith({ kind: 'role', id: 'example-dev', name: '项目开发', project: 'Example' });
+  expect(f.client.decideStaff).not.toHaveBeenCalled();
+});
+it('refuses a development target removed after the form was displayed', async () => {
+  const f = fixture(); f.snapshot.development_projects = [{ name: 'Example' }];
+  f.client.proposeDevelopment = vi.fn(async () => ({}));
+  await f.controller.refresh(); f.snapshot.development_projects = [];
+  await f.controller.proposeDevelopment({ kind: 'role', id: 'example-dev', name: '项目开发', project: 'Example' });
+  expect(f.client.proposeDevelopment).not.toHaveBeenCalled();
+});

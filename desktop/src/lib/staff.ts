@@ -2,6 +2,8 @@ export interface StaffRole {
   id: string; title: string; brief: string; enabled: boolean; revision: number; builtin: boolean;
   grants: { operations: string[]; tools: string[]; sees: string[]; web: boolean; project: boolean };
   engine: string[]; max_steps: number; timeout_seconds: number;
+  project?: string;
+  project_binding?: { name: string; repo_root: string; port: number; instance_id?: string };
 }
 export interface StaffMember {
   id: string; name: string; role: string; engine: string; model: string; revision: number;
@@ -26,12 +28,15 @@ export interface StaffSnapshot {
   roles: StaffRole[]; members: StaffMember[]; proposals: StaffProposal[];
   departments?: StaffDepartment[]; budget_settings?: StaffBudgetSettings; usage?: StaffUsage;
   standing_specialists?: Array<{ id: string; title: string; scope: string; guide: string }>;
+  development_projects?: Array<{ name: string }>;
 }
+export type DevelopmentProposal = { kind: 'role' | 'member'; id: string; name: string; project?: string; role?: string };
 export interface StaffClient {
   readStaff(): Promise<StaffSnapshot>;
   decideStaff(id: string, approve: boolean, confirmation: StaffConfirmation): Promise<unknown>;
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown>;
   setStaffBudgets?(settings: StaffBudgetSettings): Promise<StaffBudgetSettings>;
+  proposeDevelopment?(data: DevelopmentProposal): Promise<unknown>;
 }
 export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string }
 /** Only an owner click writes; refreshed identities must match the displayed card. */
@@ -63,6 +68,19 @@ export function staffController(client: StaffClient, publish: (state: StaffState
   }
   return {
     refresh,
+    proposeDevelopment(data: DevelopmentProposal) {
+      const displayed = state.value;
+      return change(async fresh => {
+        if (!client.proposeDevelopment) throw new Error('当前服务尚不支持直接提议开发岗位');
+        if (data.kind === 'role' && !fresh.development_projects?.some(project => project.name === data.project))
+          throw new Error('项目登记已变化，请刷新后重新选择');
+        const roleId = data.kind === 'role' ? data.id : data.role;
+        const before = displayed?.roles.find(role => role.id === roleId);
+        const current = fresh.roles.find(role => role.id === roleId);
+        if (JSON.stringify(before) !== JSON.stringify(current)) throw new Error('岗位已变化，请刷新后重新核对');
+        await client.proposeDevelopment(data);
+      });
+    },
     budgets(settings: StaffBudgetSettings) {
       return change(async fresh => {
         if (!client.setStaffBudgets || fresh.budget_settings?.revision !== settings.revision)

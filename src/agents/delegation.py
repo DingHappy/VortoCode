@@ -199,7 +199,8 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                          confirm: Any = None, on_progress: Any = None,
                          capabilities: Any = None, agent_factory=MainAgent,
                          subagent_factory=None, collaboration=None, on_child_tool=None,
-                         answer_task_question=None, release_task_dependencies=None, reconcile_task_dependencies=None) -> list[Tool]:
+                         answer_task_question=None, release_task_dependencies=None, reconcile_task_dependencies=None,
+                         legacy_creation=True) -> list[Tool]:
     """Shared tool adapter around the role executor and collaboration service."""
     _spawn, _response = build_delegation_executor(
         repo_root, llm=llm, max_steps=max_steps, confirm=confirm, on_progress=on_progress,
@@ -257,6 +258,8 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
              _research_parallel, read_only=True,
              argument_schema={'tasks': {'type': 'array', 'items': {'type': 'string'}}, 'max_parallel': {'type': 'integer'}}, required_args=('tasks',), operation_kind='execute', confirm=confirm),
     ]
+    if not legacy_creation:
+        tools = []  # Existing task lifecycle below remains available; new work uses staff_assign.
     if collaboration is not None:
         from src.agents.tools.model_assessment import build_model_assessment_tools
         tools += build_model_assessment_tools(collaboration, allow_judge=llm is None, confirm=confirm)

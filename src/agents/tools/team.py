@@ -98,11 +98,17 @@ def build_team_tools(repo_root: str, *, confirm: Any, owner: "str | Callable[[],
             raise CollaborationConflict(str(error)) from error
         limits = normalize_limits({key: value for key, value in (args.get("limits") or {}).items() if key in DEFAULT_LIMITS})
         project = None
-        if any(item.get("role") == "developer" for item in roster['members']):
+        if any(item['role_snapshot']['grants']['project'] for item in roster['members']):
             if not allow_developers:
                 return "未执行：带开发成员的小组只能在 Desktop 上开（手机和 IM 里不行）。请主人到 Desktop 上再提。"
             name = str(args.get("project") or "").strip()
-            project = _resident_project(name) if name else None
+            from src.workflow.staff.team_roster import fixed_project
+            fixed = fixed_project(roster['members'])
+            if fixed:
+                if name and name != fixed['name']:
+                    raise CollaborationConflict('团队不能覆盖开发岗位的固定项目')
+                name = fixed['name']
+            project = fixed or (_resident_project(name) if name else None)
             if project is None:
                 from src.workflow.workbench.resident_projects import load_resident_projects
                 names = "、".join(item["name"] for item in load_resident_projects()) or "（没有登记任何项目）"

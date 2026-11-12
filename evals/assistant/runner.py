@@ -23,7 +23,7 @@ from src.workflow.tasks import assistant_dispatch
 
 BANK = Path(__file__).with_name("cases.json")
 _ALLOWED = {"save_memory", "recall_memory", "today_activity", "schedule_list", "schedule_history",
-            "cron_list", "cron_toggle", "propose_task", "list_dispatches", "update_plan"}
+            "cron_list", "cron_toggle", "staff_propose", "list_dispatches", "update_plan"}
 
 
 def cases() -> list[dict]:
@@ -36,6 +36,13 @@ def setup(case: dict, root: Path) -> dict:
     fixture = case["fixture"]
     registry = root / "resident-projects.json"
     registry.write_text(json.dumps({"projects": [{"name": "demo", "repo_root": str(root / "project"), "port": 65534}]}))
+    if fixture == 'project':
+        project = root / 'project'
+        project.mkdir()
+        (project / 'README.md').write_text('synthetic evaluation project\n')
+        for args in [('init', '-q', '-b', 'main'), ('add', '.'),
+                     ('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')]:
+            subprocess.run(['git', '-C', str(project), *args], check=True, capture_output=True)
     save_profile(str(root), name="小V", soul="简短准确，先给结论。")
     if fixture in {"preference", "location", "hidden_memory"}:
         from src.memory.conversation_db import SessionStore
@@ -97,9 +104,12 @@ def grade(case: dict, reply: str, trace: list[dict], confirmations: list[dict], 
     elif state == "schedule_paused":
         checks[state] = any(job.name == "brief" and not job.enabled for job in load_jobs(str(root)))
     elif state == "one_proposal":
-        tasks = assistant_dispatch.list_dispatches(str(root))
-        checks[state] = len(tasks) == 1 and tasks[0]["status"] == "proposed" and not tasks[0].get("remote_task_id")
-        checks["proposal_contract"] = checks[state] and bool(tasks[0].get("goal")) and bool(tasks[0].get("criteria"))
+        from src.workflow.staff.approvals import StaffApprovals
+        from src.workflow.tasks.tasks import TaskLedger
+        proposals = StaffApprovals(root).list()
+        checks[state] = len(proposals) == 1 and proposals[0]['status'] == 'pending' and not TaskLedger(str(root)).list()
+        checks['proposal_contract'] = checks[state] and proposals[0]['approval_level'] == 'desktop' and bool(
+            proposals[0]['snapshot']['data'].get('project_binding'))
     return checks
 
 
@@ -110,8 +120,9 @@ def state_evidence(case: dict, root: Path, initial: dict) -> dict:
     if state == "schedule_paused":
         return {"jobs": [{"name": job.name, "enabled": job.enabled} for job in load_jobs(str(root))]}
     if state == "one_proposal":
-        return {"tasks": [{key: task.get(key) for key in ("id", "status", "remote_task_id", "goal", "criteria")}
-                          for task in assistant_dispatch.list_dispatches(str(root))]}
+        from src.workflow.staff.approvals import StaffApprovals
+        return {'proposals': [{key: item.get(key) for key in ('id', 'status', 'approval_level')}
+                              for item in StaffApprovals(root).list()]}
     return {}
 
 
@@ -130,6 +141,7 @@ async def run_case(case: dict, root: Path, *, llm=None, timeout: float = 90, max
     started = time.monotonic()
     # These overrides isolate the registry and instruction source; model credentials are never changed or exported.
     with patch.dict(os.environ, {"VORTOONE_RESIDENT_PROJECTS": initial["registry"],
+                               'VORTOONE_AUTO_RECALL': '0' if case.get('clean_turn') else '1',
                                "VORTOONE_CRON": "1" if initial["cron"] else "0"}), \
             patch("src.agents.project.load_user_instructions", return_value=""), \
             patch("src.agents.tools.browser.browser_control_enabled", return_value=False):
