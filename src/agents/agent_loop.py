@@ -885,6 +885,20 @@ class MainAgent:
         return (estimate_tokens(content_to_text(m.get("content")))
                 + estimate_tokens(str(reasoning)) + 4)
 
+    def export_compression_state(self) -> dict:
+        """Persistent context data; no authorization, model or pending action is exported."""
+        return {'version': 1, 'summary': self._summary, 'task_anchor': self._task_anchor,
+                'task_anchor_external': self._task_anchor_external}
+
+    def restore_compression_state(self, value) -> None:
+        from src.agents.conversation_state import compression_state
+        state = compression_state(value)
+        self._summary = state['summary']
+        self._task_anchor = state['task_anchor']
+        self._task_anchor_external = state['task_anchor_external']
+        self._trim_start = self._trim_limit = 0
+        self._env_sent, self._env_idx, self._turn_user_idx = '', None, None
+
     def _anchor_text(self) -> str:
         """原始任务纯文本：优先用捕获的 _task_anchor（压缩后仍在），否则回退扫历史首个 user。
         回退路径剥离运行时附加块——恢复的历史里首条 user 可能带着过期的 <env>/plan 尾巴。"""

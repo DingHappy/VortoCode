@@ -313,6 +313,8 @@ class IMBridge:
             self._transcript = [item for item in saved.get("transcript") or [] if isinstance(item, dict)]
             self._activities = [item for item in saved.get("activities") or [] if isinstance(item, dict)]
             agent.history = saved.get("history") or []
+            from src.agents.conversation_state import restore_agent_compression
+            restore_agent_compression(agent, saved.get('compression_state'))
             if saved.get("plan"):
                 agent.plan = saved["plan"]
             # 模式跟着会话走：`/mode build` 是主人的一次显式决定，不该被一次服务重启抹回 plan
@@ -329,6 +331,7 @@ class IMBridge:
         try:
             from src.gateway.agent_session import session_behavior_fp, session_tool_names
             from src.gateway.session_store import save_session
+            from src.agents.conversation_state import agent_compression
             channel = self._sid.split("-")[1] if self._sid.count("-") >= 2 else "im"
             saved = save_session(self.repo_root, self._sid,
                          transcript=list(getattr(self, "_transcript", []))[-_MAX_TRANSCRIPT:],
@@ -339,6 +342,7 @@ class IMBridge:
                          tool_names=session_tool_names(self.agent),
                          behavior_fp=session_behavior_fp(self.agent),
                          mode=self.mode, managed_im=True if self._input_controller is not None else None,
+                         compression_state=None if self._shares_main_chat() else agent_compression(self.agent),
                          durable=self._input_controller is not None)
             if not saved and self._input_controller is not None:
                 raise OSError("Managed IM history write failed")
@@ -755,6 +759,8 @@ class IMBridge:
                                   "想换个话题，可以在 Desktop 里开一个旁聊。")
         elif cmd == "/new":
             self.agent.history = []
+            from src.agents.conversation_state import restore_agent_compression
+            restore_agent_compression(self.agent, None)
             if hasattr(self.agent, "plan"):
                 self.agent.plan = None
             self._persist()
@@ -1456,7 +1462,7 @@ class IMBridge:
 
                     reply = await run_external_turn(self.repo_root, source=self.channel,
                                                     user_text=_shared_text(text, images, files),
-                                                    rid=rid, run=_run, activities=tools_used)
+                                                    rid=rid, run=_run, activities=tools_used, agent=self.agent)
                     if reply is None:                    # 刚好不能合并（宿主没了）：照旧单独跑
                         self._record("user", text, rid)
                         reply = await _turn()

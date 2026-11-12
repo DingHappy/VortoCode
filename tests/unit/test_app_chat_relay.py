@@ -30,7 +30,7 @@ def shared_chat(monkeypatch):
     """把主要聊天宿主换成直接跑：拿空历史跑 run，返回回复。"""
     seen = []
 
-    async def run_external_turn(root, *, source, user_text, rid, run, activities=None):
+    async def run_external_turn(root, *, source, user_text, rid, run, activities=None, agent=None):
         seen.append((source, user_text))
         _history, reply = await run([])
         return reply
