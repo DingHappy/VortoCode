@@ -25,6 +25,34 @@ from src.agents.main_agent import make_confirm_gate
 ALL_ENDS = ["cli", "web", "im"]
 
 
+@pytest.mark.parametrize('entry', ['web', 'cli', 'im', 'app'])
+@pytest.mark.parametrize('external', [False, True])
+async def test_memory_origin_controls_recall_taint_in_every_entry(tmp_path, entry, external):
+    from src.gateway.agent_session import build_session
+    from src.memory.conversation_db import SessionStore
+    from src.memory.write_policy import MemoryWriteRequest, MemoryWriter
+    store = SessionStore(str(tmp_path / '.vortoone/sessions.db'))
+    MemoryWriter(store).write(MemoryWriteRequest('火车出差优先靠窗', source='web', tainted=external), confirmed=True, owner_confirmed=True)
+    agent = build_session(str(tmp_path), kind='web' if entry == 'app' else entry,
+        workspace_scope='project' if entry == 'cli' else 'general', llm=object(),
+        capability_profile='owner_device' if entry == 'app' else None)
+    result = await agent._run_tools([('recall_memory', {'query': '火车出差', '_automatic': True})], 'plan', lambda _: None)
+    assert '火车出差优先靠窗' in result[0][1]
+    assert taint.is_tainted() is external
+
+
+async def test_im_channel_remains_tainted_after_clean_owner_memory(tmp_path):
+    from src.gateway.agent_session import build_session
+    from src.memory.conversation_db import SessionStore
+    from src.memory.write_policy import MemoryWriteRequest, MemoryWriter
+    from tests.unit.test_assistant_active_memory import RecordingLLM
+    MemoryWriter(SessionStore(str(tmp_path / '.vortoone/sessions.db'))).write(
+        MemoryWriteRequest('火车出差优先靠窗', source='web'), confirmed=True, owner_confirmed=True)
+    agent = build_session(str(tmp_path), kind='im', workspace_scope='general', llm=RecordingLLM())
+    await agent.run_turn('安排火车出差座位')
+    assert taint.is_tainted()
+
+
 @pytest.mark.parametrize('verdict,answer', [(gate.DENY, True), (gate.ASK, False), (gate.ASK, True)])
 async def test_deferred_staff_transport_still_consumes_the_single_kernel_decision(tmp_path, monkeypatch, verdict, answer):
     from src.agents.staff import build_staff_member

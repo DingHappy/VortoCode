@@ -257,7 +257,9 @@ def test_goal_tool_taints_memory_proposals_only_in_its_own_turn(tmp_path, monkey
     monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     captured = []
     monkeypatch.setattr("src.memory.assistant_profile.propose_memories", lambda *a, **k: captured.append(k))
-    session = {"repo_root": str(tmp_path), "activities": [
+    session = {"repo_root": str(tmp_path), "transcript": [
+        {"role": "assistant", "rid": rid, "source_tainted": False}
+        for rid in ("current", "other")], "activities": [
         {"type": "agent_tool", "name": "personal_goals", "rid": "current", "result": "synthetic goal"}]}
     _propose_turn_memories(session, "current", ["synthetic preference"])
     assert captured[-1]["tainted"]

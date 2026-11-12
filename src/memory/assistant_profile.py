@@ -281,7 +281,7 @@ def review_memory_proposal(root: str, proposal_id: str, approve: bool,
             allowed = {item["id"] for item in related_memories(str(proposal.get("content") or ""),
                                                                 list_memories(root))}
     result = MemoryWriter(store).review(
-        proposal_id, "approve" if approve else "reject", confirmed=True, reviewer="desktop")
+        proposal_id, "approve" if approve else "reject", confirmed=True, reviewer="desktop", owner_confirmed=True)
     if approve and result.get("ok") and allowed:
         replaced = [mid for mid in dict.fromkeys(str(r) for r in replace or []) if mid in allowed
                     and store.delete_memory("__longterm__", mid)]
