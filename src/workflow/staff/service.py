@@ -107,6 +107,8 @@ class StaffService:
                     dispatch = task.collaboration['dispatch']
                     if member['revision'] != dispatch['member_revision'] or role['revision'] != dispatch['role_revision']:
                         raise ValueError('专员或岗位版本已变化')
+                    if member['department'] != dispatch.get('department', '') or role['id'] != dispatch['role']:
+                        raise ValueError('原部门或岗位身份已变化，旧任务不能跨边界恢复')
                     self.check(member, role, task=task)
                     if dispatch['source'] == 'staff':
                         self.schedule(task, member, role)

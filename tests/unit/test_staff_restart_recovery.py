@@ -51,7 +51,7 @@ async def test_restart_requeues_the_same_proven_never_started_task_once(tmp_path
         await pool.shutdown()
 
 
-@pytest.mark.parametrize('evidence', ['missing', 'started', 'log', 'model', 'usage', 'approval', 'round', 'member'])
+@pytest.mark.parametrize('evidence', ['missing', 'started', 'log', 'model', 'usage', 'approval', 'round', 'member', 'role', 'department'])
 def test_unknown_or_previously_started_work_stays_interrupted(tmp_path, evidence):
     staff, registry, _, _, task = pending(tmp_path)
     if evidence == 'missing': task.collaboration.pop('queue_proof', None)
@@ -61,6 +61,12 @@ def test_unknown_or_previously_started_work_stays_interrupted(tmp_path, evidence
     elif evidence == 'usage': task.collaboration['usage'] = {'tokens': 0, 'calls': 1}
     elif evidence == 'approval': task.collaboration['approval'] = {'status': 'pending'}
     elif evidence == 'round': task.collaboration['round'] = 2
+    elif evidence == 'role':
+        assigned = registry.role(task.collaboration['dispatch']['role'])
+        registry.register_role({**assigned, 'brief': '主人修改后的职责'})
+    elif evidence == 'department':
+        registry.register_department({'id': 'dept-new', 'name': '新部门', 'duty': '核对资料',
+                                      'members': [task.collaboration['dispatch']['member']]})
     else:
         member = registry.member(task.collaboration['dispatch']['member'])
         registry.set_member_status(member['id'], 'paused', member['revision'])
