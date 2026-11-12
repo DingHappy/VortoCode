@@ -85,11 +85,13 @@ def standing_plan(root, args):
         routines = Routines(root)
         current = {'role': roles, 'member': registry.members(), 'department': registry.departments(), 'routine': routines.list()}
         from src.workflow.staff.approvals import StaffApprovals
-        pending = [p for p in StaffApprovals(root).list() if p['status'] in {'pending', 'applying'}]
+        pending = [p for p in StaffApprovals(root).list() if p['status'] in {'pending', 'applying', 'cancelling'}]
         steps, clear = [], True
         for kind, data in definitions:
             row = next((r for r in current[kind] if r['id'] == data['id']), None)
-            busy = any(p['snapshot']['kind'] == kind and p['snapshot']['data'].get('id') == data['id'] for p in pending)
+            busy = any((p['snapshot']['kind'] == kind and p['snapshot']['data'].get('id') == data['id'])
+                       or (p['snapshot']['kind'] == 'bundle' and any(entry['kind'] == kind and entry['data']['id'] == data['id']
+                           for entry in p['snapshot']['entries'])) for p in pending)
             state, reason = 'ready', '按完整内容提议，主人批准前不生效。'
             if busy:
                 state, reason = 'pending', '已有同名待批或待恢复提议，先核对原决定，不重复提议。'
@@ -111,8 +113,20 @@ def standing_plan(root, args):
             steps.append({'kind': kind, 'state': state, 'data': deepcopy(proposal) if state != 'conflict' else None,
                           'reason': reason, **({'definition': deepcopy(data)} if kind == 'role' else {})})
             clear = clear and state == 'existing'
-        return {'specialist': name, 'title': _specs()[name]['title'], 'steps': steps,
-                'instructions': '这只是登记建议，未创建专员或排期。只提议当前 ready 的一步；role/member/department 用 staff_propose，'
-                    'routine 用 routine_propose。每一步批准后重新用 staff_plan 核对，冲突或待批时停止。'
-                    '三个岗位涉及私人来源或联网，均由主人在 Desktop 核对后确认。内置岗位只有明确批准后才加入登记，不能改写，只能停用或恢复。',
+        draft = None
+        if not any(step['state'] in {'conflict', 'pending'} for step in steps):
+            data = {'routines': []}
+            for step in steps:
+                if step['state'] == 'existing':
+                    continue
+                if step['kind'] == 'routine':
+                    data['routines'].append(step['data'])
+                else:
+                    data[step['kind']] = step['data']
+            if len(data) > 1 or data['routines']:
+                draft = {'kind': 'bundle', 'data': data, 'snapshot': StaffApprovals(root).snapshot('bundle', data)}
+        return {'specialist': name, 'title': _specs()[name]['title'], 'steps': steps, 'bundle': draft,
+                'instructions': '这是完整开通单草稿，未创建专员或排期。bundle 非空时用 staff_propose(kind=bundle, data=bundle.data) 保存待批提议；'
+                    '主人在 Desktop 核对全部权限、时间和时区后批准整单。已有且相同的登记仅作为引用，不改写；冲突、待批或无新条目时不重复提议。'
+                    '内置岗位只有明确批准后才加入登记，不能改写，只能停用或恢复。',
                 'reminders': '本步只新增定时汇报；既有会前与新邮件提醒保留原路径，未变成实时或专员触发。'}

@@ -199,7 +199,8 @@ async def test_restart_and_followup_invalidate_old_card_without_replaying_an_act
                 **{key: card['payload'][key] for key in ('nonce', 'round', 'instance', 'runtime')})
         assert TaskLedger(tmp_path).load(task.id).status == 'interrupted' and not invoked
         service.runner.cancel(task.id); await service.runner.join(task.id)
-        service.followup('owner', task.id, 1, '已核对，请重新检查当前状态')
+        with owner_route(str(tmp_path)):
+            service.followup('owner', task.id, 1, '已核对，请重新检查当前状态')
         _, fresh = await next_card(waiting)
         assert fresh['payload']['round'] == 2
         with pytest.raises(ValueError):

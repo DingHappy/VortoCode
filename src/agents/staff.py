@@ -149,7 +149,15 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None, 
 
     async def plan(args):
         from src.workflow.staff.standing import standing_plan
-        return json.dumps(standing_plan(root, args), ensure_ascii=False)
+        value = standing_plan(root, args)
+        draft = value['bundle']
+        # Keep the complete proposal input within the shared tool-result budget.
+        # Full approval snapshots belong to the Desktop card, not duplicate prose.
+        result = {key: value[key] for key in ('title', 'instructions', 'reminders')}
+        result['steps'] = [{'kind': row['kind'], 'state': row['state'], 'reason': row['reason']}
+                           for row in value['steps']]
+        result['bundle'] = {key: draft[key] for key in ('kind', 'data')} if draft else None
+        return json.dumps(result, ensure_ascii=False, separators=(',', ':'))
 
     def classify(args):
         _, assigned = host().assignment(args)
@@ -177,7 +185,7 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None, 
 
     from src.agents.staff_proposals import build_staff_proposal_tool, build_routine_proposal_tool
     return [build_staff_proposal_tool(root, confirm=confirm, owner=owner),
-            Tool('staff_plan', '只读准备日程、邮件、资料三个常设专员的登记建议；先取得主人指定的时间、时区与公开话题。不会登记、批准或开始执行。',
+            Tool('staff_plan', '只读准备日程、邮件、资料三个常设专员的完整开通单草稿；先取得主人指定的时间、时区与公开话题。不会登记、批准或开始执行。',
                  {'specialist': 'calendar / mail / research', 'timezone': '主人确认的 IANA 时区',
                   'times': 'HH:MM 字符串数组：邮件两个不同时间，其余一个', 'weekday': '资料每周汇报日，1 周一到 7 周日',
                   'topic': '资料专员的公开研究话题，不填私人资料'}, plan, operation_kind=READ,
@@ -214,7 +222,7 @@ def staff_catalog(root):
                        for item in registry.departments()]
         return ("【专员名录（会话开始时快照）】小事自己做；独立工作交给职责匹配的专员。"
                 "用 staff_list 核对当前忙闲和版本；无合适专员先提议。权限只能来自登记。\n"
-                "可用 staff_plan 准备日程只读、邮件、公开资料三个常设方案；先问清时间、时区和公开话题，逐步提议并等主人批准，不自动开通。\n"
+                "可用 staff_plan 准备日程只读、邮件、公开资料三个常设方案；先问清时间、时区和公开话题，用 staff_propose 提议完整开通单，等主人核对整单后批准，不自动开通。\n"
                 + json.dumps({'members': rows, 'departments': departments}, ensure_ascii=False))
     except (ValueError, OSError):
         return '【专员名录】登记暂不可读取；核对问题前不能派活。'

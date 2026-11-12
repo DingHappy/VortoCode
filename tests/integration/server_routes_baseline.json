@@ -1766,6 +1766,18 @@
     ]
   },
   {
+    "path": "/api/staff/recovery",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/staff/recovery/decision",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/mobile/native/staff/actions",
     "methods": [
       "GET"
