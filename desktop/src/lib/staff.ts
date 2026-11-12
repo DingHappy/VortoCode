@@ -38,6 +38,8 @@ export interface StaffClient {
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown>;
   setStaffBudgets?(settings: StaffBudgetSettings): Promise<StaffBudgetSettings>;
   proposeDevelopment?(data: DevelopmentProposal): Promise<unknown>;
+  readStaffRecovery?: import('./staffRecovery').RecoveryClient['readStaffRecovery'];
+  decideStaffRecovery?: import('./staffRecovery').RecoveryClient['decideStaffRecovery'];
 }
 export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string }
 /** Only an owner click writes; refreshed identities must match the displayed card. */

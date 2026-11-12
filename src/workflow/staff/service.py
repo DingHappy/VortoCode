@@ -90,6 +90,35 @@ class StaffService:
                     current.error = '服务重启中断额度等待；请先核对历史，再显式返工或重新派活。'
                 self.collaboration(task.owner_session).update_staff_action(task.id, task.collaboration['round'], interrupt)
 
+    def recover(self):
+        """Only durably unchanged, never-started work may re-enter the original pool."""
+        from src.workflow.staff.recovery import never_started
+        from src.workflow.staff.team_roster import is_managed
+        with TASK_STATE_LOCK:
+            for task in TaskLedger(self.root).list():
+                if not is_managed(task) or task.status not in {'queued', 'running', 'blocked'}:
+                    continue
+                if getattr(self.runner, 'is_active', lambda _: False)(task.id):
+                    continue
+                try:
+                    if not never_started(task):
+                        raise ValueError('没有持久证据证明一步都没执行')
+                    member, role = self.execution_identity(task)
+                    dispatch = task.collaboration['dispatch']
+                    if member['revision'] != dispatch['member_revision'] or role['revision'] != dispatch['role_revision']:
+                        raise ValueError('专员或岗位版本已变化')
+                    if member['department'] != dispatch.get('department', '') or role['id'] != dispatch['role']:
+                        raise ValueError('原部门或岗位身份已变化，旧任务不能跨边界恢复')
+                    self.check(member, role, task=task)
+                    if dispatch['source'] == 'staff':
+                        self.schedule(task, member, role)
+                except Exception as error:  # noqa: BLE001 - uncertain work stays visible for owner reconciliation.
+                    reason = f'重启后等待主人核对：{type(error).__name__}: {str(error)[:300]}'
+                    def interrupt(current, reason=reason):
+                        current.status = 'interrupted'
+                        current.error = reason
+                    CollaborationService(self.root, task.owner_session).update_staff_action(task.id, task.collaboration['round'], interrupt)
+
     def record_usage(self, task, meter, *, complete=True):
         def update(current):
             previous = current.collaboration.get('usage') or {'tokens': 0, 'calls': 0, 'complete': True}
@@ -270,6 +299,10 @@ class StaffService:
                           **({'notes': notes} if notes is not None else {}),
                           'delivery': args.get('delivery', 'review'), 'max_steps': role['max_steps'],
                           'timeout_seconds': role['timeout_seconds'], **({'routine': routine} if routine else {})})
+            from src.workflow.staff.recovery import seed_queue_proof
+            def seed(current):
+                seed_queue_proof(current)
+            task = self.collaboration(owner).update_staff_action(task.id, 1, seed)
             try:
                 self.schedule(task, member, role, after=after)
             except Exception:
@@ -360,6 +393,9 @@ class StaffService:
         with TASK_STATE_LOCK:
             work = self.collaboration(owner)
             previous = work.get(task_id)
+            if previous.status == 'interrupted':
+                from src.workflow.staff.owner_confirmation import require_owner_route
+                require_owner_route(self.root)
             dispatch = previous.collaboration.get('dispatch', {})
             if dispatch.get('source') != 'staff':
                 raise ValueError('不是专员任务')

@@ -5,6 +5,9 @@ import { staffController, type StaffClient, type StaffState, type StaffRole, typ
 import { StaffBudgets } from "./StaffBudgets";
 import { RoutinesPane } from './RoutinesPane';
 import { DevelopmentStaff } from './DevelopmentStaff';
+import { StaffRecovery } from './StaffRecovery';
+import type { RecoveryClient } from '../../lib/staffRecovery';
+
 import { StaffBundleReview } from './StaffBundleReview';
 import type { DevelopmentProposal } from '../../lib/staff';
 import type { RoutinesClient } from '../../lib/routines';
@@ -118,7 +121,7 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
       void confirmAction(`撤掉「${member.name}」？保留历史记录，但不能再接活，本批不能恢复。`)
         .then(ok => { if (ok && current === controller.current) void current?.status(member, status); })
         .catch(() => { if (current === controller.current) setState(value => ({ ...value, error: "确认窗口未完成，请刷新后重试" })); });
-    }} />{client.readRoutines && client.changeRoutines
+    }} />{client.readStaffRecovery && client.decideStaffRecovery && <StaffRecovery client={client as StaffClient & RecoveryClient} />}{client.readRoutines && client.changeRoutines
       ? <RoutinesPane client={client as StaffClient & RoutinesClient} onProposed={() => void controller.current?.refresh()} />
       : <p>当前连接尚不支持例行工作管理。</p>}</>;
 }

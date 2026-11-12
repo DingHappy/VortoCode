@@ -172,6 +172,7 @@ class CollaborationService:
             if has_dependencies(task):
                 validate_consumed(task, self.ledger)
             validate_reserved(task, self.ledger)
+            task.collaboration.pop('queue_proof', None)
             task.status = "running"
             self._message(task, "started", task.collaboration["assignee"], "已领取任务")
             return self._save(task)
