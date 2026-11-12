@@ -114,5 +114,5 @@ def standing_plan(root, args):
         return {'specialist': name, 'title': _specs()[name]['title'], 'steps': steps,
                 'instructions': '这只是登记建议，未创建专员或排期。只提议当前 ready 的一步；role/member/department 用 staff_propose，'
                     'routine 用 routine_propose。每一步批准后重新用 staff_plan 核对，冲突或待批时停止。'
-                    '三个岗位涉及私人来源或联网，均沿用 Desktop 批准钥匙。内置岗位只有明确批准后才加入登记，不能改写，只能停用或恢复。',
+                    '三个岗位涉及私人来源或联网，均由主人在 Desktop 核对后确认。内置岗位只有明确批准后才加入登记，不能改写，只能停用或恢复。',
                 'reminders': '本步只新增定时汇报；既有会前与新邮件提醒保留原路径，未变成实时或专员触发。'}

@@ -9,8 +9,8 @@ function task(): TaskItem {
     round: 1, assignee: "staff-helper", review: "not_submitted", acceptance: [], tainted: true, messages: [],
     dispatch: { source: "staff", max_steps: 12, timeout_seconds: 600 }, approval: { status: "pending", reason: "", decision: null,
       digest: "digest", payload: { id: "action", task_id: "task-0123456789", round: 1, member: "staff-helper", member_revision: 1,
-        role: "organizer", role_revision: 1, instance: "instance", key_id: "key", nonce: "nonce", kind: "own_data", expires_at: 2000000000, tool: "personal_goal_create",
-        message: "整理目标 <script>ignored()</script>", args: { objective: "完整正文" }, tainted: true, required_key: "device" } } as StaffAction } };
+        role: "organizer", role_revision: 1, instance: "instance", runtime: "runtime", nonce: "nonce", kind: "own_data", expires_at: 2000000000, tool: "personal_goal_create",
+        message: "整理目标 <script>ignored()</script>", args: { objective: "完整正文" }, tainted: true, approval_level: "normal" } } as StaffAction } };
 }
 const getClient = () => null, onUpdated = () => {};
 it("shows the action, complete arguments, owner decision controls and external-content warning", () => {

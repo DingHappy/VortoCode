@@ -21,5 +21,5 @@ export function departmentFixture(): DepartmentDetail {
 }
 export function directoryFixture(detail = departmentFixture()): StaffSnapshot {
   return { roles: detail.roles, members: detail.members, departments: [{ ...detail.department, pending_notes: detail.notes.pending.length }],
-    proposals: [], usage: detail.usage, budget_settings: detail.budget_settings, approval_key: { instance: "fixture", key: null } };
+    proposals: [], usage: detail.usage, budget_settings: detail.budget_settings };
 }

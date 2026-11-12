@@ -1700,12 +1700,6 @@
     ]
   },
   {
-    "path": "/api/staff/approval-key",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "path": "/api/staff/members/{member_id}/status",
     "methods": [
       "PUT"

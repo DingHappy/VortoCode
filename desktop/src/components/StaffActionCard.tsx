@@ -30,7 +30,7 @@ function ActionForm({ card, waiting, getClient, onUpdated }: Omit<Props, "task">
     <p className="staff-action-preview">{p.message}</p>
     <details><summary>核对完整动作内容</summary><pre>{JSON.stringify({ tool: p.tool, args: p.args }, null, 2)}</pre></details>
     {p.tainted && <p>本轮读过外部内容，请核对动作是否符合你的要求。</p>}
-    {pending && <p>仅批准当前这一步，之后的动作仍须逐次确认。{p.required_key === "approval" ? "本次需要 Desktop 批准钥匙。" : "批准后会产生上述改动。"}</p>}
+    {pending && <p>仅批准当前这一步，之后的动作仍须逐次确认。批准后会产生上述改动。</p>}
     {pending && <small>审批有效期至 {new Date(p.expires_at * 1000).toLocaleString()}。</small>}
     {card.reason && <p>你的理由：{card.reason}</p>}
     {["approved", "denied"].includes(card.status) && <p>审批决定不代表执行结果，请核对任务记录。</p>}

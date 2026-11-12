@@ -1,5 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-
 export interface StaffRole {
   id: string; title: string; brief: string; enabled: boolean; revision: number; builtin: boolean;
   grants: { operations: string[]; tools: string[]; sees: string[]; web: boolean; project: boolean };
@@ -11,8 +9,9 @@ export interface StaffMember {
   department?: string;
   recent_tasks: Array<{ id: string; status: string; review: string; delivery: string; prompt?: string }>;
 }
-export interface StaffProposal {
-  id: string; digest: string; nonce: string; status: string; reason: string; requires_desktop_key: boolean;
+export interface StaffConfirmation { digest: string; nonce: string; round: number; instance: string }
+export interface StaffProposal extends StaffConfirmation {
+  id: string; status: string; reason: string; approval_level: "normal" | "desktop";
   snapshot: { kind: "role" | "member" | "department" | "routine" | "routine_migration"; data: Record<string, unknown>; previous: unknown; role_snapshot?: StaffRole;
     members_snapshot?: Array<StaffMember & { role_snapshot: StaffRole }> };
 }
@@ -27,28 +26,16 @@ export interface StaffSnapshot {
   roles: StaffRole[]; members: StaffMember[]; proposals: StaffProposal[];
   departments?: StaffDepartment[]; budget_settings?: StaffBudgetSettings; usage?: StaffUsage;
   standing_specialists?: Array<{ id: string; title: string; scope: string; guide: string }>;
-  approval_key: { instance: string; key: { id: string; public_key: string } | null };
 }
-export interface StaffProof { public_key: string; signature: string }
-export interface StaffSignRequest { instance: string; proposalId?: string; digest?: string; nonce?: string }
 export interface StaffClient {
   readStaff(): Promise<StaffSnapshot>;
-  decideStaff(id: string, approve: boolean, digest: string, signature?: string): Promise<unknown>;
-  bindStaffKey(proof: StaffProof, authorization: string): Promise<unknown>;
+  decideStaff(id: string, approve: boolean, confirmation: StaffConfirmation): Promise<unknown>;
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown>;
   setStaffBudgets?(settings: StaffBudgetSettings): Promise<StaffBudgetSettings>;
 }
 export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string }
-export function signStaff(request: StaffSignRequest): Promise<StaffProof> {
-  return invoke<StaffProof>("staff_approval_sign", { instance: request.instance, proposalId: request.proposalId ?? null,
-    digest: request.digest ?? null, nonce: request.nonce ?? null }).catch(error => {
-      throw new Error(typeof error === "string" ? error : "批准钥匙操作未完成，提议保持待批；请在 Desktop 上重试");
-    });
-}
-
-/** Every write uses a freshly checked snapshot; a disposed page cannot finish a late signature. */
-export function staffController(client: StaffClient, publish: (state: StaffState) => void,
-  sign: (request: StaffSignRequest) => Promise<StaffProof> = signStaff) {
+/** Only an owner click writes; refreshed identities must match the displayed card. */
+export function staffController(client: StaffClient, publish: (state: StaffState) => void) {
   let active = true, serial = 0;
   let state: StaffState = { value: null, busy: false, error: "" };
   function emit(patch: Partial<StaffState>) { if (active) { state = { ...state, ...patch }; publish(state); } }
@@ -91,35 +78,14 @@ export function staffController(client: StaffClient, publish: (state: StaffState
         await client.setStaffStatus(member.id, status, member.revision);
       });
     },
-    enroll(authorization: string) {
-      return change(async fresh => {
-        if (fresh.approval_key.key) throw new Error("已登记批准钥匙，请刷新核对");
-        if (!authorization.trim()) throw new Error("请先取得主机本地一次性授权码");
-        const instance = fresh.approval_key.instance;
-        const proof = await sign({ instance });
-        if (!active) return;
-        await client.bindStaffKey(proof, authorization.trim());
-        if (!active) return;
-        const bound = await client.readStaff();
-        if (bound.approval_key.instance !== instance || bound.approval_key.key?.public_key !== proof.public_key)
-          throw new Error("批准钥匙登记结果待核对，请刷新");
-      });
-    },
     decide(proposal: StaffProposal, approve: boolean) {
       return change(async fresh => {
         const current = fresh.proposals.find(item => item.id === proposal.id);
-        if (!current || !["pending", "applying"].includes(current.status) || current.digest !== proposal.digest)
+        if (!current || !["pending", "applying"].includes(current.status) || current.digest !== proposal.digest
+          || current.nonce !== proposal.nonce || current.round !== proposal.round || current.instance !== proposal.instance)
           throw new Error("提议已变化，请刷新后重新核对");
-        let signature: string | undefined;
-        if (approve && current.requires_desktop_key) {
-          const instance = fresh.approval_key.instance;
-          if (!fresh.approval_key.key) throw new Error("请先用主机本地一次性授权码登记批准钥匙，提议保持待批");
-          const proof = await sign({ instance, proposalId: current.id, digest: current.digest, nonce: current.nonce });
-          if (!active) return;
-          if (proof.public_key !== fresh.approval_key.key?.public_key) throw new Error("批准钥匙与登记不一致，未批准");
-          signature = proof.signature;
-        }
-        if (active) await client.decideStaff(current.id, approve, current.digest, signature);
+        if (active) await client.decideStaff(current.id, approve, {
+          digest: current.digest, nonce: current.nonce, round: current.round, instance: current.instance });
       });
     },
   };

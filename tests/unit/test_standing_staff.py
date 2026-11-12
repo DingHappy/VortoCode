@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from tests.unit.staff_owner_helpers import owner_decide, owner_action
+
 
 def request(specialist='calendar', **extra):
     return {'specialist': specialist, 'timezone': 'Asia/Shanghai',
@@ -46,13 +48,12 @@ def test_plans_refuse_authority_overrides_and_incomplete_owner_choices(tmp_path,
         standing_plan(str(tmp_path), request(**change))
 
 
-def approve(approvals, step, sign):
+def approve(approvals, step):
     proposal = approvals.propose('owner', step['kind'], step['data'], '按主人核对的方案登记')
-    assert proposal['requires_desktop_key'] is True
-    with pytest.raises(ValueError, match='批准钥匙'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
-    return approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True,
-                            signature=sign(approvals.approval_message(proposal)))
+    assert proposal['approval_level'] == 'desktop'
+    with pytest.raises(ValueError, match='主人写入路由'):
+        approvals.decide(proposal['id'], True, proposal['digest'])
+    return owner_decide(approvals, proposal['id'], True, proposal['digest'])
 
 
 @pytest.mark.parametrize('specialist', ['calendar', 'mail', 'research'])
@@ -61,9 +62,7 @@ def test_each_step_becomes_available_only_after_the_previous_owner_approval(tmp_
     from src.workflow.staff.approvals import StaffApprovals
     from src.workflow.staff.registry import StaffRegistry
     from src.workflow.staff.routines import Routines
-    from tests.unit.test_staff_contract import staff_key
     approvals = StaffApprovals(str(tmp_path))
-    _, sign = staff_key(approvals)
     args = request(specialist)
     original = standing_plan(str(tmp_path), args)
     count = len(original['steps'])
@@ -75,8 +74,7 @@ def test_each_step_becomes_available_only_after_the_previous_owner_approval(tmp_
         proposal = approvals.propose('owner', step['kind'], step['data'], '按主人核对的方案登记')
         assert standing_plan(str(tmp_path), args)['steps'][index]['state'] == 'pending'
         assert len(Routines(str(tmp_path)).list()) == max(0, index - 3)
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True,
-                         signature=sign(approvals.approval_message(proposal)))
+        owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert all(step['state'] == 'existing' for step in standing_plan(str(tmp_path), args)['steps'])
     member = StaffRegistry(str(tmp_path)).members()[0]
     assert member['department'] and StaffRegistry(str(tmp_path)).department(member['department'])['members'] == [member['id']]
@@ -141,13 +139,12 @@ async def test_approved_standing_routine_reads_its_source_in_the_shared_pool_the
     from src.workflow.staff.routines import Routines
     from src.workflow.staff.service import StaffService
     from src.workflow.tasks.tasks import TaskRunner
-    from tests.unit.test_staff_contract import staff_key
-    approvals = StaffApprovals(str(tmp_path)); _, sign = staff_key(approvals)
+    approvals = StaffApprovals(str(tmp_path))
     from src.workflow.staff.standing import standing_plan
     for _ in range(5):
         ready = next((s for s in standing_plan(str(tmp_path), request(specialist))['steps'] if s['state'] == 'ready'), None)
         if ready is None: break
-        approve(approvals, ready, sign)
+        approve(approvals, ready)
     read = []
     async def calendar(args): read.append(('calendar_events', args)); return '合成日程：10:00 核对资料'
     def messages(*args):
@@ -215,12 +212,11 @@ async def test_standing_mail_can_save_a_draft_only_after_the_current_owner_card(
     from src.workflow.staff.service import StaffService
     from src.workflow.staff.standing import standing_plan
     from src.workflow.tasks.tasks import TaskRunner
-    from tests.unit.test_staff_contract import staff_key
-    approvals = StaffApprovals(str(tmp_path)); _, sign = staff_key(approvals)
+    approvals = StaffApprovals(str(tmp_path))
     for _ in range(5):
         ready = next((s for s in standing_plan(str(tmp_path), request('mail'))['steps'] if s['state'] == 'ready'), None)
         if ready is None: break
-        approve(approvals, ready, sign)
+        approve(approvals, ready)
     saved, results, waiting = [], [], asyncio.Queue()
     def save(draft): saved.append(deepcopy(draft)); return '合成草稿箱'
     monkeypatch.setattr(mail, 'save_draft', save)
@@ -241,8 +237,7 @@ async def test_standing_mail_can_save_a_draft_only_after_the_current_owner_card(
         current, card = await asyncio.wait_for(waiting.get(), 2)
         assert current.id == task.id and current.status == 'blocked' and saved == []
         assert card['payload']['args']['body'] == '合成草稿正文'
-        service.actions.decide(task.id, card['payload']['id'], approve=answer,
-                               expected_digest=card['digest'], reason='' if answer else '这次不保存')
+        owner_action(service, task, card, answer, reason='' if answer else '这次不保存')
         await asyncio.wait_for(pool.join(task.id), 2)
         assert len(saved) == int(answer) and pool.ledger.load(task.id).status == 'done'
         assert ('没有发送' in results[0]) if answer else ('没存' in results[0] or '拒绝' in results[0])
@@ -283,11 +278,9 @@ def test_interrupted_builtin_install_resumes_only_the_original_signed_receipt_an
     from src.workflow.staff.standing import standing_plan
     from src.workflow.staff.approvals import StaffApprovals
     from src.workflow.staff.registry import StaffRegistry
-    from tests.unit.test_staff_contract import staff_key
-    approvals = StaffApprovals(str(tmp_path)); _, sign = staff_key(approvals)
+    approvals = StaffApprovals(str(tmp_path))
     step = standing_plan(str(tmp_path), request())['steps'][0]
     proposal = approvals.propose('owner', 'role', step['data'], '登记日程岗位')
-    signature = sign(approvals.approval_message(proposal))
     original = StaffRegistry._write
     def fail(self, name, data):
         if name == 'roles.json': raise OSError('合成保存失败')
@@ -295,12 +288,12 @@ def test_interrupted_builtin_install_resumes_only_the_original_signed_receipt_an
     with monkeypatch.context() as patch:
         patch.setattr(StaffRegistry, '_write', fail)
         with pytest.raises(OSError):
-            approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True, signature=signature)
+            owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert approvals.get(proposal['id'])['status'] == 'applying'
     assert 'calendar-reader' not in {r['id'] for r in approvals.registry.roles()}
-    result = approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    result = owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert result['status'] == 'approved'
-    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True) == result
+    assert owner_decide(approvals, proposal['id'], True, proposal['digest']) == result
     role = approvals.registry.role('calendar-reader')
     with pytest.raises(ValueError, match='内置'):
         approvals.registry.register_role({**role, 'brief': '试图改写'})

@@ -1,6 +1,6 @@
-import type { StaffSnapshot, StaffProof, StaffMember, StaffBudgetSettings } from "./lib/staff";
+import type { StaffSnapshot, StaffConfirmation, StaffMember, StaffBudgetSettings } from "./lib/staff";
 import type { DepartmentDetail, DepartmentNoteSnapshot, NotesDecision } from "./lib/departments";
-import type { StaffAction } from "./lib/staffAction";
+import type { StaffAction, StaffActionConfirmation } from "./lib/staffAction";
 import type { RoutinesSnapshot } from './lib/routines';
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { ownerAccessSnapshot, type OwnerAccessSnapshot } from "./lib/ownerAccess";
@@ -403,16 +403,13 @@ export class GatewayClient {
   readStaffAction(task: string): Promise<StaffAction> {
     return this.request(`/api/staff/actions/${encodeURIComponent(task)}`);
   }
-  decideStaffAction(task: string, action: string, approve: boolean, digest: string, reason: string, signature?: string): Promise<{ status: string; replayed: boolean }> {
+  decideStaffAction(task: string, action: string, approve: boolean, confirmation: StaffActionConfirmation, reason: string): Promise<{ status: string; replayed: boolean }> {
     return this.request(`/api/staff/actions/${encodeURIComponent(task)}/${encodeURIComponent(action)}/decision`,
-      { method: "POST", body: JSON.stringify({ approve, digest, reason, ...(signature ? { signature } : {}) }) });
+      { method: "POST", body: JSON.stringify({ approve, ...confirmation, reason }) });
   }
-  decideStaff(id: string, approve: boolean, digest: string, signature?: string): Promise<unknown> {
+  decideStaff(id: string, approve: boolean, confirmation: StaffConfirmation): Promise<unknown> {
     return this.request(`/api/staff/proposals/${encodeURIComponent(id)}/decision`,
-      { method: "POST", body: JSON.stringify({ approve, digest, ...(signature ? { signature } : {}) }) });
-  }
-  bindStaffKey(proof: StaffProof, authorization: string): Promise<unknown> {
-    return this.request("/api/staff/approval-key", { method: "POST", body: JSON.stringify({ ...proof, authorization }) });
+      { method: "POST", body: JSON.stringify({ approve, ...confirmation }) });
   }
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown> {
     return this.request(`/api/staff/members/${encodeURIComponent(id)}/status`,

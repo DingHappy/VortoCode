@@ -14,10 +14,10 @@ import "../src/styles/shell.css";
 import "./staff-actions.css";
 const initial: StaffAction = { status: "pending", decision: null, reason: "", digest: "d".repeat(64), payload: {
   id: "staff-action-" + "a".repeat(32), task_id: "task-0123456789", round: 1, member: "staff-study", member_revision: 1,
-  member_name: "学习专员", role: "study-helper", role_title: "学习整理", role_revision: 1, instance: "b".repeat(32), key_id: "", nonce: "c".repeat(32),
+  member_name: "学习专员", role: "study-helper", role_title: "学习整理", role_revision: 1, instance: "b".repeat(32), runtime: "runtime", nonce: "c".repeat(32),
   tool: "personal_goal_create", args: { objective: "读完一本设计书，整理一页笔记", acceptance_criteria: ["笔记包含三个要点"], next_action: "列出候选书单" },
   kind: "own_data", message: "新建个人目标：读完一本设计书，整理一页笔记\n下一步：列出候选书单\n达标条件：笔记包含三个要点",
-  tainted: true, required_key: "device", expires_at: 2000000000 } };
+  tainted: true, approval_level: "normal", expires_at: 2000000000 } };
 const noop = () => {};
 function Fixture() {
   const [card, setCard] = useState(structuredClone(initial));

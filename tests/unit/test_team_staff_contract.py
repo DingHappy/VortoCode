@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from tests.unit.staff_owner_helpers import owner_decide
+
 from src.workflow.tasks.collaboration import CollaborationService
 from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.team import TeamService
@@ -211,7 +213,7 @@ def test_old_builtin_delivery_permissions_require_an_explicit_versioned_approval
     approvals = StaffApprovals(str(tmp_path))
     proposal = approvals.propose('owner', 'role', {'id': 'reviewer', 'revision': old['revision'], 'upgrade': True}, '允许读取本任务交付物')
     assert registry.role('reviewer') == old
-    approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    owner_decide(approvals, proposal['id'], True, proposal['digest'])
     updated = registry.role('reviewer')
     assert updated['revision'] == old['revision'] + 1 and 'read_delivery' in updated['grants']['tools']
 

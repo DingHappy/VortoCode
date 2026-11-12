@@ -35,7 +35,7 @@ export function RoutinesView({ state, onRefresh, onChange, onPreview }: {
       {value.migrations.some(item => item.status === 'applying') && <p role="alert">有一批迁移已有批准、登记尚待核对；相关新旧作业均不调度，请到待批登记继续同一次迁移。</p>}
       <details className="settings-card">
         <summary>迁移旧定时事项</summary>
-        <p>先预览，再提交提议；用批准钥匙批准后才接管。离线和联网分别保留原工具范围，项目及命令作业暂留原路径。原配置作为证据保留，不会同时执行两份。</p>
+        <p>先预览，再提交提议；由主人核对并确认后才接管。离线和联网分别保留原工具范围，项目及命令作业暂留原路径。原配置作为证据保留，不会同时执行两份。</p>
         <label>旧主机原时区<input value={migrationZone} disabled={disabled} onChange={event => setMigrationZone(event.target.value)} placeholder="无法识别时请明确填写" /></label>
         <button disabled={disabled || !migrationZone.trim()} onClick={() => onPreview(migrationZone.trim())}>预览迁移清单</button>
         {plan && <>

@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from tests.unit.staff_owner_helpers import owner_decide
+
 from src.workflow.staff.approvals import StaffApprovals
 from src.workflow.staff.notes import StaffNotes
 from src.workflow.staff.registry import StaffRegistry
@@ -62,12 +64,12 @@ def test_department_proposal_grants_nothing_until_owner_confirms_exact_members(t
     approvals = StaffApprovals(str(tmp_path))
     data = {'id': 'dept-reading', 'name': '资料', 'duty': '整理公开材料', 'members': [member['id']]}
     proposal = approvals.propose('owner', 'department', data, '长期整理')
-    assert not proposal['requires_desktop_key'] and registry.departments() == []
+    assert proposal['approval_level'] == 'normal' and registry.departments() == []
     with pytest.raises(ValueError, match='主人'):
         approvals.decide(proposal['id'], True, proposal['digest'])
-    approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert registry.member(member['id'])['department'] == 'dept-reading'
-    assert approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)['status'] == 'approved'
+    assert owner_decide(approvals, proposal['id'], True, proposal['digest'])['status'] == 'approved'
 
 
 def test_department_proposal_is_invalidated_by_member_or_role_change(tmp_path):
@@ -76,17 +78,17 @@ def test_department_proposal_is_invalidated_by_member_or_role_change(tmp_path):
     proposal = approvals.propose('owner', 'department', {'id': 'dept-reading', 'name': '资料', 'duty': '整理', 'members': [member['id']]}, '长期整理')
     registry.set_member_status(member['id'], 'paused', member['revision'])
     with pytest.raises(ValueError, match='版本已变化'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+        owner_decide(approvals, proposal['id'], True, proposal['digest'])
     assert registry.departments() == []
 
 
-def test_private_department_requires_existing_desktop_key_proof(tmp_path):
+def test_private_department_requires_owner_route_confirmation(tmp_path):
     registry = StaffRegistry(str(tmp_path)); member = specialist(registry, 'mail', sees=['plugin:mail'])
     approvals = StaffApprovals(str(tmp_path))
     proposal = approvals.propose('owner', 'department', {'id': 'dept-mail', 'name': '邮件', 'duty': '只读', 'members': [member['id']]}, '长期整理')
-    assert proposal['requires_desktop_key']
-    with pytest.raises(ValueError, match='批准钥匙'):
-        approvals.decide(proposal['id'], True, proposal['digest'], owner_confirmation=True)
+    assert proposal['approval_level'] == 'desktop'
+    with pytest.raises(ValueError, match='主人写入路由'):
+        approvals.decide(proposal['id'], True, proposal['digest'])
     assert registry.departments() == []
 
 
