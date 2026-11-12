@@ -160,7 +160,9 @@ async def test_setup_and_persistence_failures_keep_owner_input_and_finalize_wake
                 raise RuntimeError("尚未追加历史就失败")
             return await super().run_turn(prompt, mode)
     if stage == "history":
-        monkeypatch.setattr("src.workflow.tasks.team.load_history", fail)
+        from src.workflow.tasks import team as domain
+        load_context = domain.load_coordinator_context
+        monkeypatch.setattr("src.workflow.tasks.team.load_coordinator_context", fail)
     if stage == "save":
         monkeypatch.setattr("src.workflow.tasks.team.save_history", fail)
     if stage == "ack":
@@ -173,6 +175,8 @@ async def test_setup_and_persistence_failures_keep_owner_input_and_finalize_wake
     if stage in ("run", "save", "ack"):
         assert current.team["inbox"][-1]["text"] == "期间到达的新留言"
     if stage in ("factory", "history"):
+        if stage == "history":
+            monkeypatch.setattr(domain, 'load_coordinator_context', load_context)
         assert load_history(str(tmp_path), root.id) == original
     if stage in ("save", "ack"):
         assert current.status == "waiting" and "核对" in current.team["waiting_reason"]

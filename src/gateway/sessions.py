@@ -83,6 +83,8 @@ class SessionTable:
                 activities = list(saved.get("activities") or [])
                 prompt_queue = list(saved.get("prompt_queue") or [])
                 agent.history = list(saved.get("history") or [])
+                from src.agents.conversation_state import restore_agent_compression
+                restore_agent_compression(agent, saved.get('compression_state'))
                 if saved.get("plan"):
                     agent.plan = list(saved["plan"])
                 # 升级后复原旧会话：工具清单有变要告诉模型，否则历史里过期的「我做不到」
@@ -139,6 +141,7 @@ class SessionTable:
                 return False
             from src.gateway.session_store import save_session
             from src.gateway.agent_session import session_behavior_fp, session_tool_names
+            from src.agents.conversation_state import agent_compression
             from src.workflow.tasks.dashboard import agent_context_summary
             agent = sess.get("agent")
             mode = getattr(agent, "_context_mode", "plan")
@@ -149,7 +152,7 @@ class SessionTable:
                          prompt_queue_paused=sess.get("prompt_queue_paused") is True,
                          context_usage=agent_context_summary(agent, mode),
                          tool_names=session_tool_names(agent),
-                         behavior_fp=session_behavior_fp(agent)) is True
+                         behavior_fp=session_behavior_fp(agent), compression_state=agent_compression(agent)) is True
         except Exception:  # noqa: BLE001
             return False
 

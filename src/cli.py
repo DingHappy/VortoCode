@@ -963,12 +963,18 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         except Exception as e:  # noqa: BLE001
             print(f"设置模型失败: {e}", file=sys.stderr)
     if continue_session:                          # 续上一次 CLI 对话（claude -c 式）
-        saved_profile = _load_cli_capability_profile(cwd)
+        saved = _load_cli_session(cwd)
+        saved_profile = _cli_session_profile(saved)
         can_resume = saved_profile == profile
-        hist = _load_cli_history(cwd) if can_resume else []
+        hist = saved.get('history') if can_resume else []
+        if not isinstance(hist, list):
+            hist = []
         if not can_resume and not quiet:
             print(f"\033[2m⚠ 上次 CLI 会话是 {saved_profile}，不能把历史带进 {profile} 信任域；已新开上下文\033[0m",
                   file=sys.stderr, flush=True)
+        if can_resume:
+            from src.agents.conversation_state import restore_agent_compression
+            restore_agent_compression(agent, saved.get('compression_state'))
         if hist:
             agent.history = hist
             if not quiet:
@@ -1048,7 +1054,9 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         print(reply)                               # 管道/重定向：一次性输出
     if speak and reply:                            # 语音回复：把最终文字合成成 WAV（mimo-v2.5-tts）
         await _speak_reply(reply, voice, speak_out, llm, quiet)
-    _save_cli_history(cwd, getattr(agent, "history", []), profile)   # 落盘，供下次 --continue 接上
+    from src.agents.conversation_state import agent_compression
+    _save_cli_history(cwd, getattr(agent, "history", []), profile,
+                      compression_state=agent_compression(agent))
     if mcp_mgr is not None:                        # 关掉 MCP 子进程，别残留
         try:
             await mcp_mgr.shutdown()
@@ -1110,29 +1118,43 @@ def _load_cli_history(cwd):
 
 
 def _load_cli_capability_profile(cwd):
-    value = _load_cli_session(cwd).get("capability_profile")
+    return _cli_session_profile(_load_cli_session(cwd))
+
+
+def _cli_session_profile(data):
+    value = data.get('capability_profile')
     if value is None:
         return None                                  # legacy files are treated as local-only by the caller
     from src.agents.capabilities import normalize_profile
     return normalize_profile(str(value))             # corrupt/unknown values fail closed to external
 
 
-def _save_cli_history(cwd, history, capability_profile="local"):
+def _save_cli_history(cwd, history, capability_profile="local", *, compression_state=None):
     """把 CLI 对话历史落盘（尾 40 条；多模态 content 折成纯文本，免 base64 撑爆文件）。失败安全吞。"""
     import json
 
     from src.llm.content import content_to_text
+    from src.agents.taint import EXTERNAL_MARK
     out = []
     for m in list(history or [])[-40:]:
         c = m.get("content")
         out.append({"role": m.get("role", ""),
                     "content": c if isinstance(c, str) else content_to_text(c)})
+        if m.get(EXTERNAL_MARK):
+            out[-1][EXTERNAL_MARK] = True
     p = Path(cwd) / _CLI_SESSION
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"history": out, "capability_profile": capability_profile},
-                                  ensure_ascii=False), encoding="utf-8")
+        payload = {'history': out, 'capability_profile': capability_profile}
+        if compression_state is None:
+            previous = _load_cli_session(cwd)
+            if _cli_session_profile(previous) == capability_profile:
+                compression_state = previous.get('compression_state')
+        if compression_state is not None:
+            from src.agents.conversation_state import compression_state as normalize
+            payload['compression_state'] = normalize(compression_state)
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
         tmp.replace(p)
     except (OSError, TypeError, ValueError):
         pass

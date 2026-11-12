@@ -775,15 +775,24 @@ def _history_path(repo_root: str, root_id: str):
 
 
 def load_history(repo_root: str, root_id: str) -> List[dict]:
+    return load_coordinator_context(repo_root, root_id)['history']
+
+
+def load_coordinator_context(repo_root: str, root_id: str) -> dict:
     import json
     try:
         data = json.loads(_history_path(repo_root, root_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+        return {'history': [], 'compression_state': None}
+    if isinstance(data, list):  # Original history files remain readable.
+        return {'history': [item for item in data if isinstance(item, dict)], 'compression_state': None}
+    if not isinstance(data, dict) or data.get('version') != 1 or not isinstance(data.get('history'), list):
+        raise ValueError('协调人上下文格式无效，未恢复执行')
+    return {'history': [item for item in data['history'] if isinstance(item, dict)],
+            'compression_state': data.get('compression_state')}
 
 
-def save_history(repo_root: str, root_id: str, history: List[dict]) -> None:
+def save_history(repo_root: str, root_id: str, history: List[dict], *, compression_state=None) -> None:
     import json
     from src.utils.state_dir import ensure_state_gitignore
     path = _history_path(repo_root, root_id)
@@ -793,5 +802,11 @@ def save_history(repo_root: str, root_id: str, history: List[dict]) -> None:
     kept = list(history[-_MAX_HISTORY:])
     while kept and kept[0].get("role") != "user":      # 不从一组工具调用的中间开始
         kept.pop(0)
-    tmp.write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
+    if compression_state is None:
+        compression_state = load_coordinator_context(repo_root, root_id)['compression_state']
+    payload = kept
+    if compression_state is not None:
+        from src.agents.conversation_state import compression_state as normalize
+        payload = {'version': 1, 'history': kept, 'compression_state': normalize(compression_state)}
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)

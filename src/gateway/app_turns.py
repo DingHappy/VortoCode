@@ -227,7 +227,7 @@ class AppTurns:
                 self._current = None
 
         try:
-            reply = await run_external_turn(self.root, source="app", user_text=turn.text, rid=turn.rid, run=run)
+            reply = await run_external_turn(self.root, source="app", user_text=turn.text, rid=turn.rid, run=run, agent=agent)
             if reply is None:
                 turn.state, turn.error = "failed", "主要聊天还没开通：请先在 Desktop 上打开一次助理对话"
             else:

@@ -968,7 +968,7 @@ class MainConversationBusy(RuntimeError):
 
 
 async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, rid: str, run,
-                                      activities: Optional[List[Dict[str, Any]]] = None) -> str:
+                                      activities: Optional[List[Dict[str, Any]]] = None, agent=None) -> str:
     """外部入口的一个回合：拿主要聊天的最新历史跑完，历史交回、记进对话、推给正在看的 Desktop。
 
     ``activities`` 是入口在 run 期间记下的工具事件（只有名字和状态），跑完（含失败）记进这段对话。"""
@@ -978,6 +978,9 @@ async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, 
     async def execute() -> None:
         sess = context.get_session()
         previous_history = list(getattr(sess["agent"], "history", None) or [])
+        from src.agents.conversation_state import agent_compression, restore_agent_compression
+        if agent is not None:
+            restore_agent_compression(agent, agent_compression(sess['agent']))
         _append_transcript(sess, "user", user_text, rid=rid, source=source)
 
         def record_incomplete(message: str) -> None:
@@ -991,6 +994,10 @@ async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, 
             await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
             history, reply = await run(list(previous_history))
             sess["agent"].history = list(history)
+            if agent is not None:
+                compression = agent_compression(agent)
+                if compression is not None:
+                    restore_agent_compression(sess['agent'], compression)
             _append_transcript(sess, "assistant", reply, rid=rid, source=source)
             outcome["reply"] = str(reply)
             _schedule_turn_digest(key, rid)

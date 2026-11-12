@@ -123,7 +123,7 @@ async def test_telegram_turn_uses_and_returns_main_chat_history(tmp_path):
                           {"role": "assistant", "content": "好的，记下了。"}]}
     calls = []
 
-    async def host(*, key, source, user_text, rid, run, activities):
+    async def host(*, key, source, user_text, rid, run, activities, agent=None):
         calls.append({"key": key, "source": source, "text": user_text})
         seen = list(shared["history"])
         history, reply = await run(seen)
@@ -561,7 +561,7 @@ async def test_im_turn_records_tools_alone_and_when_joining_main_chat(tmp_path):
 
     handed = []
 
-    async def host(*, key, source, user_text, rid, run, activities):
+    async def host(*, key, source, user_text, rid, run, activities, agent=None):
         _, reply = await run([])
         handed.extend(activities)
         return reply
