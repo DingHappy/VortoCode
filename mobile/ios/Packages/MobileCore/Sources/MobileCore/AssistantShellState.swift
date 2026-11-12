@@ -33,6 +33,8 @@ public struct WaitingItem: Identifiable, Equatable, Sendable {
     public enum Kind: Sendable, Equatable {
         /// 对话里的确认卡：挡着新消息，排最前
         case card
+        /// 专员的单次动作；高级别卡片只能在电脑决定
+        case staff
         /// 等你批准的 Codex 动作
         case decision
         /// 等你下发的任务单
@@ -47,7 +49,7 @@ public struct WaitingItem: Identifiable, Equatable, Sendable {
     public let tainted: Bool
 
     public static func collect(cards: [ChatCard], decisions: [PendingDecision],
-                               dispatches: [DispatchProposal], teams: [TeamSummary] = []) -> [WaitingItem] {
+                               dispatches: [DispatchProposal], teams: [TeamSummary] = [], staff: [StaffActionCard] = []) -> [WaitingItem] {
         let fromCards: [WaitingItem] = cards.map { card in
             WaitingItem(id: "card:" + card.id, kind: .card, title: "需要你确认 · " + card.categoryLabel,
                         detail: firstLine(card.text), tainted: card.tainted == true)
@@ -68,7 +70,12 @@ public struct WaitingItem: Identifiable, Equatable, Sendable {
                                detail: firstLine(detail), tainted: team.tainted)
         }
         // 和 Desktop 一样：小组排在确认卡之后、Codex 动作和任务单之前
-        return fromCards + fromTeams + fromDecisions + fromDispatches
+        let fromStaff = staff.filter(\.isPending).map { card in
+            WaitingItem(id: "staff:" + card.id, kind: .staff,
+                title: card.memberName + (card.canDecideOnPhone() ? " · 需要你确认" : " · 需要在电脑上批准"),
+                detail: firstLine(card.message), tainted: card.tainted)
+        }
+        return fromCards + fromStaff + fromTeams + fromDecisions + fromDispatches
     }
 
     static func firstLine(_ text: String) -> String {

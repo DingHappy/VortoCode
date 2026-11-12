@@ -117,6 +117,37 @@ extension MobileAPI {
         return try decode(Reply.self, try await owner("changes", method: "GET", credential: credential)).ops
     }
 
+    public func staffActions(_ credential: NativeCredential, after: String? = nil) async throws -> StaffActionsPage {
+        let query = after.map { [URLQueryItem(name: "after", value: $0)] } ?? []
+        return try decode(StaffActionsPage.self, try await owner("staff/actions", method: "GET", credential: credential, query: query))
+    }
+
+    public func staffAction(_ credential: NativeCredential, taskId: String) async throws -> StaffActionCard {
+        let page = try decode(StaffActionsPage.self, try await owner("staff/actions", method: "GET", credential: credential,
+            query: [URLQueryItem(name: "task_id", value: taskId)]))
+        guard page.sourceComplete, page.next == nil, page.cards.count == 1,
+              let card = page.cards.first, card.taskId == taskId else { throw MobileError.invalidResponse }
+        return card
+    }
+
+    public func staffDecide(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
+                            card: StaffActionCard, approve: Bool, reason: String = "",
+                            beforeSend: (@Sendable () async throws -> Void)? = nil) async throws -> StaffActionReceipt {
+        let reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard card.canDecideOnPhone(), reason.unicodeScalars.count <= 2000, approve || !reason.isEmpty else {
+            throw OwnerWriteError.rejected("这张卡不能在手机决定，或拒绝理由尚未填写")
+        }
+        let body: [String: Any] = ["task_id": card.taskId, "action_id": card.id, "digest": card.digest,
+            "nonce": card.nonce, "round": card.round, "instance": card.instance, "runtime": card.runtime,
+            "approve": approve, "reason": reason]
+        let data = try await owner("staff/action", method: "POST", credential: credential, body: try json(body),
+            signer: signer, key: .device, deviceId: deviceId, beforeSend: {
+                guard card.canDecideOnPhone() else { throw OwnerWriteError.rejected("这张卡已经过期，请刷新核对") }
+                if let beforeSend { try await beforeSend() }
+            })
+        return try decode(StaffActionReceipt.self, data)
+    }
+
     public func undo(_ credential: NativeCredential, signer: RequestSigner, deviceId: String,
                      change: OwnerChange) async throws -> UndoOutcome {
         let data = try await owner("undo", method: "POST", credential: credential, body: try json(["op_id": change.id]),

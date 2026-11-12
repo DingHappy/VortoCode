@@ -589,12 +589,36 @@ struct ActivityView: View {
                 Section { Text(owner.readOnlyReason).foregroundStyle(Palette.muted) }
             } else {
                 Section(VCCopy.Nav.waiting) {
-                    if owner.decisions.isEmpty && owner.dispatches.isEmpty {
+                    if owner.decisions.isEmpty && owner.dispatches.isEmpty && owner.staffActions.isEmpty
+                        && owner.staffActionsComplete && owner.staffActionsError.isEmpty {
                         Text("现在没有等你批准的事。在对话里说「让 Codex 把…」「派个任务去…」，助理拟好会出现在这里。")
                             .foregroundStyle(Palette.muted)
                     }
                     ForEach(owner.dispatches) { proposal in dispatchRow(proposal) }
                     ForEach(owner.decisions) { decision in decisionRow(decision) }
+                    if !owner.staffActionsError.isEmpty {
+                        Text(owner.staffActionsError).font(.footnote).foregroundStyle(Palette.waitText)
+                    } else if !owner.staffActionsComplete {
+                        Text("专员审批来源还未完整核对，件数可能不全；不代表没有待批动作。")
+                            .font(.footnote).foregroundStyle(Palette.waitText)
+                    }
+                    if owner.staffApproval.blocksDecisions {
+                        Text(owner.staffApproval.message).font(.footnote).foregroundStyle(Palette.waitText)
+                        if owner.staffApproval.canCheck {
+                            Button("核对专员审批状态") {
+                                guard let credential = session.credential else { return }
+                                Task { await owner.checkStaffActionDecision(entry, credential,
+                                    sessionCurrent: { [session] in session.credential?.token == credential.token && session.credential?.instanceId == credential.instanceId }) }
+                            }.buttonStyle(VCSecondaryButtonStyle()).disabled(owner.working)
+                        }
+                    }
+                    ForEach(owner.staffActions) { card in
+                        StaffActionRow(card: card, disabled: owner.working || owner.staffApproval.blocksDecisions || !owner.staffActionsError.isEmpty) { approve, reason in
+                            guard let credential = session.credential else { return }
+                            Task { await owner.decideStaffAction(entry, credential, card, approve: approve, reason: reason,
+                                sessionCurrent: { [session] in session.credential?.token == credential.token && session.credential?.instanceId == credential.instanceId }) }
+                        }
+                    }
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: VCSpace.space2, leading: VCSpace.space4, bottom: VCSpace.space2, trailing: VCSpace.space4))
@@ -675,5 +699,39 @@ struct ActivityView: View {
     private func act(_ decision: PendingDecision, approve: Bool) {
         guard let credential = session.credential else { return }
         Task { await owner.decide(entry, credential, decision, approve: approve) }
+    }
+}
+
+/// Only the single displayed action is decided; higher categories have no mobile buttons.
+private struct StaffActionRow: View {
+    let card: StaffActionCard
+    let disabled: Bool
+    let decide: (Bool, String) -> Void
+    @State private var reason = ""
+    var body: some View {
+        ApprovalCardFrame(title: card.memberName + " · " + ApprovalLabels.category(card.kind),
+            meta: card.roleTitle + " · 第 \(card.round) 轮",
+            tainted: card.tainted ? "本回合读过外部内容，请核对这次具体动作；这次批准不产生同类放行。" : nil,
+            text: card.message) {
+                DisclosureGroup("完整参数与身份") {
+                    Text(card.argsText).font(.footnote.monospaced()).textSelection(.enabled)
+                    Text("任务：\(card.taskId)\n工具：\(card.tool)").font(.caption).foregroundStyle(Palette.muted)
+                }
+                if card.canDecideOnPhone() {
+                    TextField("不执行的理由", text: $reason, axis: .vertical).font(.subheadline)
+                } else {
+                    Text(card.isPending ? "需要在电脑上批准，手机仅可查看。" : "这张卡已处理、中断或过期，不能在手机决定。")
+                        .font(.footnote).foregroundStyle(Palette.muted)
+                }
+            } actions: {
+                if card.canDecideOnPhone() {
+                    Button("不执行") { decide(false, reason) }.buttonStyle(VCSecondaryButtonStyle(danger: true))
+                        .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Spacer()
+                    Button("批准这一次") { decide(true, "") }.buttonStyle(VCPrimaryButtonStyle())
+                }
+            }
+            .disabled(disabled)
+            .accessibilityIdentifier("native-staff-action-" + card.id)
     }
 }

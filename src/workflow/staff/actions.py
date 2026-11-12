@@ -53,6 +53,49 @@ class StaffActions:
                 card['status'] = 'expired'
             return card
 
+    @staticmethod
+    def _mobile_category(card):
+        p = card['payload']
+        return (isinstance(p.get('kind'), str) and p['kind'] in {'read', 'own_data', 'draft'} and p.get('risk') == 'normal'
+                and p.get('approval_level') == 'normal')
+
+    def _mobile_view(self, card):
+        p = card['payload']
+        fields = ('id', 'task_id', 'round', 'member_name', 'role_title', 'tool', 'kind', 'message',
+                  'tainted', 'nonce', 'instance', 'runtime', 'expires_at', 'risk', 'approval_level')
+        return {**{key: p[key] for key in fields}, 'digest': card['digest'], 'status': card['status'],
+                'args_text': json.dumps(p['args'], ensure_ascii=False, sort_keys=True, indent=2),
+                'can_decide': card['status'] == 'pending' and self._mobile_category(card)}
+
+    def mobile_snapshot(self, *, task_id=None, after=''):
+        """Bounded read projection; no Agent, continuation or new approval is created."""
+        from src.utils.ids import typed_id
+        from src.workflow.staff.team_roster import is_managed
+        if task_id is not None and not typed_id(task_id, 'task') or after and not typed_id(after, 'task'):
+            raise ValueError('专员任务编号无效')
+        with TASK_STATE_LOCK:
+            if task_id is not None:
+                return {'cards': [self._mobile_view(self.view(task_id))], 'next': None, 'source_complete': True}
+            scan = TaskLedger(self.service.root).scan()
+            tasks = sorted((task for task in scan.tasks if is_managed(task)
+                            and (task.collaboration.get('approval') or {}).get('status') == 'pending'
+                            and task.id > after), key=lambda task: task.id)
+            cards, size, complete, cursor, more = [], 0, scan.complete, after, False
+            for task in tasks:
+                try:
+                    row = self._mobile_view(self.view(task.id))
+                    count = len(json.dumps(row, ensure_ascii=False).encode())
+                    if count > 256 * 1024:
+                        raise ValueError('审批内容超过手机读取上限，须在电脑核对')
+                except (ValueError, KeyError, TypeError):
+                    complete, cursor = False, task.id
+                    continue
+                if cards and (len(cards) == 8 or size + count > 256 * 1024):
+                    more = True
+                    break
+                cards.append(row); size += count; cursor = task.id
+            return {'cards': cards, 'next': cursor if more else None, 'source_complete': complete}
+
     async def request(self, task, role, member, call, budget):
         """Only the running tool adapter supplies call metadata; model arguments cannot do so."""
         self.service.check(member, role)
@@ -130,6 +173,25 @@ class StaffActions:
     def decide(self, task_id, action_id, *, approve, expected_digest, reason='', nonce=None, round=None,
                instance=None, runtime=None):
         require_owner_route(self.service.root)
+        return self._decide(task_id, action_id, approve=approve, expected_digest=expected_digest, reason=reason,
+                            nonce=nonce, round=round, instance=instance, runtime=runtime)
+
+    def decide_mobile(self, body):
+        from src.workflow.staff.owner_confirmation import require_signed_staff_action
+        require_signed_staff_action(self.service.root, body)
+        required = {'task_id', 'action_id', 'approve', 'digest', 'reason', 'nonce', 'round', 'instance', 'runtime'}
+        if not isinstance(body, dict) or set(body) != required:
+            raise ValueError('手机只允许本次具体决定，不能附带同类放行或权限字段')
+        with TASK_STATE_LOCK:
+            card = self._card(self._task(body['task_id']))
+            if not self._mobile_category(card):
+                raise ValueError('这张卡需要在电脑上批准，手机仅可查看')
+            result = self._decide(body['task_id'], body['action_id'], approve=body['approve'], expected_digest=body['digest'],
+                reason=body['reason'], nonce=body['nonce'], round=body['round'], instance=body['instance'], runtime=body['runtime'])
+            return {**{key: body[key] for key in required - {'approve'}}, **result}
+
+    def _decide(self, task_id, action_id, *, approve, expected_digest, reason='', nonce=None, round=None,
+                instance=None, runtime=None):
         if type(approve) is not bool or not isinstance(reason, str) or len(reason) > 2000 or (not approve and not reason.strip()):
             raise ValueError('拒绝需要明确理由；批准必须为布尔值')
         with TASK_STATE_LOCK:
