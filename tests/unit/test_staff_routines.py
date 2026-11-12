@@ -282,7 +282,7 @@ def test_two_preexisting_cron_state_instances_do_not_erase_each_others_claims(tm
     assert cron.CronState(str(tmp_path)).last_run('two') == now
 
 
-def test_restart_parks_the_original_queued_task_without_replaying_it(tmp_path):
+def test_restart_parks_a_legacy_queue_without_a_never_started_proof(tmp_path):
     from src.workflow.staff.service import StaffService
     from src.workflow.tasks.tasks import TaskLedger
     _, routines, data = registered(tmp_path)
@@ -293,6 +293,9 @@ def test_restart_parks_the_original_queued_task_without_replaying_it(tmp_path):
     staff = StaffService(str(tmp_path), Pool(), execute=None)
     ids = routines.dispatch(staff, datetime.fromisoformat('2026-11-11T09:01:00+00:00'))
     assert TaskLedger(str(tmp_path)).load(ids[0]).status == 'queued'
+    legacy = TaskLedger(str(tmp_path)).load(ids[0])
+    legacy.collaboration.pop('queue_proof', None)
+    TaskLedger(str(tmp_path)).save(legacy)
     routines.recover()
     assert TaskLedger(str(tmp_path)).load(ids[0]).status == 'interrupted'
     assert routines.dispatch(staff, datetime.fromisoformat('2026-11-12T09:01:00+00:00')) == []
