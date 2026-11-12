@@ -4,7 +4,7 @@ import asyncio
 import pytest
 
 from src.agents import team_coordinator
-from src.scheduling.team_runner import TeamRunner
+from src.scheduling.team_runner import TeamRunner, NUDGE
 from src.workflow.tasks.tasks import TaskRunner
 from src.workflow.tasks.team import TeamService, load_history, save_history
 
@@ -267,7 +267,7 @@ def test_older_owner_messages_get_stable_delivery_ids_without_being_consumed(tmp
 
 
 @pytest.mark.parametrize("disposition", ["accepted", "cancelled", "waiting"])
-async def test_recovery_does_not_wake_accepted_receipts_or_owner_stopped_work(tmp_path, disposition):
+async def test_recovery_nudges_idle_work_without_replaying_accepted_receipts_or_owner_waits(tmp_path, disposition):
     service, root = setup_team(tmp_path)
     child = service.assign(root.id, "审查员", "核对 A", "依据")
     work = service.collaboration(root)
@@ -280,12 +280,17 @@ async def test_recovery_does_not_wake_accepted_receipts_or_owner_stopped_work(tm
     else:
         service.ask_owner(root.id, "需要主人决定")
     calls = []
-    async def coordinator(*args, **kwargs):
-        calls.append(args)
+    async def coordinator(repo_root, root_id, events, **kwargs):
+        calls.append(events)
+        service.begin_wake(root_id)
+        service.end_wake(root_id)
+    unseen = [item.id for item in service.unseen_member_results(root.id)]
     runner = TeamRunner(str(tmp_path), Pool(), coordinator=coordinator)
     await runner.recover()
+    await asyncio.gather(*list(runner._driving.values()))
     await runner.close()
-    assert calls == [] and service.get(root.id).team["used"]["wakes"] == 0
+    assert calls == ([[NUDGE]] * 3 if disposition == 'accepted' else [])
+    assert [item.id for item in service.unseen_member_results(root.id)] == unseen
 
 
 @pytest.mark.parametrize("status", ["done", "failed", "cancelled", "interrupted"])
@@ -305,12 +310,20 @@ async def test_saved_coordinator_turn_does_not_recover_seen_but_unaccepted_recei
     assert service.unseen_member_results(root.id)
     await team_coordinator.coordinator_turn(str(tmp_path), root.id, [], kick=lambda _id: None, agent_factory=Agent)
     assert work.get(child.id).collaboration.get("review") != "accepted"
+    calls = []
+    async def coordinator(repo_root, root_id, events, **kwargs):
+        calls.append(events)
+        assert service.unseen_member_results(root_id) == []
+        service.begin_wake(root_id)
+        service.end_wake(root_id)
     for _ in range(2):
-        runner = TeamRunner(str(tmp_path), Pool(), coordinator=no_coordinator)
+        runner = TeamRunner(str(tmp_path), Pool(), coordinator=coordinator)
         await runner.recover()
-        assert not runner._driving and not runner._pending
+        await asyncio.gather(*list(runner._driving.values()))
         await runner.close()
-    assert service.get(root.id).team["used"]["wakes"] == 1
+    assert calls == [[NUDGE], [NUDGE]]
+    assert service.get(root.id).status == 'waiting'
+    assert service.get(root.id).team["used"]["wakes"] == 3
 
 
 async def test_receipt_arriving_during_a_wake_stays_unseen_after_saving_that_wake(tmp_path):
@@ -347,7 +360,7 @@ async def test_failed_history_save_does_not_acknowledge_member_receipts(tmp_path
     assert service.get(root.id).status == "waiting"
 
 
-async def test_legacy_completed_team_with_six_old_failures_does_not_wake_on_each_restart(tmp_path):
+async def test_legacy_active_team_with_old_failures_gets_bounded_nudges_without_replaying_receipts(tmp_path):
     service, root = setup_team(tmp_path)
     work = service.collaboration(root)
     for i in range(6):
@@ -357,12 +370,19 @@ async def test_legacy_completed_team_with_six_old_failures_does_not_wake_on_each
     root.team["wake"].pop("seen_results")
     root.team["used"]["wakes"] = 6
     service.ledger.save(root)
+    calls = []
+    async def coordinator(repo_root, root_id, events, **kwargs):
+        calls.append(events)
+        assert service.unseen_member_results(root_id) == []
+        service.begin_wake(root_id)
+        service.end_wake(root_id)
     for _ in range(2):
-        runner = TeamRunner(str(tmp_path), Pool(), coordinator=no_coordinator)
+        runner = TeamRunner(str(tmp_path), Pool(), coordinator=coordinator)
         await runner.recover()
-        assert not runner._driving and not runner._pending
+        await asyncio.gather(*list(runner._driving.values()))
         await runner.close()
-    assert service.get(root.id).team["used"]["wakes"] == 6
+    assert calls == [[NUDGE]] * 3 and service.get(root.id).status == 'waiting'
+    assert service.get(root.id).team["used"]["wakes"] == 9
 
 
 def test_seen_receipt_does_not_hide_a_new_rework_round(tmp_path):
