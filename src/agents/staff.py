@@ -18,6 +18,7 @@ def build_staff_member(root, role, member, *, check, llm=None, agent_factory=Non
     from src.agents.gate import make_confirm_gate
     from src.agents.capabilities import SessionCapabilities
     from src.agents.permissions import load_permissions
+    from src.llm.background import background_client
     from src.workflow.staff.registry import tool_catalog
     from src.workflow.staff.service import StaffService
     StaffService.executable(role)
@@ -77,7 +78,7 @@ def build_staff_member(root, role, member, *, check, llm=None, agent_factory=Non
     extra += ('\n如有值得记下的经验，可将最终答复写成 JSON：'
               '{"result":"完整交付正文","note_suggestions":["建议记下的条目"]}。'
               '建议不会直接保存，最多 8 条、每条 2000 字。没有建议时正常交回答复。')
-    agent = factory(tools, llm=llm, extra_system=extra,
+    agent = factory(tools, llm=llm if llm is not None else background_client(), extra_system=extra,
         max_steps=role['max_steps'], native=native_default(), raise_llm_errors=True,
         capabilities=SessionCapabilities.for_profile('external', root), permissions=load_permissions(root),
         confirm_gate=gate, execution_check=check, auto_recall=False, env_context=False)
