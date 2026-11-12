@@ -280,7 +280,9 @@ def test_schedule_goal_text_taints_memory_proposals_in_the_same_turn(tmp_path, m
     monkeypatch.setenv("VORTOONE_WORKSPACE_SCOPE", "general")
     captured = []
     monkeypatch.setattr("src.memory.assistant_profile.propose_memories", lambda *a, **k: captured.append(k))
-    session = {"repo_root": str(tmp_path), "activities": [
+    session = {"repo_root": str(tmp_path), "transcript": [
+        {"role": "assistant", "rid": rid, "source_tainted": False}
+        for rid in ("current", "another-turn")], "activities": [
         {"type": "agent_tool", "name": "schedule_list", "rid": "current", "result": "synthetic goal reminder"}]}
     _propose_turn_memories(session, "current", ["synthetic preference"])
     assert captured[-1]["tainted"]

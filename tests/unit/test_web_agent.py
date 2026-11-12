@@ -166,6 +166,7 @@ async def test_ws_agent_handler_invokes_read_tool(monkeypatch):
     tool_events = [m for m in ws.sent if m["type"] == "agent_tool"]
     assert [item["status"] for item in tool_events] == ["running", "succeeded"]
     assert tool_events[0]["id"] == tool_events[1]["id"]
+    assert tool_events[1]["source_untrusted"] is False
     assert tool_events[0]["summary"] == "浏览文件"
     assert any("仓库里有这些文件" in m.get("text", "") for m in ws.sent)
     _cleanup(ws)
