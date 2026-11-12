@@ -55,10 +55,13 @@ def test_web_tools_are_untrusted_source():
     assert t["web_fetch"].untrusted_source and t["web_search"].untrusted_source
 
 
-def test_memory_recall_and_proposal_listing_are_untrusted_sources(tmp_path):
+async def test_empty_memory_recall_is_clean_but_proposal_listing_is_untrusted(tmp_path):
     tools = {tool.name: tool for tool in build_memory_tools(str(tmp_path), _yes)}
-    assert tools["recall_memory"].untrusted_source
-    assert tools["list_memory_proposals"].untrusted_source
+    agent = MainAgent(list(tools.values()))
+    await agent._run_tools([('recall_memory', {})], 'plan', lambda _: None)
+    assert not taint.is_tainted()
+    await agent._run_tools([('list_memory_proposals', {})], 'plan', lambda _: None)
+    assert taint.is_tainted()
 
 
 def test_command_and_pr_tools_are_outward():
@@ -428,7 +431,9 @@ def test_realtime_memory_candidates_keep_conversation_evidence_taint(tmp_path, m
     seen = []
     monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     monkeypatch.setattr('src.memory.assistant_profile.propose_memories', lambda *args, **kwargs: seen.append(kwargs))
-    sess = {'repo_root': str(tmp_path), 'activities': [{'type': 'agent_tool', 'name': name, 'rid': 'current' if same_turn else 'previous'}]}
+    sess = {'repo_root': str(tmp_path),
+            'transcript': [{'role': 'assistant', 'rid': 'current', 'source_tainted': False}],
+            'activities': [{'type': 'agent_tool', 'name': name, 'rid': 'current' if same_turn else 'previous'}]}
     _propose_turn_memories(sess, 'current', ['fictional preference'])
     assert seen[0]['tainted'] is same_turn
 

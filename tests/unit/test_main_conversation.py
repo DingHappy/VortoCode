@@ -609,6 +609,7 @@ async def test_web_host_keeps_external_tools_and_taints_phone_memories(tmp_path,
         sess["activities"] = []                                       # 即使一个工具都没用
         realtime._propose_turn_memories(sess, "im-t1", ["synthetic preference"])
         sess["transcript"].append({"role": "user", "text": "电脑上", "rid": "desk-1"})
+        sess["transcript"].append({"role": "assistant", "rid": "desk-1", "source_tainted": False})
         realtime._propose_turn_memories(sess, "desk-1", ["synthetic preference"])
         assert seen == [True, False]
     finally:

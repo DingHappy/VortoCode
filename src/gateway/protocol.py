@@ -105,7 +105,7 @@ OUTBOUND: Dict[str, _Spec] = {
     AGENT_PLAN: (("items",), ()),
     AGENT_SAY: (("text",), ()),
     AGENT_PHASE: (("id", "phase", "status", "label"), ("detail", "duration_ms")),
-    AGENT_TOOL: (("id", "name", "status", "summary"), ("args", "result", "duration_ms")),
+    AGENT_TOOL: (("id", "name", "status", "summary"), ("args", "result", "duration_ms", "source_untrusted")),
     AGENT_HOOK: (("id", "name", "event", "status", "summary"),
                  ("tool", "message", "error", "duration_ms", "stop_execution")),
     AGENT_STREAM: (("text",), ()),
