@@ -27,6 +27,7 @@ PATH_OPS = {
     "/api/mobile/native/team/message": "team_message",
     "/api/mobile/native/team/decide": "team_decide",
     "/api/mobile/native/team/stop": "team_stop",
+    "/api/mobile/native/staff/action": "staff_action",
 }
 # 批准时必须是批准钥匙（Face ID）签的操作。对话里的卡片按卡片自己的风险级别在 AppTurns 里判。
 _APPROVAL_OPS = {"decide_codex", "dispatch"}

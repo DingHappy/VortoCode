@@ -42,6 +42,12 @@ final class OwnerSession {
     var teams: [TeamSummary] = []
     var sideChats: [SideChatSummary] = []
     var conversationsError = ""
+    var staffActions: [StaffActionCard] = []
+    var staffActionsError = ""
+    var staffActionsComplete = false
+    var staffApproval = StaffApprovalState()
+    private var staffRequest = UUID()
+    private var staffApprovalWork: UUID?
     private var timelineRequest = UUID()
     private var timelineEpoch = UUID()
     var chatApproval = ChatApprovalState()
@@ -63,6 +69,9 @@ final class OwnerSession {
         teams = []
         sideChats = []
         conversationsError = ""
+        staffActions = []; staffActionsError = ""; staffActionsComplete = false
+        staffRequest = UUID(); staffApproval.reset()
+        if staffApprovalWork != nil { working = false; staffApprovalWork = nil }
     }
     var note = ""
     var working = false
@@ -151,6 +160,89 @@ final class OwnerSession {
         } catch { say(error) }
         await refreshTimeline(entry, credential)
         await refreshConversations(entry, credential)
+        await refreshStaffActions(entry, credential)
+    }
+
+    func refreshStaffActions(_ entry: AssistantEntry, _ credential: NativeCredential) async {
+        guard canWrite, !Task.isCancelled else { return }
+        let epoch = timelineEpoch, request = UUID(); staffRequest = request
+        do {
+            var cards: [StaffActionCard] = [], after: String?, seen = Set<String>(), cursors = Set<String>(), complete = true
+            for _ in 0..<64 {
+                let page = try await api(entry).staffActions(credential, after: after)
+                try Task.checkCancellation()
+                guard epoch == timelineEpoch, staffRequest == request else { return }
+                for card in page.cards {
+                    guard seen.insert(card.id).inserted else { throw MobileError.invalidResponse }
+                    cards.append(card)
+                }
+                complete = complete && page.sourceComplete
+                guard let next = page.next else { after = nil; break }
+                guard cursors.insert(next).inserted else { throw MobileError.invalidResponse }
+                after = next
+            }
+            guard epoch == timelineEpoch, staffRequest == request else { return }
+            staffActions = cards; staffActionsComplete = complete && after == nil; staffActionsError = ""
+        } catch {
+            guard epoch == timelineEpoch, staffRequest == request, !Task.isCancelled else { return }
+            staffActionsError = "专员审批暂时无法核对，保留上次内容；请刷新后再决定。"
+            staffActionsComplete = false
+            if error as? MobileError == .unauthorized { sessionExpired?() }
+        }
+    }
+
+    func decideStaffAction(_ entry: AssistantEntry, _ credential: NativeCredential, _ card: StaffActionCard,
+                          approve: Bool, reason: String = "", sessionCurrent: @escaping @MainActor @Sendable () -> Bool) async {
+        guard sessionCurrent(), canWrite, let device = bootstrap?.device.id, !working, staffActionsError.isEmpty,
+              staffActions.contains(card), let attempt = staffApproval.begin(card: card, approve: approve, reason: reason) else { return }
+        let epoch = timelineEpoch, work = UUID(); staffApprovalWork = work; working = true
+        defer { if staffApprovalWork == work { staffApprovalWork = nil; working = false } }
+        do {
+            let fresh = try await api(entry).staffAction(credential, taskId: card.taskId)
+            guard sessionCurrent(), epoch == timelineEpoch, staffApproval.isCurrent(attempt) else { return }
+            guard fresh == card else { throw OwnerWriteError.rejected("专员卡片已变化，请刷新后重新核对") }
+            let receipt = try await api(entry).staffDecide(credential, signer: signer, deviceId: device,
+                card: card, approve: approve, reason: attempt.reason, beforeSend: { [weak self] in
+                    guard let current = self else { throw CancellationError() }
+                    try await MainActor.run {
+                        guard sessionCurrent(), epoch == current.timelineEpoch, !Task.isCancelled,
+                              current.canWrite, current.bootstrap?.device.id == device, current.staffActionsError.isEmpty,
+                              current.staffActions.contains(where: { $0.identity == card.identity && $0.canDecideOnPhone() }),
+                              current.staffApproval.willSend(attempt) else { throw CancellationError() }
+                    }
+                })
+            try Task.checkCancellation()
+            guard sessionCurrent(), epoch == timelineEpoch, staffApproval.isCurrent(attempt) else { return }
+            guard staffApproval.receive(receipt, for: attempt) else { throw MobileError.invalidResponse }
+            note = "已收到这次决定的回执；批准不代表专员已经执行完成。"
+            guard let checking = staffApproval.beginCheck() else { return }
+            let latest = try await api(entry).staffAction(credential, taskId: card.taskId)
+            guard sessionCurrent(), epoch == timelineEpoch else { return }
+            staffApproval.checked(latest, for: checking)
+            await refreshStaffActions(entry, credential)
+        } catch {
+            guard sessionCurrent(), epoch == timelineEpoch, staffApproval.failed(attempt) else { return }
+            if error is CancellationError {
+                if !staffApproval.blocksDecisions { note = "这次专员决定没有提交，请重新核对卡片。" }
+            } else { say(error) }
+        }
+    }
+
+    func checkStaffActionDecision(_ entry: AssistantEntry, _ credential: NativeCredential,
+                                 sessionCurrent: @escaping @MainActor @Sendable () -> Bool) async {
+        guard sessionCurrent(), canWrite, !working, let attempt = staffApproval.beginCheck() else { return }
+        let epoch = timelineEpoch, work = UUID(); staffApprovalWork = work; working = true
+        defer { if staffApprovalWork == work { staffApprovalWork = nil; working = false } }
+        do {
+            let card = try await api(entry).staffAction(credential, taskId: attempt.identity.taskId)
+            try Task.checkCancellation()
+            guard sessionCurrent(), epoch == timelineEpoch, staffApproval.checked(card, for: attempt) else { return }
+            note = "已核对审批状态；旧卡不能重发，执行结果仍需核对。"
+            await refreshStaffActions(entry, credential)
+        } catch {
+            guard sessionCurrent(), epoch == timelineEpoch, staffApproval.failed(attempt) else { return }
+            if !(error is CancellationError) { say(error) }
+        }
     }
 
     /// 抽屉里的小组和旁聊。旧服务没有这两个接口（404）时安静地留空。

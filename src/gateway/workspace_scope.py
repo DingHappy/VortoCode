@@ -85,6 +85,8 @@ _GENERAL_HTTP_PATTERNS = (
                r"|keys|decisions|decide|capture|changes|undo|push"
                # 对话：转给常驻助理以 owner_device 档案跑回合，不碰项目文件、Shell 或 Git
                r"|chat|chat/(send|turn|card)"
+               # 专员卡片只读投影与验签后的普通单次决定，不授予岗位或任务权限（L6）
+               r"|staff/(actions|action)"
                # 任务单：只读常驻助理已有的任务单，下发 / 撤回交给常驻助理执行
                r"|dispatches|dispatch"
                # 动态时间线（只读汇总）与恢复被暂停的目标

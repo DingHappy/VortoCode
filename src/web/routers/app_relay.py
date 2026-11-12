@@ -30,8 +30,10 @@ TEAM_PATH = "/api/assistant/app-relay/team"
 TEAM_OP_PATH = "/api/assistant/app-relay/team-op"
 SIDE_CHATS_PATH = "/api/assistant/app-relay/side-chats"
 SIDE_CHAT_PATH = "/api/assistant/app-relay/side-chat"
+STAFF_ACTIONS_PATH = '/api/assistant/app-relay/staff-actions'
+STAFF_ACTION_PATH = '/api/assistant/app-relay/staff-action'
 PATHS = (TURN_PATH, STATUS_PATH, CARD_PATH, CHAT_PATH, OP_PATH, TIMELINE_PATH, ACCESS_PATH,
-         TEAMS_PATH, TEAM_PATH, TEAM_OP_PATH, SIDE_CHATS_PATH, SIDE_CHAT_PATH)
+         TEAMS_PATH, TEAM_PATH, TEAM_OP_PATH, SIDE_CHATS_PATH, SIDE_CHAT_PATH, STAFF_ACTIONS_PATH, STAFF_ACTION_PATH)
 
 _turns = None
 
@@ -147,6 +149,35 @@ async def decide_card(request: Request):
     except KeyError:
         raise HTTPException(404, "没有这张卡") from None
     except AppTurnError as error:
+        raise HTTPException(409, str(error)) from None
+
+
+def _staff_actions():
+    from src.scheduling.staff_runner import get_staff_service
+    return get_staff_service(os.getcwd()).actions
+
+
+@router.post(STAFF_ACTIONS_PATH)
+async def staff_actions(request: Request):
+    _guard(request)
+    body = await _body(request)
+    if set(body) - {'task_id', 'after'} or 'task_id' in body and 'after' in body:
+        raise HTTPException(400, '读取条件无效')
+    try:
+        return _staff_actions().mobile_snapshot(**body)
+    except (ValueError, OSError) as error:
+        raise HTTPException(409, str(error)) from None
+
+
+@router.post(STAFF_ACTION_PATH)
+async def decide_staff_action(request: Request):
+    _guard(request)
+    _op, data, _key = _opened(await _body(request), {'staff_action'})
+    from src.workflow.staff.owner_confirmation import signed_staff_action
+    try:
+        with signed_staff_action(os.getcwd(), data):
+            return _staff_actions().decide_mobile(data)
+    except (ValueError, OSError) as error:
         raise HTTPException(409, str(error)) from None
 
 
