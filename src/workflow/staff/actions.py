@@ -156,7 +156,7 @@ class StaffActions:
                     raise ValueError('岗位或专员权限已变化，旧卡不能批准')
             from src.gateway.audit import append_audit
             if not append_audit(self.service.root, {'category': 'decision', 'operation': '专员审批：' + p['tool'],
-                    'decision': desired, 'operation_kind': p['kind'], 'approval_scope': 'once',
+                    'decision': 'allowed' if approve else 'denied', 'operation_kind': p['kind'], 'approval_scope': 'once',
                     'decision_source': 'user', 'approval_outcome': desired, 'tainted': p['tainted'],
                     'staff_task': task.id, 'staff_action': action_id, 'action_digest': card['digest'],
                     **{key: p[key] for key in ('nonce', 'round', 'instance', 'runtime')}}, durable=True):

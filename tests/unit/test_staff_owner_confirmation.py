@@ -127,6 +127,18 @@ def test_proposal_audit_is_durable_before_registration_and_failure_keeps_it_pend
     assert len(calls) == 1 and approvals.registry.role('reader')['revision'] == 1
 
 
+@pytest.mark.parametrize('approve', [True, False])
+def test_proposal_audit_readback_preserves_actual_owner_decision(tmp_path, owner_client, approve):
+    from src.gateway.audit import list_audit
+    approvals = StaffApprovals(str(tmp_path))
+    proposal = approvals.propose('owner', 'role', role(), '核对决定记录')
+    assert owner_client.post(f"/api/staff/proposals/{proposal['id']}/decision",
+        json=proposal_body(proposal, approve=approve)).status_code == 200
+    [entry] = list_audit(str(tmp_path))
+    assert entry['decision'] == ('allowed' if approve else 'denied')
+    assert entry['approval_outcome'] == ('approved' if approve else 'denied')
+
+
 @pytest.mark.parametrize('extra', [{'owner_confirmation': True}, {'signature': 'untrusted'},
     {'source': 'desktop'}, {'auto_approve': True}])
 def test_request_body_cannot_supply_owner_authority(tmp_path, owner_client, extra):
@@ -191,6 +203,9 @@ async def test_actions_require_owner_route_for_all_levels_and_run_once(tmp_path,
         assert owner_client.post(endpoint, json=body).json()['status'] == 'approved'
         await service.runner.join(task.id)
         assert len(invoked) == 1
+        from src.gateway.audit import list_audit
+        entry = next(x for x in list_audit(str(tmp_path)) if x.get('operation') == '专员审批：fixture_action')
+        assert entry['decision'] == 'allowed' and entry['approval_outcome'] == 'approved'
         assert owner_client.post(endpoint, json=body).json()['replayed'] is True
         assert len(invoked) == 1
     finally:

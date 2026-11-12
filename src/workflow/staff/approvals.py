@@ -273,8 +273,8 @@ class StaffApprovals:
     def _audit(self, item, approve):
         from src.gateway.audit import append_audit
         if not append_audit(self.registry.root, {'category': 'decision', 'operation': '专员登记：' + item['snapshot']['kind'],
-                'decision': 'approved' if approve else 'rejected', 'decision_source': 'user', 'operation_kind': 'execute',
-                'approval_scope': 'once', 'approval_outcome': 'approved' if approve else 'rejected',
+                'decision': 'allowed' if approve else 'denied', 'decision_source': 'user', 'operation_kind': 'execute',
+                'approval_scope': 'once', 'approval_outcome': 'approved' if approve else 'denied',
                 'staff_proposal': item['id'], 'action_digest': item['digest'],
                 'nonce': item['nonce'], 'round': self._round(item), 'instance': self.instance}, durable=True):
             raise OSError('审批审计保存失败，未授权登记')
