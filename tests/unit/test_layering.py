@@ -36,7 +36,7 @@ def _imports(path, root=SRC):
                                     'agents/tool_results.py', 'agents/tool_calls.py', 'agents/tool_arguments.py',
                                     'agents/backends/control.py', 'agents/backends/codex.py',
                                     'agents/backends/execution.py', 'agents/backends/observation_order.py',
-                                    'agents/backends/acp.py'])
+                                    'agents/backends/acp.py', 'agents/backends/entry.py'])
 def test_security_core_never_imports_upper_layers(module):
     forbidden = tuple('src.' + name for name in ('workflow', 'gateway', 'scheduling', 'web', 'tui', 'im'))
     found = [(line, name) for line, name in _imports(SRC / module)

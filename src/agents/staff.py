@@ -99,7 +99,9 @@ async def execute_staff(root, task, work, role, member, check, *, approval_servi
         from src.agents.team_members import execute_team_developer
         return await execute_team_developer(root, task, work)
     if role.get('project_binding'):
+        from functools import partial
         from src.agents.team_members import execute_development
+        from src.agents.team_engines import run_developer
         from src.workflow.staff.projects import check as check_project
         def record(delivery):
             check()
@@ -110,7 +112,8 @@ async def execute_staff(root, task, work, role, member, check, *, approval_servi
         return await execute_development(work, task,
             {**task.collaboration['dispatch'], 'model': member['model']}, member['engine'], check_project(role),
             bool(task.collaboration.get('tainted')), record_delivery=record, check=check,
-            execution_ref=execution.ref, on_snapshot=execution.publish)
+            execution_ref=execution.ref, on_snapshot=execution.publish,
+            execute_backend=partial(run_developer, member['engine'], member['model']))
     from dataclasses import replace
     import time
     from src.agents.backends.execution import ExecutionState

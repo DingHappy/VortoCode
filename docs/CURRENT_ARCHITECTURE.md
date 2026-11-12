@@ -28,11 +28,11 @@
 | --- | --- | --- |
 | 日常主会话 | `gateway/agent_session.build_session` → `MainAgent.run_turn` | 主核心不切换，自有工具统一进 ToolRuntime 和确认门 |
 | CLI 实现/审查 | `dev_tools` → `external_agent_for_role` → `ExternalWorkerAgent.run_turn` | Codex / Claude CLI，实验开关默认关闭，每次新执行；恢复沿用原合同 |
-| 专员隔离开发 | `agents/staff.execute_staff` → `team_members.execute_development` → `team_engines.run_external` → `AcpSession.run` | 目前仅 OpenCode；只在一次性副本改文件，测试和本地分支由 VortoOne 交付 |
+| 专员隔离开发 | `agents/staff.execute_staff` → `team_members.execute_development` → `team_engines.run_developer` → `backends/entry.execute_once` → 原 ACP 装配 | 目前仅 OpenCode；只在一次性副本改文件，测试和本地分支由 VortoOne 交付 |
 | 旧团队 ACP 成员 | `team_members.run_member` → `team_engines.run_external` | 保留已有研究员/审查员兼容，不由本次整理扩到新专员岗位 |
 | 已有 Codex 会话 | 已批准的监管动作 → `control_session` → `CodexBackend` → 现有 RPC 连接 | 不隐式创建会话，不改原生审批/沙箱，不把受理当作完成 |
 
-目前 MainAgent、CLI、ACP 和 Codex 有共同执行快照；ACP 保留 AcpResult 返回值。native 与固定项目开发专员已将报告绑定原任务并接入既有读取接口；旧团队开发、CLI 与概览的全面消费仍待后续。统一入口是下面的迁移目标。
+目前 MainAgent、CLI、ACP 和 Codex 有共同执行快照；ACP 保留 AcpResult 返回值。native 与固定项目开发专员已将报告绑定原任务并接入既有读取接口；薄执行入口首批只接固定项目 OpenCode 开发专员。旧团队开发、CLI、已有 Codex 会话与概览的全面消费仍待后续。
 
 ### 已确认的收敛路线
 
@@ -51,8 +51,8 @@ flowchart TD
 | 步骤 | 范围 | 完成标准 | 当前状态 |
 | --- | --- | --- | --- |
 | 1 | 架构地图、职责与迁移边界 | 能从本表找到修改落点，当前与目标分开 | PR #863，文档已提交，待合并 |
-| 2 | ACP 共同执行报告、原专员任务的报告关联和只读投影 | 原身份、轮次与尝试可核对；旧记录可读；迟到或未知报告不能冒充新执行或成功 | 本 PR；native 与固定项目开发专员，待合并 |
-| 3 | 薄执行入口，先迁 OpenCode 开发专员 | 业务端通过显式绑定调用；目录、权限、模型配置、测试、分支交付与失败语义不变；独立实跑验证 | 待实现 |
+| 2 | ACP 共同执行报告、原专员任务的报告关联和只读投影 | 原身份、轮次与尝试可核对；旧记录可读；迟到或未知报告不能冒充新执行或成功 | PR #864；native 与固定项目开发专员，待合并 |
+| 3 | 薄执行入口，先迁 OpenCode 开发专员 | 业务端通过显式绑定调用；目录、权限、模型配置、测试、分支交付与失败语义不变；独立实跑验证 | 本 PR；真实执行证据另列，待合并 |
 | 4 | 迁移 CLI 开发执行 | 独立 PR，保留实验开关和原恢复策略 | 本批不做 |
 | 5 | 迁移已有 Codex 会话控制 | 独立 PR，保留原会话与轮次绑定、受理/完成区分 | 本批不做 |
 | 6 | 统一前端投影、清理无调用兼容入口 | 原状态继续权威，界面不判断厂商协议，兼容清理有调用证据 | 本批不做 |
@@ -160,7 +160,7 @@ Desktop local Project 可绑定本机 Appium，观察原生界面及逐次确认
 | Codex App Server | 观察已有会话；批准后启动新轮次、补充要求和请求停止 | 不创建新核心进程，不取代 Gateway 主会话；真实版本与端到端链路需验收 |
 | Codex CLI | 隔离开发流水线的实现/审查角色 | 实验功能默认关闭；每次独立执行，不迁移旧会话 |
 | Claude Code CLI | 同样作为实现/审查角色的可选执行者 | 实验功能默认关闭；没有完整常驻会话控制接入 |
-| OpenCode ACP | 已接旧团队成员与隔离开发；新开发专员只在固定项目一次性副本执行 | 当前按任务起进程，有共同执行快照；薄运行入口待第 3 步，不替代主会话 |
+| OpenCode ACP | 已接旧团队成员与隔离开发；新开发专员只在固定项目一次性副本执行 | 当前按任务起进程，有共同执行快照；固定项目开发专员通过薄入口，不替代主会话 |
 | DeepSeek Harness ACP | 已接旧研究/审查成员的受限兼容路径 | 不用于开发成员；不借架构整理放宽新专员的岗位限制 |
 | 其它核心 | 可按实际需要编写适配器 | 未实现的执行器不因 ACP 客户端存在就被视为已接入 |
 
