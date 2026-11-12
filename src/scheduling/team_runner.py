@@ -236,6 +236,9 @@ class TeamRunner:
         for root in self.service.list():
             if root.status not in LIVE:
                 continue
+            driving = self._driving.get(root.id)
+            if root.id in self._pending or (driving is not None and not driving.done()) or self.runner.is_active(root.id):
+                continue  # This process already owns a scheduled/running coordinator wake.
             if root.team.get('staff_roster') and root.team.get('quota', {}).get('status') == 'waiting':
                 from src.workflow.staff.team_budget import TeamBudget
                 TeamBudget(self.repo_root, self.staff()).stage(root, root.team['quota'], interrupted=True)
@@ -251,6 +254,8 @@ class TeamRunner:
                 self.wake(root.id, "；".join(describe(child) for child in cut))
             elif root.team.get("inbox"):
                 self.wake(root.id, "仍有主人留言未完成交付；先核对现有任务状态和执行结果，再处理留言")
+            elif self._stuck(root.id):
+                self.wake(root.id, NUDGE)
             else:
                 self.kick(root.id)
 
