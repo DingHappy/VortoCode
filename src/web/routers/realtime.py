@@ -160,7 +160,7 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
                     valid = record_decision_audit(pending["root"], session=pending["session"], mode="build",
                         operation="本轮同类授权" if effective_scope == "turn" else "本次操作批准", decision=True,
                         tainted=bool(pending.get("tainted") or offer.state.tainted),
-                        approval={"operation_kind": offer.kind, "approval_scope": effective_scope, "decision_source": "user", "approval_outcome": "approved"}, durable=True)
+                        approval={"operation_kind": offer.kind, "approval_scope": effective_scope, "decision_source": "user", "approval_outcome": "approved", "approval_event": "scope_grant"}, durable=True)
                 if not valid:
                     pending["scope_rejected"] = True
                 fut.set_result(ApprovalDecision(True, effective_scope) if valid else False)

@@ -1712,6 +1712,12 @@
     ]
   },
   {
+    "path": "/api/staff/approval-stats",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/staff/actions/{task_id}",
     "methods": [
       "GET"

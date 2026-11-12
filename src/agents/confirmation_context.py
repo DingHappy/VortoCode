@@ -6,6 +6,7 @@ approval channel: the original gate and pending Future still own the decision.
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+import time
 
 _TURN: ContextVar[object | None] = ContextVar("confirmation_turn", default=None)
 _WEBSITE: ContextVar[dict | None] = ContextVar("website_confirmation", default=None)
@@ -36,6 +37,7 @@ def presenting_website(details: dict):
 
 
 _APPROVAL: ContextVar[dict | None] = ContextVar("approval_presentation", default=None)
+_OPENED: ContextVar[float | None] = ContextVar("approval_opened", default=None)
 
 
 def approval_details(kind: str | None) -> dict:
@@ -56,7 +58,9 @@ def record_approval_outcome(outcome: str, source: str = "user") -> None:
     """终端回报当前等待如何闭合；只影响审计展示，不生成批准。"""
     value = _APPROVAL.get()
     if value is not None:
-        _APPROVAL.set({**value, "approval_outcome": outcome, "decision_source": source})
+        opened = _OPENED.get()
+        timing = {} if opened is None else {"wait_seconds": max(0, time.monotonic() - opened)}
+        _APPROVAL.set({**value, **timing, "approval_outcome": outcome, "decision_source": source})
 
 
 def record_approval_scope(scope: str) -> None:
@@ -68,7 +72,9 @@ def record_approval_scope(scope: str) -> None:
 @contextmanager
 def presenting_approval(kind: str | None, *, source: str, scope: str):
     token = _APPROVAL.set({**approval_details(kind), "decision_source": source, "approval_scope": scope})
+    opened = _OPENED.set(time.monotonic() if source == 'user' else None)
     try:
         yield
     finally:
         _APPROVAL.reset(token)
+        _OPENED.reset(opened)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import threading
@@ -145,12 +146,14 @@ def record_decision_audit(
     }, durable=durable)
 
 
-def _approval_fields(value: Dict[str, Any]) -> Dict[str, str]:
+def _approval_fields(value: Dict[str, Any]) -> Dict[str, Any]:
     """只保存有限元数据；不把审批正文、工具参数或凭据复制进新的历史字段。"""
     from src.agents.trust import KINDS
     limits = {"operation_kind": (*KINDS, "unknown"), "risk": ("normal", "high", "unknown"),
               "required_key": ("device", "approval", "unknown"),
-              "approval_scope": ("once", "turn", "existing_trust", "none", "unknown"),
+              "approval_scope": ("once", "turn", "existing_trust", "task_workspace", "protective", "task", "standing", "none", "unknown"),
+              "approval_source": ("main", "staff", "routine", "registration", "other"),
+              "approval_event": ("decision", "scope_grant"),
               "decision_source": ("user", "preauthorized", "system", "timeout", "cancelled", "unknown"),
               "approval_outcome": ("approved", "denied", "expired", "cancelled", "unknown")}
     fields = {key: value[key] if isinstance(value.get(key), str) and value[key] in allowed else "unknown"
@@ -158,7 +161,47 @@ def _approval_fields(value: Dict[str, Any]) -> Dict[str, str]:
     ref = value.get("app_card_ref")
     if isinstance(ref, str) and re.fullmatch(r"[0-9a-f]{64}", ref):
         fields["app_card_ref"] = ref
+    seconds = value.get('wait_seconds')
+    if type(seconds) in (int, float) and math.isfinite(seconds) and seconds >= 0:
+        fields['wait_seconds'] = seconds
+    source_id = value.get('source_id')
+    if isinstance(source_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,160}', source_id):
+        fields['source_id'] = source_id
     return fields
+
+
+def approval_history(repo_root: str) -> dict:
+    """L0 metadata projection of the bounded audit tail, without the timeline's 500-row cap.
+
+    No action body, arguments or result leaves this reader. Truncation is explicit;
+    missing old fields remain missing rather than invented measurements.
+    """
+    path = state_dir(repo_root) / 'audit.log'
+    try:
+        size = path.stat().st_size
+        lines = _tail_lines(path)
+    except FileNotFoundError:
+        return {'entries': [], 'status': 'current'}
+    except OSError:
+        return {'entries': [], 'status': 'unavailable'}
+    partial, entries = size > _MAX_READ_BYTES, []
+    for line in lines:
+        try:
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError('invalid record')
+            if record.get('category') != 'decision':
+                continue
+            item = {key: record[key] for key in ('ts', 'timestamp', 'decision', 'tainted') if key in record}
+            item.update(_approval_fields(record))
+            for key in ('staff_task', 'staff_action', 'session'):
+                value = record.get(key)
+                if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,160}', value):
+                    item[key] = value
+            entries.append(item)
+        except (ValueError, TypeError):
+            partial = True
+    return {'entries': entries, 'status': 'partial' if partial else 'current'}
 
 
 def record_event_audit(

@@ -329,6 +329,7 @@ class AppTurns:
             approval={"operation_kind": card.operation_kind, "risk": card.risk,
                       "required_key": card.scope_keys[card.selected_scope], "approval_scope": card.selected_scope,
                       "decision_source": source, "approval_outcome": outcome,
+                      "approval_source": "main", "wait_seconds": max(0, self.clock() - card.created),
                       "app_card_ref": card_ref(turn.rid, card.id)}, durable=True)
         if outcome == "approved" and not saved:
             return False
@@ -345,7 +346,8 @@ class AppTurns:
         if turn is not None:
             from src.gateway.audit import record_decision_audit
             record_decision_audit(self.root, session=turn.rid, mode="build",
-                                  operation=f"App 回合操作 {turn.rid}", decision=decision, tainted=tainted)
+                                  operation=f"App 回合操作 {turn.rid}", decision=decision, tainted=tainted,
+                                  approval={**context, 'approval_source': 'main'})
 
     async def _tell(self, text: str) -> None:
         if self.notify is None:

@@ -85,6 +85,7 @@ class StaffActions:
             if previous:
                 receipt = {key: previous.get(key) for key in ('digest', 'status', 'reason', 'decision', 'decided_at')}
                 receipt.update({key: previous['payload'][key] for key in ('id', 'round', 'tool', 'kind', 'tainted')})
+                receipt.update({key: previous['payload'][key] for key in ('created', 'expires_at', 'member') if key in previous['payload']})
                 receipt['reason'] = str(receipt.get('reason') or '')[:240]
                 current.collaboration['approval_history'] = [*current.collaboration.get('approval_history', []), receipt][-32:]
             current.collaboration['approval'] = card
@@ -155,10 +156,15 @@ class StaffActions:
                 if member['revision'] != p['member_revision'] or role['revision'] != p['role_revision']:
                     raise ValueError('岗位或专员权限已变化，旧卡不能批准')
             from src.gateway.audit import append_audit
+            from src.workflow.staff.approval_stats import _instant, _task_source
+            source, source_id = _task_source(task, p)
+            created = _instant(p.get('created'))
+            timing = {'wait_seconds': max(0, self.clock() - created.timestamp())} if created else {}
             if not append_audit(self.service.root, {'category': 'decision', 'operation': '专员审批：' + p['tool'],
                     'decision': 'allowed' if approve else 'denied', 'operation_kind': p['kind'], 'approval_scope': 'once',
                     'decision_source': 'user', 'approval_outcome': desired, 'tainted': p['tainted'],
                     'staff_task': task.id, 'staff_action': action_id, 'action_digest': card['digest'],
+                    'approval_source': source, 'source_id': source_id, **timing,
                     **{key: p[key] for key in ('nonce', 'round', 'instance', 'runtime')}}, durable=True):
                 raise OSError('审批审计保存失败，未授权执行')
             work = self.service.collaboration(task.owner_session)

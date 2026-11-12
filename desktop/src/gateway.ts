@@ -391,6 +391,7 @@ export class GatewayClient {
   }
 
   readStaff(): Promise<StaffSnapshot> { return this.request("/api/staff"); }
+  readApprovalStats(days = 7): Promise<unknown> { return this.request(`/api/staff/approval-stats?days=${days}`); }
   proposeDevelopment(data: import('./lib/staff').DevelopmentProposal): Promise<unknown> {
     return this.request('/api/staff/development-proposals', { method: 'POST', body: JSON.stringify(data) });
   }

@@ -3,6 +3,8 @@ import { confirmAction } from "../../lib/confirm";
 import { GatewayClient } from "../../gateway";
 import { staffController, type StaffClient, type StaffState, type StaffRole, type StaffMember, type StaffProposal, type StaffBudgetSettings } from "../../lib/staff";
 import { StaffBudgets } from "./StaffBudgets";
+import { ApprovalStatsPane } from './ApprovalStatsPane';
+import type { ApprovalStatsClient } from '../../lib/approvalStats';
 import { RoutinesPane } from './RoutinesPane';
 import { DevelopmentStaff } from './DevelopmentStaff';
 import type { DevelopmentProposal } from '../../lib/staff';
@@ -116,7 +118,8 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
       void confirmAction(`撤掉「${member.name}」？保留历史记录，但不能再接活，本批不能恢复。`)
         .then(ok => { if (ok && current === controller.current) void current?.status(member, status); })
         .catch(() => { if (current === controller.current) setState(value => ({ ...value, error: "确认窗口未完成，请刷新后重试" })); });
-    }} />{client.readRoutines && client.changeRoutines
+    }} />{client.readApprovalStats && <ApprovalStatsPane client={client as StaffClient & ApprovalStatsClient}
+      names={Object.fromEntries([...(state.value?.members ?? []), ...(state.value?.routines ?? [])].map(item => [item.id, item.name]))} />}{client.readRoutines && client.changeRoutines
       ? <RoutinesPane client={client as StaffClient & RoutinesClient} onProposed={() => void controller.current?.refresh()} />
       : <p>当前连接尚不支持例行工作管理。</p>}</>;
 }
