@@ -68,6 +68,10 @@ class StaffRegistry:
         return tool_catalog(self.root)
 
     def _read(self, name: str, default: dict) -> dict:
+        from src.workflow.staff.bundles import visible
+        return visible(self, name, self._read_raw(name, default))
+
+    def _read_raw(self, name: str, default: dict) -> dict:
         path = self.directory / name
         if self.directory.is_symlink():
             raise ValueError('专员登记目录不能是符号链接')
@@ -84,6 +88,8 @@ class StaffRegistry:
         return value
 
     def _write(self, name: str, value: dict) -> None:
+        from src.workflow.staff.bundles import preserve_pending
+        value = preserve_pending(self, name, value)
         if self.directory.is_symlink():
             raise ValueError('专员登记目录不能是符号链接')
         self.directory.mkdir(parents=True, exist_ok=True)

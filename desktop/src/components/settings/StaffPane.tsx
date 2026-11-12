@@ -5,6 +5,7 @@ import { staffController, type StaffClient, type StaffState, type StaffRole, typ
 import { StaffBudgets } from "./StaffBudgets";
 import { RoutinesPane } from './RoutinesPane';
 import { DevelopmentStaff } from './DevelopmentStaff';
+import { StaffBundleReview } from './StaffBundleReview';
 import type { DevelopmentProposal } from '../../lib/staff';
 import type { RoutinesClient } from '../../lib/routines';
 import "./StaffPane.css";
@@ -43,7 +44,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
       {Boolean(value.standing_specialists?.length) && <details className="staff-section">
         <summary>查看三个常设专员的设置建议</summary>
         <div className="staff-section">
-        <p className="settings-card-note">这些是登记建议，尚未开通。先在主要聊天说明汇报时间、时区和公开研究话题，再逐项核对并批准岗位、专员、部门和例行工作。</p>
+        <p className="settings-card-note">这些是登记建议，尚未开通。先在主要聊天说明汇报时间、时区和公开研究话题，再核对整张开通单后批准。</p>
         {value.standing_specialists?.map(item => <article className="settings-card" key={item.id}>
           <strong>{item.title}</strong><p>{item.scope}</p><p className="settings-card-note">{item.guide}</p>
         </article>)}
@@ -51,21 +52,22 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
         </div>
       </details>}
       {value.budget_settings && <StaffBudgets value={value.budget_settings} usage={value.usage} disabled={disabled} onSave={onBudgets} />}
-      {value.proposals.some(p => ["pending", "applying"].includes(p.status)) && <section aria-label="待批登记" className="staff-section">
+      {value.proposals.some(p => ["pending", "applying", "cancelling"].includes(p.status)) && <section aria-label="待批登记" className="staff-section">
         <h3>待批登记</h3>
-        {value.proposals.filter(p => ["pending", "applying"].includes(p.status)).map(proposal => {
+        {value.proposals.filter(p => ["pending", "applying", "cancelling"].includes(p.status)).map(proposal => {
           const role = proposal.snapshot.kind === "role" ? proposal.snapshot.data as unknown as StaffRole : proposal.snapshot.role_snapshot;
           return <article className="settings-card" key={proposal.id}>
-            <strong>{proposal.snapshot.kind === 'routine_migration' ? '迁移旧定时事项' : String(proposal.snapshot.data.title ?? proposal.snapshot.data.name ?? "登记提议")}</strong>
+            <strong>{proposal.snapshot.kind === 'bundle' ? '专员开通单' : proposal.snapshot.kind === 'routine_migration' ? '迁移旧定时事项' : String(proposal.snapshot.data.title ?? proposal.snapshot.data.name ?? "登记提议")}</strong>
             <p>{proposal.reason}</p>
-            <p className="settings-card-note">{proposal.status === "applying" ? "已有主人批准记录，登记结果待核对；可核对后继续完成。" : "待你批准，尚未登记或授予权限。"}</p>
+            <p className="settings-card-note">{proposal.status === 'cancelling' ? '取消尚未完成，新登记仍未开放；请继续取消同一张单。' : proposal.status === "applying" ? "已有主人批准记录，登记结果待核对；可核对后继续完成。" : "待你批准，尚未登记或授予权限。"}</p>
+            {proposal.snapshot.kind === 'bundle' && <StaffBundleReview proposal={proposal} renderRole={role => <RoleGrants role={role} />} />}
             {role && <><p>{role.brief}</p><RoleGrants role={role} /></>}
             {proposal.snapshot.members_snapshot?.map(member => <div key={member.id}><strong>{member.name}</strong><RoleGrants role={member.role_snapshot} /></div>)}
             <details><summary>提议原文与变更前记录</summary><pre className="staff-record">{JSON.stringify(proposal.snapshot, null, 2)}</pre></details>
             <p className="settings-card-note">核对权限和完整内容后，由你批准这一次登记。</p>
             <div className="settings-card-actions">
-              <button disabled={disabled || proposal.status === "applying"} onClick={() => onDecide(proposal, false)}>拒绝</button>
-              <button className="primary" disabled={disabled} onClick={() => onDecide(proposal, true)}>批准登记</button>
+              <button disabled={disabled || (proposal.status === "applying" && proposal.snapshot.kind !== 'bundle')} onClick={() => onDecide(proposal, false)}>{proposal.status === 'cancelling' ? '继续取消开通单' : proposal.status === 'applying' ? '取消开通单' : '拒绝'}</button>
+              <button className="primary" disabled={disabled || proposal.status === 'cancelling'} onClick={() => onDecide(proposal, true)}>{proposal.snapshot.kind === 'bundle' ? proposal.status === 'applying' ? '继续完成开通单' : '批准整张开通单' : '批准登记'}</button>
             </div>
           </article>;
         })}

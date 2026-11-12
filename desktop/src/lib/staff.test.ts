@@ -60,3 +60,17 @@ it('refuses a development target removed after the form was displayed', async ()
   await f.controller.proposeDevelopment({ kind: 'role', id: 'example-dev', name: '项目开发', project: 'Example' });
   expect(f.client.proposeDevelopment).not.toHaveBeenCalled();
 });
+
+it('cancels the exact interrupted bundle through the same owner confirmation binding', async () => {
+  const f = fixture(); const proposal = f.snapshot.proposals[0];
+  proposal.snapshot = { kind: 'bundle', data: {}, previous: null, entries: [] }; proposal.status = 'applying';
+  await f.controller.refresh(); await f.controller.decide(proposal, false);
+  expect(f.client.decideStaff).toHaveBeenCalledWith('proposal', false, { digest: 'digest', nonce: 'nonce', round: 1, instance: 'instance' });
+});
+
+it('rejects completion when the displayed bundle has begun cancelling', async () => {
+  const f = fixture(); const proposal = f.snapshot.proposals[0];
+  proposal.snapshot = { kind: 'bundle', data: {}, previous: null, entries: [] }; proposal.status = 'cancelling';
+  await f.controller.refresh(); await f.controller.decide(proposal, true);
+  expect(f.client.decideStaff).not.toHaveBeenCalled(); expect(f.states[f.states.length - 1]?.error).toContain('变化');
+});
