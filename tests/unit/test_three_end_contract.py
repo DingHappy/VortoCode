@@ -71,6 +71,31 @@ async def test_agent_confirmation_cannot_resume_a_restarted_staff_task(tmp_path,
     assert TaskLedger(str(tmp_path)).load(task.id).status == 'interrupted'
     assert TaskLedger(str(tmp_path)).load(task.id).collaboration['round'] == 1
 
+@pytest.mark.parametrize('kind', ALL_ENDS + ['app'])
+async def test_bundle_proposal_never_registers_authority_from_any_agent_turn(tmp_path, kind):
+    import json
+    from src.gateway.agent_session import build_session
+    from src.workflow.staff.approvals import StaffApprovals
+    from src.workflow.staff.registry import StaffRegistry
+    from tests.unit.test_staff_bundles import bundle
+    class Model:
+        calls = 0
+        async def chat(self, messages, **kwargs):
+            self.calls += 1
+            return {'content': json.dumps({'tool': 'staff_propose', 'args': {
+                'kind': 'bundle', 'data': bundle(), 'reason': '核对完整方案'}}) if self.calls == 1 else '等待主人核对'}
+    async def yes(*args): return True
+    agent = build_session(str(tmp_path), kind='web' if kind == 'app' else kind, llm=Model(),
+        confirm=yes, can_ask_human=True, workspace_scope='general', task_owner='owner',
+        **({'capability_profile': 'owner_device'} if kind == 'app' else {}))
+    agent._auto_recall = False  # Isolate this proposal contract from L1, which is another PR.
+    await agent.run_turn('请提议完整开通单，等待我核对', mode='build')
+    assert StaffRegistry(str(tmp_path)).members() == []
+    assert 'reader' not in {row['id'] for row in StaffRegistry(str(tmp_path)).roles()}
+    records = StaffApprovals(str(tmp_path)).list()
+    assert len(records) == (0 if kind == 'im' else 1)
+    assert all(row['status'] == 'pending' for row in records)
+
 
 @pytest.mark.parametrize('verdict,answer', [(gate.DENY, True), (gate.ASK, False), (gate.ASK, True)])
 async def test_deferred_staff_transport_still_consumes_the_single_kernel_decision(tmp_path, monkeypatch, verdict, answer):
