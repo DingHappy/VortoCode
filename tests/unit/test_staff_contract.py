@@ -513,10 +513,12 @@ async def test_actual_member_assembly_runs_without_inheriting_owner_memory(tmp_p
     captured = []
     class Agent:
         _llm = None
-        async def run_turn(self, prompt, mode):
+        execution_report = None
+        async def run_turn(self, prompt, mode, execution_ref):
+            assert execution_ref.task_id == task.id and execution_ref.backend_id == 'vortocode'
             captured.append((prompt, mode))
             return '独立结论'
-    def factory(root, assigned, person, *, check):
+    def factory(root, assigned, person, *, check, on_tool_event):
         check()
         assert assigned == registry.role('reader') and person == member
         return Agent()

@@ -423,6 +423,7 @@ class StaffService:
 
 
 def staff_directory(root, *, include_prompts=False):
+    from src.workflow.staff.executions import execution_projection
     tasks = TaskLedger(root).list(limit=500)
     members = StaffRegistry(root).members()
     for member in members:
@@ -432,6 +433,7 @@ def staff_directory(root, *, include_prompts=False):
         member['busy'] = sum(t.status in {'queued', 'running', 'blocked'} for t in own)
         member['recent_tasks'] = [{'id': t.id, 'status': t.status, 'review': t.collaboration.get('review'),
             'delivery': t.collaboration['dispatch']['delivery'],
+            'execution': execution_projection(t),
             **({'prompt': t.prompt} if include_prompts else {})} for t in own[:10]]
     from src.workflow.staff.budgets import StaffBudgets
     from src.workflow.staff.notes import StaffNotes
