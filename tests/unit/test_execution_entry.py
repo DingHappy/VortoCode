@@ -108,3 +108,54 @@ async def test_developer_binding_refuses_a_different_task_before_start(monkeypat
         await team_engines.run_developer('opencode', '', 'prompt', timeout=30, child_id='task',
             workdir=str(tmp_path), execution_ref=replace(request().ref, task_id=task_id), check=lambda: None)
     assert calls == []
+
+
+@pytest.mark.parametrize('worker', ['codex', 'claude'])
+@pytest.mark.parametrize('mode', ['build', 'plan'])
+async def test_cli_agent_delegates_one_bound_attempt_with_original_context(monkeypatch, tmp_path, worker, mode):
+    from src.agents import external_workers as cli
+    from src.agents.backends.execution import ExecutionState
+    entered, invoked, progress = [], [], []
+    ref = ExecutionRef(worker, 'fixture-host', 'fixture-attempt', task_id='task', scope='runtime')
+
+    async def through_entry(binding, call, *, check):
+        entered.append((binding.backend_id, call))
+        return await execute_once(binding, call, check=check)
+
+    async def runner(backend, prompt, cwd, **options):
+        invoked.append((backend, prompt, cwd, options))
+        owned = options['execution_ref']
+        run = cli.WorkerRun(backend, final_text='checked result', exit_code=0, started=True,
+            run_id=owned.run_id, instance_id=owned.instance_id, task_id=owned.task_id, identity_scope=owned.scope)
+        options['on_event'](cli.WorkerEvent('command', 'pytest'))
+        options['on_snapshot'](run.execution_report)
+        return run
+
+    monkeypatch.setattr(cli, 'execute_once', through_entry, raising=False)
+    monkeypatch.setattr(cli, 'run_worker', runner)
+    monkeypatch.setattr(cli, 'worker_timeout', lambda: 37)
+    agent = cli.ExternalWorkerAgent(worker, str(tmp_path), write=True, system='fixed instructions', on_progress=progress.append)
+    assert await agent.run_turn('implement', mode=mode, execution_ref=ref) == 'checked result'
+    assert len(entered) == len(invoked) == 1
+    backend, call = entered[0]
+    assert backend == worker and call.ref == ref and call.prompt == 'implement' and call.timeout == 37
+    actual, prompt, cwd, options = invoked[0]
+    assert (actual, prompt, cwd) == (worker, call.prompt, str(tmp_path))
+    assert options['write'] is (mode == 'build') and options['system'] == 'fixed instructions'
+    assert options['timeout'] == 37 and options['execution_ref'] == ref
+    assert progress and agent.execution_report.ref == ref
+    assert agent.execution_report.state == ExecutionState.FINISHED
+
+
+async def test_cli_entry_rechecks_unattended_capabilities_without_starting_or_falling_back(monkeypatch, tmp_path):
+    from src.agents import external_workers as cli
+    from src.agents.capabilities import UNATTENDED_PROFILE
+    invoked = []
+    async def forbidden(*args, **kwargs):
+        invoked.append('run')
+    monkeypatch.setattr(cli, 'run_worker', forbidden)
+    agent = cli.ExternalWorkerAgent('codex', str(tmp_path), write=True,
+        capabilities=SimpleNamespace(profile=UNATTENDED_PROFILE), fallback=lambda: invoked.append('fallback'))
+    with pytest.raises(cli.ExternalWorkerError, match='无人值守'):
+        await agent.run_turn('implement')
+    assert not invoked and agent.last_run is None
