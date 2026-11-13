@@ -317,6 +317,13 @@ trait ResidentHost {
     fn model(&mut self) -> Result<ModelSnapshot, String>;
     fn register(&mut self, config: &ServiceConfig) -> Result<DesktopProjectProfile, String>;
     fn select(&mut self, config: &ServiceConfig) -> Result<(), String>;
+    fn remove_agent(&mut self, path: &Path) -> Result<(), String> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(_) => Err("无法移除常驻登录项，未声明停止完成".into()),
+        }
+    }
 }
 
 fn loaded(paths: &ResidentPaths, host: &mut impl ResidentHost) -> Result<bool, String> {
@@ -647,18 +654,29 @@ fn launch(
         return Err("本机常驻运行文件已变化，未启动".into());
     }
     write_agent(paths, record)?;
-    let output = host.launchctl(&[
+    let result = host.launchctl(&[
         "bootstrap".into(),
         paths.domain.clone(),
         paths.agent.to_string_lossy().into_owned(),
-    ])?;
-    if output.code != 0 {
-        if loaded(paths, host).is_ok_and(|value| !value) {
-            let _ = fs::remove_file(&paths.agent);
-        }
-        return Err("本机常驻启动未完成；资料与配置已保留".into());
+    ]);
+    let error = match result {
+        Ok(output) if output.code == 0 => return Ok(()),
+        Ok(_) => "本机常驻启动未完成；资料与配置已保留".into(),
+        Err(error) => error,
+    };
+    if loaded(paths, host).is_ok_and(|value| !value) {
+        let _ = remove_agent(paths, record, host);
     }
-    Ok(())
+    Err(error)
+}
+
+fn remove_agent(
+    paths: &ResidentPaths,
+    record: &Installation,
+    host: &mut impl ResidentHost,
+) -> Result<(), String> {
+    check_agent(paths, record)?;
+    host.remove_agent(&paths.agent)
 }
 
 fn unload(
@@ -671,11 +689,8 @@ fn unload(
     if output.code != 0 {
         return Err("本机常驻停止未完成，未更新配置".into());
     }
-    match fs::remove_file(&paths.agent) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(_) => Err("本机常驻已停止，但登录项未移除，请核对后重试".into()),
-    }
+    remove_agent(paths, record, host)
+        .map_err(|_| "本机常驻已停止，但登录项未移除，请核对后重试".into())
 }
 
 fn preflight(
@@ -725,11 +740,24 @@ fn status(
         });
     };
     let (state, launch_id, message) = match host.launchctl(&["print".into(), paths.target()]) {
-        Ok(output) if matches!(output.code, 3 | 113) => (
-            "stopped",
-            None,
-            "本机常驻服务当前未加载；资料与配置已保留".into(),
-        ),
+        Ok(output) if matches!(output.code, 3 | 113) => {
+            match fs::symlink_metadata(&paths.agent) {
+                Err(error) if error.kind() == ErrorKind::NotFound => (
+                    "stopped",
+                    None,
+                    "本机常驻服务当前未加载；资料与配置已保留".into(),
+                ),
+                Err(_) => return Err("无法核对本机常驻登录项".into()),
+                Ok(_) => {
+                    check_agent(paths, &record)?;
+                    (
+                        "cleanup_required",
+                        None,
+                        "服务当前未加载，但登录项待清理；请重试移除，否则下次登录仍可能启动".into(),
+                    )
+                }
+            }
+        }
         Ok(output) if output.code == 0 => match host.report(&config).and_then(|report| {
             valid_report(&config, &report)?;
             Ok(report)
@@ -871,6 +899,10 @@ fn start(
 ) -> Result<LocalResidentStatus, String> {
     let (record, _) = require_installation(paths, expected)?;
     if !loaded(paths, host)? {
+        check_agent(paths, &record)?;
+        if paths.agent.exists() {
+            return Err("登录项待清理，请先重试停止本机常驻服务".into());
+        }
         launch(paths, &record, host)?;
     }
     status(paths, version, host)
@@ -895,12 +927,7 @@ fn stop(
     if running {
         unload(paths, &record, host)?;
     } else {
-        check_agent(paths, &record)?;
-        match fs::remove_file(&paths.agent) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
-            Err(_) => return Err("无法移除常驻登录项，未声明停止完成".into()),
-        }
+        remove_agent(paths, &record, host)?;
     }
     status(paths, version, host)
 }
@@ -962,6 +989,9 @@ fn change(
         unload(paths, &old, host)?;
     } else {
         check_agent(paths, &old)?;
+        if paths.agent.exists() {
+            return Err("登录项待清理，请先重试停止本机常驻服务".into());
+        }
     }
     if let Err(error) = save_installation(paths, &next) {
         if running {
@@ -974,6 +1004,9 @@ fn change(
             // Never roll back over a possibly started new process. An ambiguous
             // launch remains visible for the owner; no blind kill or extra start.
             if loaded(paths, host).is_ok_and(|value| !value) {
+                // A failed/timeout bootstrap can leave the new login item behind.
+                // Keep its matching pointer unless exact-owned cleanup succeeds.
+                remove_agent(paths, &next, host)?;
                 save_installation(paths, &old)?;
                 if launch(paths, &old, host).is_ok() {
                     return Err("变更启动失败，已恢复旧运行版本与配置；请核对服务状态".into());
@@ -981,11 +1014,6 @@ fn change(
             }
             return Err(format!("{error}；启动结果待核对，未自动重试任务"));
         }
-    } else if paths.agent.exists() {
-        // A stopped service may still have an unloaded login item. Keep its
-        // explicit login preference while updating the exact owned definition.
-        fs::remove_file(&paths.agent).map_err(|_| "更新配置已保存，但旧登录项未移除；请核对")?;
-        write_agent(paths, &next)?;
     }
     status(paths, version, host)
 }
@@ -1286,17 +1314,24 @@ impl ResidentHost for NativeHost {
 }
 
 fn private_socket(root: &Path) -> Result<PathBuf, String> {
-    let directory = fs::symlink_metadata(root).map_err(|_| "本机常驻私有目录不可用")?;
-    if !directory.is_dir() || directory.file_type().is_symlink() {
+    let data_directory = fs::symlink_metadata(root).map_err(|_| "本机常驻私有目录不可用")?;
+    if !data_directory.is_dir() || data_directory.file_type().is_symlink() {
         return Err("本机常驻私有目录无效".into());
     }
-    let socket = root.join("service.sock");
+    let socket = crate::resident_socket::socket_path(root, current_uid())?;
+    let directory = fs::symlink_metadata(socket.parent().unwrap())
+        .map_err(|_| "本机常驻私有连接目录尚未就绪")?;
+    if !directory.is_dir() || directory.file_type().is_symlink() {
+        return Err("本机常驻私有连接目录无效".into());
+    }
     let metadata =
         fs::symlink_metadata(&socket).map_err(|_| "本机常驻私有连接尚未就绪；未尝试网络连接")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::{FileTypeExt, MetadataExt};
-        if directory.uid() != current_uid()
+        if data_directory.uid() != current_uid()
+            || data_directory.mode() & 0o777 != 0o700
+            || directory.uid() != current_uid()
             || directory.mode() & 0o777 != 0o700
             || !metadata.file_type().is_socket()
             || metadata.file_type().is_symlink()
@@ -1323,9 +1358,12 @@ pub(crate) fn local_resident_socket_for_project(
     socket_for_project(&ResidentPaths::from_app(app)?, project_id)
 }
 
+pub(crate) fn is_local_resident_project(project_id: &str) -> bool {
+    project_id == remote_project_id(VIRTUAL_ORIGIN, "@assistant")
+}
+
 fn socket_for_project(paths: &ResidentPaths, project_id: &str) -> Result<Option<PathBuf>, String> {
-    let managed_id = remote_project_id(VIRTUAL_ORIGIN, "@assistant");
-    if project_id != managed_id {
+    if !is_local_resident_project(project_id) {
         return Ok(None);
     }
     let (record, config) =
@@ -1610,6 +1648,11 @@ mod tests {
         confirmed: bool,
         supports_resident: bool,
         fail_bootstrap: usize,
+        error_bootstrap: usize,
+        fail_agent_removal: usize,
+        bootstrap_print_errors: usize,
+        bootstrap_agent_removal_failures: usize,
+        print_errors: usize,
         ambiguous_bootstrap: bool,
         launch_stdout: String,
         report_error: bool,
@@ -1626,6 +1669,11 @@ mod tests {
                 confirmed: true,
                 supports_resident: true,
                 fail_bootstrap: 0,
+                error_bootstrap: 0,
+                fail_agent_removal: 0,
+                bootstrap_print_errors: 0,
+                bootstrap_agent_removal_failures: 0,
+                print_errors: 0,
                 ambiguous_bootstrap: false,
                 launch_stdout: "state = running".into(),
                 report_error: false,
@@ -1659,6 +1707,10 @@ mod tests {
         fn launchctl(&mut self, arguments: &[String]) -> Result<LaunchOutput, String> {
             self.calls.push(arguments.join(" "));
             let code = match arguments[0].as_str() {
+                "print" if self.print_errors > 0 => {
+                    self.print_errors -= 1;
+                    return Err("fixture launchctl print unavailable".into());
+                }
                 "print" => {
                     if self.loaded {
                         0
@@ -1670,6 +1722,13 @@ mod tests {
                     self.fail_bootstrap -= 1;
                     self.loaded = self.ambiguous_bootstrap;
                     5
+                }
+                "bootstrap" if self.error_bootstrap > 0 => {
+                    self.error_bootstrap -= 1;
+                    self.loaded = self.ambiguous_bootstrap;
+                    self.print_errors = self.bootstrap_print_errors;
+                    self.fail_agent_removal = self.bootstrap_agent_removal_failures;
+                    return Err("fixture launchctl timeout".into());
                 }
                 "bootstrap" => {
                     self.loaded = true;
@@ -1716,6 +1775,17 @@ mod tests {
         }
         fn select(&mut self, _config: &ServiceConfig) -> Result<(), String> {
             Ok(())
+        }
+        fn remove_agent(&mut self, path: &Path) -> Result<(), String> {
+            if self.fail_agent_removal > 0 {
+                self.fail_agent_removal -= 1;
+                return Err("fixture login item removal failed".into());
+            }
+            match fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.to_string()),
+            }
         }
     }
 
@@ -1996,6 +2066,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn resident_managed_identity_without_private_socket_never_selects_tcp_fallback() {
         let (paths, source, mut host) = fixture("no-socket-fallback");
         let installed = install(
@@ -2012,12 +2083,12 @@ mod tests {
         assert!(socket_for_project(&paths, "another-remote-instance")
             .unwrap()
             .is_none());
-        fs::write(
-            paths.root.join("service.sock"),
-            b"ordinary file is not a socket",
-        )
-        .unwrap();
+        let endpoint = crate::resident_socket::socket_path(&paths.root, current_uid()).unwrap();
+        private_dir(endpoint.parent().unwrap()).unwrap();
+        fs::write(&endpoint, b"ordinary file is not a socket").unwrap();
         assert!(socket_for_project(&paths, installed.project_id.as_deref().unwrap()).is_err());
+        fs::remove_file(&endpoint).unwrap();
+        fs::remove_dir(endpoint.parent().unwrap()).unwrap();
         fs::remove_dir_all(paths.root.parent().unwrap()).unwrap();
     }
 
@@ -2064,7 +2135,8 @@ mod tests {
         )
         .unwrap();
         let (_, config) = load_installation(&paths).unwrap().unwrap();
-        let socket = paths.root.join("service.sock");
+        let socket = crate::resident_socket::socket_path(&paths.root, current_uid()).unwrap();
+        private_dir(socket.parent().unwrap()).unwrap();
         let listener = UnixListener::bind(&socket).unwrap();
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
         let expected_token = config.token.clone();
@@ -2104,6 +2176,8 @@ mod tests {
         server.join().unwrap();
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o666)).unwrap();
         assert!(private_socket(&paths.root).is_err());
+        fs::remove_file(&socket).unwrap();
+        fs::remove_dir(socket.parent().unwrap()).unwrap();
         fs::remove_dir_all(paths.root.parent().unwrap()).unwrap();
     }
 
@@ -2130,6 +2204,119 @@ mod tests {
         )
         .is_err());
         fs::remove_dir_all(paths.root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn resident_bootstrap_error_restores_a_startable_old_installation() {
+        let (paths, source, mut host) = fixture("bootstrap-error-rollback");
+        let installed = install(
+            &paths, &source, "first", &mut host, false, true, NOT_INSTALLED,
+        )
+        .unwrap();
+        start(&paths, "first", &mut host, &installed.revision).unwrap();
+        let (old, _) = load_installation(&paths).unwrap().unwrap();
+        fs::write(source.join("_internal/data"), b"replacement program").unwrap();
+        host.error_bootstrap = 1;
+        assert!(change(
+            &paths, "second", &mut host, &old.revision, Some("launch-first"),
+            Change::Program(&source),
+        )
+        .is_err());
+        let (current, _) = load_installation(&paths).unwrap().unwrap();
+        assert_eq!(current.revision, old.revision);
+        assert!(check_agent(&paths, &current).is_ok());
+        assert!(host.loaded);
+        start(&paths, "second", &mut host, &current.revision).unwrap();
+        fs::remove_dir_all(paths.root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn resident_bootstrap_error_keeps_matching_new_files_when_rollback_is_not_safe() {
+        for reason in ["loaded", "unknown", "cleanup-failed"] {
+            let (paths, source, mut host) = fixture(reason);
+            let installed = install(
+                &paths, &source, "first", &mut host, false, true, NOT_INSTALLED,
+            )
+            .unwrap();
+            start(&paths, "first", &mut host, &installed.revision).unwrap();
+            fs::write(source.join("_internal/data"), b"replacement program").unwrap();
+            host.error_bootstrap = 1;
+            host.ambiguous_bootstrap = reason == "loaded";
+            host.bootstrap_print_errors = if reason == "unknown" { 2 } else { 0 };
+            host.bootstrap_agent_removal_failures = if reason == "cleanup-failed" { 2 } else { 0 };
+            host.calls.clear();
+            assert!(change(
+                &paths, "second", &mut host, &installed.revision, Some("launch-first"),
+                Change::Program(&source),
+            )
+            .is_err());
+            let (current, _) = load_installation(&paths).unwrap().unwrap();
+            assert_ne!(current.revision, installed.revision, "{reason}");
+            assert!(paths.agent.is_file(), "{reason}");
+            assert!(check_agent(&paths, &current).is_ok(), "{reason}");
+            assert_eq!(host.calls.iter().filter(|call| call.starts_with("bootstrap ")).count(), 1);
+            assert_eq!(host.calls.iter().filter(|call| call.starts_with("bootout ")).count(), 1);
+            fs::remove_dir_all(paths.root.parent().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn resident_stop_removal_failure_stays_explicit_and_can_be_retried_without_a_launch() {
+        let (paths, source, mut host) = fixture("stop-cleanup-retry");
+        let installed = install(
+            &paths, &source, "first", &mut host, true, true, NOT_INSTALLED,
+        )
+        .unwrap();
+        start(&paths, "first", &mut host, &installed.revision).unwrap();
+        host.fail_agent_removal = 1;
+        assert!(stop(
+            &paths, "first", &mut host, &installed.revision, Some("launch-first"),
+        )
+        .is_err());
+        let pending = status(&paths, "first", &mut host).unwrap();
+        assert_eq!(pending.state, "cleanup_required");
+        assert!(pending.launch_id.is_none());
+        assert!(paths.agent.is_file());
+        assert!(start(&paths, "first", &mut host, &installed.revision).is_err());
+        assert!(change(
+            &paths, "first", &mut host, &installed.revision, None, Change::Model,
+        )
+        .is_err());
+        assert_eq!(load_installation(&paths).unwrap().unwrap().0.revision, installed.revision);
+        host.calls.clear();
+        let stopped = stop(&paths, "first", &mut host, &installed.revision, None).unwrap();
+        assert_eq!(stopped.state, "stopped");
+        assert!(!paths.agent.exists());
+        assert!(host.calls.iter().all(|call| call.starts_with("print ")));
+        fs::remove_dir_all(paths.root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn resident_cleanup_retry_never_removes_a_foreign_item_or_stops_a_live_service() {
+        for foreign in [false, true] {
+            let (paths, source, mut host) = fixture("cleanup-recheck");
+            let installed = install(
+                &paths, &source, "first", &mut host, false, true, NOT_INSTALLED,
+            )
+            .unwrap();
+            start(&paths, "first", &mut host, &installed.revision).unwrap();
+            host.fail_agent_removal = 1;
+            assert!(stop(
+                &paths, "first", &mut host, &installed.revision, Some("launch-first"),
+            )
+            .is_err());
+            if foreign {
+                fs::write(&paths.agent, b"foreign login item").unwrap();
+            } else {
+                host.loaded = true;
+            }
+            let before = fs::read(&paths.agent).unwrap();
+            host.calls.clear();
+            assert!(stop(&paths, "first", &mut host, &installed.revision, None).is_err());
+            assert_eq!(fs::read(&paths.agent).unwrap(), before);
+            assert!(host.calls.iter().all(|call| call.starts_with("print ")));
+            fs::remove_dir_all(paths.root.parent().unwrap()).unwrap();
+        }
     }
 
     #[test]

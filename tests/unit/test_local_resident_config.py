@@ -260,38 +260,112 @@ def test_resident_socket_is_private_and_existing_active_socket_is_not_unlinked()
     import socket
     import stat
     import tempfile
-    from desktop.local_resident_config import prepare_resident_socket
+    from desktop.local_resident_config import prepare_resident_socket, resident_socket_path
 
-    with tempfile.TemporaryDirectory(prefix="vr-", dir=str(Path(tempfile.gettempdir()).resolve())) as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="vr-", dir=str(Path(tempfile.gettempdir()).resolve())
+    ) as directory:
         root = Path(directory)
         root.chmod(0o700)
         workspace = root / "assistant"
         workspace.mkdir(mode=0o700)
         path = prepare_resident_socket(workspace)
-        assert path == root / "service.sock"
-        assert stat.S_ISSOCK(path.stat().st_mode)
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600
-        path.unlink()
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as active:
-            active.bind(str(path))
-            path.chmod(0o600)
-            active.listen(1)
-            inode = path.stat().st_ino
-            assert prepare_resident_socket(workspace) == path
-            assert path.stat().st_ino == inode
+        try:
+            assert path == resident_socket_path(root)
+            assert stat.S_ISSOCK(path.stat().st_mode)
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+            path.unlink()
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as active:
+                active.bind(str(path))
+                path.chmod(0o600)
+                active.listen(1)
+                inode = path.stat().st_ino
+                assert prepare_resident_socket(workspace) == path
+                assert path.stat().st_ino == inode
+        finally:
+            path.unlink(missing_ok=True)
+            path.parent.rmdir()
 
 
 def test_resident_socket_cannot_replace_a_file_or_link(tmp_path):
-    from desktop.local_resident_config import prepare_resident_socket
+    from desktop.local_resident_config import prepare_resident_socket, resident_socket_path
 
     tmp_path.chmod(0o700)
     workspace = tmp_path / "assistant"
     workspace.mkdir(mode=0o700)
-    path = tmp_path / "service.sock"
-    path.write_text("owner data")
-    with pytest.raises(ValueError):
-        prepare_resident_socket(workspace)
-    assert path.read_text() == "owner data"
+    path = resident_socket_path(tmp_path)
+    path.parent.mkdir(mode=0o700)
+    try:
+        path.write_text("owner data")
+        with pytest.raises(ValueError):
+            prepare_resident_socket(workspace)
+        assert path.read_text() == "owner data"
+    finally:
+        path.unlink()
+        path.parent.rmdir()
+
+
+def test_socket_identity_matches_native_protocol_and_separates_instances():
+    from desktop.local_resident_config import _socket_directory_name
+
+    assert (
+        _socket_directory_name(Path("/fixture/application-data/local-resident"), 501)
+        == "vortoone-resident-501-e8689798d38e6f28"
+    )
+    assert _socket_directory_name(Path("/fixture/a"), 501) != _socket_directory_name(
+        Path("/fixture/b"), 501
+    )
+    assert _socket_directory_name(Path("/fixture/a"), 501) != _socket_directory_name(
+        Path("/fixture/a"), 502
+    )
+
+
+def test_socket_never_reuses_an_insecure_or_linked_endpoint_directory(tmp_path):
+    import stat
+    from desktop.local_resident_config import prepare_resident_socket, resident_socket_path
+
+    tmp_path.chmod(0o700)
+    workspace = tmp_path / "assistant"
+    workspace.mkdir(mode=0o700)
+    endpoint = resident_socket_path(tmp_path)
+    endpoint.parent.mkdir(mode=0o700)
+    endpoint.parent.chmod(0o755)
+    try:
+        with pytest.raises(ValueError):
+            prepare_resident_socket(workspace)
+        assert stat.S_IMODE(endpoint.parent.stat().st_mode) == 0o755
+        endpoint.parent.rmdir()
+        endpoint.parent.symlink_to(workspace, target_is_directory=True)
+        with pytest.raises(ValueError):
+            prepare_resident_socket(workspace)
+        assert endpoint.parent.is_symlink()
+    finally:
+        if endpoint.parent.is_symlink():
+            endpoint.parent.unlink()
+        else:
+            endpoint.parent.rmdir()
+
+
+def test_long_state_directory_still_gets_a_private_usable_socket(tmp_path):
+    import stat
+    from desktop.local_resident_config import prepare_resident_socket
+
+    root = tmp_path / ("long-user-data-" * 8)
+    root.mkdir(mode=0o700)
+    workspace = root / "assistant"
+    workspace.mkdir(mode=0o700)
+    assert len(os.fsencode(root / "service.sock")) > 103
+    endpoint = None
+    try:
+        endpoint = prepare_resident_socket(workspace)
+        assert len(os.fsencode(endpoint)) <= 103
+        assert stat.S_ISSOCK(endpoint.stat().st_mode)
+        assert stat.S_IMODE(endpoint.stat().st_mode) == 0o600
+        assert stat.S_IMODE(endpoint.parent.stat().st_mode) == 0o700
+    finally:
+        if endpoint is not None:
+            endpoint.unlink()
+            endpoint.parent.rmdir()
 
 
 def test_original_server_uses_unix_transport_without_a_network_listener(monkeypatch):

@@ -12,13 +12,14 @@ type LocalResidentViewProps = {
   canUse?: boolean;
   blocked?: boolean;
 };
-const STATE_LABELS: Record<LocalResidentStatus['state'], string> = { not_installed: '尚未安装', stopped: '已停止', starting: '正在启动', running: '正在运行', unavailable: '状态无法确认' };
+const STATE_LABELS: Record<LocalResidentStatus['state'], string> = { not_installed: '尚未安装', stopped: '已停止', cleanup_required: '登录项待清理', starting: '正在启动', running: '正在运行', unavailable: '状态无法确认' };
 
 export function LocalResidentView({ state, onRefresh, onAction, selectedHostId, connected = false, canUse = false, blocked = false }: LocalResidentViewProps) {
   const [copyModelProfile, setCopyModelProfile] = useState(false);
   const [cronEnabled, setCronEnabled] = useState(false);
   const { value, busy, error, notice, checkedAt } = state;
   const ready = Boolean(value?.supported && value.revision && !error && !busy && !blocked && !['starting', 'unavailable'].includes(value.state));
+  const cleanupRequired = value?.state === 'cleanup_required';
   const using = Boolean(!error && value?.state === 'running' && value.projectId && value.projectId === selectedHostId && connected);
   return <section className="settings-card local-resident-card" aria-label="本机常驻助理">
     <div className="settings-card-head"><strong>本机常驻助理</strong><button disabled={busy} onClick={onRefresh}>{busy ? '正在核对…' : '刷新状态'}</button></div>
@@ -45,9 +46,9 @@ export function LocalResidentView({ state, onRefresh, onAction, selectedHostId, 
           <details className="settings-runtime-details"><summary>程序与模型配置</summary>
             <p className="settings-card-note">更新程序保留常驻配置。模型配置需单独应用；Desktop 退出模型账号不会撤销这份配置。</p>
             <div className="settings-actions">
-              <button disabled={!ready} onClick={() => onAction('update')}>更新程序</button>
-              <button disabled={!ready} onClick={() => onAction('apply_model')}>应用当前模型配置</button>
-              {value.state === 'running' && <button className="danger" disabled={!ready || !value.launchId} onClick={() => onAction('stop')}>停止本机常驻助理</button>}
+              <button disabled={!ready || cleanupRequired} onClick={() => onAction('update')}>更新程序</button>
+              <button disabled={!ready || cleanupRequired} onClick={() => onAction('apply_model')}>应用当前模型配置</button>
+              {(value.state === 'running' || cleanupRequired) && <button className="danger" disabled={!ready || !cleanupRequired && !value.launchId} onClick={() => onAction('stop')}>{cleanupRequired ? '重试移除登录项' : '停止本机常驻助理'}</button>}
             </div>
           </details>
         </>}

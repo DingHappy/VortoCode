@@ -8,6 +8,7 @@ of arbitrary commands or new capabilities.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -170,6 +171,31 @@ def prepare_resident(
     return Path(value["workspace_root"]), value["port"]
 
 
+def _socket_directory_name(root: Path, uid: int) -> str:
+    identity = hashlib.sha256(
+        b"vortoone-local-resident-socket-v1\0"
+        + str(uid).encode("ascii")
+        + b"\0"
+        + os.fsencode(root)
+    ).hexdigest()[:16]
+    return f"vortoone-resident-{uid}-{identity}"
+
+
+def resident_socket_path(root: Path) -> Path:
+    """Derive the same short endpoint as native code without inheriting TMPDIR."""
+    if not root.is_absolute():
+        raise ValueError("本机常驻资料目录必须是绝对路径")
+    canonical = root.resolve(strict=True)
+    path = (
+        Path("/tmp").resolve(strict=True)
+        / _socket_directory_name(canonical, os.getuid())
+        / "service.sock"
+    )
+    if len(os.fsencode(path)) > 103:
+        raise ValueError("本机常驻私有连接路径超过系统限制")
+    return path
+
+
 def prepare_resident_socket(workspace: Path) -> Path:
     """Create a private placeholder without unlinking a possibly active server.
 
@@ -187,7 +213,19 @@ def prepare_resident_socket(workspace: Path) -> Path:
             or parent.resolve() != parent
         ):
             raise ValueError("本机常驻连接目录权限不安全")
-        path = parent / "service.sock"
+        path = resident_socket_path(parent)
+        try:
+            path.parent.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        private = path.parent.lstat()
+        if (
+            not stat.S_ISDIR(private.st_mode)
+            or private.st_uid != os.getuid()
+            or stat.S_IMODE(private.st_mode) != 0o700
+            or path.parent.resolve() != path.parent
+        ):
+            raise ValueError("本机常驻私有连接目录已存在但权限不安全；未修改原目录")
         try:
             endpoint = path.lstat()
         except FileNotFoundError:

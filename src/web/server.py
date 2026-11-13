@@ -174,7 +174,15 @@ def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = "", *, uds
     # access_log=False：token 现已移出 URL（走 httpOnly Cookie / Authorization 头，审计 P0#4 已收口），
     # URL 里不再有敏感串；仍关访问日志作为纵深防御（少一处可能记录敏感请求体/头的面）。应用级日志不受影响。
     transport = {"uds": uds} if uds else {"host": host, "port": port}
-    uvicorn.run(app, **transport, log_level="warning", access_log=False)
+    # Only the trusted resident launcher supplies a validated private socket.
+    # Scope evidence belongs to this listener, never to global app state or headers.
+    if uds:
+        from src.web.trusted_transport import PrivateUnixTransport
+
+        listener_app = PrivateUnixTransport(app)
+    else:
+        listener_app = app
+    uvicorn.run(listener_app, **transport, log_level="warning", access_log=False)
 
 
 if __name__ == "__main__":

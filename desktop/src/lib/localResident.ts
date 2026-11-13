@@ -4,7 +4,7 @@ import type { DesktopProjectProfile } from '../types';
 export interface LocalResidentStatus {
   supported: boolean;
   installed: boolean;
-  state: 'not_installed' | 'stopped' | 'starting' | 'running' | 'unavailable';
+  state: 'not_installed' | 'stopped' | 'cleanup_required' | 'starting' | 'running' | 'unavailable';
   version?: string;
   availableVersion: string;
   cronEnabled: boolean;
@@ -41,7 +41,7 @@ export const localResidentClient: LocalResidentClient = {
 
 function checked(value: LocalResidentStatus): LocalResidentStatus {
   if (!value || typeof value.supported !== 'boolean' || typeof value.installed !== 'boolean'
-    || !['not_installed', 'stopped', 'starting', 'running', 'unavailable'].includes(value.state)
+    || !['not_installed', 'stopped', 'cleanup_required', 'starting', 'running', 'unavailable'].includes(value.state)
     || typeof value.cronEnabled !== 'boolean' || typeof value.availableVersion !== 'string') {
     throw new Error('本机常驻状态无法核对，请刷新后重试');
   }
@@ -89,6 +89,7 @@ export function localResidentController(client: LocalResidentClient, publish: (s
         if (current()) { useStatus(next, Date.now()); emit({ notice: '安装操作已完成，尚未切换当前对话。' }); }
       } else {
         if (!value.installed) throw new Error('请先安装本机常驻助理');
+        if (value.state === 'cleanup_required' && action !== 'stop') throw new Error('登录项待清理，请先重试移除登录项');
         if (action === 'connect') {
           if (value.state !== 'running') throw new Error('本机常驻助理尚未运行，请先启动');
           if (!value.launchId) throw new Error('运行实例无法核对，请刷新后重试');
@@ -109,7 +110,7 @@ export function localResidentController(client: LocalResidentClient, publish: (s
             if (!value.launchId) throw new Error('运行实例无法核对，请刷新后重试');
             expected.expectedLaunchId = value.launchId;
           }
-          if (action === 'stop' && value.state !== 'running') throw new Error('本机常驻助理当前未运行');
+          if (action === 'stop' && value.state !== 'running' && value.state !== 'cleanup_required') throw new Error('本机常驻助理当前未运行');
           const next = await (action === 'stop' ? client.stop(expected) : action === 'update' ? client.update(expected) : client.applyModel(expected));
           if (current()) { useStatus(next, Date.now()); emit({ notice: action === 'stop' ? '停止操作已完成，请核对运行状态。' : action === 'update' ? '程序更新已完成，模型配置保持独立。' : '已应用当前保存的模型配置。' }); }
         }

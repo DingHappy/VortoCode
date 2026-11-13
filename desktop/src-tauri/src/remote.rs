@@ -2,6 +2,147 @@
 // 从 lib.rs 原样搬出；令牌只在 Rust 侧注入，webview 拿不到原文。
 use super::*;
 
+/// Change preference for an already trusted assistant; never register a new origin or token.
+fn select_registered_assistant_at(
+    path: &Path,
+    project_id: &str,
+) -> Result<DesktopProjectProfile, String> {
+    if crate::local_resident::is_local_resident_project(project_id) {
+        return Err("本机常驻助手必须核对当前运行实例后选择".into());
+    }
+    let mut registry = load_project_registry(path)?;
+    let index = registry
+        .projects
+        .iter()
+        .position(|profile| {
+            profile.id == project_id
+                && profile.kind == PROJECT_KIND_REMOTE
+                && profile.repo_root == ASSISTANT_HOST_ROOT
+                && !profile.assistant_pending
+        })
+        .ok_or("未找到已登记的常驻助手；默认位置未改变")?;
+    let mut profile = registry.projects[index].clone();
+    let base = validate_remote_server_url(&profile.base_url)?;
+    if base != profile.base_url || remote_project_id(&base, ASSISTANT_HOST_ROOT) != project_id {
+        return Err("常驻助手登记身份不符；默认位置未改变".into());
+    }
+    profile.last_opened_at = now_epoch_seconds()?.max(
+        registry
+            .projects
+            .iter()
+            .map(|item| item.last_opened_at)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1),
+    );
+    registry.projects.remove(index);
+    registry.projects.insert(0, profile.clone());
+    save_project_registry(path, &registry)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+pub(crate) fn select_registered_assistant(
+    app: AppHandle,
+    project_id: String,
+) -> Result<DesktopProjectProfile, String> {
+    select_registered_assistant_at(&project_registry_path(&app)?, &project_id)
+}
+
+#[cfg(test)]
+mod assistant_selection_tests {
+    use super::*;
+
+    fn fixture() -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "vorto-assistant-select-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("projects.json");
+        (root, path)
+    }
+
+    fn assistant(base: &str, opened: u64) -> DesktopProjectProfile {
+        DesktopProjectProfile {
+            id: remote_project_id(base, ASSISTANT_HOST_ROOT),
+            name: "fixture".into(),
+            repo_root: ASSISTANT_HOST_ROOT.into(),
+            base_url: base.into(),
+            last_opened_at: opened,
+            kind: PROJECT_KIND_REMOTE.into(),
+            assistant_pending: false,
+        }
+    }
+
+    #[test]
+    fn registered_remote_selection_survives_registry_reload_without_re_registration() {
+        let (root, path) = fixture();
+        let old = assistant("https://old.example", 100);
+        let selected = assistant("https://selected.example", 1);
+        save_project_registry(
+            &path,
+            &DesktopProjectRegistry {
+                projects: vec![old.clone(), selected.clone()],
+            },
+        )
+        .unwrap();
+        let saved = select_registered_assistant_at(&path, &selected.id).unwrap();
+        let reloaded = load_project_registry(&path).unwrap();
+        assert_eq!(reloaded.projects[0], saved);
+        assert_eq!(saved.id, selected.id);
+        assert!(saved.last_opened_at > old.last_opened_at);
+        assert_eq!(reloaded.projects[1], old);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn assistant_selection_rejects_unknown_pending_local_and_project_entries_without_mutating_registry(
+    ) {
+        let (root, path) = fixture();
+        let mut pending = assistant("https://pending.example", 1);
+        pending.assistant_pending = true;
+        let mut local = assistant("https://local.example", 2);
+        local.kind = "local".into();
+        let mut project = assistant("https://project.example", 3);
+        project.repo_root = "/srv/project".into();
+        project.id = remote_project_id(&project.base_url, &project.repo_root);
+        let managed = assistant("http://127.0.0.1:18731", 4);
+        let mut invalid_id = assistant("https://invalid.example", 5);
+        invalid_id.id = "untrusted-identity".into();
+        let registry = DesktopProjectRegistry {
+            projects: vec![
+                pending.clone(),
+                local.clone(),
+                project.clone(),
+                managed.clone(),
+                invalid_id.clone(),
+            ],
+        };
+        save_project_registry(&path, &registry).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        for id in [
+            "unknown",
+            &pending.id,
+            &local.id,
+            &project.id,
+            &managed.id,
+            &invalid_id.id,
+        ] {
+            assert!(
+                select_registered_assistant_at(&path, id).is_err(),
+                "accepted {id}"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
 // ── 远程工作区注册（R3a）──────────────────────────────────────────────────────
 // 与本地注册（remember_project_at）完全分开：local 流的强不变量（Git 根 + 本机 URL）一点
 // 不动；remote 是独立、显式校验（validate_remote_server_url）的旁路。repo_root 存服务器侧

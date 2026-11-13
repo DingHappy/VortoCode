@@ -22,6 +22,7 @@ mod gateway_process;
 mod remote;
 mod resident_desktop;
 mod local_resident;
+mod resident_socket;
 use local_resident::*;
 mod workspace_files;
 mod llm_profile;
@@ -1693,6 +1694,7 @@ pub fn run() {
             local_resident_update,
             local_resident_connect,
             local_resident_select,
+            select_registered_assistant,
             local_resident_apply_model,
             refresh_resident_desktop,
             save_resident_desktop_target,

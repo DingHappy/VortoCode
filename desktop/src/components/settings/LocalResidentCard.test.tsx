@@ -46,4 +46,15 @@ describe('local resident card', () => {
     expect(stale.match(/<button[^>]*>使用本机常驻助理<\/button>/)?.[0]).toContain('disabled');
     expect(stale).toContain('role="alert"');
   });
+  it('keeps cleanup explicit and offers a retry without a running launch', () => {
+    const markup = render({ ...status, state: 'cleanup_required', launchId: undefined });
+    expect(markup).toContain('登录项待清理');
+    const retry = markup.match(/<button[^>]*>重试移除登录项<\/button>/)?.[0];
+    expect(retry).toBeDefined();
+    expect(retry).not.toContain('disabled');
+    for (const label of ['更新程序', '应用当前模型配置', '使用本机常驻助理']) {
+      expect(markup.match(new RegExp(`<button[^>]*>${label}</button>`))?.[0]).toContain('disabled');
+    }
+    expect(markup).not.toContain('>启动本机常驻助理</button>');
+  });
 });

@@ -43,6 +43,19 @@ describe('local resident owner actions', () => {
     const f = fixture(status({ state: 'stopped', launchId: undefined })); await f.controller.refresh(); await f.controller.change('update');
     expect(f.client.update).toHaveBeenCalledWith({ expectedRevision: 'rev-one' });
   });
+  it('retries login-item cleanup without a launch identity', async () => {
+    const f = fixture(status({ state: 'cleanup_required', launchId: undefined }));
+    await f.controller.refresh(); await f.controller.change('stop');
+    expect(f.client.stop).toHaveBeenCalledWith({ expectedRevision: 'rev-one' });
+    expect(f.last().value?.state).toBe('stopped');
+    expect(f.client.start).not.toHaveBeenCalled();
+  });
+  it.each(['start', 'update', 'apply_model', 'connect'] as const)('blocks %s while login-item cleanup is pending', async action => {
+    const f = fixture(status({ state: 'cleanup_required', launchId: undefined }));
+    await f.controller.refresh(); await f.controller.change(action);
+    for (const method of ['start', 'update', 'applyModel', 'connect'] as const) expect(f.client[method]).not.toHaveBeenCalled();
+    expect(f.last().error).toContain('登录项');
+  });
   it('does not connect a stopped service or manufacture a selected host', async () => {
     const f = fixture(status({ state: 'stopped', launchId: undefined })); await f.controller.refresh(); await f.controller.change('connect');
     expect(f.client.connect).not.toHaveBeenCalled(); expect(f.onUse).not.toHaveBeenCalled();
