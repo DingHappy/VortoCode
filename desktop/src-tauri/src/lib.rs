@@ -21,6 +21,9 @@ use profile_store::*;
 mod gateway_process;
 mod remote;
 mod resident_desktop;
+mod local_resident;
+mod resident_socket;
+use local_resident::*;
 mod workspace_files;
 mod llm_profile;
 mod llm_services;
@@ -450,6 +453,7 @@ const ASSISTANT_HOST_ROOT: &str = "@assistant";
 fn configure_codex_watch(command: &mut Command, app: &AppHandle, scope: &str, preferences: &DesktopPreferences) {
     command.env_remove("VORTOONE_CODEX_REPORT_URL");
     command.env_remove("VORTOONE_CODEX_REPORT_TOKEN");
+    command.env_remove("VORTOONE_CODEX_REPORT_SOCKET");
     if scope != GENERAL_SCOPE || preferences.codex_watch_disabled {
         return;
     }
@@ -460,10 +464,14 @@ fn configure_codex_watch(command: &mut Command, app: &AppHandle, scope: &str, pr
             registry
                 .projects
                 .into_iter()
-                .find(|project| project.kind == "remote" && project.repo_root == ASSISTANT_HOST_ROOT)
+                .find(|project| project.kind == "remote" && project.repo_root == ASSISTANT_HOST_ROOT && !project.assistant_pending)
         })
     else {
         return;
+    };
+    let socket = match local_resident_socket_for_project(app, &host.id) {
+        Ok(socket) => socket,
+        Err(_) => return, // A managed local host must never fall back to its virtual TCP origin.
     };
     let Some(token) = remote_token_keychain::read(&host.id).ok().flatten().filter(|token| !token.trim().is_empty())
     else {
@@ -471,6 +479,9 @@ fn configure_codex_watch(command: &mut Command, app: &AppHandle, scope: &str, pr
     };
     command.env("VORTOONE_CODEX_REPORT_URL", host.base_url.trim_end_matches('/'));
     command.env("VORTOONE_CODEX_REPORT_TOKEN", token.trim());
+    if let Some(socket) = socket {
+        command.env("VORTOONE_CODEX_REPORT_SOCKET", socket);
+    }
 }
 
 #[tauri::command(async)]
@@ -684,6 +695,8 @@ struct DesktopProjectProfile {
     last_opened_at: u64,
     #[serde(default = "default_project_kind")]
     kind: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    assistant_pending: bool,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -1157,6 +1170,7 @@ fn remember_project_at(
         base_url: normalized_url,
         last_opened_at: now_epoch_seconds()?,
         kind: PROJECT_KIND_LOCAL.into(),
+        assistant_pending: false,
     };
     let mut registry = load_project_registry(path)?;
     let profile = upsert_project(&mut registry, profile);
@@ -1648,6 +1662,7 @@ pub fn run() {
         .manage(DesktopLlmProfileStore::default())
         .manage(RemoteWsRegistry::default())
         .manage(ResidentDesktopManager::default())
+        .manage(LocalResidentManager::default())
         .manage(account::AccountState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1672,6 +1687,15 @@ pub fn run() {
             set_experimental_workers,
             get_desktop_control,
             get_resident_desktop,
+            local_resident_status,
+            local_resident_install,
+            local_resident_start,
+            local_resident_stop,
+            local_resident_update,
+            local_resident_connect,
+            local_resident_select,
+            select_registered_assistant,
+            local_resident_apply_model,
             refresh_resident_desktop,
             save_resident_desktop_target,
             check_resident_desktop,
@@ -2596,6 +2620,7 @@ mod tests {
             base_url: String::new(),
             last_opened_at: 0,
             kind: "local".into(),
+            assistant_pending: false,
         };
         let found = recent_project_sessions(&project);
         assert_eq!(found.len(), 1);
@@ -3133,6 +3158,7 @@ mod tests {
                 base_url: "http://8.8.8.8:8080".into(), // 篡改成公网 http
                 last_opened_at: 1,
                 kind: PROJECT_KIND_REMOTE.into(),
+                assistant_pending: false,
             }],
         };
         save_project_registry(&registry_path, &registry).expect("save");
@@ -3156,6 +3182,7 @@ mod tests {
                 base_url: "https://attacker.tld".into(), // 目的地被换
                 last_opened_at: 1,
                 kind: PROJECT_KIND_REMOTE.into(),
+                assistant_pending: false,
             }],
         };
         save_project_registry(&registry_path, &registry).expect("save");
@@ -3395,6 +3422,7 @@ mod tests {
                     base_url: "http://127.0.0.1:8080".into(),
                     last_opened_at: 2,
                     kind: PROJECT_KIND_LOCAL.into(),
+                    assistant_pending: false,
                 },
                 DesktopProjectProfile {
                     id: "two".into(),
@@ -3403,6 +3431,7 @@ mod tests {
                     base_url: "http://127.0.0.1:8081".into(),
                     last_opened_at: 1,
                     kind: PROJECT_KIND_LOCAL.into(),
+                    assistant_pending: false,
                 },
             ],
         };
@@ -3428,6 +3457,7 @@ mod tests {
                     base_url: "http://127.0.0.1:8080".into(),
                     last_opened_at: index as u64,
                     kind: PROJECT_KIND_LOCAL.into(),
+                    assistant_pending: false,
                 },
             );
         }
@@ -4003,6 +4033,7 @@ mod tests {
                 base_url: "http://127.0.0.1:8080".into(),
                 last_opened_at: 1,
                 kind: PROJECT_KIND_LOCAL.into(),
+                assistant_pending: false,
             }],
         };
         let recoveries = GatewayRecoveryRegistry {
@@ -4067,6 +4098,7 @@ mod tests {
                     base_url: "http://127.0.0.1:8080".into(),
                     last_opened_at: 2,
                     kind: PROJECT_KIND_LOCAL.into(),
+                    assistant_pending: false,
                 },
                 DesktopProjectProfile {
                     id: "remote".into(),
@@ -4075,6 +4107,7 @@ mod tests {
                     base_url: "https://srv.ts.net".into(),
                     last_opened_at: 1,
                     kind: PROJECT_KIND_REMOTE.into(),
+                    assistant_pending: false,
                 },
             ],
         };

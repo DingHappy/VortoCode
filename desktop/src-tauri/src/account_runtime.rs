@@ -124,12 +124,8 @@ fn view(target: &Target, record: Record, proof: Option<&account::RuntimeProof>) 
     }
 }
 
-fn http() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .build()
+fn http(socket: Option<&Path>) -> Result<reqwest::Client, String> {
+    remote::remote_http_client(Duration::from_secs(10), socket)
         .map_err(|_| "无法创建助手连接".to_string())
 }
 
@@ -199,9 +195,10 @@ pub(crate) async fn resident_account_status(
 ) -> Result<View, String> {
     let path = project_registry_path(&app)?;
     let selected = target(&path, &project_id)?;
+    let socket = local_resident::local_resident_socket_for_project(&app, &project_id)?;
     let record = parse_record(
         &request(
-            &http()?,
+            &http(socket.as_deref())?,
             &selected,
             &credential(&project_id)?,
             reqwest::Method::GET,
@@ -257,7 +254,8 @@ pub(crate) async fn resident_account_update(
         return Err("已取消账号关联修改".into());
     }
     same_target(&path, &selected)?;
-    let client = http()?;
+    let socket = local_resident::local_resident_socket_for_project(&app, &project_id)?;
+    let client = http(socket.as_deref())?;
     let token = credential(&project_id)?;
     let before =
         parse_record(&request(&client, &selected, &token, reqwest::Method::GET, None).await?)?;
@@ -384,7 +382,7 @@ mod tests {
                 base,
             };
             let outcome = tauri::async_runtime::block_on(request(
-                &http().unwrap(),
+                &http(None).unwrap(),
                 &selected,
                 "fixture-admin",
                 reqwest::Method::GET,
@@ -398,5 +396,93 @@ mod tests {
             }
             server.join().unwrap();
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_account_request_uses_private_socket_and_never_tcp_fallback() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn respond<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+            stream: &mut S,
+        ) -> String {
+            let mut head = Vec::new();
+            while !head.windows(4).any(|value| value == b"\r\n\r\n") {
+                let mut byte = [0];
+                assert_eq!(stream.read(&mut byte).await.unwrap(), 1);
+                head.push(byte[0]);
+                assert!(head.len() < 8192);
+            }
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            String::from_utf8(head).unwrap()
+        }
+        tauri::async_runtime::block_on(async {
+            let root = PathBuf::from("/tmp").join(format!("vo-account-uds-{}", std::process::id()));
+            std::fs::create_dir(&root).unwrap();
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let socket = root.join("s");
+            let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let selected = Target {
+                id: "fixture".into(),
+                name: "fixture".into(),
+                base: format!("http://{}", tcp.local_addr().unwrap()),
+            };
+            let accepted = Arc::new(AtomicUsize::new(0));
+            let count = accepted.clone();
+            let trap = tauri::async_runtime::spawn(async move {
+                loop {
+                    let (mut stream, _) = tcp.accept().await.unwrap();
+                    count.fetch_add(1, Ordering::SeqCst);
+                    respond(&mut stream).await;
+                }
+            });
+            let server = tauri::async_runtime::spawn(async move {
+                let (mut stream, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .map_err(|_| ())?
+                        .map_err(|_| ())?;
+                let head = respond(&mut stream).await;
+                assert!(head.starts_with("GET /api/mobile/account/registration HTTP/1.1\r\n"));
+                assert!(head
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer fixture-owner"));
+                Ok::<(), ()>(())
+            });
+            let first = request(
+                &http(Some(&socket)).unwrap(),
+                &selected,
+                "fixture-owner",
+                reqwest::Method::GET,
+                None,
+            )
+            .await;
+            let served = server.await.unwrap();
+            let second = request(
+                &http(Some(&root.join("missing"))).unwrap(),
+                &selected,
+                "fixture-owner",
+                reqwest::Method::GET,
+                None,
+            )
+            .await;
+            trap.abort();
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(
+                accepted.load(Ordering::SeqCst),
+                0,
+                "account credentials reached the TCP origin"
+            );
+            assert!(
+                served.is_ok(),
+                "account request did not reach the private fixture"
+            );
+            assert_eq!(first.unwrap(), b"{}");
+            assert!(second.is_err());
+        });
     }
 }
