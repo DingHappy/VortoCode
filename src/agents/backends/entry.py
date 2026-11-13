@@ -1,14 +1,15 @@
 """One-shot entry over an explicitly supplied trusted binding.
 
 No registry, process pool, task store, permission policy, retry or fallback.
-Session control retains its separate lifecycle contract until migrated.
+Existing-session control delegates its separate native lifecycle contract.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Generic, TypeVar
+from typing import Awaitable, Callable, Generic, Literal, TypeVar
 
+from src.agents.backends.control import BackendControlError, ControlReceipt, SessionControlBackend, control_session
 from src.agents.backends.execution import ExecutionRef
 
 T = TypeVar('T')
@@ -67,3 +68,26 @@ async def execute_once(binding: ExecutionBinding[T], request: OneShotRequest, *,
     result = await binding.invoke(request)
     check()
     return result
+
+
+@dataclass(frozen=True)
+class SessionRequest:
+    """One already-approved operation on an existing, host-selected session."""
+    backend_id: str
+    session_id: str
+    action: Literal['message', 'interrupt']
+    text: str = ''
+    expected_turn_id: str | None = None
+
+
+async def control_existing(backend: SessionControlBackend, request: SessionRequest) -> ControlReceipt:
+    """Enter native control without converting it to a new one-shot execution.
+
+    The original controller owns fresh state, capability and receipt checks.
+    A receipt remains acceptance only; no post-send failure is reclassified as
+    definitely unsent, and no session is launched, retried or moved to a CLI.
+    """
+    if request.backend_id != backend.backend_id:
+        raise BackendControlError('会话执行身份与可信绑定不匹配，未执行')
+    return await control_session(backend, request.session_id, action=request.action,
+        text=request.text, expected_turn_id=request.expected_turn_id)
