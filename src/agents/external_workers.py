@@ -46,6 +46,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from src.agents.backends.entry import ExecutionBinding, OneShotRequest, execute_once
 from src.agents.backends.execution import (
     ExecutionFailure, ExecutionProgress, ExecutionRef, ExecutionResult, ExecutionSnapshot,
     ExecutionState, ExecutionUsage, new_run_id, process_instance,
@@ -714,8 +715,12 @@ class ExternalWorkerAgent:
         from src.agents.capabilities import UNATTENDED_PROFILE
         self._execution_report = None
         self._effective_agent = None
-        if getattr(self.capabilities, "profile", None) == UNATTENDED_PROFILE:
-            raise ExternalWorkerError("无人值守档位不允许启动外部执行者（fail-closed）")
+
+        def check() -> None:
+            if getattr(self.capabilities, "profile", None) == UNATTENDED_PROFILE:
+                raise ExternalWorkerError("无人值守档位不允许启动外部执行者（fail-closed）")
+
+        check()
 
         def observe(snapshot: ExecutionSnapshot) -> None:
             # Process exit is a source fact. This adapter must still check errors
@@ -734,8 +739,18 @@ class ExternalWorkerAgent:
         from src.agents.taint import mark_tainted
         if getattr(self.question, "tainted", False):
             mark_tainted()                     # 之前的问答来自不可信回合：本回合同样按污点处理
-        run = await run_worker(self.worker, message, self.cwd, write=self.write and mode != "plan",
-                               system=system, on_event=_event, execution_ref=execution_ref, on_snapshot=observe)
+        # Bind the existing CLI runner explicitly; the common entry does not
+        # select a program, add a retry or take ownership of fallback/questions.
+        worker, cwd, write = self.worker, self.cwd, self.write and mode != "plan"
+        ref = execution_ref or ExecutionRef(worker, process_instance('external-cli'), new_run_id())
+        request = OneShotRequest(ref, message, worker_timeout())
+
+        async def invoke(call: OneShotRequest) -> WorkerRun:
+            return await run_worker(worker, call.prompt, cwd, write=write, system=system,
+                timeout=call.timeout, on_event=_event, execution_ref=call.ref, on_snapshot=observe)
+
+        binding = ExecutionBinding(worker, frozenset({'execution.run'}), invoke)
+        run = await execute_once(binding, request, check=check)
         self.last_run = run
         if run.used_network:
             mark_tainted()
