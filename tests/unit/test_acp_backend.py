@@ -1,5 +1,6 @@
 """ACP 通用客户端（ADR-014 S2）：用一个假的 ACP 框架进程，离线验证协议、权限、文件边界、污点和超时。"""
 import json
+import asyncio
 import os
 import sys
 import textwrap
@@ -66,6 +67,8 @@ FAKE = textwrap.dedent(r'''
                 say(sid, "选择=" + json.dumps(reply.get("result")))
             if SCENARIO == "local":
                 update(sid, {"sessionUpdate": "tool_call", "toolCallId": "t2", "title": "read a.py", "kind": "read", "status": "completed"})
+            if SCENARIO == "foreign":
+                say("another-session", "foreign result must not enter this execution")
             if SCENARIO == "files":
                 inside = call("fs/read_text_file", {"sessionId": sid, "path": os.path.join(os.environ["FAKE_ROOT"], "a.txt"), "line": 2, "limit": 1}, 901)
                 outside = call("fs/read_text_file", {"sessionId": sid, "path": "/etc/hosts"}, 902)
@@ -85,7 +88,7 @@ FAKE = textwrap.dedent(r'''
                         send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "cancelled"}})
                         break
                 continue
-            send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
+            send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "future_stop" if SCENARIO == "unknown_stop" else "end_turn"}})
 ''')
 
 
@@ -111,6 +114,94 @@ def fake(tmp_path, monkeypatch):
 
 def _log(fake):
     return [json.loads(line) for line in fake.log.read_text().splitlines() if line.strip()]
+
+
+async def test_execution_report_tracks_bound_session_and_publishes_terminal_after_cleanup(fake):
+    from src.agents.backends.execution import ExecutionRef, ExecutionSnapshot, ExecutionState
+    reports = []
+    owned = ExecutionRef('opencode', 'fixture-instance', 'attempt', task_id='task-1')
+    def observe(report):
+        reports.append((report, session._proc.returncode if session._proc else None))
+    session = fake('local', execution_ref=owned, on_snapshot=observe)
+    result = await session.run('inspect', timeout=20)
+    assert result.text == '收到：inspect。'
+    report = session.execution_report
+    assert reports[0][0].state == ExecutionState.QUEUED
+    assert any(r.state == ExecutionState.RUNNING and r.progress.summary for r, _ in reports)
+    assert reports[-1][1] is not None
+    assert report.state == ExecutionState.FINISHED
+    assert report.ref.key == owned.key and report.ref.task_id == 'task-1'
+    assert report.ref.session_id == 's1'
+    assert report.result.summary == result.text and not report.result.evidence
+    assert report.result.usage.cost_usd is None
+    assert ExecutionSnapshot.from_dict(report.to_dict()) == report
+
+
+@pytest.mark.parametrize('scenario,code', [('silent', 'empty_result'), ('unknown_stop', 'unknown_stop_reason')])
+async def test_execution_report_does_not_invent_success_from_empty_or_unknown_stop(fake, scenario, code):
+    from src.agents.backends.execution import ExecutionState
+    session = fake(scenario)
+    await session.run('inspect', timeout=20)
+    assert session.execution_report.state == ExecutionState.UNKNOWN
+    assert session.execution_report.error.code == code
+    assert session.execution_report.result is None
+
+
+async def test_execution_report_observer_failure_does_not_change_protocol_or_permissions(fake):
+    from src.agents.backends.execution import ExecutionState
+    def broken(report):
+        raise OSError('fixture observer offline')
+    session = fake('permission', on_snapshot=broken)
+    result = await session.run('inspect', timeout=20)
+    assert result.permissions[0]['allowed'] is False and result.error == ''
+    assert session.execution_report.state == ExecutionState.FINISHED
+
+
+async def test_execution_report_cancellation_is_observed_only_after_process_cleanup(fake, monkeypatch):
+    from src.agents.backends.execution import ExecutionState
+    session = fake('plain')
+    started = asyncio.Event()
+    async def pending(*args, **kwargs):
+        started.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr(session, '_request', pending)
+    run = asyncio.create_task(session.run('inspect', timeout=20))
+    await started.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert session._proc.returncode is not None
+    assert session.execution_report.state == ExecutionState.CANCELLED
+
+
+async def test_execution_report_missing_program_has_not_started_effect(tmp_path):
+    from src.agents.backends.execution import ExecutionState
+    session = AcpSession([str(tmp_path / 'missing')], cwd=str(tmp_path))
+    await session.run('inspect', timeout=20)
+    assert session.execution_report.state == ExecutionState.FAILED
+    assert session.execution_report.error.effect == 'not_started'
+
+
+async def test_execution_report_ignores_foreign_session_updates_and_rejects_reuse(fake):
+    session = fake('foreign')
+    result = await session.run('inspect', timeout=20)
+    assert result.text == session.execution_report.result.summary == '收到：inspect。'
+    with pytest.raises(RuntimeError, match='once'):
+        await session.run('again', timeout=20)
+
+
+async def test_execution_report_cleanup_failure_remains_unknown(fake, monkeypatch):
+    from src.agents.backends.execution import ExecutionState
+    session = fake('plain')
+    close = session._close
+    async def unconfirmed():
+        await close()
+        raise OSError('fixture cleanup receipt unavailable')
+    monkeypatch.setattr(session, '_close', unconfirmed)
+    with pytest.raises(OSError):
+        await session.run('inspect', timeout=20)
+    assert session.execution_report.state == ExecutionState.UNKNOWN
+    assert session.execution_report.error.code == 'cleanup_unconfirmed'
 
 
 async def test_happy_path_collects_text_and_ignores_stdout_noise(fake):

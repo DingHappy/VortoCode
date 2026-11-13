@@ -209,7 +209,8 @@ def _scratch_dir(child_id: str) -> Path:
 
 async def run_external(engine: str, role: str, model: str, prompt: str, *, timeout: float,
                        child_id: str = "member", workdir: Optional[str] = None,
-                       session_factory: Callable[..., Any] = AcpSession, check=None) -> AcpResult:
+                       session_factory: Callable[..., Any] = AcpSession, check=None,
+                       execution_ref=None, on_snapshot=None) -> AcpResult:
     """跑一次外部框架回合。框架没装 / 没配端点时抛 ``EngineUnavailable``。
 
     ``workdir`` 不给就用一个专用空目录（用完即删）；开发成员传入它的一次性 worktree（由调用方清理）。"""
@@ -233,7 +234,8 @@ async def run_external(engine: str, role: str, model: str, prompt: str, *, timeo
     argv[0] = binary
     scratch = None if workdir else _scratch_dir(child_id)
     try:
-        session = session_factory(argv, cwd=str(workdir or scratch), env=env, decide=decide)
+        reporting = {'execution_ref': execution_ref, 'on_snapshot': on_snapshot} if execution_ref is not None or on_snapshot is not None else {}
+        session = session_factory(argv, cwd=str(workdir or scratch), env=env, decide=decide, **reporting)
         return await session.run(f"{ROLE_PROMPTS[role]}\n\n{prompt}", timeout=timeout, followup=FOLLOWUP)
     finally:
         if scratch is not None:
