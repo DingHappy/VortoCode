@@ -147,7 +147,7 @@ import { CustomizePage } from "./components/CustomizePage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, isLocalNetworkBlocked, mainChatKey, probeAssistantHost, relaunchApp, workProjects } from "./lib/assistantHost";
-import { connectResidentSelection, persistResidentSelection } from "./lib/residentConnection";
+import { connectResidentSelection, discardResidentConnection, persistResidentSelection } from "./lib/residentConnection";
 import type { LocalResidentStatus } from "./lib/localResident";
 import { dismissStarterTips, recordAssistantSend, shouldShowStarterTips, starterTips } from "./lib/starterTips";
 import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
@@ -1785,6 +1785,30 @@ function App() {
       persist: selected => persistResidentSelection(selected, localResidentStatusRef.current, invoke),
       connection: () => clientRef.current,
       isSelected: selected => remoteProjectRef.current === selected.id && assistantHostRef.current === selected.id,
+      discard: (selected, attached) => discardResidentConnection(selected, attached, {
+        connection: () => clientRef.current,
+        isSelected: host => remoteProjectRef.current === host.id && assistantHostRef.current === host.id,
+        disconnect: () => {
+          stopNotificationSync();
+          return sessionConnectionRef.current!.disconnect();
+        },
+        clear: () => {
+          resetIsolatedDeliveries();
+          clearProjectView();
+          invalidateAssistantReads();
+          remoteProjectRef.current = null;
+          assistantHostRef.current = null;
+          setMainChatSid("");
+          setActiveSid(createSessionId());
+          setRepoRoot("");
+          let localUrl = "http://127.0.0.1:8080";
+          try { localUrl = normalizeLocalBaseUrl(localStorage.getItem(STORAGE_KEYS.baseUrl) || localUrl); } catch { /* 留在未连接状态 */ }
+          setBaseUrl(localUrl);
+          runtimes.markAttached({ ...EMPTY_PROCESS, scope: "general", message: "常驻助手选择未完成，当前未连接" });
+          setConnection("disconnected");
+          setConnectionNote("常驻助手选择未完成；已断开此次连接，请核对后重新连接");
+        },
+      }),
       onError: message => setBanner(message),
     });
 
@@ -1934,6 +1958,10 @@ function App() {
     requestedMode: "plan" | "build" = mode,
     requestedContext?: ContextItem[],
   ): Promise<boolean> => {
+    if (coordinator.switching) {
+      setBanner("工作区正在切换，请核对连接后再发送；输入和附件已保留");
+      return false;
+    }
     if (override === undefined && isReadingAttachments()) {
       setBanner("附件还在读取，请读完后再发送，或取消读取");
       return false;

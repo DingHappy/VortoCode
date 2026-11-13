@@ -1,8 +1,10 @@
 import { expect, it, vi } from "vitest";
-import { connectResidentSelection, persistResidentSelection } from "./residentConnection";
+import { connectResidentSelection, discardResidentConnection, persistResidentSelection } from "./residentConnection";
 import type { DesktopProjectProfile } from "../types";
 import { ConnectionCoordinator } from "../connection/connectionCoordinator";
 import { localResidentController, type LocalResidentClient, type LocalResidentStatus } from "./localResident";
+import { SessionConnection } from "../connection/sessionConnection";
+import { residentRetryReason } from "../connection/connectionCoordinator";
 
 const profile: DesktopProjectProfile = { id: "fixture-host", name: "测试常驻助手", kind: "remote",
   repoRoot: "@assistant", baseUrl: "http://127.0.0.1:18765", lastOpenedAt: 0 };
@@ -123,4 +125,89 @@ it("never routes an unchecked local launch through the remote preference command
   await expect(persistResidentSelection(profile, { supported: true, installed: true, state: "running", availableVersion: "fixture",
     cronEnabled: false, projectId: profile.id, revision: "rev-one", message: "" }, invoke)).rejects.toThrow("运行实例尚未核对");
   expect(invoke).not.toHaveBeenCalled();
+});
+
+function attachmentFixture() {
+  const coordinator = new ConnectionCoordinator();
+  const client = { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}), send: vi.fn() };
+  const ref: { current: typeof client | null } = { current: null };
+  const sessions = new SessionConnection(ref);
+  const view = { sessions: ["old-default-chat"], sid: "old-default-chat" };
+  const defaults = ["old-default"];
+  const clear = vi.fn(() => {
+    expect(coordinator.switching).toBe(true);
+    view.sessions = []; view.sid = "";
+    coordinator.remote.current = null; coordinator.assistantHost.current = null;
+  });
+  const owner = { connection: () => ref.current,
+    isSelected: (selected: DesktopProjectProfile) => coordinator.remote.current === selected.id && coordinator.assistantHost.current === selected.id,
+    disconnect: sessions.disconnect, clear };
+  const connect = async () => {
+    coordinator.remote.current = profile.id; coordinator.assistantHost.current = profile.id;
+    await sessions.begin().attach(() => client, "new-host-chat", () => {});
+    view.sessions = ["new-host-chat"]; view.sid = "new-host-chat";
+    return true as const;
+  };
+  return { coordinator, client, ref, sessions, view, defaults, clear, owner, connect };
+}
+
+it("discards a rejected selection attachment and its chat under the switch lock without changing the default or retrying", async () => {
+  const f = attachmentFixture();
+  let finishDisconnect!: () => void;
+  f.client.disconnect.mockReturnValueOnce(new Promise<void>(resolve => { finishDisconnect = resolve; }));
+  const activate = vi.fn(() => { f.defaults.unshift(profile.id); }), onError = vi.fn();
+  const selection = connectResidentSelection(profile, f.connect, activate, {
+    switchWorkspace: body => f.coordinator.exclusiveSwitch(body), connection: f.owner.connection, isSelected: f.owner.isSelected,
+    persist: async () => { throw "默认助手保存失败"; },
+    discard: (selected, attached) => discardResidentConnection(selected, attached, f.owner), onError,
+  });
+  const rejected = expect(selection).rejects.toBe("默认助手保存失败");
+  await vi.waitFor(() => expect(f.client.disconnect).toHaveBeenCalledOnce());
+  expect(f.coordinator.switching).toBe(true);
+  expect(f.ref.current).toBeNull();
+  expect(await f.coordinator.exclusiveSwitch(async () => true)).toBe(false);
+  finishDisconnect(); await rejected;
+  expect(f.clear).toHaveBeenCalledOnce();
+  expect(f.coordinator.remote.current).toBeNull(); expect(f.coordinator.assistantHost.current).toBeNull();
+  expect(f.view).toEqual({ sessions: [], sid: "" });
+  expect(f.defaults).toEqual(["old-default"]);
+  expect(f.client.send).not.toHaveBeenCalled(); expect(activate).not.toHaveBeenCalled();
+  expect(onError).toHaveBeenCalledExactlyOnceWith("默认助手保存失败");
+  expect(residentRetryReason({ assistantMode: true, hasHost: true, onHost: f.coordinator.onAssistantHost,
+    connection: "disconnected", switching: false })).toBeNull();
+});
+
+it("does not discard a newer connection when persistence rejects after attachment replacement", async () => {
+  const f = attachmentFixture();
+  let rejectPersist!: (error: unknown) => void;
+  const persist = vi.fn(() => new Promise<void>((_, reject) => { rejectPersist = reject; }));
+  const discard = vi.fn((selected, attached) => discardResidentConnection(selected, attached, f.owner));
+  const selection = connectResidentSelection(profile, f.connect, vi.fn(), {
+    switchWorkspace: body => f.coordinator.exclusiveSwitch(body), connection: f.owner.connection, isSelected: f.owner.isSelected,
+    persist, discard,
+  });
+  const rejected = expect(selection).rejects.toBe("旧保存失败");
+  await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce());
+  const newer = { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}), send: vi.fn() };
+  await f.sessions.begin().attach(() => newer, "newer-chat", () => {});
+  f.coordinator.remote.current = "newer"; f.coordinator.assistantHost.current = "newer";
+  f.view.sessions = ["newer-chat"]; f.view.sid = "newer-chat";
+  rejectPersist("旧保存失败"); await rejected;
+  expect(discard).not.toHaveBeenCalled(); expect(f.clear).not.toHaveBeenCalled();
+  expect(f.ref.current).toBe(newer); expect(newer.disconnect).not.toHaveBeenCalled();
+  expect(f.view.sid).toBe("newer-chat");
+});
+
+it("does not clear a replacement that arrives while the rejected attachment is disconnecting", async () => {
+  const f = attachmentFixture(); await f.connect();
+  let finishDisconnect!: () => void;
+  f.client.disconnect.mockReturnValueOnce(new Promise<void>(resolve => { finishDisconnect = resolve; }));
+  const discard = discardResidentConnection(profile, f.client, f.owner);
+  await vi.waitFor(() => expect(f.client.disconnect).toHaveBeenCalledOnce());
+  const newer = { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}), send: vi.fn() };
+  await f.sessions.begin().attach(() => newer, "newer-chat", () => {});
+  f.coordinator.remote.current = "newer"; f.coordinator.assistantHost.current = "newer";
+  finishDisconnect(); await discard;
+  expect(f.ref.current).toBe(newer); expect(newer.disconnect).not.toHaveBeenCalled();
+  expect(f.clear).not.toHaveBeenCalled();
 });

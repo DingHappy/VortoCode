@@ -8,8 +8,21 @@ type SelectionOptions = {
   persist: (profile: DesktopProjectProfile) => Promise<void>;
   connection?: () => unknown;
   isSelected?: (profile: DesktopProjectProfile) => boolean;
+  discard?: (profile: DesktopProjectProfile, attached: unknown) => Promise<void>;
   onError?: (message: string) => void;
 };
+
+/** Disconnect only this attachment; a newer connection must retain its own view and identity. */
+export async function discardResidentConnection(profile: DesktopProjectProfile, attached: unknown, owner: {
+  connection: () => unknown;
+  isSelected: (profile: DesktopProjectProfile) => boolean;
+  disconnect: () => Promise<boolean>;
+  clear: () => void;
+}): Promise<void> {
+  if (!attached || owner.connection() !== attached || !owner.isSelected(profile)) return;
+  if (!await owner.disconnect() || owner.connection() !== null || !owner.isSelected(profile)) return;
+  owner.clear();
+}
 
 /** Only native code changes the persisted default; local hosts keep their launch-identity gate. */
 export async function persistResidentSelection(profile: DesktopProjectProfile, local: LocalResidentStatus | null,
@@ -31,18 +44,29 @@ export async function connectResidentSelection(profile: DesktopProjectProfile,
     if (prepared !== undefined && prepared !== true) throw new Error(prepared || "连接常驻助手失败");
     let failure: unknown;
     const select = async () => {
+      let attached: unknown;
+      let current = () => false;
       try {
         const result = await connect(profile);
         if (result !== true) throw new Error(result || "连接常驻助手失败");
-        const attached = options.connection?.();
-        const current = () => (!options.isSelected || options.isSelected(profile))
+        attached = options.connection?.();
+        current = () => (!options.isSelected || options.isSelected(profile))
           && (!options.connection || Boolean(attached) && options.connection() === attached);
         if (!current()) throw new Error("连接位置已变化，未切换当前对话");
         await options.persist(profile);
         if (!current()) throw new Error("连接位置已变化，未切换当前对话");
         activate(profile);
         return true;
-      } catch (error) { failure = error; throw error; }
+      } catch (error) {
+        failure = error;
+        if (current()) {
+          try { await options.discard?.(profile, attached); }
+          catch (cleanupError) {
+            failure = new Error(`${errorText(error, "连接常驻助手失败")}；${errorText(cleanupError, "此次连接未能完成清理")}`);
+          }
+        }
+        throw failure;
+      }
     };
     if (!await options.switchWorkspace(select)) throw failure ?? new Error("工作区正在切换，请稍后重试");
   } catch (error) {
