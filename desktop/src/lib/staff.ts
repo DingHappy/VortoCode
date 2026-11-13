@@ -1,3 +1,5 @@
+import { freshAt, SOURCE_FRESH_MS } from './readFreshness';
+
 export interface StaffRole {
   id: string; title: string; brief: string; enabled: boolean; revision: number; builtin: boolean;
   grants: { operations: string[]; tools: string[]; sees: string[]; web: boolean; project: boolean };
@@ -43,36 +45,55 @@ export interface StaffClient {
   readStaffRecovery?: import('./staffRecovery').RecoveryClient['readStaffRecovery'];
   decideStaffRecovery?: import('./staffRecovery').RecoveryClient['decideStaffRecovery'];
 }
-export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string }
+export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string; checkedAt?: number }
+export const staffReadCurrent = (state: StaffState, now = Date.now()) => Boolean(state.value) && !state.error && freshAt(state.checkedAt, now);
 /** Only an owner click writes; refreshed identities must match the displayed card. */
-export function staffController(client: StaffClient, publish: (state: StaffState) => void) {
+export function staffController(client: StaffClient, publish: (state: StaffState) => void, now = Date.now) {
   let active = true, serial = 0;
+  let expiry: ReturnType<typeof setTimeout> | undefined;
   let state: StaffState = { value: null, busy: false, error: "" };
   function emit(patch: Partial<StaffState>) { if (active) { state = { ...state, ...patch }; publish(state); } }
+  async function readRegistry() {
+    const checkedAt = now();
+    const value = await client.readStaff();
+    return { value, checkedAt };
+  }
+  function publishRead(read: { value: StaffSnapshot; checkedAt: number }) {
+    if (!active) return;
+    clearTimeout(expiry);
+    const at = now();
+    // One local invalidation, never a network poll or task retry.
+    expiry = freshAt(read.checkedAt, at)
+      ? setTimeout(() => emit({}), SOURCE_FRESH_MS + 1 - (at - read.checkedAt)) : undefined;
+    emit(read);
+  }
   async function refresh() {
     if (!active || state.busy) return;
     const read = ++serial;
     emit({ busy: true, error: "" });
-    try { const value = await client.readStaff(); if (active && read === serial) emit({ value }); }
+    try { const value = await readRegistry(); if (active && read === serial) publishRead(value); }
     catch (error) { if (active && read === serial) emit({ error: error instanceof Error ? error.message : "名录读取失败，请刷新" }); }
     finally { if (active && read === serial) emit({ busy: false }); }
   }
   async function change(run: (fresh: StaffSnapshot) => Promise<void>) {
     if (!active || state.busy || !state.value || state.error) return;
+    if (!staffReadCurrent(state, now())) { emit({ error: '名录已过期，请刷新核对后再操作' }); return; }
     ++serial;
     emit({ busy: true, error: "" });
     try {
-      const fresh = await client.readStaff();
+      const fresh = await readRegistry();
       if (!active) return;
-      await run(fresh);
+      if (!freshAt(fresh.checkedAt, now())) throw new Error('名录读取已超过有效期，请刷新核对后再操作');
+      await run(fresh.value);
       if (!active) return;
-      const value = await client.readStaff();
-      if (active) emit({ value });
+      const value = await readRegistry();
+      if (active) publishRead(value);
     } catch (error) { if (active) emit({ error: error instanceof Error ? error.message : "结果待核对，请刷新后再操作" }); }
     finally { if (active) emit({ busy: false }); }
   }
   return {
     refresh,
+    recheck() { if (state.value) emit({}); },
     proposeDevelopment(data: DevelopmentProposal) {
       const displayed = state.value;
       return change(async fresh => {
@@ -93,7 +114,7 @@ export function staffController(client: StaffClient, publish: (state: StaffState
         await client.setStaffBudgets(settings);
       });
     },
-    dispose() { active = false; ++serial; },
+    dispose() { active = false; ++serial; clearTimeout(expiry); },
     status(member: StaffMember, status: StaffMember["status"]) {
       return change(async fresh => {
         const current = fresh.members.find(item => item.id === member.id);
