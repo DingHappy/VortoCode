@@ -254,16 +254,16 @@ async def test_observer_steers_running_turns_starts_idle_ones_and_interrupts():
     running = [_thread(turn=_turn(status="inProgress", tid="t9"))]
     idle = [_thread(status="idle", turn=_turn(status="completed", tid="t9"))]
     codex = _FakeCodex(running[0])
-    assert await observer.execute_action(codex, {"kind": "message", "thread_id": "th1", "text": "补一句"}, running) == (True, "")
+    assert await observer.run_action(codex, {"kind": "message", "thread_id": "th1", "text": "补一句"}, running) == {"ok": True, "error": "", "uncertain": False}
     assert codex.calls[-1][0] == "turn/steer" and codex.calls[-1][1]["expectedTurnId"] == "t9"
     codex.thread = idle[0]
-    assert await observer.execute_action(codex, {"kind": "message", "thread_id": "th1", "text": "下一步"}, idle) == (True, "")
+    assert await observer.run_action(codex, {"kind": "message", "thread_id": "th1", "text": "下一步"}, idle) == {"ok": True, "error": "", "uncertain": False}
     assert codex.calls[-1][0] == "turn/start" and codex.calls[-1][1]["input"][0]["text"] == "下一步"
     codex.thread = running[0]
-    assert await observer.execute_action(codex, {"kind": "interrupt", "thread_id": "th1"}, running) == (True, "")
+    assert await observer.run_action(codex, {"kind": "interrupt", "thread_id": "th1"}, running) == {"ok": True, "error": "", "uncertain": False}
     assert codex.calls[-1] == ("turn/interrupt", {"threadId": "th1", "turnId": "t9"})
-    assert (await observer.execute_action(codex, {"kind": "interrupt", "thread_id": "th1"}, idle))[0] is False
-    assert (await observer.execute_action(codex, {"kind": "message", "thread_id": "gone", "text": "x"}, idle))[1] == "这个 Codex 会话已经关了"
+    assert (await observer.run_action(codex, {"kind": "interrupt", "thread_id": "th1"}, idle))["ok"] is False
+    assert (await observer.run_action(codex, {"kind": "message", "thread_id": "gone", "text": "x"}, idle))["error"] == "这个 Codex 会话已经关了"
 
 
 @pytest.mark.asyncio
@@ -346,9 +346,9 @@ async def test_observer_refuses_to_stop_a_newer_turn_than_the_one_approved():
             self.calls.append(method)
 
     thread = {"id": "th1", "status": "active", "turn": {"id": "t2", "status": "inProgress"}}
-    ok, error = await observer.execute_action(Client(), {"kind": "interrupt", "thread_id": "th1", "turn_id": "t1"},
+    result = await observer.run_action(Client(), {"kind": "interrupt", "thread_id": "th1", "turn_id": "t1"},
                                               [thread])
-    assert not ok and "结束" in error and Client.calls == []
+    assert not result['ok'] and "结束" in result['error'] and not result['uncertain'] and Client.calls == []
 
 
 @pytest.mark.asyncio
@@ -356,9 +356,9 @@ async def test_observer_rechecks_approved_turn_against_live_state_before_sending
     cached = _thread(turn=_turn(tid="old"))
     current = _thread(turn=_turn(tid="new"))
     codex = _FakeCodex(current)
-    ok, error = await observer.execute_action(codex,
+    result = await observer.run_action(codex,
         {"kind": "message", "thread_id": "th1", "turn_id": "old", "text": "继续"}, [cached])
-    assert not ok and "变化" in error
+    assert not result['ok'] and "变化" in result['error'] and not result['uncertain']
     assert [method for method, _ in codex.calls] == ["thread/read", "thread/turns/list"]
 
 
@@ -366,9 +366,9 @@ async def test_observer_rechecks_approved_turn_against_live_state_before_sending
 async def test_observer_explicit_user_message_uses_live_turn_without_replaying_old_context():
     cached = _thread(turn=_turn(tid="old"))
     codex = _FakeCodex(_thread(turn=_turn(tid="new")))
-    ok, error = await observer.execute_action(codex,
+    result = await observer.run_action(codex,
         {"kind": "message", "thread_id": "th1", "turn_id": "old", "text": "补充要求", "session": "user"}, [cached])
-    assert ok and not error and codex.calls[-1][1]["expectedTurnId"] == "new"
+    assert result == {'ok': True, 'error': '', 'uncertain': False} and codex.calls[-1][1]["expectedTurnId"] == "new"
 
 
 def test_interrupt_receipt_does_not_claim_the_turn_has_finished():

@@ -13,6 +13,7 @@ import type { RecoveryClient } from '../../lib/staffRecovery';
 import { StaffBundleReview } from './StaffBundleReview';
 import type { DevelopmentProposal } from '../../lib/staff';
 import type { RoutinesClient } from '../../lib/routines';
+import { ExecutionDetails } from '../ExecutionDetails';
 import "./StaffPane.css";
 
 const statuses = { active: "可接活", paused: "已暂停", retired: "已撤掉" };
@@ -84,7 +85,9 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
             <div className="settings-card-head"><strong>{member.name}</strong><span>{statuses[member.status]}{member.busy ? ` · ${member.busy} 件在办` : ""}</span></div>
             {role ? <><p>{role.title} · {role.brief}</p><RoleGrants role={role} /></> : <p role="alert">岗位不可读取，不能派活。</p>}
             <details><summary>最近做了什么 · {member.recent_tasks.length} 件</summary>
-              {member.recent_tasks.length ? <ul>{member.recent_tasks.map(task => <li key={task.id}>{task.prompt || task.id} · {taskStatus[task.status] ?? "状态待核对"} · {task.review === "accepted" ? task.delivery === "review" ? "主人已验收" : "已核对汇报" : reviews[task.review] ?? "审查待核对"}</li>)}</ul> : <p>还没有任务记录。</p>}
+              {member.recent_tasks.length ? <ul>{member.recent_tasks.map(task => <li key={task.id}>{task.prompt || task.id} · {taskStatus[task.status] ?? "状态待核对"} · {task.review === "accepted" ? task.delivery === "review" ? "主人已验收" : "已核对汇报" : reviews[task.review] ?? "审查待核对"}
+                <ExecutionDetails taskId={task.id} value={task.execution} current={!error} />
+              </li>)}</ul> : <p>还没有任务记录。</p>}
             </details>
             {member.status !== "retired" && <div className="settings-card-actions">
               <button disabled={disabled} onClick={() => onStatus(member, member.status === "active" ? "paused" : "active")}>{member.status === "active" ? "暂停接活" : "恢复接活"}</button>

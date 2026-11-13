@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { StaffView, StaffPane } from "./StaffPane";
 import { DevelopmentStaff } from './DevelopmentStaff';
 import type { StaffSnapshot } from "../../lib/staff";
+import executionWire from '../../../../tests/fixtures/execution_observation_v1.json';
 const noop = () => {};
 const role = { id: "calendar", title: "日历只读", brief: "只查看日程", builtin: false, enabled: true, revision: 1, grants: { operations: ["read"], tools: ["calendar_events"], sees: ["plugin:calendar"], web: false, project: false }, engine: ["vortocode"], max_steps: 12, timeout_seconds: 600 };
 const snapshot: StaffSnapshot = { roles: [role], members: [{ id: "staff-calendar", name: "日程专员", role: "calendar", engine: "vortocode", model: "", status: "active", revision: 1, busy: 1, recent_tasks: [{ id: "task-fixture", prompt: "检查明天的安排", status: "done", review: "pending", delivery: "review" }] }], proposals: [{ id: "pending", digest: "digest", nonce: "nonce", approval_level: "desktop", round: 1, instance: "fixture", status: "pending", reason: "日历查询", snapshot: { kind: "role", data: role, previous: null } }] };
@@ -35,6 +36,28 @@ it('keeps approval statistics and interrupted-task recovery available on the sam
   const html = renderToStaticMarkup(<StaffPane client={client} />);
   expect(html).toContain('审批统计（只读）');
   expect(html).toContain('中断任务核对');
+});
+
+it('shows task, execution and owner acceptance separately with safe report text', () => {
+  const value = structuredClone(snapshot);
+  value.members[0].recent_tasks[0].execution = { round: 1, stale: false, snapshot: {
+    ...executionWire, state: 'finished', ref: { ...executionWire.ref, backend_id: 'vendor.future', task_id: 'task-fixture' },
+    progress: { summary: '<script>untrusted progress</script>' },
+  } };
+  const html = renderToStaticMarkup(<StaffView state={{ value, busy: false, error: '' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
+  for (const text of ['已交回', '待核对', '执行观察：本次执行已结束', 'vendor.future', '第 1 轮', '不代表任务验收通过']) expect(html).toContain(text);
+  expect(html).not.toContain('主人已验收'); expect(html).not.toContain('<script>');
+  expect(html).toContain('&lt;script&gt;untrusted progress');
+});
+
+it.each(['missing', 'wrong task', 'stale', 'disconnected'])('keeps unavailable execution evidence explicit: %s', fault => {
+  const value = structuredClone(snapshot), task = value.members[0].recent_tasks[0];
+  if (fault !== 'missing') task.execution = { round: 1, stale: fault === 'stale', snapshot: {
+    ...executionWire, state: 'running', ref: { ...executionWire.ref, task_id: fault === 'wrong task' ? 'other' : task.id },
+  } };
+  const html = renderToStaticMarkup(<StaffView state={{ value, busy: false, error: fault === 'disconnected' ? '离线' : '' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
+  expect(html).toContain('执行观察：无法确认');
+  expect(html).not.toContain('执行观察：在忙'); expect(html).not.toContain('主人已验收');
 });
 it('shows standing suggestions as unapproved guidance without adding activation controls', () => {
   const value = structuredClone(snapshot);
