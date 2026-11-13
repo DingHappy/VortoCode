@@ -24,11 +24,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 import signal
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+
+from src.agents.backends.execution import (
+    ExecutionFailure, ExecutionProgress, ExecutionRef, ExecutionResult, ExecutionSnapshot,
+    ExecutionState, new_run_id, process_instance,
+)
+
+logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 1
 LOCAL_KINDS = frozenset({"read", "edit", "delete", "move", "think", "switch_mode"})
@@ -97,7 +106,9 @@ class AcpSession:
     """跑一次 ACP 会话：起进程、发一条提示、收齐结果、关进程。一个实例只用一次。"""
 
     def __init__(self, argv: List[str], *, cwd: str, env: Optional[Dict[str, str]] = None,
-                 decide: Decide = _deny, read_root: Optional[str] = None, write_root: Optional[str] = None):
+                 decide: Decide = _deny, read_root: Optional[str] = None, write_root: Optional[str] = None,
+                 execution_ref: ExecutionRef | None = None,
+                 on_snapshot: Callable[[ExecutionSnapshot], None] | None = None):
         if not argv:
             raise ValueError("缺少启动命令")
         self.argv = list(argv)
@@ -115,6 +126,47 @@ class AcpSession:
         self._calls: Dict[str, Dict[str, str]] = {}
         self._tasks: List[asyncio.Task] = []
         self._write_lock = asyncio.Lock()
+        self._ref = execution_ref if execution_ref is not None else ExecutionRef('acp', process_instance('acp'), new_run_id())
+        if not isinstance(self._ref, ExecutionRef):
+            raise ValueError('invalid ACP execution identity')
+        self._on_snapshot = on_snapshot
+        self._execution_report: ExecutionSnapshot | None = None
+        self._report_closed = False
+
+    @property
+    def execution_report(self) -> ExecutionSnapshot | None:
+        return self._execution_report
+
+    def _publish(self, state: ExecutionState, *, native_state='', progress=None, result=None, error=None):
+        if self._report_closed:
+            return
+        self._execution_report = ExecutionSnapshot(self._ref, state, time.time(), native_state=native_state,
+            progress=progress or ExecutionProgress(), result=result, error=error,
+            features=frozenset({'result.text', 'progress.tools'}))
+        if self._on_snapshot is not None:
+            try:
+                self._on_snapshot(self._execution_report)
+            except Exception as exc:  # Observation cannot change protocol or authorization.
+                logger.warning('ACP execution observation unavailable (%s)', type(exc).__name__)
+
+    def _finish_report(self, cancelled: bool):
+        state, result, error = ExecutionState.UNKNOWN, None, None
+        if cancelled:
+            state = ExecutionState.CANCELLED
+        elif self.result.error:
+            state = ExecutionState.FAILED
+            error = ExecutionFailure('acp_failed', self.result.error,
+                effect='not_started' if self._proc is None else 'possible')
+        elif self.result.stop_reason == 'cancelled':
+            state = ExecutionState.CANCELLED
+        elif self.result.stop_reason != 'end_turn':
+            error = ExecutionFailure('unknown_stop_reason', 'ACP returned an unrecognized stop reason', effect='possible')
+        elif not self.result.text.strip():
+            error = ExecutionFailure('empty_result', 'ACP returned no text', effect='possible')
+        else:
+            state, result = ExecutionState.FINISHED, ExecutionResult(self.result.text)
+        self._publish(state, native_state=self.result.stop_reason, result=result, error=error)
+        self._report_closed = True
 
     # ── 对外 ──────────────────────────────────────────────────────────
     async def run(self, prompt: str, *, timeout: float, followup: Optional[str] = None) -> AcpResult:
@@ -122,9 +174,15 @@ class AcpSession:
         真机 2026-11-04：OpenCode 某个动作被拒后直接结束本轮，什么都没交回。"""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
+        if self._execution_report is not None:
+            raise RuntimeError('ACP session instances can only run once')
+        cancelled = False
+        self._publish(ExecutionState.QUEUED)
         try:
             await self._start()
+            self._publish(ExecutionState.RUNNING, native_state='initializing')
             await asyncio.wait_for(self._handshake(), timeout=min(timeout, 60))
+            self._publish(ExecutionState.RUNNING, native_state='session_ready')
             try:
                 for index, text in enumerate([prompt, followup]):
                     if index and (not text or self.result.text.strip() or self.result.stop_reason != "end_turn"):
@@ -145,9 +203,22 @@ class AcpSession:
             self.result.error = str(error)[:500]
         except FileNotFoundError:
             self.result.error = f"没有找到 {self.argv[0]}：常驻电脑上还没装这个框架"
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except Exception as error:
+            self.result.error = f'{type(error).__name__}: {str(error)[:300]}'
+            raise
         finally:
-            await self._close()
-        self.result.tool_calls = list(self._calls.values())[-_MAX_TOOL_CALLS:]
+            try:
+                await self._close()
+            except BaseException:
+                self._publish(ExecutionState.UNKNOWN, native_state='cleanup_unconfirmed',
+                    error=ExecutionFailure('cleanup_unconfirmed', 'ACP process cleanup was not confirmed', effect='possible'))
+                self._report_closed = True
+                raise
+            self.result.tool_calls = list(self._calls.values())[-_MAX_TOOL_CALLS:]
+            self._finish_report(cancelled)
         return self.result
 
     # ── 进程 ──────────────────────────────────────────────────────────
@@ -260,7 +331,7 @@ class AcpSession:
             return
         method, params = str(message["method"]), message.get("params") or {}
         if "id" not in message:
-            if method == "session/update":
+            if method == "session/update" and self._session_id and params.get('sessionId') == self._session_id:
                 self._on_update(params.get("update") or {})
             return
         # 框架向我们发的请求：放到单独任务里处理，判定慢也不堵住读循环
@@ -298,6 +369,9 @@ class AcpSession:
         self._session_id = str((session or {}).get("sessionId") or "")
         if not self._session_id:
             raise AcpError("框架没有返回会话 ID")
+        if self._ref.session_id and self._ref.session_id != self._session_id:
+            raise AcpError('ACP execution session identity changed')
+        self._ref = replace(self._ref, session_id=self._session_id)
 
     def _on_update(self, update: Dict[str, Any]) -> None:
         kind = update.get("sessionUpdate")
@@ -316,6 +390,8 @@ class AcpSession:
             if len(self._calls) > _MAX_TOOL_CALLS * 2:
                 for old in list(self._calls)[:_MAX_TOOL_CALLS]:
                     del self._calls[old]
+            self._publish(ExecutionState.RUNNING, native_state='tool_update',
+                progress=ExecutionProgress('ACP tool ' + entry['kind'][:30] + ': ' + entry['status'][:30]))
 
     # ── 权限与文件 ─────────────────────────────────────────────────────
     async def _judge(self, ask: PermissionAsk) -> bool:

@@ -300,6 +300,11 @@ class TeamService:
                 child.collaboration["tainted"] = True
                 if not self.ledger.save(child):
                     raise OSError("子任务污点标记未能保存")
+            if root.team.get('staff_roster'):
+                from src.workflow.staff.recovery import seed_queue_proof
+                seed_queue_proof(child)
+                if not self.ledger.save(child):
+                    raise OSError('排队证明未能保存')
             root = self.get(root_id)
             root.team["children"].append(child.id)
             self._event(root, "assigned", f"{member}：{instruction}")
@@ -390,6 +395,9 @@ class TeamService:
             service = self.collaboration(root)
             child = service.get(child_id)
             number = child.collaboration["round"]
+            if verdict == 'rework' and root.team.get('staff_roster') and child.status == 'interrupted':
+                from src.workflow.staff.owner_confirmation import require_owner_route
+                require_owner_route(self.repo_root)
             if verdict == "rework":
                 if child.status == "done":
                     service.review(child_id, number, "rework", note)

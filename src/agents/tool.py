@@ -14,6 +14,22 @@ class ToolTurnYield(Exception):
     """A trusted tool durably suspended work; return control to its caller."""
 
 
+class SourcedToolText(str):
+    """Host-produced text can add taint, never suppress a tool's static taint.
+
+    JSON results and model arguments cannot construct this Python value. It
+    preserves the string contract of data readers with per-result provenance.
+    """
+    untrusted: bool
+
+    def __new__(cls, text: str, *, untrusted: bool = True):
+        if type(untrusted) is not bool:
+            raise ValueError('Result provenance must be a boolean')
+        value = super().__new__(cls, text)
+        value.untrusted = untrusted
+        return value
+
+
 @dataclass(frozen=True)
 class ToolResult:
     """Explicit text outcome from a trusted handler; never inferred from prose.

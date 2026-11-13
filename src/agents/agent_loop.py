@@ -1770,15 +1770,14 @@ class MainAgent:
         self._pending_images = []              # 每轮重置：上轮异常中断可能残留未注入的图
         self._media_ingested = False           # 本轮是否真往上下文注入过图片（→ 打污点，见 _mark_taint）
         self._tool_turn_state.external_ingested = False
+        self._tool_turn_state.external_reads = 0
         if (auto_continues == 0 and self._auto_recall and len(str(user_text).strip()) >= 4
                 and "<vortocode_untrusted_memory>" not in str(user_text)):
             tool = self.tools.get("recall_memory")
-            if tool is not None and tool.read_only and tool.untrusted_source:
+            if tool is not None and tool.read_only:
                 # Existing permission, capability, audit and tool-budget gates apply.
                 recalled = await self._run_tool("recall_memory", {"query": str(user_text)[:256], "_automatic": True}, mode, say)
-                if recalled.startswith("<vortocode_untrusted_memory>"):
-                    from src.agents.taint import mark_tainted
-                    mark_tainted()
+                if recalled.startswith(("<vortocode_untrusted_memory>", "<vortocode_memory>")):
                     self._turn_memory_context = recalled
         from src.llm.content import build_user_content
         if not self._task_anchor:              # 捕获原始任务（首个 user 纯文本）——压缩后仍作锚点（修 #16）。
@@ -1853,12 +1852,13 @@ class MainAgent:
             message["reasoning_content"] = str(reasoning)
         self.history.append(message)
         media_before = self._media_ingested
+        external_before = self._tool_turn_state.external_reads
         results = await self._run_tools(calls, mode, say)   # 全只读→并发；含写→顺序
         start = len(self.history)
         self.history.append({"role": "user", "content": _tool_results_msg(results)})
         self._flush_pending_images()           # 工具带回的图紧跟结果注入（read_file 读图）
         # 这一批里有外部来源的工具（网页/搜索/MCP）或带回了图：结果留在历史里，后续回合仍算外部内容
-        if self._media_ingested != media_before or any(
+        if self._media_ingested != media_before or self._tool_turn_state.external_reads != external_before or any(
                 (tool := self.tools.get(str(call[0]))) is not None and tool.untrusted_source
                 for call in calls if isinstance(call, (list, tuple)) and call):
             from src.agents.taint import mark_message_external

@@ -30,7 +30,7 @@ def test_clean_memory_requires_confirmation_and_records_provenance(tmp_path):
     assert not store.get_memories("__longterm__")
     assert not store.list_memory_proposals()
 
-    result = writer.write(request, confirmed=True, confirmed_by="unit_user")
+    result = writer.write(request, confirmed=True, confirmed_by="unit_user", owner_confirmed=True)
     assert result.status == "stored"
     row = store.get_memories("__longterm__")[0]
     metadata = json.loads(row["metadata"])
@@ -44,6 +44,9 @@ def test_clean_memory_requires_confirmation_and_records_provenance(tmp_path):
         "policy_version": 1,
         "policy_decision": "durable",
         "policy_reasons": [],
+        "memory_origin": "owner_confirmed",
+        "origin_version": 1,
+        "owner_confirmed": True,
     }
 
 

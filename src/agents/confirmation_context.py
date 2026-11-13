@@ -71,4 +71,24 @@ def presenting_approval(kind: str | None, *, source: str, scope: str):
     try:
         yield
     finally:
+        receipt = _APPROVAL_RECEIPT.get()
+        if receipt is not None:
+            receipt.update(approval_context() or {})
         _APPROVAL.reset(token)
+
+
+_APPROVAL_RECEIPT: ContextVar[dict | None] = ContextVar('approval_receipt', default=None)
+
+
+@contextmanager
+def capture_approval_receipt(receipt: dict):
+    """Observe finite decision metadata; this never grants or changes approval."""
+    token = _APPROVAL_RECEIPT.set(receipt)
+    try:
+        yield
+    finally:
+        _APPROVAL_RECEIPT.reset(token)
+
+
+def owner_approved(receipt: dict) -> bool:
+    return receipt.get('decision_source') == 'user' and receipt.get('approval_outcome') == 'approved'

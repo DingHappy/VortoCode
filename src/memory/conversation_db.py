@@ -430,6 +430,16 @@ class SessionStore:
                 "reviewed_at": now,
                 **(review_metadata or {}),
             }
+            from src.memory.provenance import origin_fields
+            # Original proposal columns are authoritative. Approval records a
+            # decision about the material; it cannot erase an external origin.
+            known_taint = False if type(proposal['tainted']) is int and proposal['tainted'] == 0 else True
+            confirmed = (review_metadata or {}).get('confirmed') is True
+            metadata.update(source=proposal['source'], tainted=known_taint, confirmed=confirmed,
+                            confirmed_by=reviewer, write_method=proposal['write_method'])
+            metadata.update(origin_fields(source=proposal['source'], tainted=known_taint, confirmed=confirmed,
+                                          confirmed_by=reviewer, decision='durable',
+                                          owner_confirmed=(review_metadata or {}).get('owner_confirmed') is True))
             memory_id = str(uuid.uuid4())[:8]
             conn.execute(
                 """INSERT INTO memories

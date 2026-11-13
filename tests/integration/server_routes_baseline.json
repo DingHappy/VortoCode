@@ -1764,5 +1764,41 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/staff/recovery",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/staff/recovery/decision",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/staff/actions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/staff/action",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/staff-actions",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/app-relay/staff-action",
+    "methods": [
+      "POST"
+    ]
   }
 ]

@@ -167,7 +167,7 @@ class MemoryWriter:
         self.policy = MemoryWritePolicy()
 
     def write(self, request: MemoryWriteRequest, *, confirmed: bool,
-              confirmed_by: str = "user") -> MemoryWriteResult:
+              confirmed_by: str = "user", owner_confirmed: bool = False) -> MemoryWriteResult:
         decision = self.policy.evaluate(request)
         if decision.outcome == "reject":
             reason = "内容为空" if "empty" in decision.reasons else f"内容超过 {MAX_MEMORY_CONTENT} 字符"
@@ -190,6 +190,10 @@ class MemoryWriter:
             "policy_decision": decision.outcome,
             "policy_reasons": list(decision.reasons),
         })
+        from src.memory.provenance import origin_fields
+        metadata.update(origin_fields(source=source, tainted=request.tainted, confirmed=True,
+                                      confirmed_by=confirmed_by, decision=decision.outcome,
+                                      owner_confirmed=owner_confirmed))
 
         if decision.outcome == "durable":
             memory_id = self.store.add_memory(
@@ -221,14 +225,15 @@ class MemoryWriter:
         return MemoryWriteResult(status, decision, proposal_id, message)
 
     def review(self, proposal_id: str, action: str, *, confirmed: bool,
-               reviewer: str = "user", session_id: Optional[str] = None) -> dict[str, Any]:
+               reviewer: str = "user", session_id: Optional[str] = None, owner_confirmed: bool = False) -> dict[str, Any]:
         if not confirmed:
             return {"ok": False, "status": "needs_confirmation", "error": "提案审阅尚未确认"}
         return self.store.review_memory_proposal(
             proposal_id,
             action,
             reviewer=str(reviewer or "user")[:80],
-            review_metadata={"session_id": str(session_id or "unknown")[:160], "confirmed": True},
+            review_metadata={"session_id": str(session_id or "unknown")[:160], "confirmed": True,
+                             "owner_confirmed": owner_confirmed is True},
         )
 
 

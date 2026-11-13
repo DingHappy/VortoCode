@@ -222,6 +222,7 @@ def test_memory_proposals_only_inherit_actual_recall_data(tmp_path, monkeypatch,
                         lambda *args, **kwargs: captured.append(kwargs))
     rid = "current" if same_turn else "previous"
     base = {"type": "agent_tool", "name": "recall_memory", "rid": rid, "args": {"_automatic": True}}
-    session = {"repo_root": str(tmp_path), "activities": [base, {**base, "result": result}]}
+    session = {"repo_root": str(tmp_path), "activities": [base, {**base, "result": result}],
+               'transcript': [{'role': 'assistant', 'rid': 'current', 'source_tainted': False}]}
     _propose_turn_memories(session, "current", ["synthetic preference"])
     assert captured[0]["tainted"] is (same_turn and result.startswith("<vortocode_untrusted_memory>"))

@@ -64,6 +64,7 @@ class ToolTurnState:
     escalated: bool = False
     media_ingested: bool = False
     external_ingested: bool = False
+    external_reads: int = 0
     escalation_result: EscalationDecision | None = None
     _escalation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _escalation_epoch: int = field(default=0, repr=False)
@@ -300,11 +301,12 @@ class ToolRuntime:
                 logger.warning("Hook 调用失败，按隔离处理继续执行：%s %s", stage, payload.get("tool"), exc_info=True)
         return None
 
-    def mark_taint(self, tools: list[Tool]) -> None:
+    def mark_taint(self, tools: list[Tool], *, untrusted: bool = False) -> None:
         # Remember actual ingestion independently of the live tool namespace.
         # A connector revoked during a parallel read must not erase parent taint.
-        if any(tool.untrusted_source for tool in tools):
+        if untrusted or any(tool.untrusted_source for tool in tools):
             self.context.state.external_ingested = True
+            self.context.state.external_reads += 1
         if self.context.state.external_ingested or self.context.state.media_ingested:
             mark_tainted()
 
@@ -332,6 +334,7 @@ class ToolRuntime:
         claim_check_tool(tool)
         name = tool.name
         call_id = "tool-" + uuid.uuid4().hex[:16]
+        result_untrusted = bool(tool.untrusted_source)
         started = time.monotonic()
         waited_before = waited()          # 确认框停在这个工具上的时间不算它的耗时
         event_args = args if isinstance(args, dict) and all(isinstance(key, str) for key in args) else {}
@@ -351,6 +354,7 @@ class ToolRuntime:
                 "status": status,
                 **({"reason": reason} if reason else {}),
                 "result": str(result),
+                "source_untrusted": result_untrusted,
                 "duration_ms": int(minus_wait(time.monotonic() - started, waited_before) * 1000),
             })
             return ToolOutcome(result, status, call_id, reason)
@@ -424,6 +428,9 @@ class ToolRuntime:
                 _EXECUTION_CONTEXT.reset(context_token)
             if isinstance(raw, ToolResult):
                 status, raw = raw.status, raw.text
+            from src.agents.tool import SourcedToolText
+            if isinstance(raw, SourcedToolText):
+                result_untrusted = result_untrusted or raw.untrusted
             # 工具可以**正常返回**却表示失败（隔离实现没过、预检不通过…）。没有这条，台账把
             # 一条以 ❌ 开头的结果记成 succeeded，UI 上一片绿、人得逐条读正文才知道哪步真挂了
             # （真机 2026-09-17：dev_isolated 三轮全败，工具事件却都是 succeeded）。
@@ -444,7 +451,7 @@ class ToolRuntime:
             result = f"工具 {name} 执行出错: {e}"
             await self._hook("tool_error", {"tool": name, "args": args, "error": str(e)})
         finally:
-            self.mark_taint([tool])
+            self.mark_taint([tool], untrusted=result_untrusted)
         ctx.check_execution()
         result = _clip_middle(result, _max_tool_result())  # 超长保头+尾：别把末尾的报错/失败摘要截没了
         if status == "succeeded":                          # 只对成功结果算重复；失败重试是正当的

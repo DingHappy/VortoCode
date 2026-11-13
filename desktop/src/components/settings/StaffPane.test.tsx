@@ -29,7 +29,7 @@ it('shows standing suggestions as unapproved guidance without adding activation 
     { id: 'mail', title: '邮件专员建议', scope: '逐次审批后存草稿，不发送', guide: '说明两个汇报时间' },
     { id: 'research', title: '资料专员建议', scope: '只查公开资料', guide: '说明公开研究话题' }];
   const html = renderToStaticMarkup(<StaffView state={{ value, busy: false, error: '' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
-  expect(html).toContain('登记建议，尚未开通'); expect(html).toContain('再逐项核对并批准');
+  expect(html).toContain('登记建议，尚未开通'); expect(html).toContain('再核对整张开通单后批准');
   expect(html).toContain('邮件专员建议'); expect(html).toContain('资料专员建议');
   expect(html).not.toContain('一键开通'); expect(html).toContain('本步不改为实时提醒');
 });
@@ -50,4 +50,26 @@ it('shows fixed project boundaries and separates proposing from owner confirmati
   expect(html).toContain('提交岗位提议'); expect(html).toContain('提交专员提议');
   expect(html).toContain('每一步都由主人核对后确认'); expect(html).toContain('换项目须重新批准');
   expect(html).not.toContain('批准钥匙'); expect(html).not.toContain('type="file"');
+});
+
+it('renders every bundle grant and routine timezone before the single owner approval', () => {
+  const value = structuredClone(snapshot), proposal = value.proposals[0];
+  proposal.snapshot = { kind: 'bundle', previous: null, data: {}, entries: [
+    { kind: 'role', previous: null, data: role },
+    { kind: 'member', previous: null, data: { id: 'staff-new', name: '新专员', role: role.id, engine: 'vortocode' }, role_snapshot: role },
+    { kind: 'routine', previous: null, data: { id: 'routine-new', name: '每日安排', member: 'staff-new', schedule: 'at 09:00', timezone: 'Asia/Shanghai', prompt: '<script>仅作资料</script>', delivery: 'notify', enabled: true }, role_snapshot: role },
+  ] };
+  const html = renderToStaticMarkup(<StaffView state={{ value, busy: false, error: '' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
+  for (const text of ['专员开通单', 'calendar_events', 'plugin:calendar', '不联网', '常设放行：无', 'Asia/Shanghai', 'at 09:00', '批准整张开通单']) expect(html).toContain(text);
+  expect(html).not.toContain('<script>'); expect(html).toContain('&lt;script&gt;');
+  expect(html.match(/>批准整张开通单</g)?.length).toBe(1);
+});
+
+it('offers completion or cancellation of an interrupted bundle, and only cancellation once it has begun', () => {
+  const value = structuredClone(snapshot), proposal = value.proposals[0];
+  proposal.snapshot = { kind: 'bundle', previous: null, data: {}, entries: [] }; proposal.status = 'applying';
+  const render = () => renderToStaticMarkup(<StaffView state={{ value, busy: false, error: '' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
+  expect(render()).toContain('继续完成开通单'); expect(render()).toContain('取消开通单');
+  proposal.status = 'cancelling';
+  expect(render()).toContain('继续取消开通单'); expect(render().match(/<button[^>]*>批准整张开通单<\/button>/)?.[0]).toContain('disabled');
 });
