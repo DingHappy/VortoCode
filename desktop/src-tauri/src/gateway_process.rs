@@ -227,7 +227,7 @@ pub(crate) fn configure_gateway_command(
     // 先把继承来的旧名字 VORTOCODE_* 换成新名字；下面和各个 configure_* 只管新名字（ADR-018 批次 B）。
     crate::env_names::adopt_legacy_env(&mut command, std::env::vars_os());
     if module {
-        command.args(["-m", "src.cli"]);
+        command.args(["-m", "src.runtime_entry"]);
     }
     command.args(["server", "--host", "127.0.0.1", "--port"]);
     command.arg(port.to_string());
@@ -249,6 +249,12 @@ pub(crate) fn configure_gateway_command(
         command.env("VORTOONE_API_TOKEN", token);
     }
     command
+}
+
+pub(crate) fn build_installed_runtime_command(
+    repo_root: &Path, port: u16, token: &str, scope: &str,
+) -> Command {
+    build_command("vortoone-runtime", false, repo_root, port, token, scope)
 }
 
 /// 内置 runtime 是 PyInstaller onedir 目录（可执行文件 + _internal/），随 App 放在 resources/runtime/。
@@ -304,7 +310,7 @@ pub(crate) fn is_vortocode_development_root(root: &Path) -> bool {
         && root.canonicalize().is_ok_and(|path| {
             format!("{:x}", Sha256::digest(path.as_os_str().as_bytes())) == expected
         })
-        && root.join("src/cli.py").is_file()
+        && root.join("src/runtime_entry.py").is_file()
 }
 
 #[tauri::command]
@@ -484,15 +490,15 @@ pub(crate) fn start_gateway(
         Err(error) => sidecar_setup_error = Some(error),
     }
     candidates.push((
-        build_command("vc", false, &root, port, &token, scope),
-        "系统 vc server".to_string(),
+        build_installed_runtime_command(&root, port, &token, scope),
+        "系统内部 runtime".to_string(),
     ));
     if is_vortocode_development_root(&root) {
         candidates.extend([("python3", "python3"), ("python", "python")].map(
             |(executable, label)| {
                 (
                     build_command(executable, true, &root, port, &token, scope),
-                    format!("{label} -m src.cli server"),
+                    format!("{label} -m src.runtime_entry server"),
                 )
             },
         ));
@@ -578,7 +584,7 @@ pub(crate) fn start_gateway(
     }
 
     let message = format!(
-        "找不到 Desktop 内置 runtime 或已安装的 vc 命令，无法为该项目启动 runtime：{}{}",
+        "找不到 Desktop 内置 runtime 或已安装的内部 runtime，无法为该项目启动 runtime：{}{}",
         last_not_found
             .map(|error| error.to_string())
             .unwrap_or_else(|| "unknown error".into()),

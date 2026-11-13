@@ -68,6 +68,7 @@ all = [
 ]
 
 [project.scripts]
+vortoone-runtime = "src.runtime_entry:main"
 vortocode = "src.cli:main"
 vc = "src.cli:main"
 

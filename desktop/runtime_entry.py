@@ -2,8 +2,8 @@
 """Minimal entry point for the VortoOne Desktop bundled runtime.
 
 The sidecar intentionally exposes only the local Gateway server command. The
-full ``vc`` CLI remains the user-facing entry point for TUI, headless and
-maintenance workflows.
+internal ``src.runtime_entry`` handles installed service and diagnostic commands.
+Public ``vc`` wrappers are retained temporarily while their callers migrate.
 """
 
 from __future__ import annotations

@@ -28,7 +28,7 @@ WorkingDirectory=/opt/vortocode/VortoCode
 EnvironmentFile=/etc/vortocode/env
 # --host 0.0.0.0 仅限内网/Tailscale 网段；禁止裸挂公网（token 是全权凭据且 HTTP 明文）。
 # 只本机用（配合 SSH 隧道/Tailscale serve）就删掉 --host，回到默认 127.0.0.1。
-ExecStart=/opt/vortocode/venv/bin/python -m src.cli server --host 0.0.0.0 --port 8080
+ExecStart=/opt/vortocode/venv/bin/python -m src.runtime_entry server --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=10
 # 命令执行沙箱：Linux 依赖 bubblewrap（apt install bubblewrap）。
