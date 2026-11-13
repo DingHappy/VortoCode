@@ -1,0 +1,7 @@
+.approval-stats-table { overflow-x: auto; }
+.approval-stats p { margin: 0; }
+.approval-stats table { width: 100%; border-collapse: collapse; font-size: var(--vc-size-small); color: var(--vc-text); }
+.approval-stats th, .approval-stats td { text-align: start; padding: var(--vc-space-2) var(--vc-space-3); border-bottom: 1px solid var(--vc-divider); }
+.approval-stats th { font-weight: var(--vc-weight-strong); white-space: nowrap; }
+.approval-stats caption { text-align: start; color: var(--vc-muted); padding: var(--vc-space-2); }
+.approval-stats-basis { display: contents; }

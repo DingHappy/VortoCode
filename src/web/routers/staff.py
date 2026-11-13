@@ -105,6 +105,12 @@ def _decision_owner(request: Request):
         raise HTTPException(status_code=403, detail='审批需要携带主人令牌的 owner 写入路由')
 
 
+@router.get('/api/staff/approval-stats', dependencies=[Depends(_decision_owner)])
+def approval_stats(days: int = 7):
+    from src.workflow.staff.approval_stats import approval_statistics
+    return _apply(lambda: approval_statistics(os.getcwd(), days=days))
+
+
 def _recovery():
     from src.scheduling.staff_runner import get_staff_service
     from src.workflow.staff.recovery import StaffRecovery
