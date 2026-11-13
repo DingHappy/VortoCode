@@ -63,6 +63,7 @@ pub(crate) fn remember_remote_at(
         base_url: normalized_url.to_string(),
         last_opened_at: now_epoch_seconds()?,
         kind: PROJECT_KIND_REMOTE.into(),
+        assistant_pending: false,
     };
     let mut registry = load_project_registry(path)?;
     let profile = upsert_project(&mut registry, profile);
@@ -175,6 +176,9 @@ pub(crate) async fn remember_resident_project(
     remote_repo_root: String,
     name: String,
 ) -> Result<DesktopProjectProfile, String> {
+    if local_resident::local_resident_socket_for_project(&app, &host_project_id)?.is_some() {
+        return Err("本机常驻助理不提供其他端口的项目登记".into());
+    }
     let path = project_registry_path(&app)?;
     let host_base = resolve_remote_base(&path, &host_project_id)?;
     let normalized = sibling_server_url(&host_base, port)?;
@@ -249,6 +253,9 @@ pub(crate) async fn fetch_resident_branch(
     local_project_id: String,
     branch: String,
 ) -> Result<String, String> {
+    if local_resident::local_resident_socket_for_project(&app, &resident_project_id)?.is_some() {
+        return Err("本机常驻助理不提供远程 SSH 分支拉取".into());
+    }
     if !valid_resident_branch(&branch) {
         return Err("分支名不合法，已拒绝拉取".into());
     }
@@ -402,23 +409,55 @@ pub(crate) async fn remote_http_request(
     body: Option<String>,
 ) -> Result<RemoteHttpResponse, String> {
     let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
-    let url = build_remote_url(&base, &path)?;
-    let verb = normalize_http_method(&method)?;
+    let socket = local_resident::local_resident_socket_for_project(&app, &project_id)?;
     let token = remote_token_keychain::read(&project_id)?
         .filter(|value| !value.trim().is_empty())
         .ok_or("未找到该远程工作区的访问 token，请重新注册")?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+    remote_http_transport(&base, &method, &path, body, &token, socket.as_deref()).await
+}
+
+pub(crate) fn remote_http_client(
+    timeout: Duration,
+    socket: Option<&Path>,
+) -> Result<reqwest::Client, String> {
+    let builder = reqwest::Client::builder()
+        .timeout(timeout)
         // 禁跟随重定向：一次 302 就能把带着 Authorization 的请求引去第三方 host。
         .redirect(reqwest::redirect::Policy::none())
         // **禁环境变量代理**：reqwest 默认 auto_sys_proxy，即便关了 system-proxy feature，
         // 底层仍会读 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY——那样真实 TCP 目的地由 connector 决定，
         // 上面所有 URL 层校验（含终局 host 不变量）全部形同虚设；且 http 目标走 forward 代理时，
         // 带 Authorization 的完整请求会**明文**交给代理主机。与本仓 child_env「不信任环境变量」同口径。
-        .no_proxy()
+        .no_proxy();
+    // A managed origin is registry identity only. Once selected, socket failure
+    // must remain a failure; the bearer must never fall back to that TCP port.
+    #[cfg(unix)]
+    let builder = if let Some(socket) = socket {
+        builder.unix_socket(socket.to_path_buf())
+    } else {
+        builder
+    };
+    #[cfg(not(unix))]
+    if socket.is_some() {
+        return Err("此平台不支持本机常驻私有连接".into());
+    }
+    builder
         .build()
-        .map_err(|error| format!("无法创建远程请求客户端：{error}"))?;
-    let mut request = client.request(verb, url).bearer_auth(&token);
+        .map_err(|error| format!("无法创建远程请求客户端：{error}"))
+}
+
+async fn remote_http_transport(
+    base: &str,
+    method: &str,
+    path: &str,
+    body: Option<String>,
+    token: &str,
+    socket: Option<&Path>,
+) -> Result<RemoteHttpResponse, String> {
+    let url = build_remote_url(base, path)?;
+    let verb = normalize_http_method(method)?;
+    let client = remote_http_client(Duration::from_secs(30), socket)?;
+    let mut request = client.request(verb, url).bearer_auth(token);
     if let Some(payload) = body {
         request = request
             .header("content-type", "application/json")
@@ -431,7 +470,11 @@ pub(crate) async fn remote_http_request(
     })?;
     let status = response.status();
     if status.is_server_error() {
-        diag("warn", "remote.http_status", &format!("HTTP {}", status.as_u16()));
+        diag(
+            "warn",
+            "remote.http_status",
+            &format!("HTTP {}", status.as_u16()),
+        );
     }
     // 响应体封顶：只有 30s 总 deadline 兜着的话，内网千兆下一个被攻陷/发疯的已注册 server
     // 就能把数 GB 灌进内存（再经 IPC 序列化成 JSON 还要放大几倍）→ 单请求打爆 Desktop。
@@ -480,7 +523,8 @@ pub(crate) fn normalize_ws_sid(value: &str) -> Result<String, String> {
 /// 手工拼 authority 而不用 Url::set_scheme，避开该 API 在 special scheme 间切换的边界行为。
 pub(crate) fn remote_ws_url(base: &str, sid: &str) -> Result<Url, String> {
     let sid = normalize_ws_sid(sid)?;
-    let parsed = Url::parse(base).map_err(|error| format!("已注册的服务器地址无法解析：{error}"))?;
+    let parsed =
+        Url::parse(base).map_err(|error| format!("已注册的服务器地址无法解析：{error}"))?;
     let scheme = match parsed.scheme() {
         "https" => "wss",
         "http" => "ws",
@@ -540,10 +584,12 @@ pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
         // EPERM / EHOSTUNREACH：macOS「本地网络」不放行时，直连内网地址就是这样被系统拦下，而且不弹窗。
         // 真机 2026-10-27、10-28：App 内更新后放行记录还停在旧版，重新打开 App 就恢复；从没授权过才要去系统设置。
         // 前端按「本地网络」四个字给提示条加「重新打开 VortoOne」按钮，改这段话时要留着它。
-        Some(1) | Some(65) => "这台 Mac 拒绝直连过去（No route to host）。如果终端或别的程序能连上，\
+        Some(1) | Some(65) => {
+            "这台 Mac 拒绝直连过去（No route to host）。如果终端或别的程序能连上，\
             多半是 macOS「本地网络」没放行 VortoOne，更新后常见：重新打开 VortoOne 一般就好；\
             还不行，到系统设置 → 隐私与安全性 → 本地网络，把 VortoOne 打开"
-            .into(),
+                .into()
+        }
         Some(51) => "网络不通（Network is unreachable）：检查网络或隧道".into(),
         _ => match error.kind() {
             ErrorKind::ConnectionRefused => "常驻电脑拒绝连接：VortoOne 服务可能没在运行".into(),
@@ -562,6 +608,9 @@ pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
 #[tauri::command]
 pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Result<(), String> {
     let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
+    if let Some(socket) = local_resident::local_resident_socket_for_project(&app, &project_id)? {
+        return remote_health(&base, Some(&socket)).await;
+    }
     let parsed = Url::parse(&base).map_err(|_| "已注册的服务器地址无法解析".to_string())?;
     let host = parsed
         .host_str()
@@ -569,7 +618,9 @@ pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Resu
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_string();
-    let port = parsed.port_or_known_default().ok_or("已注册的服务器地址缺少端口")?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or("已注册的服务器地址缺少端口")?;
     match tokio::time::timeout(
         REMOTE_REACHABLE_TIMEOUT,
         tokio::net::TcpStream::connect((host.as_str(), port)),
@@ -582,25 +633,23 @@ pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Resu
         }
         Ok(Err(error)) => {
             let reason = network_failure_reason(&error);
-            diag("warn", "remote.probe_failed", &format!("os error {:?}：{reason}", error.raw_os_error()));
+            diag(
+                "warn",
+                "remote.probe_failed",
+                &format!("os error {:?}：{reason}", error.raw_os_error()),
+            );
             Err(reason)
         }
-        Ok(Ok(_)) => remote_health(&base).await,
+        Ok(Ok(_)) => remote_health(&base, None).await,
     }
 }
 
 const REMOTE_NOT_ANSWERING: &str =
     "常驻电脑没有正常应答：网络可能断了，或者中间有代理接管了连接（例如开着全局 / TUN 模式的代理）";
 
-async fn remote_health(base: &str) -> Result<(), String> {
+async fn remote_health(base: &str, socket: Option<&Path>) -> Result<(), String> {
     let url = build_remote_url(base, "/api/health")?;
-    let client = reqwest::Client::builder()
-        .timeout(REMOTE_REACHABLE_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        // 与 remote_http 同口径：不读环境变量代理，走 WebSocket 那条直连的路
-        .no_proxy()
-        .build()
-        .map_err(|error| format!("无法创建远程请求客户端：{error}"))?;
+    let client = remote_http_client(REMOTE_REACHABLE_TIMEOUT, socket)?;
     let reply = match client.get(url).send().await {
         Ok(response) => {
             let status = response.status().as_u16();
@@ -633,7 +682,10 @@ pub(crate) fn remote_ws_failure_reason(error: &tokio_tungstenite::tungstenite::E
     use tokio_tungstenite::tungstenite::Error;
     match error {
         Error::Http(response) => {
-            format!("远程 WebSocket 连接失败：服务器返回 HTTP {}", response.status())
+            format!(
+                "远程 WebSocket 连接失败：服务器返回 HTTP {}",
+                response.status()
+            )
         }
         Error::Io(io) => format!("远程 WebSocket 连接失败：{}", network_failure_reason(io)),
         Error::Url(_) => "远程 WebSocket 连接失败：地址无效".into(),
@@ -642,9 +694,96 @@ pub(crate) fn remote_ws_failure_reason(error: &tokio_tungstenite::tungstenite::E
     }
 }
 
+// Preserve the existing TCP/TLS connector and bridge loop; only the socket transport differs.
+trait RemoteWebSocket:
+    futures_util::Stream<
+        Item = Result<
+            tokio_tungstenite::tungstenite::Message,
+            tokio_tungstenite::tungstenite::Error,
+        >,
+    > + futures_util::Sink<
+        tokio_tungstenite::tungstenite::Message,
+        Error = tokio_tungstenite::tungstenite::Error,
+    > + Unpin
+    + Send
+{
+}
+impl<T> RemoteWebSocket for T where
+    T: futures_util::Stream<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + futures_util::Sink<
+            tokio_tungstenite::tungstenite::Message,
+            Error = tokio_tungstenite::tungstenite::Error,
+        > + Unpin
+        + Send
+{
+}
+
+async fn remote_ws_transport(
+    url: &Url,
+    token: &str,
+    socket: Option<&Path>,
+) -> Result<Box<dyn RemoteWebSocket>, String> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+    let mut request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|_| "远程 WebSocket 请求无法构造".to_string())?;
+    let mut auth = HeaderValue::from_str(&format!("Bearer {token}"))
+        .map_err(|_| "远程 token 含非法字符，无法作为请求头".to_string())?;
+    auth.set_sensitive(true);
+    request.headers_mut().insert("authorization", auth);
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_REMOTE_WS_MESSAGE_BYTES))
+        .max_frame_size(Some(MAX_REMOTE_WS_FRAME_BYTES));
+    let connected = tokio::time::timeout(REMOTE_WS_CONNECT_TIMEOUT, async move {
+        if let Some(socket) = socket {
+            #[cfg(unix)]
+            {
+                let io = tokio::net::UnixStream::connect(socket)
+                    .await
+                    .map_err(tokio_tungstenite::tungstenite::Error::Io)?;
+                let (stream, _) =
+                    tokio_tungstenite::client_async_with_config(request, io, Some(config)).await?;
+                return Ok(Box::new(stream) as Box<dyn RemoteWebSocket>);
+            }
+            #[cfg(not(unix))]
+            return Err(tokio_tungstenite::tungstenite::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::Unsupported, "本机常驻私有连接不可用"),
+            ));
+        }
+        let (stream, _) =
+            tokio_tungstenite::connect_async_with_config(request, Some(config), false).await?;
+        Ok::<Box<dyn RemoteWebSocket>, tokio_tungstenite::tungstenite::Error>(Box::new(stream))
+    })
+    .await
+    .map_err(|_| {
+        diag(
+            "warn",
+            "remote.ws.connect_timeout",
+            "远程 WebSocket 连接超时",
+        );
+        "远程 WebSocket 连接超时".to_string()
+    })?;
+    connected.map_err(|error| {
+        let reason = remote_ws_failure_reason(&error);
+        diag("warn", "remote.ws.connect_failed", &reason);
+        reason
+    })
+}
+
 /// 收尾：摘表 + 通报，**恰好一次**——谁先摘掉表项谁负责发事件，避免重复通报或漏报。
 /// 返回被摘下的句柄交调用方决定是否 abort（读任务自己收尾时不该 abort 自己）。
-pub(crate) fn finish_remote_ws(app: &AppHandle, conn_id: &str, reason: &str) -> Option<RemoteWsHandle> {
+pub(crate) fn finish_remote_ws(
+    app: &AppHandle,
+    conn_id: &str,
+    reason: &str,
+) -> Option<RemoteWsHandle> {
     use tauri::Emitter;
     let removed = app.try_state::<RemoteWsRegistry>().and_then(|state| {
         state
@@ -674,9 +813,6 @@ pub(crate) async fn remote_ws_connect(
 ) -> Result<String, String> {
     use futures_util::{SinkExt, StreamExt};
     use tauri::Emitter;
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    use tokio_tungstenite::tungstenite::http::HeaderValue;
-    use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
     use tokio_tungstenite::tungstenite::Message;
 
     // 连接配额：webview 一个循环就能把 fd/内存耗尽，闸要设在建连之前。
@@ -694,39 +830,13 @@ pub(crate) async fn remote_ws_connect(
 
     // 与 HTTP 代理同一条锁链：已注册 + remote 条目 + 重过网段校验 + id↔base_url 绑定回验。
     let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
+    let socket = local_resident::local_resident_socket_for_project(&app, &project_id)?;
     let url = remote_ws_url(&base, &sid)?;
     let token = remote_token_keychain::read(&project_id)?
         .filter(|value| !value.trim().is_empty())
         .ok_or("未找到该远程工作区的访问 token，请重新注册")?;
 
-    let mut request = url
-        .as_str()
-        .into_client_request()
-        .map_err(|_| "远程 WebSocket 请求无法构造".to_string())?;
-    let mut auth = HeaderValue::from_str(&format!("Bearer {token}"))
-        .map_err(|_| "远程 token 含非法字符，无法作为请求头".to_string())?;
-    // **必须置敏**：否则头值的 Debug 会被 tungstenite 写进握手错误串并回到 webview。
-    auth.set_sensitive(true);
-    request.headers_mut().insert("authorization", auth);
-
-    let config = WebSocketConfig::default()
-        .max_message_size(Some(MAX_REMOTE_WS_MESSAGE_BYTES))
-        .max_frame_size(Some(MAX_REMOTE_WS_FRAME_BYTES));
-    let connected = tokio::time::timeout(
-        REMOTE_WS_CONNECT_TIMEOUT,
-        tokio_tungstenite::connect_async_with_config(request, Some(config), false),
-    )
-    .await
-    .map_err(|_| {
-        diag("warn", "remote.ws.connect_timeout", "远程 WebSocket 连接超时");
-        "远程 WebSocket 连接超时".to_string()
-    })?;
-    let (stream, _response) = connected.map_err(|error| {
-        // 只记粗粒度原因：底层错误串可能带头值原文（含 token）
-        let reason = remote_ws_failure_reason(&error);
-        diag("warn", "remote.ws.connect_failed", &reason);
-        reason
-    })?;
+    let stream = remote_ws_transport(&url, &token, socket.as_deref()).await?;
     let (mut sink, mut source) = stream.split();
 
     let conn_id = {
@@ -827,4 +937,230 @@ pub(crate) fn remote_ws_close(app: AppHandle, conn_id: String) -> Result<(), Str
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod unix_transport_tests {
+    use super::*;
+    use futures_util::{SinkExt, StreamExt};
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = PathBuf::from("/tmp").join(format!(
+                "vo-transport-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::SeqCst)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            Self(path)
+        }
+        fn socket(&self) -> PathBuf {
+            self.0.join("s")
+        }
+        fn listen(&self) -> tokio::net::UnixListener {
+            let listener = tokio::net::UnixListener::bind(self.socket()).unwrap();
+            std::fs::set_permissions(self.socket(), std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+            listener
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn reply<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+        stream: &mut S,
+        body: &str,
+    ) -> String {
+        let mut head = Vec::new();
+        while !head.windows(4).any(|value| value == b"\r\n\r\n") {
+            let mut byte = [0];
+            assert_eq!(stream.read(&mut byte).await.unwrap(), 1);
+            head.push(byte[0]);
+            assert!(head.len() < 8192);
+        }
+        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        String::from_utf8(head).unwrap()
+    }
+
+    #[test]
+    fn managed_http_and_health_use_private_unix_socket() {
+        tauri::async_runtime::block_on(async {
+            let fixture = Fixture::new();
+            let listener = fixture.listen();
+            let server = tauri::async_runtime::spawn(async move {
+                let (mut stream, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                let head = reply(&mut stream, r#"{"ok":true}"#).await;
+                assert!(head.starts_with("GET /api/fixture?read=1 HTTP/1.1\r\n"));
+                assert!(head
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer fixture-owner"));
+                let (mut stream, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                let head = reply(&mut stream, r#"{"healthy":true}"#).await;
+                assert!(head.starts_with("GET /api/health HTTP/1.1\r\n"));
+                assert!(!head.to_ascii_lowercase().contains("authorization:"));
+            });
+            let response = remote_http_transport(
+                "http://127.0.0.1:1",
+                "GET",
+                "/api/fixture?read=1",
+                None,
+                "fixture-owner",
+                Some(&fixture.socket()),
+            )
+            .await;
+            let health = remote_health("http://127.0.0.1:1", Some(&fixture.socket())).await;
+            let served = server.await;
+            assert!(
+                response.is_ok(),
+                "UDS request did not reach the private fixture"
+            );
+            assert!(health.is_ok());
+            served.unwrap();
+        });
+    }
+
+    #[test]
+    fn managed_websocket_uses_unix_socket_and_preserves_frames() {
+        tauri::async_runtime::block_on(async {
+            let fixture = Fixture::new();
+            let listener = fixture.listen();
+            let server = tauri::async_runtime::spawn(async move {
+                let (stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let mut ws = tokio_tungstenite::accept_hdr_async(
+                    stream,
+                    |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                     response| {
+                        assert_eq!(request.uri().to_string(), "/ws?sid=fixture");
+                        assert_eq!(request.headers()["authorization"], "Bearer fixture-owner");
+                        Ok(response)
+                    },
+                )
+                .await
+                .unwrap();
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                    "fixture-reply".into(),
+                ))
+                .await
+                .unwrap();
+                assert_eq!(
+                    ws.next().await.unwrap().unwrap().into_text().unwrap(),
+                    "fixture-input"
+                );
+            });
+            let connected = remote_ws_transport(
+                &remote_ws_url("http://127.0.0.1:1", "fixture").unwrap(),
+                "fixture-owner",
+                Some(&fixture.socket()),
+            )
+            .await;
+            if let Ok(mut ws) = connected {
+                assert_eq!(
+                    ws.next().await.unwrap().unwrap().into_text().unwrap(),
+                    "fixture-reply"
+                );
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                    "fixture-input".into(),
+                ))
+                .await
+                .unwrap();
+                server.await.unwrap();
+            } else {
+                server.abort();
+                panic!("UDS websocket did not reach the private fixture");
+            }
+        });
+    }
+
+    #[test]
+    fn unavailable_managed_socket_never_falls_back_to_registered_tcp_origin() {
+        tauri::async_runtime::block_on(async {
+            let fixture = Fixture::new();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let accepted = Arc::new(AtomicUsize::new(0));
+            let count = accepted.clone();
+            let trap = tauri::async_runtime::spawn(async move {
+                loop {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    count.fetch_add(1, Ordering::SeqCst);
+                    reply(&mut stream, r#"{"healthy":true}"#).await;
+                }
+            });
+            let http = remote_http_transport(
+                &base,
+                "GET",
+                "/api/fixture",
+                None,
+                "fixture-owner",
+                Some(&fixture.socket()),
+            )
+            .await;
+            let health = remote_health(&base, Some(&fixture.socket())).await;
+            let ws = remote_ws_transport(
+                &remote_ws_url(&base, "fixture").unwrap(),
+                "fixture-owner",
+                Some(&fixture.socket()),
+            )
+            .await;
+            trap.abort();
+            assert_eq!(
+                accepted.load(Ordering::SeqCst),
+                0,
+                "the TCP listener received a managed request"
+            );
+            assert!(http.is_err());
+            assert!(health.is_err());
+            assert!(ws.is_err());
+        });
+    }
+
+    #[test]
+    fn remote_websocket_without_managed_socket_keeps_tcp_transport() {
+        tauri::async_runtime::block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let server = tauri::async_runtime::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                    "remote-fixture".into(),
+                ))
+                .await
+                .unwrap();
+            });
+            let mut ws = remote_ws_transport(
+                &remote_ws_url(&base, "fixture").unwrap(),
+                "fixture-owner",
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                ws.next().await.unwrap().unwrap().into_text().unwrap(),
+                "remote-fixture"
+            );
+            server.await.unwrap();
+        });
+    }
 }

@@ -14,7 +14,7 @@ export function isAssistantHost(project: Pick<DesktopProjectProfile, "kind" | "r
 
 /** 已登记的常驻电脑（最近登记的在前，取第一台）。 */
 export function findAssistantHost(projects: DesktopProjectProfile[]): DesktopProjectProfile | undefined {
-  return projects.find(isAssistantHost);
+  return projects.find(project => isAssistantHost(project) && !project.assistantPending);
 }
 
 /** 工作台里能打开的项目：去掉常驻电脑。 */

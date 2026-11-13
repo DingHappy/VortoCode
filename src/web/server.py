@@ -142,7 +142,7 @@ def _insecure_bind_reason(host: str) -> str:
             f"      或（确知风险、已有外层鉴权时）：export VORTOONE_ALLOW_INSECURE_BIND=1")
 
 
-def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = ""):
+def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = "", *, uds: str | None = None):
     """启动服务器（绑非本地且无鉴权时 fail-closed 拒绝启动，见 _insecure_bind_reason）。
 
     im：非空则内嵌 IM 桥（telegram|dingtalk，凭证缺失 fail-closed 拒启——显式要了就不能静默没有）。
@@ -167,13 +167,14 @@ def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = ""):
         os.environ["VORTOONE_IM"] = im        # lifespan 从 env 读（uvicorn.run 不传自定义参数）
     print(f"\n{'='*50}")
     print(f"  VortoOne 服务器启动")
-    print(f"  访问: http://{host}:{port}")
+    print("  本机常驻专用连接（不监听网络端口）" if uds else f"  访问: http://{host}:{port}")
     if host not in _LOCAL_HOSTS:
         print("  ⚠️  绑定到非本地地址；已设置鉴权/显式放行。请确认 token 足够强。")
     print(f"{'='*50}\n")
     # access_log=False：token 现已移出 URL（走 httpOnly Cookie / Authorization 头，审计 P0#4 已收口），
     # URL 里不再有敏感串；仍关访问日志作为纵深防御（少一处可能记录敏感请求体/头的面）。应用级日志不受影响。
-    uvicorn.run(app, host=host, port=port, log_level="warning", access_log=False)
+    transport = {"uds": uds} if uds else {"host": host, "port": port}
+    uvicorn.run(app, **transport, log_level="warning", access_log=False)
 
 
 if __name__ == "__main__":

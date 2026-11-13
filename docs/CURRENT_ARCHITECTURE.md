@@ -212,6 +212,8 @@ Desktop local Project 可绑定本机 Appium，观察原生界面及逐次确认
 
 ## 继续阅读
 
+- [Mac 本机常驻助手](LOCAL_RESIDENT.md)：同一服务器的独立生命周期、本机/远端连接与资料、模型配置边界；不自动迁移现有资料或开启后台能力。新增服务管理尚未发布、安装或实机验收。
+
 用户已明确需要“总助手 + 专职 bot，按需独立 IM 入口”。[多 bot 方案](MULTI_BOT_COLLABORATION.md)
 记录 Grok 源码对照、会话隔离底座和分阶段联动。[Project 的 N 入口只读托管](IM_MULTI_HOST.md)
 已接入实际 runtime 生命周期、账号级事件记录和原 SessionActors；未知认领不自动重跑。

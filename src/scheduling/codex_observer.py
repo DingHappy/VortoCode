@@ -12,12 +12,14 @@ Codex CLI（0.16x）的本机后台服务在 ``~/.codex/app-server-control/app-s
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import hashlib
 import json
 import logging
 import os
 import re
 import socket
+import stat
 import time
 import uuid
 from copy import deepcopy
@@ -338,14 +340,12 @@ async def post_report(threads: List[dict], *, http=None) -> bool:
         return False
     url, token = target
     payload = _report_payload(threads)
-    if http is not None:
+    if http is not None and not os.getenv("VORTOONE_CODEX_REPORT_SOCKET", "").strip():
         return bool(await http(f"{url}/api/codex/report", payload, token))
-    import aiohttp
-    timeout = aiohttp.ClientTimeout(total=15)
-    # trust_env=False：常驻电脑在局域网，别经代理
-    async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as session:
+    async with _resident_session() as session:
         async with session.post(f"{url}/api/codex/report", json=payload,
-                                headers={"Authorization": f"Bearer {token}"}) as response:
+                                headers={"Authorization": f"Bearer {token}"},
+                                allow_redirects=False) as response:
             return response.status < 300
 
 
@@ -355,16 +355,50 @@ class ResidentHTTPError(RuntimeError):
         super().__init__(f"常驻助理返回 {status}")
 
 
+def _resident_socket() -> str | None:
+    """Only the trusted launcher supplies this private transport, never a tool call."""
+    raw = os.getenv("VORTOONE_CODEX_REPORT_SOCKET", "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    try:
+        parent, endpoint = path.parent.stat(), path.lstat()
+        if (not path.is_absolute() or path.parent.resolve(strict=True) != path.parent
+                or parent.st_uid != os.getuid() or stat.S_IMODE(parent.st_mode) != 0o700
+                or not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != os.getuid()
+                or stat.S_IMODE(endpoint.st_mode) != 0o600):
+            raise OSError("unsafe managed socket")
+    except (OSError, ValueError):
+        raise RuntimeError("本机常驻的私有连接不可用；未改用网络地址") from None
+    return raw
+
+
+@asynccontextmanager
+async def _resident_session():
+    import aiohttp
+
+    path = _resident_socket()
+    connector = aiohttp.UnixConnector(path=path) if path is not None else None
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15),
+                                         trust_env=False, connector=connector) as session:
+            yield session
+    except (aiohttp.ClientError, OSError):
+        if path is not None:
+            raise RuntimeError("本机常驻的私有连接未完成；未改用网络地址") from None
+        raise
+
+
 async def resident_call(method: str, path: str, payload: Optional[dict] = None) -> dict:
     """调常驻助理的 Codex 接口（取待执行的动作、认领、报结果）。"""
     target = report_target()
     if target is None:
         raise RuntimeError("没有常驻助理的地址")
     url, token = target
-    import aiohttp
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as session:
+    async with _resident_session() as session:
         async with session.request(method, f"{url}{path}", json=payload,
-                                   headers={"Authorization": f"Bearer {token}"}) as response:
+                                   headers={"Authorization": f"Bearer {token}"},
+                                   allow_redirects=False) as response:
             if response.status >= 300:
                 raise ResidentHTTPError(response.status)
             return await response.json()

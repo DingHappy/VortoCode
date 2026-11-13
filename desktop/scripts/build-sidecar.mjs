@@ -77,6 +77,7 @@ const inputs = [
   join(desktopRoot, "requirements-runtime.in"),
   join(desktopRoot, "requirements-runtime.lock"),
   join(desktopRoot, "runtime_entry.py"),
+  join(desktopRoot, "local_resident_config.py"),
   join(desktopRoot, "scripts", "python-tooling.mjs"),
   join(desktopRoot, "scripts", "generate_third_party_notices.py"),
   join(desktopRoot, "scripts", "managed-python.mjs"),

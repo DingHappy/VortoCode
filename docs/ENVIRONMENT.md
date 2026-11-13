@@ -205,4 +205,5 @@ VortoOne 读取的全部 `VORTOONE_*` 环境变量。常用项的示例与注释
 | `VORTOONE_MODEL_CHOICES` | Desktop | 默认服务上允许点名的模型列表。 | `llm/routing.py` |
 | `VORTOONE_MODEL_CONTEXT_WINDOW_SOURCE` | Desktop | 窗口值的来源标记，供设置页显示。 | `llm/client.py` |
 | `VORTOONE_CODEX_REPORT_URL` / `VORTOONE_CODEX_REPORT_TOKEN` | Desktop | 本机 Codex 观察结果的上报地址与令牌。 | `scheduling/codex_observer.py` |
+| `VORTOONE_CODEX_REPORT_SOCKET` | Desktop | 受管本机常驻的私有 Unix socket。启用时 URL 只作身份索引，报告和动作请求不走 TCP；私有通道失效直接报错，不回退网络连接。 | `scheduling/codex_observer.py` |
 | `VORTOONE_IN_SANDBOX` | 隔离流水线 | 标记当前进程在 worktree 隔离测试里。 | `agents/worktree.py` |

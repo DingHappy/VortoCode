@@ -49,6 +49,39 @@ it("does not report the local runtime running just because the remote conversati
   expect(markup).toContain("本机引擎未运行");
   expect(markup).not.toContain("本机引擎运行中");
 });
+it("separates local and remote resident cards while retaining the original remote anchor", () => {
+  const markup = renderSettings({ initialSection: "computer" });
+  expect(markup).toContain('id="setting-local-resident"');
+  expect(markup).toContain('id="setting-resident"');
+  expect(markup).toContain('本机常驻助理');
+  expect(markup).toContain('其他电脑上的常驻助理');
+  expect(markup).toContain('本机引擎与工作区');
+});
+it("does not present the registered local service as another computer", () => {
+  const markup = renderSettings({ initialSection: "computer", hasResident: true, residentConnected: true,
+    residentName: "local-fixture-name", residentAccountProjectId: "local-fixture", localResidentProjectId: "local-fixture", selectedAssistantHostId: "local-fixture" });
+  expect(markup).toContain('尚未登记其他常驻电脑');
+  expect(markup).not.toContain('local-fixture-name');
+  expect(markup).not.toContain('当前对话已连接到常驻实例');
+});
+it("keeps remote registration unknown until the local resident identity is checked", () => {
+  const markup = renderSettings({ initialSection: "computer", hasResident: true, residentName: "unchecked-host", residentRegistrationKnown: false,
+    onConnectResident: noop, onOpenResidentSetup: noop });
+  expect(markup).toContain("正在核对已登记的常驻电脑");
+  expect(markup).not.toContain("尚未登记其他常驻电脑");
+  expect(markup).not.toContain("unchecked-host");
+  expect(markup.match(/<button[^>]*>连接助手<\/button>/)?.[0]).toContain("disabled");
+  expect(markup.match(/<button[^>]*>连接常驻电脑<\/button>/)?.[0]).not.toContain("disabled");
+});
+it("describes an exact local resident connection without offering temporary controls over it", () => {
+  const markup = renderSettings({ initialSection: "computer", runtimeIsRemote: true, localResidentProjectId: "local-fixture", selectedAssistantHostId: "local-fixture" });
+  expect(markup).toContain("当前对话使用本机常驻助理；下方仅管理临时引擎");
+  expect(markup).toContain("退出 Desktop 后停止；不开定时任务");
+  expect(markup).not.toContain("当前会话连接到远端实例");
+  expect(markup).not.toContain("远端会话；此处不控制服务器");
+  expect(markup).not.toContain(">停止本机引擎</button>");
+  expect(markup).not.toContain(">重新加载本机引擎</button>");
+});
 it("opens the legacy abilities entry at permissions and exposes seven clear categories", () => {
   const markup = renderSettings({ initialSection: "abilities" });
   expect(markup).toContain('id="settings-page-title">权限与自动化');

@@ -18,4 +18,9 @@ describe("settings navigation", () => {
     expect(searchSettings("  ")).toEqual([]);
     expect(searchSettings("does-not-exist")).toEqual([]);
   });
+  it("finds local resident setup separately from remote connections", () => {
+    expect(searchSettings("本机 常驻").map(item => item.id)).toEqual(["local-resident"]);
+    expect(searchSettings("登录 后台").map(item => item.id)).toEqual(["local-resident"]);
+    expect(searchSettings("远程").map(item => item.id)).toContain("resident");
+  });
 });

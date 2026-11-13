@@ -20,6 +20,14 @@ describe("assistantHost", () => {
     expect(workProjects(list).map((item) => item.id)).toEqual(["repo", "srv"]);
   });
 
+  it("preparing a local host never selects it, including when it is the only registered host", () => {
+    const pending = { ...project("new-local", "remote", ASSISTANT_HOST_ROOT), assistantPending: true };
+    expect(findAssistantHost([pending])).toBeUndefined();
+    expect(findAssistantHost([pending, ...list])?.id).toBe("host");
+    expect(workProjects([pending])).toEqual([]);
+    expect(findAssistantHost([{ ...pending, assistantPending: false }])?.id).toBe("new-local");
+  });
+
   it("本机与每台常驻电脑各有自己的主要聊天", () => {
     expect(mainChatKey(null)).toBe(STORAGE_KEYS.mainChatSid);
     expect(mainChatKey("host")).toBe(`${STORAGE_KEYS.mainChatSid}:host`);

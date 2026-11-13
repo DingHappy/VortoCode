@@ -49,7 +49,8 @@ IM inherits `VORTOONE_WORKSPACE_SCOPE` when assembling its agent. General cannot
 gain file/Shell/Git tools through an IM message. Scratch keeps its restricted
 folder tools. Project-only `/task`, `/tasks`, and pipeline commands are rejected
 in both General and Scratch, including direct background task submission.
-Autonomous cron/heartbeat opt-in requires Project scope.
+General supports explicitly enabled cron under its existing restricted unattended
+profile; command jobs remain unavailable there. Heartbeat requires Project scope.
 
 A resident server can send task completion, failure and confirmation reminders
 through its embedded owner bridge. A reminder does not approve a Desktop
@@ -80,6 +81,8 @@ inbox while another workspace is active. Disconnecting Desktop does not stop the
 service or its background tasks. Remote source browsing does not read local files
 with the same path; inspect task changes through the server-backed change views.
 
-This change does not install a local daemon, deploy a service, configure real
-credentials, or prove receipt on a phone. A future local daemon can use the same
-Runtime lifecycle after its explicit start/stop and reconnect UX is defined.
+The original hosting change does not itself install a daemon or prove receipt on
+a phone. Desktop's explicit Mac local-resident management reuses this Runtime
+lifecycle with separate files and ownership; see [Mac local resident](LOCAL_RESIDENT.md).
+Implementation, local offline checks, installation and live acceptance remain
+separate evidence.

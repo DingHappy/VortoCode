@@ -147,6 +147,8 @@ import { CustomizePage } from "./components/CustomizePage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, isLocalNetworkBlocked, mainChatKey, probeAssistantHost, relaunchApp, workProjects } from "./lib/assistantHost";
+import { connectResidentSelection } from "./lib/residentConnection";
+import type { LocalResidentStatus } from "./lib/localResident";
 import { dismissStarterTips, recordAssistantSend, shouldShowStarterTips, starterTips } from "./lib/starterTips";
 import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
@@ -235,6 +237,12 @@ function App() {
   const [projectSwitching, setProjectSwitching] = useState(false);
   coordinator.listen({ switching: setProjectSwitching, starting: setRuntimeStarting });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localResidentStatus, setLocalResidentStatus] = useState<LocalResidentStatus | null>(null);
+  const localResidentStatusRef = useRef<LocalResidentStatus | null>(null);
+  const updateLocalResidentStatus = (status: LocalResidentStatus) => {
+    localResidentStatusRef.current = status;
+    setLocalResidentStatus(status);
+  };
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -1605,6 +1613,8 @@ function App() {
   // ── 助理模式 ─────────────────────────────────────────────────────────────
   // 常驻电脑上有哪些项目（它的登记表）：工作台「在哪做」据此判断能不能切到常驻电脑。
   const residentHost = findAssistantHost(projects);
+  const otherResidentHost = localResidentStatus
+    ? projects.find(item => isAssistantHost(item) && !item.assistantPending && item.id !== localResidentStatus.projectId) : undefined;
   const [residentProjects, setResidentProjects] = useState<ResidentProject[]>([]);
   // 空白对话里的上手示例（用熟了或点了「不再显示」就收起）
   const [showStarterTips, setShowStarterTips] = useState(() => shouldShowStarterTips());
@@ -1745,6 +1755,18 @@ function App() {
     });
     return switched || (coordinator.lastConnectError ?? "连接常驻电脑失败");
   };
+
+  const useRegisteredAssistant = (profile: DesktopProjectProfile) => connectResidentSelection(
+    profile, connectAssistantHost, async selected => {
+      const local = localResidentStatusRef.current;
+      if (local?.projectId === selected.id) {
+        await invoke("local_resident_select", { expectedRevision: local.revision, expectedLaunchId: local.launchId });
+      }
+      const active = { ...selected, assistantPending: false };
+      setProjects(current => [active, ...current.filter(item => item.id !== active.id)]);
+      setAppMode("assistant");
+      await openMainChat(selected.id);
+    });
 
   /** 新建旁聊。从主要聊天出发时必须换新会话——newSession 对空草稿只清界面不换 id，会把旁聊并进主要聊天。 */
   const newSideChat = async () => {
@@ -3568,11 +3590,18 @@ function App() {
           initialSection={settingsSection}
           initialAnchor={settingsAnchor}
           onOpenPlugins={() => { setMainView("plugins"); }}
-          hasResident={Boolean(findAssistantHost(projects))}
-          residentName={findAssistantHost(projects)?.name}
+          hasResident={Boolean(otherResidentHost)}
+          residentName={otherResidentHost?.name}
           residentConnected={onAssistantHost() && connection === "connected"}
+          selectedAssistantHostId={onAssistantHost() ? assistantHostRef.current ?? undefined : undefined}
+          localResidentProjectId={localResidentStatus?.projectId}
+          remoteResidentProjectId={otherResidentHost?.id}
+          residentRegistrationKnown={Boolean(localResidentStatus)}
+          onLocalResidentStatus={updateLocalResidentStatus}
+          onUseLocalResident={useRegisteredAssistant}
           onOpenResidentSetup={() => setRemoteDialogOpen("assistant")}
-          onConnectResident={() => { const host = findAssistantHost(projects); if (host) void connectAssistantHost(host).then(ok => { if (ok) { setAppMode("assistant"); void openMainChat(host.id); } }); }}
+          onConnectResident={() => { if (otherResidentHost) void useRegisteredAssistant(otherResidentHost)
+            .catch(error => setBanner(errorText(error, "连接常驻助手失败"))); }}
           onOpenSchedule={() => { setAppMode("assistant"); setMainView("chat"); setAssistantTab("schedule"); setInspectorOpen(true); }}
           llmSaveNote={llmSaveNote}
           llmSaveKind={llmSaveKind}
