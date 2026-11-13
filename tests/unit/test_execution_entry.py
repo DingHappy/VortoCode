@@ -159,3 +159,60 @@ async def test_cli_entry_rechecks_unattended_capabilities_without_starting_or_fa
     with pytest.raises(cli.ExternalWorkerError, match='无人值守'):
         await agent.run_turn('implement')
     assert not invoked and agent.last_run is None
+
+
+@pytest.mark.parametrize('phase,action,operation', [
+    ('idle', 'message', 'start'), ('running', 'message', 'steer'), ('running', 'interrupt', 'interrupt'),
+])
+async def test_session_entry_preserves_native_control_and_acceptance_only(phase, action, operation):
+    from src.agents.backends.codex import CodexBackend
+    from src.agents.backends.entry import SessionRequest, control_existing
+    from tests.unit.test_agent_backends import RPC
+    rpc = RPC(phase)
+    request = SessionRequest('codex', 's1', action, text=' continue ', expected_turn_id='t1')
+    receipt = await control_existing(CodexBackend(rpc), request)
+    assert receipt.operation == operation and receipt.session_id == 's1'
+    assert not hasattr(receipt, 'completed')
+    assert [name for name, _ in rpc.calls] == ['thread/read', 'thread/turns/list', f'turn/{operation}']
+    assert set(rpc.writes[0][1]) <= {'threadId', 'input', 'expectedTurnId', 'turnId'}
+
+
+async def test_session_entry_refuses_a_different_backend_before_read_or_write():
+    from src.agents.backends.codex import CodexBackend
+    from src.agents.backends.control import BackendControlError
+    from src.agents.backends.entry import SessionRequest, control_existing
+    from tests.unit.test_agent_backends import RPC
+    rpc = RPC()
+    with pytest.raises(BackendControlError, match='身份'):
+        await control_existing(CodexBackend(rpc), SessionRequest('other', 's1', 'message', text='continue'))
+    assert not rpc.calls
+
+
+async def test_session_entry_never_replays_an_uncertain_receipt_or_cancellation():
+    from src.agents.backends.codex import CodexBackend
+    from src.agents.backends.control import ControlOutcomeUnknown
+    from src.agents.backends.entry import SessionRequest, control_existing
+    from tests.unit.test_agent_backends import RPC
+    for response, error in [(None, ControlOutcomeUnknown), (asyncio.CancelledError(), asyncio.CancelledError)]:
+        rpc = RPC()
+        rpc.response['steer'] = response
+        with pytest.raises(error):
+            await control_existing(CodexBackend(rpc), SessionRequest('codex', 's1', 'message', text='continue', expected_turn_id='t1'))
+        assert len(rpc.writes) == 1
+
+
+async def test_observer_uses_session_entry_and_retains_original_action_round(monkeypatch):
+    from src.agents.backends.entry import control_existing
+    from src.scheduling import codex_observer as observer
+    from tests.unit.test_agent_backends import RPC
+    entries = []
+    async def through_entry(backend, request):
+        entries.append(request)
+        return await control_existing(backend, request)
+    monkeypatch.setattr(observer, 'control_existing', through_entry, raising=False)
+    rpc = RPC(turn_id='new')
+    action = {'thread_id': 's1', 'kind': 'message', 'text': 'continue', 'turn_id': 'old'}
+    threads = [{'id': 's1', 'status': 'active', 'turn': {'id': 'old', 'status': 'inProgress'}}]
+    result = await observer.run_action(rpc, action, threads)
+    assert len(entries) == 1 and entries[0].expected_turn_id == 'old'
+    assert not result['ok'] and not result['uncertain'] and not rpc.writes

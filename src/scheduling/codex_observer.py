@@ -27,7 +27,8 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from src.agents.backends.codex import CodexBackend, codex_execution_state
-from src.agents.backends.control import ControlOutcomeUnknown, control_session
+from src.agents.backends.control import ControlOutcomeUnknown
+from src.agents.backends.entry import SessionRequest, control_existing
 from src.agents.backends.execution import (
     ExecutionProgress, ExecutionRef, ExecutionSnapshot, process_instance,
 )
@@ -483,8 +484,8 @@ async def _execute(client: CodexClient, action: dict, threads: List[dict]) -> tu
         expected = None
         if kind == "interrupt" or not action.get("session"):
             expected = str(action.get("turn_id") or turn.get("id") or "") or None
-        await control_session(CodexBackend(client), str(thread["id"]), action=kind,
-                              text=text, expected_turn_id=expected)
+        await control_existing(CodexBackend(client), SessionRequest('codex', str(thread['id']),
+                              kind, text=text, expected_turn_id=expected))
         return True, ""
     except ControlOutcomeUnknown:
         raise

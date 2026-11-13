@@ -5,6 +5,8 @@
 ```text
 常驻助理 → 人工批准 → Mac 观察员
                          │
+               entry.control_existing
+                         │
                   control_session
                          │
                SessionControlBackend
@@ -14,13 +16,13 @@
 
 ## 当前实现
 
-三类执行来源现已提供 [可扩展执行合同 v1](EXECUTION_CONTRACT.md) 的只读报告。会话控制合同继续独立存在；SessionState 可携带共同快照，控制器核对来源与状态一致性。ControlReceipt 可关联执行引用，仍只代表受理。
+自有 Agent、CLI、ACP、已有 Codex 会话四类执行来源现已提供 [可扩展执行合同 v1](EXECUTION_CONTRACT.md) 的只读报告。会话控制合同继续独立存在；SessionState 可携带共同快照，控制器核对来源与状态一致性。ControlReceipt 可关联执行引用，仍只代表受理。
 
 - `SessionState`：backend/session/turn 精确身份，running/idle/unknown 状态。
 - `SessionControlBackend`：read_state、start_turn、steer_turn、interrupt_turn，以及明确声明的可用操作。
 - `control_session`：宿主批准后的单次控制入口。重新读状态，核对会话/轮次和支持的操作，再选择启动、补充或停止；无法确认时拒绝。不自动重试、不切备用核心、不自动创建新会话。
 - `CodexBackend`：通过观察员已有 RPC 连接实现合同；状态读取只取最近一轮的身份与状态，不拉完整对话。不更改模型、工作目录、沙箱或审批策略。
-- Codex 观察员的 `execute_action` 实际调用该控制入口。自动监管建议绑定产生建议的轮次；停止始终绑定原轮次。用户在自己的对话中明确要求发消息，仍可发到该会话的最新轮次。
+- Codex 观察员的 `execute_action` 经 `entry.control_existing` 调用原控制器：不可变 SessionRequest 固定来源、会话、原动作和预期轮次，宿主显式提供已有 RPC 的适配对象，来源不匹配时在读取或写入前拒绝。入口不另写一份状态判定、不新建进程，不增加发送后重试或把受理改成完成。自动监管建议绑定产生建议的轮次；停止始终绑定原轮次。用户在自己的对话中明确要求发消息，仍可发到该会话的最新轮次。
 - 只有主人交接过的会话才能拟动作（ADR-010）：其余会话只汇报、只提醒。目标按会话 id 定位，同名时拒绝。交接后主人自己在 Codex 里发起的那一轮，监管不拟下一步。
 
 - `backends/acp.py`（ADR-014 S2 第一步）：Agent Client Protocol 通用客户端，一个适配器覆盖 DeepSeek Harness（`dsh --profile acp`）、OpenCode（`opencode acp`）等。一次会话只发一条提示：框架的每个权限请求交给宿主注入的判定函数，放行只选 `allow_once`、判定出错按拒绝；文件读写只在宿主给的根目录内，写入另需判定；不声明终端能力；出现非本地类别的工具调用即记为可能联网（宿主据此标污点）；超时先发 `session/cancel` 再结束进程组。子进程环境剥离操作密钥与 GitHub 令牌，常驻模式下 HOME / XDG 指到 `VORTOONE_WORKER_HOME/<框架>`。已接成任务上下文成员（`agents/team_engines.py`）：成员可选执行框架 opencode / deepseek-harness，权限按角色判定（研究员只允许读、搜索、联网抓取，审查员只允许读；开发成员只允许在本轮一次性 worktree 内读写，命令和联网一律不放，测试由 VortoOne 用 `worktree.run_tests` 在沙箱里跑，改动落成项目仓库的本地分支，见 `agents/team_delivery.py`）。DeepSeek Harness 的审批不覆盖联网和只读命令，另用 `--patch` 按角色关掉工具；OpenCode 以 `OPENCODE_CONFIG_CONTENT` 注入全部 ask 的配置。
