@@ -36,7 +36,8 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/agents/tool_results.py` | 原模型历史文本的版本化结果编解码、调用顺序核对和旧格式读取 | 工具执行、真实性证明、权限、状态台账或模型请求 |
 | `src/agents/tool_calls.py` | 模型调用信封、批次与参数对象的纯解析，坏调用整体拒绝，兼容原解析入口 | 工具执行、权限批准、模型请求或完整业务参数校验 |
 | `src/agents/backends/control.py` / `backends/codex.py` | 现有会话的状态与轮次控制合同、Codex 协议适配；[核心控制合同](AGENT_BACKENDS.md) | 启动额外进程、工具执行、审批代决、会话存储或任意核心切换 |
-| `src/agents/team_engines.py` / `backends/acp.py` | ACP 框架配置/角色装配与协议进程调用，保留 AcpResult 并提供共同快照；开发成员只用 OpenCode | 新专员权限、测试/分支交付、统一执行入口或主会话替换 |
+| `src/agents/team_engines.py` / `backends/acp.py` | ACP 框架配置/角色装配与协议进程调用，保留 AcpResult 并提供共同快照；开发成员只用 OpenCode | 新专员权限、测试/分支交付或主会话替换 |
+| `src/agents/backends/entry.py` | 显式可信绑定的一次性执行转交与能力核对；首批用于固定项目 OpenCode 开发专员 | 权限判定、新任务库/执行池、重试、接手、恢复或动态程序加载 |
 | `src/workflow/staff/executions.py` | 在原专员任务内绑定执行尝试、核对回调并提供只读投影 | 新任务库、调度、恢复、权限、验收或界面状态机 |
 | `src/agents/external_workers.py` | 实验性 Codex / Claude CLI 的一次性实现/审查、事件解析和执行报告 | 默认启用、已有会话续聊、任务台账或审批代决 |
 | `src/agents/backends/execution.py` | 可扩展的执行身份/状态/进展/结果与证据投影、版本编解码；[执行合同](EXECUTION_CONTRACT.md) | 任务数据库、调度、授权、验收判定或自动插件加载 |

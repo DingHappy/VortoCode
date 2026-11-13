@@ -144,7 +144,8 @@ async def _run_developer(service: Any, root: Any, work: Any, child: Any, number:
 
 
 async def execute_development(work, child, dispatch, engine, project, tainted, *, record_delivery,
-                              check=None, run_external=None, run_tests=None, execution_ref=None, on_snapshot=None):
+                              check=None, run_external=None, run_tests=None, execution_ref=None, on_snapshot=None,
+                              execute_backend=None):
     """Shared isolated-copy execution; no coordinator or second task is required."""
     from src.agents import team_delivery, team_engines
     number = child.collaboration['round']
@@ -160,8 +161,12 @@ async def execute_development(work, child, dispatch, engine, project, tainted, *
         options = {'check': check} if check is not None else {}
         if execution_ref is not None:
             options.update(execution_ref=execution_ref, on_snapshot=on_snapshot)
-        result = await runner(engine, "developer", dispatch.get("model", ""), external_developer_prompt(child, work),
-                              timeout=dispatch["timeout_seconds"], child_id=child.id, workdir=str(path), **options)
+        if execute_backend is not None:
+            result = await execute_backend(external_developer_prompt(child, work),
+                timeout=dispatch["timeout_seconds"], child_id=child.id, workdir=str(path), **options)
+        else:
+            result = await runner(engine, "developer", dispatch.get("model", ""), external_developer_prompt(child, work),
+                timeout=dispatch["timeout_seconds"], child_id=child.id, workdir=str(path), **options)
         tainted = tainted or result.networked
         if check is not None:
             check()

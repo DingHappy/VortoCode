@@ -141,6 +141,36 @@ async def test_acp_observation_is_bound_to_original_developer_task_not_delivery_
     assert git(project, 'branch', '--show-current') == 'main'
 
 
+async def test_developer_uses_common_entry_once_with_original_task_and_isolated_copy(development, monkeypatch):
+    from src.agents import team_engines
+    from src.agents.backends import entry
+    root, project, config, data = development
+    registry, role, member, pool, service = registered(development)
+    observed = []
+    original_entry = entry.execute_once
+    async def traced(binding, call, **kwargs):
+        observed.append((binding.backend_id, call))
+        return await original_entry(binding, call, **kwargs)
+    copies = []
+    async def external(engine, kind, model, prompt, **kwargs):
+        path = Path(kwargs['workdir'])
+        copies.append(path)
+        assert path != project and kind == 'developer' and engine == 'opencode'
+        assert not (path / '.env').exists()
+        (path / 'app.txt').write_text('changed in isolated copy\n')
+        return SimpleNamespace(text='已修改', error='', networked=False)
+    monkeypatch.setattr(entry, 'execute_once', traced)
+    monkeypatch.setattr(team_engines, 'run_external', external)
+    task = service.assign('owner', {'member': member['id'], 'prompt': '只改项目副本'})
+    await pool.jobs[task.id]()
+    saved = service.collaboration('owner').get(task.id)
+    assert saved.status == 'done' and saved.collaboration['review'] == 'pending'
+    assert len(observed) == len(copies) == 1 and observed[0][0] == 'opencode'
+    assert observed[0][1].ref.task_id == task.id
+    assert git(project, 'show', saved.collaboration['delivery']['branch'] + ':app.txt') == 'changed in isolated copy'
+    assert (project / 'app.txt').read_text() == 'original\n' and not copies[0].exists()
+
+
 async def test_changed_project_never_starts_queued_development(development, monkeypatch):
     root, project, config, data = development
     registry, role, member, pool, service = registered(development)

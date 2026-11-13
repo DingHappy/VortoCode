@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from src.agents.tool import Tool, PreparedToolCall
+from src.agents.tool import Tool, PreparedToolCall, SourcedToolText
 from src.agents.trust import READ, OWN_DATA, DRAFT, WRITE, EXECUTE, INTERACT
 
 
@@ -99,7 +99,9 @@ async def execute_staff(root, task, work, role, member, check, *, approval_servi
         from src.agents.team_members import execute_team_developer
         return await execute_team_developer(root, task, work)
     if role.get('project_binding'):
+        from functools import partial
         from src.agents.team_members import execute_development
+        from src.agents.team_engines import run_developer
         from src.workflow.staff.projects import check as check_project
         def record(delivery):
             check()
@@ -110,7 +112,8 @@ async def execute_staff(root, task, work, role, member, check, *, approval_servi
         return await execute_development(work, task,
             {**task.collaboration['dispatch'], 'model': member['model']}, member['engine'], check_project(role),
             bool(task.collaboration.get('tainted')), record_delivery=record, check=check,
-            execution_ref=execution.ref, on_snapshot=execution.publish)
+            execution_ref=execution.ref, on_snapshot=execution.publish,
+            execute_backend=partial(run_developer, member['engine'], member['model']))
     from dataclasses import replace
     import time
     from src.agents.backends.execution import ExecutionState
@@ -168,7 +171,12 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None, 
         if args:
             raise ValueError('staff_list 不接受参数')
         from src.workflow.staff.service import staff_directory
-        return json.dumps(service.directory() if service is not None else staff_directory(root), ensure_ascii=False)
+        data = service.directory() if service is not None else staff_directory(root)
+        # Backend prose is data, including output from local/native specialists.
+        # Preserve provenance through the existing runtime/history mechanism.
+        untrusted = any(task.get('execution') is not None
+            for member in data.get('members', []) for task in member.get('recent_tasks', []))
+        return SourcedToolText(json.dumps(data, ensure_ascii=False), untrusted=untrusted)
 
     async def plan(args):
         from src.workflow.staff.standing import standing_plan
