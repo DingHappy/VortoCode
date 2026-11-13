@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { searchSettings, settingsPage } from "./settingsNavigation";
+import { searchSettings, settingsPage, SETTINGS_ITEMS, SETTINGS_OWNER_LABELS } from "./settingsNavigation";
 
 describe("settings navigation", () => {
+  it("declares an owner for every searchable setting and keeps local and runtime writes distinct", () => {
+    for (const item of SETTINGS_ITEMS) expect(SETTINGS_OWNER_LABELS[item.owner]).toBeTruthy();
+    expect(SETTINGS_ITEMS.find(item => item.id === "services")?.owner).toBe("desktop");
+    expect(SETTINGS_ITEMS.find(item => item.id === "staff")?.owner).toBe("space");
+    expect(SETTINGS_ITEMS.find(item => item.id === "trust")?.owner).toBe("workspace");
+    expect(searchSettings("这台 Mac 模型").map(item => item.id)).toContain("services");
+  });
   it("keeps the previous abilities entry pointing at workspace permissions", () => {
     expect(settingsPage("abilities")).toBe("permissions");
     expect(settingsPage("computer")).toBe("computer");

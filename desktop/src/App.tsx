@@ -1,3 +1,4 @@
+import { settingsTargetLease, type SettingsTargetLease } from "./lib/settingsTarget";
 import { desktopContext, retryAssistant } from "./lib/desktopContext";
 import { PersonalSpacePicker } from "./components/PersonalSpacePicker";
 import { AssistantTimeline } from "./components/AssistantTimeline";
@@ -348,7 +349,7 @@ function App() {
   const [exceptionFocus, setExceptionFocus] = useState(0);
   const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
-  const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  const [profileDialogLease, setProfileDialogLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
   // 常驻电脑连不上时在本机聊过的会话：连回常驻电脑后列在「本机（离线时）」，见 lib/offlineChats.ts
   const [offlineChatIds, setOfflineChatIds] = useState(() => listOfflineChats());
@@ -361,10 +362,19 @@ function App() {
     scope: activeScope, repoRoot, sid: activeSid, baseUrl, runtimeId: processStatus.runtimeId ?? "", connection,
     profiles: projects, localResidentId: localResidentStatus?.projectId ?? null, source: clientRef.current?.desktopSource ?? null });
   const assistantScope = currentTarget.readKey;
+  const settingsTargetRef = useRef(currentTarget);
+  settingsTargetRef.current = currentTarget;
+  const runtimeSettings = useMemo(() => settingsOpen ? settingsTargetLease(() => ({
+    context: settingsTargetRef.current, client: clientRef.current,
+  })) : undefined, [settingsOpen]);
   const [waitingDisclosure, setWaitingDisclosure] = useState({ scope: "", open: false });
   useEffect(() => setCapabilitiesOpen(false), [assistantScope, activeSid]);
   const assistantScopeRef = useRef(assistantScope);
   assistantScopeRef.current = assistantScope;
+  const openProfileDialog = () => {
+    if (assistantScopeRef.current !== assistantScope) return;
+    setProfileDialogLease(settingsTargetLease(() => ({ context: settingsTargetRef.current, client: clientRef.current })));
+  };
   const {
     assistantProfile, assistantAvatar, setAssistantAvatar, scheduleReadEpoch, assistantSchedule, setAssistantSchedule,
     assistantMemories, setAssistantMemories, memoryProposals, setMemoryProposals,
@@ -386,7 +396,7 @@ function App() {
   useEffect(() => {
     setWaitingDisclosure({ scope: assistantScope, open: false });
     setPhoneChatSid(null); setPhoneChatRid(undefined); setExceptionFocus(0);
-    setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
+    setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogLease(null);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
@@ -446,7 +456,7 @@ function App() {
     hookStatus, setHookStatus, hookTrustBusy, setHookTrustBusy,
     extensionsInspect, extensionsInspectBusy,
     refreshHookStatus, refreshExtensionsInspect,
-  } = useExtensionsStatus(clientRef);
+  } = useExtensionsStatus(clientRef, assistantScope);
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
   const decisionScopeRef = useRef(activeSid);
   decisionScopeRef.current = activeSid;
@@ -515,13 +525,13 @@ function App() {
     refreshProjectAssets, loadArtifactPreview, resetProjectAssets,
   } = useProjectAssets(clientRef);
   // 授权档位与模型服务配置已收进 useTrustLevel / useLlmProfile；重启 runtime 经注入回调。
-  const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
+  const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner, assistantScope);
   const {
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmRolesInput, setLlmRolesInput,
     llmKeyInput, setLlmKeyInput, llmProfileBusy, llmSaveNote, llmSaveKind, llmProfileLoading, llmProfileError, llmProfileConflict, reloadLlmProfile, saveLlmProfile, clearLlmProfile,
-  } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
+  } = useLlmProfile(settingsOpen, setBanner, () => runtimeSettings?.current() ? restartCurrentRuntimeForLlmProfile() : Promise.resolve(false));
   const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
   const [modelPicks, setModelPicks] = useState<string[] | null>(() => loadModelPicks());
   const changeModelPicks = useCallback((picks: string[] | null) => {
@@ -2122,10 +2132,13 @@ function App() {
   // selectJournalDay / continueFromYesterday 已随 journal 域收进 useJournal（S6b）。
 
   const toggleHookTrust = async () => {
-    if (!clientRef.current || !hookStatus?.configured || hookTrustBusy) return;
+    if (!clientRef.current || !hookStatus?.configured || hookTrustBusy || assistantScopeRef.current !== assistantScope) return;
+    const client = clientRef.current, scope = assistantScopeRef.current, epoch = client.connectionEpoch;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope && client.connectionEpoch === epoch;
     setHookTrustBusy(true);
     try {
-      const next = await clientRef.current.setHookTrust(!hookStatus.trusted);
+      const next = await client.setHookTrust(!hookStatus.trusted);
+      if (!current()) return;
       setHookStatus(next);
       void refreshAudit();
       void refreshExtensionsInspect();
@@ -2133,9 +2146,9 @@ function App() {
         ? `已信任并启用 ${next.hooks.length} 个项目 Hook；当前会话已热重载`
         : "已撤销项目 Hook 信任；当前会话已停止执行仓库 Hook");
     } catch (error) {
-      setBanner(errorText(error, "Hook 信任状态更新失败"));
+      if (current()) setBanner(errorText(error, "Hook 信任状态更新失败"));
     } finally {
-      setHookTrustBusy(false);
+      if (current()) setHookTrustBusy(false);
     }
   };
 
@@ -3218,7 +3231,7 @@ function App() {
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
           : <AssistantPanel id="assistant-panel" toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
-            onEditProfile={() => setProfileDialogOpen(true)}
+            onEditProfile={openProfileDialog}
             host={onAssistantHost() ? { kind: "resident", name: currentTarget.runtimeLabel, reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => residentHost ? void connectAssistantHost(residentHost) : setSettingsOpen(true)}
@@ -3260,7 +3273,7 @@ function App() {
                   proposals={memoryProposals}
                   onMemorySnapshot={panelActions.memorySnapshot}
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
-                  onEdit={() => setProfileDialogOpen(true)}
+                  onEdit={openProfileDialog}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
               : <>
               <AssistantActivity key={assistantScope} items={assistantFeedItems} teams={attentionTeams} exceptionFocus={exceptionFocus} onExceptionFocused={() => setExceptionFocus(0)}
@@ -3601,15 +3614,14 @@ function App() {
             <button className="primary" onClick={() => bringOfflineChat(chat)}>带回常驻电脑</button>
           </>} />;
       })()}
-      {profileDialogOpen && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogOpen(false)}
+      {profileDialogLease && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogLease(null)}
         onSave={async (next) => {
-          const client = clientRef.current;
-          if (!client) throw new Error("还没连上助理");
-          const scope = assistantScopeRef.current;
+          if (!profileDialogLease.client) throw new Error("还没连上助理");
+          profileDialogLease.requireCurrent();
           invalidateAssistantReads(); // A pre-save profile read cannot restore the old identity.
-          const profile = await client.saveAssistantProfile(next);
-          if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
-          setAssistantProfile(profile); setProfileDialogOpen(false);
+          const profile = await profileDialogLease.client.saveAssistantProfile(next);
+          if (!profileDialogLease.current()) return;
+          setAssistantProfile(profile); setProfileDialogLease(null);
         }} />}
       {remoteDialogOpen && <RemoteProjectDialog purpose={remoteDialogOpen} onClose={() => setRemoteDialogOpen(false)} onRegistered={async (profile) => {
         const known = [profile, ...projects.filter((item) => item.id !== profile.id)];
@@ -3620,6 +3632,7 @@ function App() {
       }} />}
       {settingsOpen && (
         <SettingsModal
+          runtimeSettings={runtimeSettings}
           residentAccountProjectId={residentHost?.id}
           readCodexObserver={readCodexObserver}
           activeScope={activeScope}
@@ -3680,7 +3693,7 @@ function App() {
           llmProfileLoading={llmProfileLoading}
           llmProfileError={llmProfileError} llmProfileConflict={llmProfileConflict}
           onReloadLlmProfile={reloadLlmProfile}
-          onEditAssistant={() => setProfileDialogOpen(true)}
+          onEditAssistant={openProfileDialog}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}
@@ -3708,8 +3721,8 @@ function App() {
               hookStatus={hookStatus}
               hookTrustBusy={hookTrustBusy}
               connection={connection}
-              onRefresh={() => void Promise.all([refreshExtensionsInspect(), refreshHookStatus()])}
-              onToggleHookTrust={toggleHookTrust}
+              onRefresh={() => { if (runtimeSettings?.current()) void Promise.all([refreshExtensionsInspect(), refreshHookStatus()]); }}
+              onToggleHookTrust={() => { if (runtimeSettings?.current()) void toggleHookTrust(); }}
             />
           )}
         </SettingsModal>

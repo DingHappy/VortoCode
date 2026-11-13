@@ -21,43 +21,52 @@ export function useTrustLevel(
   repoRoot: string,
   settingsOpen: boolean,
   onBanner: (text: string) => void,
+  scope = "",
 ) {
-  const [trust, setTrust] = useState<TrustStatus | null>(null);
-  const [trustBusy, setTrustBusy] = useState(false);
+  type Owner = { client: GatewayClient; epoch: number; scope: string };
+  const [snapshot, setSnapshot] = useState<(Owner & { value: TrustStatus }) | null>(null);
+  const [busyOwner, setBusyOwner] = useState<Owner | null>(null);
   const generation = useRef(0);
+  const scopeRef = useRef(scope); scopeRef.current = scope;
+  const matches = (owner: Owner | null) => Boolean(owner && owner.client === clientRef.current
+    && owner.epoch === owner.client.connectionEpoch && owner.scope === scopeRef.current);
+  const trust = matches(snapshot) ? snapshot!.value : null;
+  const trustBusy = matches(busyOwner);
 
   useEffect(() => {
     const ticket = ++generation.current;
     const client = clientRef.current;
-    setTrust(null);
-    setTrustBusy(false);
-    if (connection !== "connected") {
+    setSnapshot(null);
+    setBusyOwner(null);
+    if (connection !== "connected" || !client) {
       return;
     }
-    const current = () => generation.current === ticket && clientRef.current === client;
-    void client?.getTrust()
-      .then((value) => { if (current()) setTrust(value); })
-      .catch(() => { if (current()) setTrust(null); });
+    const owner = { client, epoch: client.connectionEpoch, scope };
+    const current = () => generation.current === ticket && matches(owner);
+    void client.getTrust()
+      .then(value => { if (current()) setSnapshot({ ...owner, value }); })
+      .catch(() => { if (current()) setSnapshot(null); });
     return () => { ++generation.current; };
-  }, [clientRef, connection, repoRoot, settingsOpen]);
+  }, [clientRef, connection, repoRoot, settingsOpen, scope]);
 
   const changeTrustLevel = async (level: TrustLevel) => {
     const client = clientRef.current;
-    if (!client || connection !== "connected" || !trust || trustBusy || trust.level === level) return;
+    if (!client || connection !== "connected" || !trust || !matches(snapshot) || trustBusy || trust.level === level) return;
     const ticket = ++generation.current; // invalidate any older GET as well as prior workspace callbacks
-    const current = () => generation.current === ticket && clientRef.current === client;
-    setTrustBusy(true);
+    const owner = { client, epoch: client.connectionEpoch, scope };
+    const current = () => generation.current === ticket && matches(owner);
+    setBusyOwner(owner);
     try {
       const next = await client.setTrust(level);
       if (!current()) return;
-      setTrust(next);
+      setSnapshot({ ...owner, value: next });
       onBanner(next.level === next.effective
         ? `授权级别已设为「${TRUST_LEVEL_TEXT[next.level]}」`
         : `已选「${TRUST_LEVEL_TEXT[next.level]}」，当前会话最高到「${TRUST_LEVEL_TEXT[next.effective]}」`);
     } catch (error) {
       if (current()) onBanner(errorText(error, "授权级别保存失败"));
     } finally {
-      if (current()) setTrustBusy(false);
+      if (current()) setBusyOwner(null);
     }
   };
 

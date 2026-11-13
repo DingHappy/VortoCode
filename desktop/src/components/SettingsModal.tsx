@@ -2,8 +2,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDialogSurface } from "../hooks/useDialogSurface";
-import { SETTINGS_SECTIONS, searchSettings, settingsPage, type SettingsPage, type SettingsSection } from "../lib/settingsNavigation";
+import { SETTINGS_OWNER_LABELS, SETTINGS_SECTIONS, searchSettings, settingsPage, type SettingsPage, type SettingsSection } from "../lib/settingsNavigation";
 import "./SettingsModal.css";
+import { SettingsTargetSection } from "./settings/SettingsTargetSection";
+import { settingsTargetSummary, type SettingsTargetLease } from "../lib/settingsTarget";
 export type { SettingsSection } from "../lib/settingsNavigation";
 import { invoke } from "@tauri-apps/api/core";
 import { errorText } from "../lib/errorText";
@@ -92,6 +94,7 @@ type SettingsModalProps = {
   /** 登记了常驻电脑（「让助理查看 Codex」要报给它） */
   hasResident?: boolean;
   staffClient?: StaffClient;
+  runtimeSettings?: SettingsTargetLease<StaffClient>;
   readCodexObserver?: () => Promise<CodexObserverRead>;
   /** 打开助理资料（名字、SOUL、关于你） */
   onEditAssistant?: () => void;
@@ -172,7 +175,7 @@ type SettingsModalProps = {
 export function SettingsModal({
   onOpenPlugins,
   hasResident = false,
-  readCodexObserver, staffClient,
+  readCodexObserver, staffClient, runtimeSettings,
   onEditAssistant,
   residentName, residentAccountProjectId, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", llmProfileConflict = false, onReloadLlmProfile,
   selectedAssistantHostId, localResidentProjectId, remoteResidentProjectId, onUseLocalResident, onLocalResidentStatus, residentRegistrationKnown = true,
@@ -203,7 +206,7 @@ export function SettingsModal({
   onLlmModelChange,
   onLlmFastChange,
   onLlmStrongChange,
-  onRestartRuntime,
+  onRestartRuntime: restartRuntime,
   onLlmProfileChange,
   modelPicks,
   onModelPicksChange,
@@ -225,6 +228,10 @@ export function SettingsModal({
   trustBusy,
   onTrustChange,
 }: SettingsModalProps) {
+  // Local writes stay local; reloading an engine must not follow a changed conversation target.
+  const onRestartRuntime = () => runtimeSettings?.current() ? restartRuntime() : Promise.resolve(false);
+  const onRuntimeAction = (action: () => void) => { if (runtimeSettings?.current()) action(); };
+  const boundResidentId = runtimeSettings?.target.space?.runtime.registrationId ?? undefined;
   const trustView = trustCard(trust);
   const llmInputIsLocal = isLocalModelBase(llmBaseInput);
   const [section, setSection] = useState<SettingsPage>(settingsPage(
@@ -342,7 +349,7 @@ export function SettingsModal({
           {query.trim() ? searchResults.map(item => {
             const Icon = NAV_ICONS[item.page];
             return <button key={item.id} className="settings-search-result" onClick={() => navigate(item.page, item.id)}>
-              <Icon size={17} aria-hidden="true" /><span>{item.label}<small>{SETTINGS_SECTIONS.find(page => page.id === item.page)?.label}</small></span><ChevronRight size={14} aria-hidden="true" />
+              <Icon size={17} aria-hidden="true" /><span>{item.label}<small>{SETTINGS_SECTIONS.find(page => page.id === item.page)?.label} · {SETTINGS_OWNER_LABELS[item.owner]}</small></span><ChevronRight size={14} aria-hidden="true" />
             </button>;
           }) : SETTINGS_SECTIONS.map(item => {
             const Icon = NAV_ICONS[item.id];
@@ -354,24 +361,23 @@ export function SettingsModal({
           })}
           {query.trim() && !searchResults.length && <p className="settings-nav-empty">没有匹配的设置项<br />试试「远程」「模型」或「权限」</p>}
         </div>
-        <div className="settings-nav-footer"><Monitor size={15} /><div>这台 Mac 的设置<small>常驻实例单独配置</small></div></div>
+        <div className="settings-nav-footer"><Monitor size={15} /><div>按区块核对保存位置<small>本机、空间和项目分别管理</small></div></div>
       </nav>
       <div className="settings-pane">
         <header className="settings-heading"><div><h2 id="settings-page-title">{currentPage.label}</h2><p>{currentPage.description}</p></div>
           <button className="settings-close" disabled={saving} onClick={() => requestLeave(onClose)} aria-label="关闭设置"><X size={18} /></button></header>
         <div className="settings-content" ref={contentRef} aria-labelledby="settings-page-title">
+          <div className="settings-target-current"><strong>打开设置时的运行目标</strong><span>{runtimeSettings ? settingsTargetSummary(runtimeSettings.target) : "目标尚未核对"}</span>
+            {runtimeSettings && !runtimeSettings.current() && <small role="status">当前目标已失效或尚未连接；运行端设置已停用。关闭后重开以核对新目标。</small>}</div>
           <div className="settings-scope"><MapPin size={16} aria-hidden="true" /><p>{currentPage.scope}</p></div>
           {visited.has("account") && <div hidden={section !== "account"} className="settings-page">
             <div id="setting-account" className={anchorClass("account")} tabIndex={-1}>
-              <VortoAccountCard
+              <SettingsTargetSection owner="desktop"><VortoAccountCard
                 modelConfigured={Boolean(llmProfile?.configured)}
                 onProfile={onLlmProfileChange}
                 onRestartRuntime={onRestartRuntime}
                 onProfileCleared={async () => onLlmProfileChange(await invoke<DesktopLlmProfileStatus>("get_llm_profile"))}
               />
-              <div id="setting-mobile-account" className={anchorClass("mobile-account")} tabIndex={-1}>
-                <ResidentAccountCard key={residentAccountProjectId ?? "no-resident"} projectId={residentAccountProjectId} />
-              </div>
               {settingsBlockVisible("relayLogin", llmProfile) && (
                 <AccountPane
                   profile={llmProfile}
@@ -381,9 +387,15 @@ export function SettingsModal({
                 />
               )}
               {settingsBlockVisible("usage", llmProfile) && <UsagePane account={llmProfile?.account} />}
+              </SettingsTargetSection>
+              <SettingsTargetSection owner="space" lease={runtimeSettings} unavailable={!boundResidentId}>
+                <div id="setting-mobile-account" className={anchorClass("mobile-account")} tabIndex={-1}>
+                  <ResidentAccountCard key={boundResidentId ?? "no-resident"} projectId={boundResidentId} guard={runtimeSettings} />
+                </div>
+              </SettingsTargetSection>
             </div>
           </div>}
-          {visited.has("model") && <div hidden={section !== "model"} className="settings-page" aria-busy={llmProfileLoading}>
+          {visited.has("model") && <div hidden={section !== "model"} className="settings-page" aria-busy={llmProfileLoading}><SettingsTargetSection owner="desktop">
             {modelUnavailable && <section className="settings-read-feedback" role={llmProfileError ? "alert" : "status"}>
               {llmProfileLoading ? <LoaderCircle size={18} aria-hidden="true" /> : <CircleAlert size={18} aria-hidden="true" />}
               <div><strong>{llmProfileLoading ? "正在读取本机模型配置…" : "暂时无法读取本机模型配置"}</strong>
@@ -477,8 +489,8 @@ export function SettingsModal({
                 <div id="setting-routing" className={anchorClass("routing")} tabIndex={-1}><p className="settings-card-note">配置服务后可设置自动调度与常用模型。</p></div>
               </section>}
             </fieldset>}
-          </div>}
-          {visited.has("computer") && <div hidden={section !== "computer"} className="settings-page">
+          </SettingsTargetSection></div>}
+          {visited.has("computer") && <div hidden={section !== "computer"} className="settings-page"><SettingsTargetSection owner="desktop">
             <div id="setting-local-resident" className={anchorClass("local-resident")} tabIndex={-1}><LocalResidentCard
               onUse={onUseLocalResident ? async profile => { if (pending.length || otherSaving) throw new Error("请先处理未保存的设置，再连接本机常驻助理"); await onUseLocalResident(profile); } : undefined}
               selectedHostId={selectedAssistantHostId} connected={residentConnected} onBusyChange={setLocalResidentBusy}
@@ -581,11 +593,11 @@ export function SettingsModal({
                   )}
                 </div>
               </details>}</section>
-          </div>}
+          </SettingsTargetSection></div>}
           {visited.has("permissions") && <div hidden={section !== "permissions"} className="settings-page">
-            <div id="setting-trust" className={anchorClass("trust")} tabIndex={-1}>        <h3 className="settings-subhead">授权级别 <small>Agent 动手前要不要先问你</small></h3>
+            <SettingsTargetSection owner="workspace" lease={runtimeSettings}><div id="setting-trust" className={anchorClass("trust")} tabIndex={-1}>        <h3 className="settings-subhead">授权级别 <small>Agent 动手前要不要先问你</small></h3>
               {!trustView && (
-                <p className="settings-intro">授权级别按工作区保存：在工作台打开一个对话、连上引擎后就能在这里调整，也可以直接在输入框下方切换。</p>
+                <p className="settings-intro">授权级别按工作区保存：连接到要调整的个人空间或项目后，在这里核对该工作区的权限，也可以在输入框下方切换。</p>
               )}
               {trustView && (
                 <section className="trust-card" aria-label="授权级别">
@@ -605,7 +617,7 @@ export function SettingsModal({
                         className={option.active ? "active" : ""}
                         disabled={trustBusy || option.blocked}
                         title={option.blockedReason}
-                        onClick={() => onTrustChange(option.level)}
+                        onClick={() => onRuntimeAction(() => onTrustChange(option.level))}
                       >{option.title}</button>
                     ))}
                   </div>
@@ -616,30 +628,37 @@ export function SettingsModal({
               )}
 
             </div>
-            <div id="setting-browser" className={anchorClass("browser")} tabIndex={-1}><BrowserPane onDraftStateChange={draftCallbacks.browser} onRestartRuntime={onRestartRuntime} /></div>
+            </SettingsTargetSection>
+            <SettingsTargetSection owner="desktop"><div id="setting-browser" className={anchorClass("browser")} tabIndex={-1}><BrowserPane onDraftStateChange={draftCallbacks.browser} onRestartRuntime={onRestartRuntime} /></div>
             <div id="setting-control" className={anchorClass("control")} tabIndex={-1}><DesktopControlPane onDraftStateChange={draftCallbacks.control} onRestartRuntime={onRestartRuntime} /></div>
-            <section id="setting-schedule" className={`${anchorClass("schedule")} settings-card`} tabIndex={-1}><div className="settings-card-head"><strong>定时任务</strong>
-              {onOpenSchedule && <button onClick={() => requestLeave(() => { onClose(); onOpenSchedule(); })}>查看计划</button>}</div>
-              <p className="settings-card-note">在助手的「计划」中管理任务。定时任务由对应实例执行；启用浏览器或桌面操作不会扩大无人值守任务的权限。</p></section>
+            </SettingsTargetSection>
+            <SettingsTargetSection owner="space" lease={runtimeSettings} unavailable={!runtimeSettings?.target.space}><section id="setting-schedule" className={`${anchorClass("schedule")} settings-card`} tabIndex={-1}><div className="settings-card-head"><strong>定时任务</strong>
+              {onOpenSchedule && <button onClick={() => requestLeave(() => { onRuntimeAction(() => { onClose(); onOpenSchedule(); }); })}>查看计划</button>}</div>
+              <p className="settings-card-note">在助手的「计划」中管理任务。定时任务由对应实例执行；启用浏览器或桌面操作不会扩大无人值守任务的权限。</p></section></SettingsTargetSection>
           </div>}
           {visited.has("tools") && <div hidden={section !== "tools"} className="settings-page">
-            <div id="setting-codex" className={anchorClass("codex")} tabIndex={-1}><CodexWatchCard hasResident={hasResident} readSnapshot={readCodexObserver} /></div>
-            <section id="setting-extensions" className={`${anchorClass("extensions")} settings-card`} tabIndex={-1}><div className="settings-card-head"><strong>MCP 工具服务</strong>
-              {onOpenPlugins && <button onClick={() => requestLeave(() => { onClose(); onOpenPlugins(); })}>管理插件和 MCP</button>}</div>
+            <SettingsTargetSection owner="desktop"><div id="setting-codex" className={anchorClass("codex")} tabIndex={-1}><CodexWatchCard hasResident={hasResident} readSnapshot={readCodexObserver} /></div>
+            </SettingsTargetSection>
+            <SettingsTargetSection owner="workspace" lease={runtimeSettings}><section id="setting-extensions" className={`${anchorClass("extensions")} settings-card`} tabIndex={-1}><div className="settings-card-head"><strong>MCP 工具服务</strong>
+              {onOpenPlugins && <button onClick={() => requestLeave(() => { onRuntimeAction(() => { onClose(); onOpenPlugins(); }); })}>管理插件和 MCP</button>}</div>
               <p className="settings-card-note">连接文档检索、云服务等外部工具。安装和配置在插件页中管理。</p></section>
-            {children || <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>}
+            </SettingsTargetSection>
+            <div id="setting-project-extensions" className={anchorClass("project-extensions")} tabIndex={-1}><SettingsTargetSection owner="project" lease={runtimeSettings} unavailable={!runtimeSettings?.target.projectRoot}>
+              {children || <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>}
+            </SettingsTargetSection></div>
           </div>}
           {visited.has("personal") && <div hidden={section !== "personal"} className="settings-page">
-            {onEditAssistant && (
+            <SettingsTargetSection owner="space" lease={runtimeSettings} unavailable={!runtimeSettings?.target.space}>{onEditAssistant && (
               <section id="setting-identity" className={`${anchorClass("identity")} settings-card`} tabIndex={-1} aria-label="助理资料">
                 <div className="settings-card-head">
                   <strong>助理资料</strong>
-                  <button onClick={() => requestLeave(() => { onClose(); onEditAssistant(); })}>编辑</button>
+                  <button onClick={() => requestLeave(() => { onRuntimeAction(() => { onClose(); onEditAssistant(); }); })}>编辑</button>
                 </div>
                 <p className="settings-card-note">助理的名字、性格（SOUL）和「关于你」。常驻电脑上的助理每次对话都会读。</p>
               </section>
             )}
-            <div id="setting-instructions" className={anchorClass("instructions")} tabIndex={-1}><PersonalizePane onDraftStateChange={draftCallbacks.instructions} /></div>
+            </SettingsTargetSection>
+            <SettingsTargetSection owner="desktop"><div id="setting-instructions" className={anchorClass("instructions")} tabIndex={-1}><PersonalizePane onDraftStateChange={draftCallbacks.instructions} /></div>
 
             <section id="setting-appearance" tabIndex={-1} className={`${anchorClass("appearance")} appearance-card`} aria-label="外观">
               <div className="appearance-row">
@@ -660,17 +679,18 @@ export function SettingsModal({
                 </div>
               </div>
             </section>
-
-
+            </SettingsTargetSection>
           </div>}
-          {visited.has("staff") && <div hidden={section !== "staff"} className="settings-page"><StaffPane projectId={residentAccountProjectId} client={staffClient} /></div>}
-          {visited.has("advanced") && <div hidden={section !== "advanced"} className="settings-page">
+          {visited.has("staff") && <div hidden={section !== "staff"} className="settings-page"><SettingsTargetSection owner="space" lease={runtimeSettings} unavailable={!boundResidentId}>
+            <StaffPane projectId={boundResidentId} client={runtimeSettings?.client ?? staffClient} />
+          </SettingsTargetSection></div>}
+          {visited.has("advanced") && <div hidden={section !== "advanced"} className="settings-page"><SettingsTargetSection owner="desktop">
             <div id="setting-version" className={anchorClass("version")} tabIndex={-1}>
               <UpdateCard /><details className="advanced-settings settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
             </div><div id="setting-diagnostics" tabIndex={-1}><h3 className="settings-subhead">诊断日志</h3><DiagnosticsPane /></div>
             <div id="setting-telemetry" tabIndex={-1}><h3 className="settings-subhead">错误报告与使用统计</h3><TelemetryPane /></div>
             <div id="setting-files" className={anchorClass("files")} tabIndex={-1}><h3 className="settings-subhead">配置文件</h3><ConfigPane llmProfilePath={llmProfile?.configPath} /></div>
-          </div>}
+          </SettingsTargetSection></div>}
         </div>
         <footer className={`settings-savebar${section === "model" && modelDirty ? " settings-savebar-model-dirty" : ""}`}><div className="settings-save-summary">
           <div className="settings-save-feedback" role={modelFeedbackError ? "alert" : "status"}>
@@ -685,7 +705,7 @@ export function SettingsModal({
         </div>
           {section === "model" && modelDirty && <button disabled={saving || modelUnavailable} onClick={resetModelDraft}>还原模型草稿</button>}
           {section === "model" && <button className="primary" disabled={saving || modelUnavailable || llmProfileConflict || !modelDirty || Boolean(modelState.missing)}
-            title={modelState.missing || "保存默认模型、角色分工与自动调度配置"} onClick={() => void onSaveLlmProfile()}>{llmProfileBusy ? "保存中…" : "保存模型配置"}</button>}
+            title={modelState.missing || "保存到这台 Mac：默认模型、角色分工与自动调度配置"} onClick={() => void onSaveLlmProfile()}>{llmProfileBusy ? "保存中…" : "保存模型配置"}</button>}
           <button disabled={saving} onClick={() => requestLeave(onClose)}>完成</button>
         </footer>
       </div>
