@@ -1,5 +1,5 @@
 import type { DesktopProjectProfile } from "../types";
-import type { LocalResidentStatus } from "./localResident";
+import { localResidentClient, type LocalResidentStatus } from "./localResident";
 import { errorText } from "./errorText";
 
 type SelectionOptions = {
@@ -33,6 +33,16 @@ export async function persistResidentSelection(profile: DesktopProjectProfile, l
   } else {
     await invoke("select_registered_assistant", { projectId: profile.id });
   }
+}
+
+/** The space picker can open before Settings has ever loaded the managed-local launch identity. */
+export async function persistCurrentResidentSelection(profile: DesktopProjectProfile,
+  observed: (status: LocalResidentStatus) => void,
+  invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>,
+  read = localResidentClient.read): Promise<void> {
+  const status = await read().catch(() => null);
+  if (status) observed(status);
+  await persistResidentSelection(profile, status, invoke);
 }
 
 /** Attachment, persistence and activation belong to the same workspace switch. */

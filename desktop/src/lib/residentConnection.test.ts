@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { connectResidentSelection, discardResidentConnection, persistResidentSelection } from "./residentConnection";
+import { connectResidentSelection, discardResidentConnection, persistCurrentResidentSelection, persistResidentSelection } from "./residentConnection";
 import type { DesktopProjectProfile } from "../types";
 import { ConnectionCoordinator } from "../connection/connectionCoordinator";
 import { localResidentController, type LocalResidentClient, type LocalResidentStatus } from "./localResident";
@@ -10,6 +10,22 @@ const profile: DesktopProjectProfile = { id: "fixture-host", name: "测试常驻
   repoRoot: "@assistant", baseUrl: "http://127.0.0.1:18765", lastOpenedAt: 0 };
 const selectionOptions = () => ({ switchWorkspace: (body: () => Promise<boolean>) => new ConnectionCoordinator().exclusiveSwitch(body),
   persist: vi.fn(async () => {}) });
+
+it("reads the managed-local launch identity before persisting a selection made outside Settings", async () => {
+  const status: LocalResidentStatus = { supported: true, installed: true, state: "running", availableVersion: "fixture",
+    cronEnabled: false, projectId: profile.id, revision: "current", launchId: "current-launch", message: "" };
+  const native = vi.fn(async () => {}), observed = vi.fn();
+  await persistCurrentResidentSelection(profile, observed, native, async () => status);
+  expect(observed).toHaveBeenCalledExactlyOnceWith(status);
+  expect(native).toHaveBeenCalledExactlyOnceWith("local_resident_select", { expectedRevision: "current", expectedLaunchId: "current-launch" });
+});
+
+it("leaves remote selection to native validation when local resident status is unavailable", async () => {
+  const native = vi.fn(async () => {}), observed = vi.fn();
+  await persistCurrentResidentSelection(profile, observed, native, async () => { throw Error("unavailable"); });
+  expect(observed).not.toHaveBeenCalled();
+  expect(native).toHaveBeenCalledExactlyOnceWith("select_registered_assistant", { projectId: profile.id });
+});
 
 it("does not activate a host or open its chat when the connection returns an error string", async () => {
   const activate = vi.fn();

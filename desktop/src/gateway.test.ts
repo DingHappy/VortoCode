@@ -39,6 +39,18 @@ const CURSOR_KEY = `vortocode.desktop.eventCursor:${SID}`;
 const SETTINGS = { baseUrl: "http://127.0.0.1:8080", token: "" };
 
 describe("registered remote transport", () => {
+  it("provides a safe read identity that changes with client ownership and disconnect", async () => {
+    const a = new GatewayClient({ ...SETTINGS, token: "private-credential", remoteProjectId: "a" });
+    const b = new GatewayClient({ ...SETTINGS, remoteProjectId: "a" });
+    const before = a.desktopSource;
+    expect(before).toMatchObject({ registrationId: "a", baseUrl: SETTINGS.baseUrl, sid: "" });
+    expect(Object.keys(before).sort()).toEqual(["baseUrl", "epoch", "generation", "registrationId", "sid"]);
+    expect(before.generation).not.toBe(b.desktopSource.generation);
+    await a.disconnect();
+    expect(a.desktopSource.epoch).not.toBe(before.epoch);
+    before.registrationId = "forged";
+    expect(a.desktopSource.registrationId).toBe("a");
+  });
   it("uses native registration identity for HTTP, without passing URL or credentials", async () => {
     vi.mocked(invoke).mockResolvedValueOnce({ status: 200, body: JSON.stringify({ sessions: [] }) });
     const client = new GatewayClient({ baseUrl: "http://192.168.1.2:8080", token: "must-not-leave-js", remoteProjectId: "registered" });

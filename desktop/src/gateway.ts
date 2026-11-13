@@ -85,9 +85,11 @@ import type {
   TrustStatus,
   WorktreeWorkspaceSnapshot, CodexAction} from "./types";
 import type { ResidentProject } from "./lib/residentPlace";
+import type { DesktopSource } from "./lib/desktopContext";
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
+let clientGeneration = 0;
 /**
  * 远端连接的心跳：每 10 秒发一个 ping，30 秒什么都没收到就当连接已死。
  * 真机 2026-10-28：网络断了一分多钟，服务端早已断开，本机这头的 socket 没有任何报错，
@@ -171,6 +173,14 @@ export class GatewayClient {
   private dropRemote: ((reason: string) => void) | null = null;
 
   constructor(private readonly settings: ConnectionSettings) {}
+
+  private readonly generation = ++clientGeneration;
+
+  /** Safe read identity only; credentials and server authority never leave this client. */
+  get desktopSource(): DesktopSource {
+    return { registrationId: this.settings.remoteProjectId ?? null, baseUrl: this.settings.baseUrl,
+      sid: this.sessionId, generation: this.generation, epoch: this.snapshotEpoch };
+  }
 
   /** Reuse the existing transport/read epoch; observers cannot survive a reconnect. */
   get connectionEpoch(): number { return this.snapshotEpoch; }

@@ -1,0 +1,8 @@
+.qa-space-shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 100vh; color: var(--vc-text); background: var(--vc-bg); }
+.qa-space-shell .sidebar { width: auto; background: var(--vc-sidebar); }
+.qa-space-main { max-width: 720px; padding: var(--vc-space-8); }
+.qa-space-main h1 { font-size: var(--vc-size-title); }
+.qa-space-main p, .qa-space-main label, .qa-space-main button { font-size: var(--vc-size-body); }
+.qa-space-main > label { display: block; margin: var(--vc-space-4) 0; }
+.qa-space-main textarea { display: block; width: 100%; min-height: 160px; margin-top: var(--vc-space-2); }
+.qa-space-controls { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); }
