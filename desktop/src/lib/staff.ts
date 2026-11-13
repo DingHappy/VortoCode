@@ -27,12 +27,14 @@ export interface StaffBudgetSettings { revision: number; daily_tokens: number; t
 export interface StaffUsage { day?: string; total?: number; departments?: Record<string, number>; members?: Record<string, number>; error?: string }
 export interface StaffSnapshot {
   roles: StaffRole[]; members: StaffMember[]; proposals: StaffProposal[];
+  routines?: Array<{ id: string; name: string }>;
   departments?: StaffDepartment[]; budget_settings?: StaffBudgetSettings; usage?: StaffUsage;
   standing_specialists?: Array<{ id: string; title: string; scope: string; guide: string }>;
   development_projects?: Array<{ name: string }>;
 }
 export type DevelopmentProposal = { kind: 'role' | 'member'; id: string; name: string; project?: string; role?: string };
 export interface StaffClient {
+  readApprovalStats?(days: number): Promise<unknown>;
   readStaff(): Promise<StaffSnapshot>;
   decideStaff(id: string, approve: boolean, confirmation: StaffConfirmation): Promise<unknown>;
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown>;

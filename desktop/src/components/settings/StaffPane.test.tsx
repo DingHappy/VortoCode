@@ -23,6 +23,19 @@ it("renders proposal content as text without executing HTML", () => {
   expect(markup).toContain("&lt;script&gt;"); expect(markup).not.toContain("<script>");
 });
 it("does not treat the local project as the resident registry", () => { expect(renderToStaticMarkup(<StaffPane />)).toContain("登记常驻电脑"); });
+it('keeps approval statistics and interrupted-task recovery available on the same connection', () => {
+  const client = {
+    readStaff: async () => snapshot,
+    decideStaff: async () => ({}),
+    setStaffStatus: async () => ({}),
+    readApprovalStats: async () => ({}),
+    readStaffRecovery: async () => ({ instance: 'fixture', items: [] }),
+    decideStaffRecovery: async () => ({ results: [] }),
+  };
+  const html = renderToStaticMarkup(<StaffPane client={client} />);
+  expect(html).toContain('审批统计（只读）');
+  expect(html).toContain('中断任务核对');
+});
 it('shows standing suggestions as unapproved guidance without adding activation controls', () => {
   const value = structuredClone(snapshot);
   value.standing_specialists = [{ id: 'calendar', title: '日程专员建议', scope: '只读日历', guide: '说明每天的时间和时区' },
