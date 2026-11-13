@@ -1,0 +1,7 @@
+.settings-card.local-resident-card p.local-resident-status { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); margin-block: var(--vc-space-3); }
+.local-resident-card .local-resident-options { display: grid; gap: var(--vc-space-2); margin-block: var(--vc-space-4); }
+.local-resident-card .local-resident-options label { display: flex; align-items: flex-start; gap: var(--vc-space-2); font-size: var(--vc-size-caption); }
+.local-resident-card .local-resident-options input[type="checkbox"] { flex: none; width: auto; margin: var(--vc-space-1) 0 0; }
+.local-resident-card .local-resident-options p { margin: 0; }
+.local-resident-card .settings-actions { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); margin-block: var(--vc-space-3); }
+.settings-card.local-resident-card p.local-resident-error { color: var(--vc-danger-text); font-size: var(--vc-size-small); margin-bottom: var(--vc-space-2); overflow-wrap: anywhere; }

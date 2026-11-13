@@ -29,6 +29,8 @@ import { BrowserPane } from "./settings/BrowserPane";
 import { UpdateCard } from "./settings/UpdateCard";
 import { VortoAccountCard } from "./settings/VortoAccountCard";
 import { ResidentAccountCard } from "./settings/ResidentAccountCard";
+import { LocalResidentCard } from "./settings/LocalResidentCard";
+import type { LocalResidentStatus } from "../lib/localResident";
 import { MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { ResidentDesktopPane } from "./ResidentDesktopPane";
@@ -51,6 +53,7 @@ import { trustCard } from "../lib/trustCard";
 import type {
   ConnectionState,
   DesktopLlmProfileStatus,
+  DesktopProjectProfile,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
   EngineWorkersView,
@@ -95,6 +98,12 @@ type SettingsModalProps = {
   residentName?: string;
   residentAccountProjectId?: string;
   residentConnected?: boolean;
+  residentRegistrationKnown?: boolean;
+  selectedAssistantHostId?: string;
+  localResidentProjectId?: string;
+  remoteResidentProjectId?: string;
+  onUseLocalResident?: (profile: DesktopProjectProfile) => Promise<void>;
+  onLocalResidentStatus?: (status: LocalResidentStatus) => void;
   onOpenResidentSetup?: () => void;
   onConnectResident?: () => void;
   onOpenSchedule?: () => void;
@@ -166,6 +175,7 @@ export function SettingsModal({
   readCodexObserver, staffClient,
   onEditAssistant,
   residentName, residentAccountProjectId, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", llmProfileConflict = false, onReloadLlmProfile,
+  selectedAssistantHostId, localResidentProjectId, remoteResidentProjectId, onUseLocalResident, onLocalResidentStatus, residentRegistrationKnown = true,
   activeScope,
   connection,
   connectionText,
@@ -225,6 +235,8 @@ export function SettingsModal({
   const contentRef = useRef<HTMLDivElement>(null);
   const [closeAction, setCloseAction] = useState<(() => void) | null>(null);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
+  const [localResidentBusy, setLocalResidentBusy] = useState(false);
+  const [localResidentStatus, setLocalResidentStatus] = useState<LocalResidentStatus | null>(null);
   const draftCallbacks = useMemo(() => Object.fromEntries(Object.keys(DRAFT_ITEMS).map(key => [key,
     (state: DraftState) => setDrafts(previous => ({ ...previous, [key]: state })),
   ])), []);
@@ -291,7 +303,14 @@ export function SettingsModal({
   const modelReadMessage = llmProfileLoading ? "正在读取本机模型配置…" : llmProfileError;
   const modelFeedback = section === "model" ? modelReadMessage || (llmProfileConflict ? "已保存配置有更新，请先核对最新配置" : llmSaveNote) : "";
   const modelFeedbackError = section === "model" && (Boolean(llmProfileError) || llmProfileConflict || llmSaveKind === "error");
-  const saving = runtimeActionBusy || recoveryBusy || llmProfileBusy || experimentalBusy || trustBusy || Object.values(drafts).some(state => state.busy);
+  const otherSaving = runtimeActionBusy || recoveryBusy || llmProfileBusy || experimentalBusy || trustBusy || Object.values(drafts).some(state => state.busy);
+  const saving = localResidentBusy || otherSaving;
+  const knownLocalId = localResidentProjectId ?? localResidentStatus?.projectId;
+  const knownRemoteId = remoteResidentProjectId ?? residentAccountProjectId;
+  const remoteIsLocal = Boolean(knownLocalId && knownRemoteId === knownLocalId);
+  const currentUsesLocalResident = Boolean(knownLocalId && selectedAssistantHostId === knownLocalId);
+  const hasRemoteResident = residentRegistrationKnown && hasResident && !remoteIsLocal;
+  const remoteResidentConnected = residentRegistrationKnown && residentConnected && !remoteIsLocal && !currentUsesLocalResident;
   const requestLeave = (action: () => void) => {
     if (saving) return;
     if (pending.length) setCloseAction(() => action);
@@ -460,18 +479,24 @@ export function SettingsModal({
             </fieldset>}
           </div>}
           {visited.has("computer") && <div hidden={section !== "computer"} className="settings-page">
+            <div id="setting-local-resident" className={anchorClass("local-resident")} tabIndex={-1}><LocalResidentCard
+              onUse={onUseLocalResident ? async profile => { if (pending.length || otherSaving) throw new Error("请先处理未保存的设置，再连接本机常驻助理"); await onUseLocalResident(profile); } : undefined}
+              selectedHostId={selectedAssistantHostId} connected={residentConnected} onBusyChange={setLocalResidentBusy}
+              blocked={Boolean(pending.length || otherSaving || projectSwitching)}
+              onStatus={status => { setLocalResidentStatus(status); onLocalResidentStatus?.(status); }} /></div>
             <section id="setting-resident" className={`${anchorClass("resident")} settings-card`} tabIndex={-1} aria-label="常驻助手连接">
-              <div className="settings-card-head"><strong>常驻助手</strong><span className="settings-scope-tag">独立实例</span></div>
-              <div className="settings-connection-row"><div><strong>{residentName || (hasResident ? "已登记常驻电脑" : "尚未登记常驻电脑")}</strong>
-                <p>{residentConnected ? "当前对话已连接到常驻实例" : hasResident ? "已登记；当前对话未连接到该实例" : "连接专用电脑上的助手服务，让它在远端持续运行。"}</p></div>
-                {hasResident && onConnectResident && !residentConnected && <button onClick={() => requestLeave(() => { onClose(); onConnectResident(); })}>连接助手</button>}
-                {onOpenResidentSetup && <button onClick={() => requestLeave(() => { onClose(); onOpenResidentSetup(); })}>{hasResident ? "添加常驻连接" : "连接常驻电脑"}</button>}</div>
+              <div className="settings-card-head"><strong>其他电脑上的常驻助理</strong><span className="settings-scope-tag">独立实例</span></div>
+              <div className="settings-connection-row"><div><strong>{!residentRegistrationKnown ? "正在核对已登记的常驻电脑" : hasRemoteResident ? residentName || "已登记常驻电脑" : "尚未登记其他常驻电脑"}</strong>
+                <p>{!residentRegistrationKnown ? "登记状态尚未核对；可先添加其他电脑的连接。" : remoteResidentConnected ? "当前对话已连接到常驻实例" : hasRemoteResident ? "已登记；当前对话未连接到该实例" : "连接专用电脑上的助手服务，让它在远端持续运行。"}</p></div>
+                {(hasRemoteResident || !residentRegistrationKnown) && onConnectResident && !remoteResidentConnected && <button disabled={saving || !residentRegistrationKnown} onClick={() => requestLeave(() => { onClose(); onConnectResident(); })}>连接助手</button>}
+                {onOpenResidentSetup && <button disabled={saving} onClick={() => requestLeave(() => { onClose(); onOpenResidentSetup(); })}>{hasRemoteResident ? "添加常驻连接" : "连接常驻电脑"}</button>}</div>
               <p className="settings-card-note">助手服务的连接不代表远程画面已连接，也不会自动启用桌面操作。</p>
             </section>
             <div id="setting-desktop" className={anchorClass("desktop")} tabIndex={-1}><ResidentDesktopPane onDraftStateChange={draftCallbacks.desktop} /></div>
             <section id="setting-runtime" className={`${anchorClass("runtime")} settings-card`} tabIndex={-1}><div className="settings-card-head"><strong>本机引擎与工作区</strong><span className="settings-scope-tag">这台 Mac</span></div>
-              <p className="settings-runtime-status">{runtimeIsRemote ? "当前会话连接到远端实例" : runtimeStarting ? "正在准备本机引擎…" : processStatus.running ? "本机引擎运行中" : "本机引擎未运行"}</p>
-              <p className="settings-card-note">当前目标：{runtimeIsRemote ? "远端会话；此处不控制服务器" : controlScope === "general" ? "本机通用工作区" : controlScope === "scratch" ? "本机隔离工作区" : `本机项目 · ${controlRoot || "尚未选择目录"}`}</p>
+              <p className="settings-card-note">临时引擎退出 Desktop 后停止；不开定时任务。</p>
+              <p className="settings-runtime-status">{runtimeIsRemote ? currentUsesLocalResident ? "当前对话使用本机常驻助理；下方仅管理临时引擎" : "当前会话连接到远端实例" : runtimeStarting ? "正在准备本机引擎…" : processStatus.running ? "本机引擎运行中" : "本机引擎未运行"}</p>
+              <p className="settings-card-note">当前目标：{runtimeIsRemote ? currentUsesLocalResident ? "本机常驻会话；此处不控制常驻服务" : "远端会话；此处不控制服务器" : controlScope === "general" ? "本机通用工作区" : controlScope === "scratch" ? "本机隔离工作区" : `本机项目 · ${controlRoot || "尚未选择目录"}`}</p>
               <div className="settings-actions" aria-label="本机引擎控制">
                 {runtimeIsRemote ? <button disabled={saving || runtimeStarting || projectSwitching} onClick={() => requestLeave(() => { onClose(); onSwitchScope("general"); })}>切到本机通用工作区</button>
                   : <>
@@ -483,7 +508,7 @@ export function SettingsModal({
                     </>}
                   </>}
               </div>
-              <p className="settings-card-note" role="status">{runtimeIsRemote ? "切到本机工作区后可管理本机引擎；远端任务继续运行。" : runtimeActionBusy ? "正在核对引擎活动，请等待操作完成…" : runtimeActionNote || "停止与重新加载前会即时核对会话、后台任务和终端；仍有活动或无法确认时保留引擎。"}</p>
+              <p className="settings-card-note" role="status">{runtimeIsRemote ? currentUsesLocalResident ? "切到本机工作区后可管理临时引擎；常驻任务继续运行。" : "切到本机工作区后可管理本机引擎；远端任务继续运行。" : runtimeActionBusy ? "正在核对引擎活动，请等待操作完成…" : runtimeActionNote || "停止与重新加载前会即时核对会话、后台任务和终端；仍有活动或无法确认时保留引擎。"}</p>
               {!runtimeIsRemote && <details className="settings-runtime-details"><summary>工作区与连接诊断</summary>
                 <>
                   <label>

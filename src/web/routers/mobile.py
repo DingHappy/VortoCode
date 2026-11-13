@@ -28,6 +28,10 @@ def _private(response: Response) -> None:
 
 
 def _secure_transport(request: Request) -> None:
+    from src.web.trusted_transport import is_private_unix_transport
+
+    if is_private_unix_transport(request.scope):
+        return
     try:
         peer = ipaddress.ip_address(request.client.host if request.client else "")
         loopback_peer = peer.is_loopback or bool(

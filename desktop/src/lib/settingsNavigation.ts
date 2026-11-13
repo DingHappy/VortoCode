@@ -1,7 +1,7 @@
 export const SETTINGS_SECTIONS = [
   { id: "account", label: "账号与用量", description: "账号、会员与模型用量，集中查看。", scope: "账号状态来自 VortoOne；模型额度以服务端返回为准。" },
   { id: "model", label: "模型与执行", description: "选择模型服务，安排研究、实现与审查的分工。", scope: "保存在这台 Mac。模型与执行者配置不自动同步到常驻实例。" },
-  { id: "computer", label: "电脑与连接", description: "连接常驻助手、查看远程画面，管理本机工作区。", scope: "助手服务、远程画面和本机引擎分别连接，各自报告状态。连接画面不会授予助手操作权限。" },
+  { id: "computer", label: "电脑与连接", description: "管理本机常驻助理，或连接其他电脑。", scope: "常驻助理、远程画面和临时本机引擎分别运行，各自报告状态。连接画面不会授予助理操作权限。" },
   { id: "permissions", label: "权限与自动化", description: "决定助手能做什么，以及哪些操作需要你确认。", scope: "授权级别属于当前工作区；浏览器与桌面开关配置在本机。自动化仍遵守各自的能力限制。" },
   { id: "staff", label: "团队与权限", description: "查看专员的岗位与权限，批准登记，暂停或撤掉专员。", scope: "登记保存在常驻助理。核对岗位权限和完整内容后，由主人确认批准。" },
   { id: "tools", label: "工具与集成", description: "为助手连接工具，检查项目加载的扩展。", scope: "MCP 按其配置加载；规则、Skills 与 Hooks 展示当前项目的状态。" },
@@ -22,7 +22,8 @@ export const SETTINGS_ITEMS: Array<{ id: string; page: SettingsPage; label: stri
   { id: "services", page: "model", label: "模型服务与 API Key", keywords: "供应商 omlx 本地 端侧 openai deepseek kimi glm minimax relay https 默认 地址" },
   { id: "roles", page: "model", label: "模型与执行者分工", keywords: "研究 实现 审查 评判器 codex claude cli 核心 子 agent 实验" },
   { id: "routing", page: "model", label: "自动调度与常用模型", keywords: "快速 强力 名单 picks 智能" },
-  { id: "resident", page: "computer", label: "常驻助手连接", keywords: "远程 服务器 24小时 实例 服务" },
+  { id: "local-resident", page: "computer", label: "本机常驻助理", keywords: "本机 Mac 常驻 后台 登录 开机 安装 更新 模型 退出" },
+  { id: "resident", page: "computer", label: "其他电脑上的常驻助理", keywords: "常驻助手 连接 远程 服务器 24小时 实例 服务" },
   { id: "desktop", page: "computer", label: "远程桌面连接", keywords: "ssh vnc 观察 接管 画面 密码库 持久化" },
   { id: "runtime", page: "computer", label: "本机引擎与工作区", keywords: "项目 scratch runtime 恢复 gateway token 连接" },
   { id: "trust", page: "permissions", label: "工作区授权", keywords: "确认 只读 完全信任 trust 权限" },

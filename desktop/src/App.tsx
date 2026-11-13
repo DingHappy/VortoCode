@@ -147,6 +147,8 @@ import { CustomizePage } from "./components/CustomizePage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, isLocalNetworkBlocked, mainChatKey, probeAssistantHost, relaunchApp, workProjects } from "./lib/assistantHost";
+import { connectResidentSelection, discardResidentConnection, persistResidentSelection } from "./lib/residentConnection";
+import type { LocalResidentStatus } from "./lib/localResident";
 import { dismissStarterTips, recordAssistantSend, shouldShowStarterTips, starterTips } from "./lib/starterTips";
 import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
@@ -235,6 +237,12 @@ function App() {
   const [projectSwitching, setProjectSwitching] = useState(false);
   coordinator.listen({ switching: setProjectSwitching, starting: setRuntimeStarting });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localResidentStatus, setLocalResidentStatus] = useState<LocalResidentStatus | null>(null);
+  const localResidentStatusRef = useRef<LocalResidentStatus | null>(null);
+  const updateLocalResidentStatus = (status: LocalResidentStatus) => {
+    localResidentStatusRef.current = status;
+    setLocalResidentStatus(status);
+  };
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -1521,6 +1529,7 @@ function App() {
   };
 
   const switchSession = async (sid: string) => {
+    if (coordinator.switching) return false;
     if (sid === activeSid) return connection === "connected";
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
@@ -1580,6 +1589,7 @@ function App() {
   };
 
   const newSession = async () => {
+    if (coordinator.switching) return;
     if (creatingSessionRef.current) return;
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
@@ -1605,6 +1615,8 @@ function App() {
   // ── 助理模式 ─────────────────────────────────────────────────────────────
   // 常驻电脑上有哪些项目（它的登记表）：工作台「在哪做」据此判断能不能切到常驻电脑。
   const residentHost = findAssistantHost(projects);
+  const otherResidentHost = localResidentStatus
+    ? projects.find(item => isAssistantHost(item) && !item.assistantPending && item.id !== localResidentStatus.projectId) : undefined;
   const [residentProjects, setResidentProjects] = useState<ResidentProject[]>([]);
   // 空白对话里的上手示例（用熟了或点了「不再显示」就收起）
   const [showStarterTips, setShowStarterTips] = useState(() => shouldShowStarterTips());
@@ -1711,8 +1723,7 @@ function App() {
     await switchSession(sid);
   };
 
-  /** 连到常驻电脑上的助理（通用范围）。已经连着就直接返回；连不上返回原因。 */
-  const connectAssistantHost = async (host: DesktopProjectProfile): Promise<true | string> => {
+  const prepareAssistantHost = async (host: DesktopProjectProfile): Promise<true | string> => {
     if (remoteProjectRef.current === host.id && assistantHostRef.current === host.id && connection === "connected") return true;
     // 启动时本机引擎还在拉起（正在切换，或启动流程还在装填数据）：等它走完再连常驻电脑。
     // 否则两次连接交错：本机那次被顶掉，常驻电脑又连不上时，回落会撞上「引擎正在启动」被丢弃，
@@ -1723,31 +1734,87 @@ function App() {
       return "有一个源码保存确认还没处理";
     }
     // 先只测通不通：连不上就别断开本机——断开再回落会清掉当前对话，而且真实原因会被回落提示盖掉
+    const generation = runtimes.currentGeneration();
     const unreachable = await probeAssistantHost(host.id);
+    if (generation !== runtimes.currentGeneration()) return "连接位置已变化，请核对后重新连接";
     if (unreachable) return unreachable;
-    const switched = await runWorkspaceSwitch("连接常驻电脑失败", async () => {
-      const key = mainChatKey(host.id);
-      let sid = "";
-      try { sid = localStorage.getItem(key) ?? ""; } catch { /* 读不到就新开一个 */ }
-      if (!sid) sid = createSessionId();
-      // 主要聊天由常驻电脑统一登记（手机、电脑共用一段）：已登记就用那段，没登记就把本机这段报上去
-      sid = await resolveMainChat(new GatewayClient({ baseUrl: host.baseUrl, token: "", remoteProjectId: host.id }), sid);
-      try { localStorage.setItem(key, sid); } catch { /* 存不下也照常使用本次会话 */ }
-      setMainChatSid(sid);
-      setActiveSid(sid);
-      setRepoRoot("");
-      setBaseUrl(host.baseUrl);
-      remoteProjectRef.current = host.id;
-      assistantHostRef.current = host.id;
-      runtimes.markRemote(host, true);
-      return await connectToRuntime(sid, { baseUrl: host.baseUrl, repoRoot: "", scope: "general",
-        remoteProjectId: host.id, token: "" });
-    });
+    return true;
+  };
+
+  /** Caller owns the workspace switch until all selection work is complete. */
+  const attachAssistantHost = async (host: DesktopProjectProfile): Promise<true | string> => {
+    const key = mainChatKey(host.id);
+    let sid = "";
+    try { sid = localStorage.getItem(key) ?? ""; } catch { /* 读不到就新开一个 */ }
+    if (!sid) sid = createSessionId();
+    // 主要聊天由常驻电脑统一登记（手机、电脑共用一段）：已登记就用那段，没登记就把本机这段报上去
+    const generation = runtimes.currentGeneration(), previousClient = clientRef.current;
+    sid = await resolveMainChat(new GatewayClient({ baseUrl: host.baseUrl, token: "", remoteProjectId: host.id }), sid);
+    if (generation !== runtimes.currentGeneration() || previousClient !== clientRef.current) return "连接位置已变化，请核对后重新连接";
+    try { localStorage.setItem(key, sid); } catch { /* 存不下也照常使用本次会话 */ }
+    setMainChatSid(sid);
+    setActiveSid(sid);
+    setRepoRoot("");
+    setBaseUrl(host.baseUrl);
+    remoteProjectRef.current = host.id;
+    assistantHostRef.current = host.id;
+    runtimes.markRemote(host, true);
+    const connected = await connectToRuntime(sid, { baseUrl: host.baseUrl, repoRoot: "", scope: "general",
+      remoteProjectId: host.id, token: "" });
+    return connected || (coordinator.lastConnectError ?? "连接常驻电脑失败");
+  };
+
+  /** 连到常驻电脑上的助理（通用范围）。已经连着就直接返回；连不上返回原因。 */
+  const connectAssistantHost = async (host: DesktopProjectProfile): Promise<true | string> => {
+    const prepared = await prepareAssistantHost(host);
+    if (prepared !== true) return prepared;
+    if (remoteProjectRef.current === host.id && assistantHostRef.current === host.id && connection === "connected") return true;
+    const switched = await runWorkspaceSwitch("连接常驻电脑失败", async () => await attachAssistantHost(host) === true);
     return switched || (coordinator.lastConnectError ?? "连接常驻电脑失败");
   };
 
+  const useRegisteredAssistant = (profile: DesktopProjectProfile) => connectResidentSelection(
+    profile, attachAssistantHost, selected => {
+      const active = { ...selected, assistantPending: false };
+      setProjects(current => [active, ...current.filter(item => item.id !== active.id)]);
+      setAppMode("assistant");
+      setMainView("chat");
+    }, {
+      prepare: prepareAssistantHost,
+      switchWorkspace: body => runWorkspaceSwitch("连接常驻电脑失败", body),
+      persist: selected => persistResidentSelection(selected, localResidentStatusRef.current, invoke),
+      connection: () => clientRef.current,
+      isSelected: selected => remoteProjectRef.current === selected.id && assistantHostRef.current === selected.id,
+      discard: (selected, attached) => discardResidentConnection(selected, attached, {
+        connection: () => clientRef.current,
+        isSelected: host => remoteProjectRef.current === host.id && assistantHostRef.current === host.id,
+        disconnect: () => {
+          stopNotificationSync();
+          return sessionConnectionRef.current!.disconnect();
+        },
+        clear: () => {
+          resetIsolatedDeliveries();
+          clearProjectView();
+          invalidateAssistantReads();
+          remoteProjectRef.current = null;
+          assistantHostRef.current = null;
+          setMainChatSid("");
+          setActiveSid(createSessionId());
+          setRepoRoot("");
+          let localUrl = "http://127.0.0.1:8080";
+          try { localUrl = normalizeLocalBaseUrl(localStorage.getItem(STORAGE_KEYS.baseUrl) || localUrl); } catch { /* 留在未连接状态 */ }
+          setBaseUrl(localUrl);
+          runtimes.markAttached({ ...EMPTY_PROCESS, scope: "general", message: "常驻助手选择未完成，当前未连接" });
+          setConnection("disconnected");
+          setConnectionNote("常驻助手选择未完成；已断开此次连接，请核对后重新连接");
+        },
+      }),
+      onError: message => setBanner(message),
+    });
+
   /** 新建旁聊。从主要聊天出发时必须换新会话——newSession 对空草稿只清界面不换 id，会把旁聊并进主要聊天。 */
   const newSideChat = async () => {
+    if (coordinator.switching) return;
     setMainView("chat");
     if (activeSid !== mainChatSid) {
       await newSession();
@@ -1831,6 +1898,7 @@ function App() {
   }, [residentRetry, busy, residentRetryRound]);
 
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
+    if (coordinator.switching) return;
     if (localRuntimeControls.isOperating()) { setBanner("正在核对本机引擎，请等待操作完成后再切换"); return; }
     setAppMode(mode);
     if (mode !== "assistant") {
@@ -1890,6 +1958,10 @@ function App() {
     requestedMode: "plan" | "build" = mode,
     requestedContext?: ContextItem[],
   ): Promise<boolean> => {
+    if (coordinator.switching) {
+      setBanner("工作区正在切换，请核对连接后再发送；输入和附件已保留");
+      return false;
+    }
     if (override === undefined && isReadingAttachments()) {
       setBanner("附件还在读取，请读完后再发送，或取消读取");
       return false;
@@ -2129,7 +2201,7 @@ function App() {
   const restoreRecoveryConfig = async () => {
     const record = recoveryRecord;
     if (!record) return;
-    if (busy || savingFile || connection === "connecting" || coordinator.starting) {
+    if (busy || savingFile || connection === "connecting" || coordinator.busy) {
       setBanner("当前仍有操作进行中，暂时不能切换到恢复配置");
       return;
     }
@@ -3568,11 +3640,18 @@ function App() {
           initialSection={settingsSection}
           initialAnchor={settingsAnchor}
           onOpenPlugins={() => { setMainView("plugins"); }}
-          hasResident={Boolean(findAssistantHost(projects))}
-          residentName={findAssistantHost(projects)?.name}
+          hasResident={Boolean(otherResidentHost)}
+          residentName={otherResidentHost?.name}
           residentConnected={onAssistantHost() && connection === "connected"}
+          selectedAssistantHostId={onAssistantHost() ? assistantHostRef.current ?? undefined : undefined}
+          localResidentProjectId={localResidentStatus?.projectId}
+          remoteResidentProjectId={otherResidentHost?.id}
+          residentRegistrationKnown={Boolean(localResidentStatus)}
+          onLocalResidentStatus={updateLocalResidentStatus}
+          onUseLocalResident={useRegisteredAssistant}
           onOpenResidentSetup={() => setRemoteDialogOpen("assistant")}
-          onConnectResident={() => { const host = findAssistantHost(projects); if (host) void connectAssistantHost(host).then(ok => { if (ok) { setAppMode("assistant"); void openMainChat(host.id); } }); }}
+          onConnectResident={() => { if (otherResidentHost) void useRegisteredAssistant(otherResidentHost)
+            .catch(error => setBanner(errorText(error, "连接常驻助手失败"))); }}
           onOpenSchedule={() => { setAppMode("assistant"); setMainView("chat"); setAssistantTab("schedule"); setInspectorOpen(true); }}
           llmSaveNote={llmSaveNote}
           llmSaveKind={llmSaveKind}
@@ -3589,7 +3668,7 @@ function App() {
           onBaseUrlChange={setBaseUrl}
           onTokenChange={setToken}
           onStopRuntime={stopRuntime}
-          onConnectExisting={() => void connectToRuntime(activeSid)}
+          onConnectExisting={() => { if (!coordinator.switching) void connectToRuntime(activeSid); }}
           onStartRuntime={startRuntime}
           onSwitchScope={(scope) => void (async () => {
             // An explicit local settings action leaves Assistant mode; otherwise
