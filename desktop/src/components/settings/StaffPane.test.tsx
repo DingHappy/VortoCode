@@ -30,7 +30,7 @@ it('keeps approval statistics and interrupted-task recovery available on the sam
     setStaffStatus: async () => ({}),
     readApprovalStats: async () => ({}),
     readStaffRecovery: async () => ({ instance: 'fixture', items: [] }),
-    decideStaffRecovery: async () => ({}),
+    decideStaffRecovery: async () => ({ results: [] }),
   };
   const html = renderToStaticMarkup(<StaffPane client={client} />);
   expect(html).toContain('审批统计（只读）');
