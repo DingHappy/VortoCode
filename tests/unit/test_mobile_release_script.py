@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ def _setup(tmp_path, probe_body):
     (deploy / "src" / "web" / "auth.py").write_text(
         "MOBILE_SELF_AUTHENTICATED = frozenset({('POST', '/api/mobile/native/keys'), "
         "('GET', '/api/mobile/native/timeline'), ('POST', '/api/mobile/native/goal-advance/resume')})\n")
+    shutil.copyfile(SCRIPT.parent.parent / 'src/web/mobile_rate_limit.py', deploy / 'src/web/mobile_rate_limit.py')
     git = ["git", "-C", str(deploy), "-c", "user.email=t@t", "-c", "user.name=t"]
     subprocess.run(["git", "init", "-q", str(deploy)], check=True)
     subprocess.run(git + ["add", "-A"], check=True)
@@ -37,6 +39,15 @@ def _setup(tmp_path, probe_body):
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    (bin_dir / 'python3').write_text(f'#!{sys.executable}\n' +
+        'import importlib.util, os, pathlib, sys\n' +
+        'if len(sys.argv)>1 and pathlib.Path(sys.argv[1]).name == "mobile-route-check.py":\n' +
+        '    spec=importlib.util.spec_from_file_location("route_check", sys.argv[1])\n' +
+        '    module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)\n' +
+        '    clock=[0.0]\n' +
+        '    def sleep(seconds): clock[0]+=seconds\n' +
+        '    sys.exit(module.main(sys.argv[2:], clock=lambda:clock[0], sleep=sleep))\n' +
+        'os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n')
     (bin_dir / "systemctl").write_text("#!/usr/bin/env python3\n" +
         "import os, pathlib, sys\n" +
         f"log=pathlib.Path({str(tmp_path / 'systemctl.log')!r})\n" +
