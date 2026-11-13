@@ -107,7 +107,7 @@ def test_probe_is_bounded_and_never_follows_redirects_or_uses_real_keys(monkeypa
 
 
 @pytest.mark.parametrize("response", [(200, {}), (301, {}), (401, {"detail": "Unauthorized"}),
-                                      (404, None), (500, {"detail": "crash"})])
+                                      (404, None), (429, {'detail': 'rate limited'}), (500, {"detail": "crash"})])
 def test_wrong_layer_redirect_or_success_is_not_a_pass(response):
     with pytest.raises(check.CheckFailed):
         check.check_response("GET", "/api/mobile/native/timeline", response)
@@ -155,3 +155,71 @@ def test_environment_written_before_the_rename_is_still_read(tmp_path):
     path.write_text("VORTOCODE_MOBILE_PUBLIC_ORIGIN=https://old.example.test:18443\n"
                     "VORTOONE_MOBILE_PUBLIC_ORIGIN=https://new.example.test:18443\n")
     assert check.public_origin(path) == "https://new.example.test:18443"
+
+
+def test_release_probe_respects_failure_backoff_when_origins_share_a_source(monkeypatch):
+    from src.web.mobile_rate_limit import MobileRateLimiter
+    now, waits, responses = [0.0], [], []
+    limiter = MobileRateLimiter(clock=lambda: now[0])
+    def sleep(seconds):
+        waits.append(seconds)
+        now[0] += seconds
+    def request_once(origin, method, path, **kwargs):
+        if (method, path) in check.CLOSED_ROUTES:
+            return 404, None
+        blocked = limiter.admit('one-source')
+        if blocked:
+            response = (429, {'detail': 'rate limited'})
+        else:
+            limiter.authentication_failed('one-source')
+            response = (401, {'detail': '登录或设备授权已失效，请重新登录'})
+        responses.append(response[0])
+        return response
+    monkeypatch.setattr(check, '_request_once', request_once)
+    monkeypatch.setattr(check.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(check.time, 'sleep', sleep)
+    routes = [('GET', check.PREFIX + 'timeline')] * 8
+    check.probe(routes, 'http://127.0.0.1:18081', 'https://example.test')
+    assert responses == [401] * 16
+    assert waits and sum(waits) <= 4 * 61
+
+
+@pytest.mark.parametrize('limits', [
+    'WINDOW_SECONDS=60\nREQUEST_LIMIT=120\nFAILURE_LIMIT=1\n',
+    'WINDOW_SECONDS=True\nREQUEST_LIMIT=120\nFAILURE_LIMIT=5\n',
+    'WINDOW_SECONDS=60\nREQUEST_LIMIT=0\nFAILURE_LIMIT=5\n',
+    'WINDOW_SECONDS=60\nREQUEST_LIMIT=120\nFAILURE_LIMIT=int("5")\n',
+    'WINDOW_SECONDS=60\nREQUEST_LIMIT=120\nFAILURE_LIMIT=5\nFAILURE_LIMIT=9\n',
+])
+def test_unverifiable_limiter_policy_fails_before_any_probe(tmp_path, monkeypatch, limits):
+    auth = tmp_path / 'auth.py'
+    auth.write_text("MOBILE_SELF_AUTHENTICATED=frozenset({('GET','/api/mobile/native/timeline')})")
+    auth.with_name('mobile_rate_limit.py').write_text(limits)
+    env = tmp_path / 'environment'
+    env.write_text('VORTOONE_MOBILE_PUBLIC_ORIGIN=https://example.test\n')
+    def forbidden(*args, **kwargs):
+        raise AssertionError('invalid policy must not send requests')
+    monkeypatch.setattr(check, 'request', forbidden)
+    assert check.main(['--auth-file', str(auth), '--environment-file', str(env)]) == 1
+
+
+def test_probe_pacing_counts_transport_retries_with_virtual_time(monkeypatch):
+    now, calls, outcomes = [0.0], [], [56, 56, 0]
+    def sleep(seconds): now[0] += seconds
+    def curl(args, **kwargs):
+        calls.append(now[0])
+        code = outcomes.pop(0)
+        if not code:
+            Path(args[args.index('--output') + 1]).write_text('{"detail":"登录或设备授权已失效，请重新登录"}')
+        return SimpleNamespace(returncode=code, stdout='000' if code else '401')
+    monkeypatch.setattr(check.subprocess, 'run', curl)
+    monkeypatch.setattr(check.time, 'sleep', sleep)
+    pacer = check.ProbePacer((60, 1), clock=lambda: now[0], sleep=sleep)
+    assert check.request('https://example.test', 'GET', check.PREFIX + 'timeline', pacer=pacer)[0] == 401
+    assert len(calls) == 3 and calls[1] - calls[0] >= 61 and calls[2] - calls[1] >= 61
+
+
+def test_probe_policy_uses_the_lower_request_and_failure_budget(tmp_path):
+    auth = tmp_path / 'auth.py'
+    auth.with_name('mobile_rate_limit.py').write_text('WINDOW_SECONDS=37\nREQUEST_LIMIT=2\nFAILURE_LIMIT=9\n')
+    assert check.limiter_policy(auth) == (37, 2)
