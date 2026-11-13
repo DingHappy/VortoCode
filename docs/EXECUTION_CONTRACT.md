@@ -130,13 +130,17 @@ Codex 观察员也在现有精简 thread 报告内携带 `execution`，与控制
 ## 8. 后续迁移顺序与保留边界
 
 2026-11-12 主人确认的本批范围见[当前架构的收敛路线](CURRENT_ARCHITECTURE.md#已确认的收敛路线)：
-先固定职责，再补 ACP 与原专员任务的只读执行报告，随后只迁 OpenCode 开发路径的薄入口。
+先固定职责，再补 ACP 与原专员任务的只读执行报告，随后迁 OpenCode 开发路径的薄入口；完成后主人确认接续 CLI、已有 Codex 会话控制和前端投影三个独立 PR。
 第 1 步是文档，第 2 步已补 ACP 与上述原专员任务投影。数据格式以本合同为准，原生会话控制以
 [AGENT_BACKENDS](AGENT_BACKENDS.md) 为准，失败接手以 [EXECUTION_RECOVERY](EXECUTION_RECOVERY.md) 为准。
 
 第 3 步：`agents/backends/entry.py` 提供 OneShotRequest / ExecutionBinding / execute_once。宿主显式传入可信函数与能力集合；入口核对 backend、所需能力和有限时限，并调用原宿主 check 复核当前授权。只调用一次，返回值和异常原样传回；不重试、接手、认领任务或根据远端名称加载程序。已有 session/turn 引用不能冒充一次性新执行，也不通过重跑模拟恢复。
 
-首批绑定为 `team_engines.run_developer`，固定 OpenCode 开发岗位、原模型和一次性目录，仍调用原 run_external / AcpSession；原环境隔离、权限逐次复核、一次同会话 followup、时限与进程清理不变。固定项目专员从原 execute_development 注入此绑定；旧团队开发与其它来源保留原入口。CLI 和已有 Codex 会话控制后续单独迁移，不能因同一份快照就强迫它们具有相同生命周期。
+首批绑定为 `team_engines.run_developer`，固定 OpenCode 开发岗位、原模型和一次性目录，仍调用原 run_external / AcpSession；原环境隔离、权限逐次复核、一次同会话 followup、时限与进程清理不变。固定项目专员从原 execute_development 注入此绑定；旧团队开发保留原入口。
+
+第 4 步：`ExternalWorkerAgent.run_turn` 用显式绑定把 Codex / Claude CLI 转交 `execute_once`，仍由原 `run_worker` 管理进程、协议解析、时限和清理。绑定固定执行者、目录、system 与本次读写模式；预期执行引用原样传入，没有引用时新建进程级尝试，不能携带已有 session/turn。调用前后复核原无人值守拒绝规则。实验开关仍默认关闭，提问、污点、用量和可信环境过滤保持；失败后的接手仅由原恢复合同决定，入口不增加重试。`last_run` 保留 CLI 尝试，实际接手者的报告仍来自原包装器。已有 Codex 会话控制随后单独迁移，不能用新 CLI 进程冒充原会话恢复。
+
+第 5 步：同一 `entry.py` 提供不可变 SessionRequest 与 `control_existing`，显式来源须匹配宿主提供的会话适配器。原观察员的已批准动作实际使用此入口，再交回 `control_session` 重新读取原生状态、核对实例/轮次、能力和受理回执；这些检查仍只有原控制器一份。消息的自动建议/主人明确指令范围保持，停止始终绑定原轮次。此方法不经过 OneShotRequest，不启动 CLI、不复制上下文、不自动重发。写入后的回执不明仍向原动作记录为 unknown，取消仍向上传播；真实会话和安装版本验收另算。
 
 ### 第 3 步实跑记录（2026-11-12）
 

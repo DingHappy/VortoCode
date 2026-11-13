@@ -56,11 +56,11 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 **运行循环、工具执行与能力装配分离**：`agents/agent_loop.py` 负责模型回合、历史、上下文预算和媒体消息；`agents/tool_runtime.py` 独立承担工具能力/权限检查、plan 升级、Hook/审计、串并行调度和污点传播。`agents/tool.py` 提供必填操作类别的 Tool 合同与声明/schema 导出；确认由 `tool_runtime` 统一调用内核，工具准备具体预览与待执行动作。其它 Agent 核心可通过可信宿主适配调用同一个工具运行层，不需要构造 MainAgent；外部核心自带的工具仍由其原生权限系统执行。接入合同见 `docs/TOOL_RUNTIME.md`。`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。
 
-**外部核心控制**：`agents/backends/control.py` 定义现有会话的状态/启动新轮次/补充指令/请求停止合同；`backends/codex.py` 通过注入的 RPC 连接适配 Codex。观察员的已批准动作实际使用此层，执行前读取最新状态，自动建议与停止绑定原轮次。回执只代表受理，不代表完成；不自动重试、不调整外部核心的权限/模型/沙箱。Gateway 主会话仍使用 MainAgent，尚未实现整会话自由切换。边界见 `docs/AGENT_BACKENDS.md`。这些适配模块同样不得导入 workflow/gateway/scheduling/web/im，分层测试覆盖。
+**外部核心控制**：`agents/backends/control.py` 定义现有会话的状态/启动新轮次/补充指令/请求停止合同；`backends/codex.py` 通过注入的 RPC 连接适配 Codex。观察员的已批准动作由 `entry.control_existing` 核对显式来源后交回原控制器，执行前读取最新状态，自动建议与停止绑定原轮次。回执只代表受理，不代表完成；不自动重试、不调整外部核心的权限/模型/沙箱。Gateway 主会话仍使用 MainAgent，尚未实现整会话自由切换。边界见 `docs/AGENT_BACKENDS.md`。这些适配模块同样不得导入 workflow/gateway/scheduling/web/im，分层测试覆盖。
 
 **共同执行观测**：`agents/backends/execution.py` 提供 ExecutionRef / ExecutionSnapshot v1 和只读 ExecutionReporter。自有 Agent、外部 CLI 包装器、ACP、Codex 会话适配器已接入；旧执行方法与台账保留。native 与固定项目开发专员的报告在原协作任务内关联，`workflow/staff/executions.py` 核对回调并提供只读投影。backend/feature 名称开放，未知状态保守 unknown，不兼容版本拒绝；默认身份仅进程有效，持久宿主身份必须显式提供。结果/证据不从模型自述或退出码推断验收，费用未知保留 null。此层不得导入上层、加载插件、授予权限或创建调度器，详见 `docs/EXECUTION_CONTRACT.md`。
 
-**薄执行入口**：`agents/backends/entry.py` 只转交显式可信绑定的一次性调用，核对能力并调用原宿主的授权复核，不创建执行池、不重试或自动接手。首批只迁固定项目 OpenCode 开发专员，原 ACP 配置/权限/清理及测试分支交付保留；主核心、CLI、旧团队开发和已有 Codex 会话路径未迁。维护职责与后续顺序见 `docs/CURRENT_ARCHITECTURE.md`；该入口同样不得反向导入 workflow/gateway/scheduling/web/im。
+**薄执行入口**：`agents/backends/entry.py` 按生命周期提供 `execute_once` 和 `control_existing`，不创建执行池、不重试或自动接手。一次执行核对显式绑定与原宿主授权，已迁固定项目 OpenCode 开发专员与实验性 CLI 实现/审查；原配置/权限/清理及测试分支交付保留，CLI 实验开关仍默认关闭，恢复与提问仍在原包装器。已有 Codex 会话用固定来源的 SessionRequest 交回原控制合同，不经过一次执行、不新建 CLI；受理与完成继续分开。主核心和旧团队开发路径未迁。维护职责与顺序见 `docs/CURRENT_ARCHITECTURE.md`；入口同样不得反向导入 workflow/gateway/scheduling/web/im。
 
 **观测上报顺序**：`agents/backends/observation_order.py` 是纯数据的前序游标/代次/序号合同。Codex 观察循环先读现有 status 游标再采集，上报在原 state.json 的文件锁内核对并替换；重复包不更新时间或再次生成提醒。发送端冻结 pending 至回执，409 后旧来源停止上报、不自动抢回；已启用有序来源的状态槽拒绝旧格式覆盖。旧服务无协议声明时兼容旧方式。它不是完整事件补收或执行指令重试，见 `docs/OBSERVATION_ORDER.md`。
 
