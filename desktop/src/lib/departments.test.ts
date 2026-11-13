@@ -58,4 +58,5 @@ it("budget settings use a fresh version and never silently retry a write", async
   await controller.refresh();
   await controller.budgets({ revision: 1, daily_tokens: 100, task_tokens: 20 });
   expect(write).toHaveBeenCalledTimes(1);
+  controller.dispose();
 });
