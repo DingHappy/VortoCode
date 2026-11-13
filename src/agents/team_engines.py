@@ -209,7 +209,8 @@ def _scratch_dir(child_id: str) -> Path:
 
 async def run_external(engine: str, role: str, model: str, prompt: str, *, timeout: float,
                        child_id: str = "member", workdir: Optional[str] = None,
-                       session_factory: Callable[..., Any] = AcpSession, check=None) -> AcpResult:
+                       session_factory: Callable[..., Any] = AcpSession, check=None,
+                       execution_ref=None, on_snapshot=None) -> AcpResult:
     """跑一次外部框架回合。框架没装 / 没配端点时抛 ``EngineUnavailable``。
 
     ``workdir`` 不给就用一个专用空目录（用完即删）；开发成员传入它的一次性 worktree（由调用方清理）。"""
@@ -233,8 +234,33 @@ async def run_external(engine: str, role: str, model: str, prompt: str, *, timeo
     argv[0] = binary
     scratch = None if workdir else _scratch_dir(child_id)
     try:
-        session = session_factory(argv, cwd=str(workdir or scratch), env=env, decide=decide)
+        reporting = {'execution_ref': execution_ref, 'on_snapshot': on_snapshot} if execution_ref is not None or on_snapshot is not None else {}
+        session = session_factory(argv, cwd=str(workdir or scratch), env=env, decide=decide, **reporting)
         return await session.run(f"{ROLE_PROMPTS[role]}\n\n{prompt}", timeout=timeout, followup=FOLLOWUP)
     finally:
         if scratch is not None:
             shutil.rmtree(scratch, ignore_errors=True)
+
+
+async def run_developer(engine: str, model: str, prompt: str, *, timeout: float, child_id: str,
+                        workdir: str, check, execution_ref=None, on_snapshot=None) -> AcpResult:
+    """Trusted one-shot binding for registered OpenCode development specialists.
+
+    The original ACP assembly still owns config, environment and permission
+    decisions. No new process lifecycle, fallback or authority is introduced.
+    """
+    from src.agents.backends.entry import ExecutionBinding, OneShotRequest, execute_once
+    from src.agents.backends.execution import ExecutionRef, new_run_id, process_instance
+    if engine != 'opencode':
+        raise EngineUnavailable('开发成员目前只能由 OpenCode 担任')
+    ref = execution_ref if execution_ref is not None else ExecutionRef(
+        engine, process_instance('acp'), new_run_id(), task_id=child_id)
+    if not isinstance(ref, ExecutionRef) or ref.task_id != child_id:
+        raise ValueError('developer execution identity does not match its task')
+    async def invoke(request):
+        return await run_external(engine, 'developer', model, request.prompt, timeout=request.timeout,
+            child_id=child_id, workdir=workdir, check=check, execution_ref=request.ref, on_snapshot=on_snapshot)
+    binding = ExecutionBinding(engine,
+        frozenset({'execution.run', 'execution.observe', 'progress.tools', 'result.text'}), invoke)
+    return await execute_once(binding, OneShotRequest(ref, prompt, timeout,
+        required_features=frozenset({'execution.run', 'execution.observe', 'result.text'})), check=check)

@@ -71,6 +71,19 @@ class DevelopmentProposal(BaseModel):
     role: str = ''
 
 
+class RecoveryTask(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: str
+    digest: str
+
+
+class RecoveryDecision(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    selected: list[RecoveryTask] = Field(min_length=1, max_length=100)
+    action: Literal['rework', 'abandon']
+    instance: str
+
+
 def _apply(action):
     try:
         return action()
@@ -96,6 +109,35 @@ def _decision_owner(request: Request):
 def approval_stats(days: int = 7):
     from src.workflow.staff.approval_stats import approval_statistics
     return _apply(lambda: approval_statistics(os.getcwd(), days=days))
+
+
+def _recovery():
+    from src.scheduling.staff_runner import get_staff_service
+    from src.workflow.staff.recovery import StaffRecovery
+    return StaffRecovery(get_staff_service(os.getcwd()))
+
+
+@router.get('/api/staff/recovery')
+def recovery_snapshot():
+    return _apply(lambda: _recovery().snapshot())
+
+
+@router.post('/api/staff/recovery/decision', dependencies=[Depends(_decision_owner)])
+def recovery_decision(body: RecoveryDecision):
+    with owner_route(os.getcwd()):
+        result = _apply(lambda: _recovery().decide([item.model_dump() for item in body.selected], body.action, body.instance))
+    if body.action == 'rework':
+        from src.scheduling.team_runner import get_team_runner
+        from src.workflow.tasks.tasks import TaskLedger
+        for item in result['results']:
+            if item['status'] == 'applied':
+                task = TaskLedger(os.getcwd()).load(item['id'])
+                root_id = task.collaboration['dispatch'].get('root')
+                if root_id:
+                    runner = get_team_runner()
+                    if runner:
+                        runner.kick(root_id)
+    return result
 
 
 @router.post('/api/staff/proposals/{proposal_id}/decision', dependencies=[Depends(_decision_owner)])

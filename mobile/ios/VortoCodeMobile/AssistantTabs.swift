@@ -19,11 +19,12 @@ struct AssistantShell: View {
     private var name: String? { session.reading.profile.data?.name ?? session.credential?.name }
     private var waiting: [WaitingItem] {
         WaitingItem.collect(cards: owner.turn?.pendingCards ?? [], decisions: owner.decisions, dispatches: owner.dispatches,
-                            teams: owner.teams)
+                            teams: owner.teams, staff: owner.staffActions)
     }
     /// 动态里有来源没读到时，「等你处理」的件数可能不全
     private var waitingUncertain: Bool {
-        owner.canWrite && (!owner.timelineError.isEmpty || !(owner.timeline?.unavailable.isEmpty ?? false))
+        owner.canWrite && (!owner.timelineError.isEmpty || !(owner.timeline?.unavailable.isEmpty ?? false)
+                           || !owner.staffActionsError.isEmpty || !owner.staffActionsComplete)
     }
     private var statusLine: AssistantStatusLine {
         let goals = session.reading.goals.data.map { $0.items.filter { $0.status == "active" }.count }

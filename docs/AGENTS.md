@@ -3,6 +3,10 @@
 > 当前实现：一个会话主 Agent + 按需委派的角色子 Agent + 隔离开发工具。
 > 早期固定五角色批处理流水线已经退役；本文描述当前运行路径。
 
+维护入口：[当前架构与调用地图](CURRENT_ARCHITECTURE.md#当前结构与维护入口) 区分当前路径与已确认的迁移目标。
+模型服务、Agent 执行器和工具资源各自有合同；执行器能力声明不授予岗位权限。统一执行报告与薄入口
+按该文档第 1～3 步推进，现有任务、原确认门、资料边界和恢复规则保持，不能把待迁移结构当成已实现。
+
 Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁定的OpenAI兼容工具客户端，
 原sidecar smoke校验SDK构造与服务健康；CLI仍按原llm可选依赖安装。只读运行包诊断
 `vortocode-runtime model-capabilities`不发送推理；模型列表、真实推理与工具验收分别记录。
@@ -32,6 +36,10 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/agents/tool_results.py` | 原模型历史文本的版本化结果编解码、调用顺序核对和旧格式读取 | 工具执行、真实性证明、权限、状态台账或模型请求 |
 | `src/agents/tool_calls.py` | 模型调用信封、批次与参数对象的纯解析，坏调用整体拒绝，兼容原解析入口 | 工具执行、权限批准、模型请求或完整业务参数校验 |
 | `src/agents/backends/control.py` / `backends/codex.py` | 现有会话的状态与轮次控制合同、Codex 协议适配；[核心控制合同](AGENT_BACKENDS.md) | 启动额外进程、工具执行、审批代决、会话存储或任意核心切换 |
+| `src/agents/team_engines.py` / `backends/acp.py` | ACP 框架配置/角色装配与协议进程调用，保留 AcpResult 并提供共同快照；开发成员只用 OpenCode | 新专员权限、测试/分支交付或主会话替换 |
+| `src/agents/backends/entry.py` | 显式可信绑定的一次性执行转交与能力核对；首批用于固定项目 OpenCode 开发专员 | 权限判定、新任务库/执行池、重试、接手、恢复或动态程序加载 |
+| `src/workflow/staff/executions.py` | 在原专员任务内绑定执行尝试、核对回调并提供只读投影 | 新任务库、调度、恢复、权限、验收或界面状态机 |
+| `src/agents/external_workers.py` | 实验性 Codex / Claude CLI 的一次性实现/审查、事件解析和执行报告 | 默认启用、已有会话续聊、任务台账或审批代决 |
 | `src/agents/backends/execution.py` | 可扩展的执行身份/状态/进展/结果与证据投影、版本编解码；[执行合同](EXECUTION_CONTRACT.md) | 任务数据库、调度、授权、验收判定或自动插件加载 |
 | `src/agents/backends/recovery.py` | 可信执行观察上的失败/备用/人工核对纯决策，以及停止内层自动重试的信号；[恢复合同](EXECUTION_RECOVERY.md) | 进程启动、模型调用、持久调度、权限或跨回合预算授权 |
 | `src/agents/backends/observation_order.py` / `scheduling/codex_observer.py` / `codex_watch.py` | 整份快照的前序/代次/序号核对、不可变重传与原状态槽加锁替换；[观测顺序](OBSERVATION_ORDER.md) | 完整事件回放、多主机报告合并、自动抢回上报权或执行指令重试 |

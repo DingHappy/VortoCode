@@ -260,6 +260,9 @@ class Routines:
                 if not task_id:
                     continue
                 task = TaskLedger(self.root).load(task_id)
+                from src.workflow.staff.recovery import never_started
+                if task is not None and never_started(task):
+                    continue
                 if task is None or task.status in {'queued', 'running', 'blocked', 'interrupted'}:
                     item['state']['error'] = '重启中断了原执行；请核对任务和已生效动作后显式恢复，未自动重跑。'
                     if task is not None and task.status in {'queued', 'running', 'blocked'}:
@@ -270,4 +273,33 @@ class Routines:
                         CollaborationService(self.root, task.owner_session).update_staff_action(task.id, task.collaboration['round'], interrupt)
                     changed = True
             if changed:
+                self.registry._write('routines.json', value)
+
+    def prepare_rework(self, task):
+        """Explicit owner retry of this latest original slot, never another routine run."""
+        with TASK_STATE_LOCK:
+            reference = task.collaboration['dispatch']['routine']
+            value = self.read()
+            item = next(x for x in value['routines'] if x['id'] == reference['id'])
+            previous = deepcopy(item['state'])
+            if item['state'].get('task') not in {None, task.id} or (item['state'].get('task') is None and item['state'].get('last_task') != task.id):
+                raise ValueError('例行工作已有其它执行，不能返工旧时段')
+            if not reference.get('manual') and item['state']['cursor'] != reference['slot']:
+                raise ValueError('例行工作已进入其它时段')
+            item['state'].update(task=task.id, error='')
+            self.registry._write('routines.json', value)
+            try:
+                self.check_task(task)
+            except Exception:
+                self.restore_rework((item['id'], task.id, previous))
+                raise
+            return item['id'], task.id, previous
+
+    def restore_rework(self, previous):
+        with TASK_STATE_LOCK:
+            routine_id, task_id, state = previous
+            value = self.read()
+            item = next(x for x in value['routines'] if x['id'] == routine_id)
+            if item['state'].get('task') == task_id:
+                item['state'] = state
                 self.registry._write('routines.json', value)

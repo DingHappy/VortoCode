@@ -20,7 +20,7 @@ def clean_taint():
     reset_taint()
 
 
-def live_staff(root, monkeypatch, *, kind='own_data', count=1, real_goal=False):
+def live_staff(root, monkeypatch, *, kind='own_data', count=1, real_goal=False, text=None):
     from src.agents.staff import build_staff_member
     from src.agents.tool import PreparedToolCall, Tool
     import src.workflow.staff.registry as module
@@ -36,11 +36,11 @@ def live_staff(root, monkeypatch, *, kind='own_data', count=1, real_goal=False):
     if not real_goal:
         monkeypatch.setattr(module, 'tool_catalog', lambda root: {**catalog(root),
             'fixture_action': Tool.prepared('fixture_action', '离线动作夹具', {'text': '正文'}, prepare,
-                operation_kind=kind, required_args=('text',))})
+                operation_kind=kind, always_confirm=kind == 'read', required_args=('text',))})
     registry = StaffRegistry(str(root))
     name = 'personal_goal_create' if real_goal else 'fixture_action'
     assigned = registry.register_role({'id': 'assistant', 'title': '整理岗位', 'brief': '只做所派任务',
-        'grants': {'operations': ['read', kind], 'tools': [name], 'sees': ['goals'] if real_goal else [],
+        'grants': {'operations': list(dict.fromkeys(['read', kind])), 'tools': [name], 'sees': ['goals'] if real_goal else [],
                    'web': False, 'project': False}, 'engine': ['vortocode'], 'max_steps': 12, 'timeout_seconds': 600})
     member = registry.register_member({'id': 'staff-assistant', 'name': '整理专员', 'role': assigned['id'], 'engine': 'vortocode'})
     pool = TaskRunner(str(root), None, max_concurrent=1)
@@ -59,7 +59,7 @@ def live_staff(root, monkeypatch, *, kind='own_data', count=1, real_goal=False):
             return await service.confirm_action(task, role, person, call)
         agent = build_staff_member(str(root), role, person, check=check, llm=object(), confirm_action=confirm)
         for number in range(count):
-            args = {'objective': '整理学习计划', 'acceptance_criteria': ['列出书单'], 'next_action': '列出书单'} if real_goal else {'text': f'第 {number + 1} 步'}
+            args = {'objective': '整理学习计划', 'acceptance_criteria': ['列出书单'], 'next_action': '列出书单'} if real_goal else {'text': text if text is not None else f'第 {number + 1} 步'}
             results.append(await agent._run_tool(name, args, 'build', lambda _: None))
         return '专员已核对动作结果'
     service = StaffService(str(root), pool, execute=execute, on_update=update)
@@ -199,7 +199,8 @@ async def test_restart_and_followup_invalidate_old_card_without_replaying_an_act
                 **{key: card['payload'][key] for key in ('nonce', 'round', 'instance', 'runtime')})
         assert TaskLedger(tmp_path).load(task.id).status == 'interrupted' and not invoked
         service.runner.cancel(task.id); await service.runner.join(task.id)
-        service.followup('owner', task.id, 1, '已核对，请重新检查当前状态')
+        with owner_route(str(tmp_path)):
+            service.followup('owner', task.id, 1, '已核对，请重新检查当前状态')
         _, fresh = await next_card(waiting)
         assert fresh['payload']['round'] == 2
         with pytest.raises(ValueError):

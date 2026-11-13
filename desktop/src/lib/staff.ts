@@ -14,7 +14,8 @@ export interface StaffMember {
 export interface StaffConfirmation { digest: string; nonce: string; round: number; instance: string }
 export interface StaffProposal extends StaffConfirmation {
   id: string; status: string; reason: string; approval_level: "normal" | "desktop";
-  snapshot: { kind: "role" | "member" | "department" | "routine" | "routine_migration"; data: Record<string, unknown>; previous: unknown; role_snapshot?: StaffRole;
+  snapshot: { kind: "role" | "member" | "department" | "routine" | "routine_migration" | "bundle"; data: Record<string, unknown>; previous: unknown; role_snapshot?: StaffRole;
+    entries?: StaffProposal['snapshot'][];
     members_snapshot?: Array<StaffMember & { role_snapshot: StaffRole }> };
 }
 export interface StaffDepartment {
@@ -39,6 +40,8 @@ export interface StaffClient {
   setStaffStatus(id: string, status: StaffMember["status"], revision: number): Promise<unknown>;
   setStaffBudgets?(settings: StaffBudgetSettings): Promise<StaffBudgetSettings>;
   proposeDevelopment?(data: DevelopmentProposal): Promise<unknown>;
+  readStaffRecovery?: import('./staffRecovery').RecoveryClient['readStaffRecovery'];
+  decideStaffRecovery?: import('./staffRecovery').RecoveryClient['decideStaffRecovery'];
 }
 export interface StaffState { value: StaffSnapshot | null; busy: boolean; error: string }
 /** Only an owner click writes; refreshed identities must match the displayed card. */
@@ -101,7 +104,7 @@ export function staffController(client: StaffClient, publish: (state: StaffState
     decide(proposal: StaffProposal, approve: boolean) {
       return change(async fresh => {
         const current = fresh.proposals.find(item => item.id === proposal.id);
-        if (!current || !["pending", "applying"].includes(current.status) || current.digest !== proposal.digest
+        if (!current || !["pending", "applying", ...(current.snapshot.kind === 'bundle' ? ['cancelling'] : [])].includes(current.status) || (current.status === 'cancelling' && approve) || current.status !== proposal.status || current.digest !== proposal.digest
           || current.nonce !== proposal.nonce || current.round !== proposal.round || current.instance !== proposal.instance)
           throw new Error("提议已变化，请刷新后重新核对");
         if (active) await client.decideStaff(current.id, approve, {

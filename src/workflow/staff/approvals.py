@@ -29,9 +29,12 @@ class StaffApprovals:
     def snapshot(self, kind, data):
         if not isinstance(data, dict):
             raise ValueError('提议内容必须是对象')
+        if kind == 'bundle':
+            from src.workflow.staff.bundles import StaffBundles
+            return StaffBundles(self.registry).snapshot(data)
         if kind == 'routine':
             from src.workflow.staff.routines import Routines
-            return Routines(self.registry.root).snapshot(data)
+            return Routines(self.registry.root, registry=self.registry).snapshot(data)
         if kind == 'routine_migration':
             from src.workflow.staff.routine_migration import RoutineMigration
             return RoutineMigration(self.registry.root).snapshot(data)
@@ -85,6 +88,8 @@ class StaffApprovals:
 
     @staticmethod
     def approval_level(snapshot):
+        if snapshot['kind'] == 'bundle':
+            return 'desktop'
         if snapshot['kind'] == 'routine_migration':
             return 'desktop'
         if snapshot['kind'] == 'department':
@@ -164,6 +169,9 @@ class StaffApprovals:
 
     def _target(self, item):
         snapshot = item['snapshot']
+        if snapshot['kind'] == 'bundle':
+            from src.workflow.staff.bundles import StaffBundles
+            return StaffBundles(self.registry).target(item)
         if snapshot['kind'] == 'routine':
             from src.workflow.staff.routines import Routines
             return Routines(self.registry.root).target(snapshot, item['decision']['at'], item['owner'])
@@ -198,6 +206,18 @@ class StaffApprovals:
             desired = 'approved' if approve else 'rejected'
             if item['status'] == desired:
                 return self._view(item)
+            if item['snapshot']['kind'] == 'bundle' and item['status'] in {'applying', 'cancelling'} and not approve:
+                from src.workflow.staff.bundles import StaffBundles
+                self._audit(item, False)
+                if item['status'] != 'cancelling':
+                    item['status'] = 'cancelling'
+                    item['cancellation'] = {'at': datetime.fromtimestamp(self.clock(), timezone.utc).isoformat(),
+                                            'instance': self.instance, 'source': 'owner_route'}
+                    self._save(item)
+                StaffBundles(self.registry).cancel(item)
+                item['status'] = 'rejected'
+                self._save(item)
+                return self._view(item)
             if item['status'] not in {'pending', 'applying'} or (item['status'] == 'applying' and not approve):
                 raise ValueError('提议已经处理，不能改换决定')
             if item['status'] == 'applying':
@@ -213,7 +233,7 @@ class StaffApprovals:
                             {'id': data['id'], 'revision': data['revision'], 'upgrade': True})
                 elif kind == 'department':
                     data = {key: value for key, value in data.items() if key not in {'notes_revision', 'routines'}}
-                if self.snapshot(kind, data) != snapshot:
+                if (approve or kind != 'bundle') and self.snapshot(kind, data) != snapshot:
                     raise ValueError('岗位或专员版本已变化，旧提议不能批准')
                 self._audit(item, approve)
                 item['decision'] = {'at': datetime.fromtimestamp(self.clock(), timezone.utc).isoformat(),
@@ -227,6 +247,12 @@ class StaffApprovals:
                 if self._target(item) != item['target']:
                     raise ValueError('批准后的登记目标已变化')
                 snapshot = item['snapshot']
+                if snapshot['kind'] == 'bundle':
+                    from src.workflow.staff.bundles import StaffBundles
+                    StaffBundles(self.registry).apply(item)
+                    item['status'] = 'approved'
+                    self._save(item)
+                    return self._view(item)
                 if snapshot['kind'] == 'routine_migration':
                     from src.workflow.staff.routine_migration import RoutineMigration
                     RoutineMigration(self.registry.root).apply(item['target'], snapshot)

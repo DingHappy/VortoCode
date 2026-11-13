@@ -267,6 +267,28 @@ async def chat_card(request: Request):
     return await _guarded(request, handle)
 
 
+@router.get('/api/mobile/native/staff/actions')
+async def staff_actions(request: Request):
+    async def handle(grant):
+        if not _trusted(grant):
+            return _reply({'detail': '这台手机还没获得写入权限'}, 403)
+        if (set(request.query_params) - {'task_id', 'after'}
+                or len(request.query_params.multi_items()) != len(request.query_params)
+                or 'task_id' in request.query_params and 'after' in request.query_params):
+            return _reply({'detail': '读取条件无效'}, 400)
+        return await _relayed('/api/assistant/app-relay/staff-actions', dict(request.query_params))
+    return await _guarded(request, handle)
+
+
+@router.post('/api/mobile/native/staff/action')
+async def staff_action(request: Request):
+    async def handle(grant):
+        await _signed(request, grant, 'device')
+        return await _relayed('/api/assistant/app-relay/staff-action',
+                              {'envelope': await _envelope(request, grant, 'device')})
+    return await _guarded(request, handle)
+
+
 # —— 任务单（ADR-012）：助理在对话里拟好的任务单，手机上核对后下发（Face ID）或撤回 ——
 
 @router.get("/api/mobile/native/dispatches")

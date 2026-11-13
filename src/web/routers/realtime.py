@@ -669,8 +669,16 @@ def _propose_turn_memories(sess: dict, rid: str, candidates) -> None:
         return
     from src.gateway.turn_digest import turn_tool_names
     from src.memory.assistant_profile import propose_memories
+    # A digest runs in another task and may finish after the next turn starts.
+    # Use the original reply's runtime snapshot, not the current ContextVar or
+    # model-generated candidate fields. Legacy missing snapshots stay unknown.
+    snapshots = [item.get('source_tainted') for item in sess.get('transcript') or []
+                 if item.get('rid') == rid and item.get('role') == 'assistant']
+    round_tainted = not snapshots or any(value is not False for value in snapshots)
     activities = []
     for event in sess.get("activities") or []:
+        if event.get('name') == 'recall_memory' and ('result' not in event or event.get('source_untrusted') is False):
+            continue
         args = event.get("args") if isinstance(event.get("args"), dict) else {}
         if (event.get("name") == "recall_memory" and args.get("_automatic") is True
                 and not str(event.get("result") or "").startswith("<vortocode_untrusted_memory>")):
@@ -679,7 +687,7 @@ def _propose_turn_memories(sess: dict, rid: str, candidates) -> None:
     names = turn_tool_names(activities, rid, limit=50)
     # 手机等外部入口来的回合（对话记录带 source）：IM 入站一律按外部输入，与 IM 单独跑时同一口径
     external = any(item.get("rid") == rid and item.get("source") for item in sess.get("transcript") or [])
-    tainted = external or any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "personal_goals", "schedule_list", "mcp")) for name in names)
+    tainted = round_tainted or external or any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "personal_goals", "schedule_list", "mcp")) for name in names)
     try:
         propose_memories(sess.get("repo_root") or os.getcwd(), list(candidates), source="assistant", tainted=tainted)
     except Exception as error:  # noqa: BLE001 —— 记忆候选是旁路
@@ -712,7 +720,7 @@ def _ws_agent(websocket):
     return _get_session(websocket)["agent"]
 
 
-def _record(websocket, role: str, text: str, *, rid: Optional[str] = None) -> None:
+def _record(websocket, role: str, text: str, *, rid: Optional[str] = None, source_tainted: bool | None = None) -> None:
     """把一条用户输入/最终回复记进展示 transcript，供重连回放（截断防膨胀）。"""
     sess = _SESSIONS.get(_session_key(websocket))
     if sess is None:
@@ -723,6 +731,8 @@ def _record(websocket, role: str, text: str, *, rid: Optional[str] = None) -> No
     item = {"role": role, "text": str(text), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     if rid:
         item["rid"] = str(rid)
+    if type(source_tainted) is bool:
+        item['source_tainted'] = source_tainted
     t.append(item)
     _touch_session(sess)
     if len(t) > _MAX_TRANSCRIPT:
@@ -1552,13 +1562,16 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         if stage != "start":
             fields["result"] = sanitize_audit_value(payload.get("result"))
             fields["duration_ms"] = max(0, int(payload.get("duration_ms") or 0))
+            if type(payload.get('source_untrusted')) is bool:
+                fields['source_untrusted'] = payload['source_untrusted']
         q.put_nowait(P.make_event(P.AGENT_TOOL, **fields))
 
     bindings.bind(tool_event=tool_event)
 
     def agent_emit(m):
         start_responding()
-        _record(websocket, "assistant", m, rid=rid)  # 最终回复进展示历史
+        from src.agents.taint import is_tainted
+        _record(websocket, "assistant", m, rid=rid, source_tainted=is_tainted())
         q.put_nowait(P.make_event(P.AGENT_EMIT, text=m))
         finish_phase("responding", "已整理回复")
 

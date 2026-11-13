@@ -58,7 +58,9 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 **外部核心控制**：`agents/backends/control.py` 定义现有会话的状态/启动新轮次/补充指令/请求停止合同；`backends/codex.py` 通过注入的 RPC 连接适配 Codex。观察员的已批准动作实际使用此层，执行前读取最新状态，自动建议与停止绑定原轮次。回执只代表受理，不代表完成；不自动重试、不调整外部核心的权限/模型/沙箱。Gateway 主会话仍使用 MainAgent，尚未实现整会话自由切换。边界见 `docs/AGENT_BACKENDS.md`。这些适配模块同样不得导入 workflow/gateway/scheduling/web/im，分层测试覆盖。
 
-**共同执行观测**：`agents/backends/execution.py` 提供 ExecutionRef / ExecutionSnapshot v1 和只读 ExecutionReporter。自有 Agent、外部 CLI 包装器、Codex 会话适配器已接入；旧执行方法与台账保留。backend/feature 名称开放，未知状态保守 unknown，不兼容版本拒绝；默认身份仅进程有效，持久宿主身份必须显式提供。结果/证据不从模型自述或退出码推断验收，费用未知保留 null。此层不得导入上层、加载插件、授予权限或创建调度器，详见 `docs/EXECUTION_CONTRACT.md`。
+**共同执行观测**：`agents/backends/execution.py` 提供 ExecutionRef / ExecutionSnapshot v1 和只读 ExecutionReporter。自有 Agent、外部 CLI 包装器、ACP、Codex 会话适配器已接入；旧执行方法与台账保留。native 与固定项目开发专员的报告在原协作任务内关联，`workflow/staff/executions.py` 核对回调并提供只读投影。backend/feature 名称开放，未知状态保守 unknown，不兼容版本拒绝；默认身份仅进程有效，持久宿主身份必须显式提供。结果/证据不从模型自述或退出码推断验收，费用未知保留 null。此层不得导入上层、加载插件、授予权限或创建调度器，详见 `docs/EXECUTION_CONTRACT.md`。
+
+**薄执行入口**：`agents/backends/entry.py` 只转交显式可信绑定的一次性调用，核对能力并调用原宿主的授权复核，不创建执行池、不重试或自动接手。首批只迁固定项目 OpenCode 开发专员，原 ACP 配置/权限/清理及测试分支交付保留；主核心、CLI、旧团队开发和已有 Codex 会话路径未迁。维护职责与后续顺序见 `docs/CURRENT_ARCHITECTURE.md`；该入口同样不得反向导入 workflow/gateway/scheduling/web/im。
 
 **观测上报顺序**：`agents/backends/observation_order.py` 是纯数据的前序游标/代次/序号合同。Codex 观察循环先读现有 status 游标再采集，上报在原 state.json 的文件锁内核对并替换；重复包不更新时间或再次生成提醒。发送端冻结 pending 至回执，409 后旧来源停止上报、不自动抢回；已启用有序来源的状态槽拒绝旧格式覆盖。旧服务无协议声明时兼容旧方式。它不是完整事件补收或执行指令重试，见 `docs/OBSERVATION_ORDER.md`。
 

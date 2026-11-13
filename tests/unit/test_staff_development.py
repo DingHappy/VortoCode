@@ -116,6 +116,61 @@ async def test_single_developer_delivers_branch_and_reworks_without_touching_pri
     assert all(not path.exists() for path in copies)
 
 
+async def test_acp_observation_is_bound_to_original_developer_task_not_delivery_acceptance(development, monkeypatch):
+    import sys
+    from src.agents import team_engines
+    from src.workflow.staff.executions import execution_projection
+    from tests.unit.test_acp_backend import FAKE
+    root, project, config, data = development
+    registry, role, member, pool, service = registered(development)
+    binary = root.parent / 'fake-opencode'
+    binary.write_text('#!' + sys.executable + '\n' + FAKE)
+    binary.chmod(0o700)
+    monkeypatch.setattr(team_engines, 'resolve_binary', lambda _: str(binary))
+    for key, value in {'OPENAI_API_BASE': 'https://relay.example.invalid/v1', 'OPENAI_API_KEY': 'fixture-key',
+                       'FAKE_SCENARIO': 'plain', 'FAKE_LOG': str(root.parent / 'acp-log')}.items():
+        monkeypatch.setenv(key, value)
+    task = service.assign('owner', {'member': member['id'], 'prompt': '检查项目'})
+    await pool.jobs[task.id]()
+    done = service.collaboration('owner').get(task.id)
+    report = execution_projection(done)['snapshot']
+    assert report['ref']['task_id'] == task.id and report['ref']['backend_id'] == 'opencode'
+    assert report['ref']['session_id'] == 's1' and report['state'] == 'finished'
+    assert done.collaboration['review'] != 'accepted'
+    assert (project / 'app.txt').read_text() == 'original\n'
+    assert git(project, 'branch', '--show-current') == 'main'
+
+
+async def test_developer_uses_common_entry_once_with_original_task_and_isolated_copy(development, monkeypatch):
+    from src.agents import team_engines
+    from src.agents.backends import entry
+    root, project, config, data = development
+    registry, role, member, pool, service = registered(development)
+    observed = []
+    original_entry = entry.execute_once
+    async def traced(binding, call, **kwargs):
+        observed.append((binding.backend_id, call))
+        return await original_entry(binding, call, **kwargs)
+    copies = []
+    async def external(engine, kind, model, prompt, **kwargs):
+        path = Path(kwargs['workdir'])
+        copies.append(path)
+        assert path != project and kind == 'developer' and engine == 'opencode'
+        assert not (path / '.env').exists()
+        (path / 'app.txt').write_text('changed in isolated copy\n')
+        return SimpleNamespace(text='已修改', error='', networked=False)
+    monkeypatch.setattr(entry, 'execute_once', traced)
+    monkeypatch.setattr(team_engines, 'run_external', external)
+    task = service.assign('owner', {'member': member['id'], 'prompt': '只改项目副本'})
+    await pool.jobs[task.id]()
+    saved = service.collaboration('owner').get(task.id)
+    assert saved.status == 'done' and saved.collaboration['review'] == 'pending'
+    assert len(observed) == len(copies) == 1 and observed[0][0] == 'opencode'
+    assert observed[0][1].ref.task_id == task.id
+    assert git(project, 'show', saved.collaboration['delivery']['branch'] + ':app.txt') == 'changed in isolated copy'
+    assert (project / 'app.txt').read_text() == 'original\n' and not copies[0].exists()
+
+
 async def test_changed_project_never_starts_queued_development(development, monkeypatch):
     root, project, config, data = development
     registry, role, member, pool, service = registered(development)
