@@ -262,7 +262,7 @@ def test_resident_socket_is_private_and_existing_active_socket_is_not_unlinked()
     import tempfile
     from desktop.local_resident_config import prepare_resident_socket
 
-    with tempfile.TemporaryDirectory(prefix="vr-", dir="/private/tmp") as directory:
+    with tempfile.TemporaryDirectory(prefix="vr-", dir=str(Path(tempfile.gettempdir()).resolve())) as directory:
         root = Path(directory)
         root.chmod(0o700)
         workspace = root / "assistant"
