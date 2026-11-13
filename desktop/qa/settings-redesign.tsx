@@ -7,10 +7,13 @@ import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SettingsModal, type SettingsSection } from "../src/components/SettingsModal";
 import { useLlmProfile } from "../src/hooks/useLlmProfile";
+import { staffSettingsFixture } from "./staff-settings-fixture";
 import type { DesktopLlmProfileStatus, TrustStatus, GatewayProcessStatus, WorkspaceScope } from "../src/types";
 import "../src/App.css";
 
 const params = new URLSearchParams(location.search);
+const staffFixture = params.has("staff") ? staffSettingsFixture(params.get("staff") || "ready") : undefined;
+if (staffFixture) Object.assign(window, { settingsQAStaff: staffFixture.read });
 document.documentElement.setAttribute("data-theme", params.get("theme") || "dark");
 const lifecycleFixture = Boolean(params.get("runtime"));
 const fixtureScope: WorkspaceScope = params.get("scope") === "scratch" ? "scratch" : params.get("scope") === "project" ? "project" : "general";
@@ -230,7 +233,7 @@ function Fixture() {
   const [trust, setTrust] = useState<TrustStatus>({ level: "ask", effective: "ask", ceiling: "reads", levels: ["ask", "reads", "full"], capability_profile: "local", workspace_scope: "project", local_file_reads: true, supervised: true });
   const noop = () => { };
   return <><main data-profile-checked={llm.llmProfileChecked} data-profile-loading={llm.llmProfileLoading} style={{ padding: 24 }}><p>真实设置组件 · 合成数据验收 · 不连接真实服务</p><button onClick={() => setOpen(true)}>打开设置</button><p role="status">{notice}</p></main>
-    {open && <SettingsModal activeScope={lifecycleFixture ? fixtureScope : "project"} connection={runtimeConnected ? "connected" : "disconnected"} connectionText="未连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
+    {open && <SettingsModal staffClient={staffFixture?.client} activeScope={lifecycleFixture ? fixtureScope : "project"} connection={runtimeConnected ? "connected" : "disconnected"} connectionText="未连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
       processStatus={lifecycleFixture ? runtimeControls.target : { running: false, message: "本机引擎未运行" }}
       runtimeIsRemote={remote} runtimeActionBusy={runtimeControls.busy} runtimeActionNote={runtimeControls.note} onReloadRuntime={runtimeControls.reload} recoveryRecord={null} llmProfile={llm.llmProfile}
       llmBaseInput={llm.llmBaseInput} llmModelInput={llm.llmModelInput} llmKeyInput={llm.llmKeyInput} llmFastInput={llm.llmFastInput} llmStrongInput={llm.llmStrongInput}

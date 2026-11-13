@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StaffView, StaffPane } from "./StaffPane";
 import { DevelopmentStaff } from './DevelopmentStaff';
+import { StaffBudgets } from './StaffBudgets';
 import type { StaffSnapshot } from "../../lib/staff";
 import { SOURCE_FRESH_MS } from '../../lib/readFreshness';
 import executionWire from '../../../../tests/fixtures/execution_observation_v1.json';
@@ -125,9 +126,97 @@ it.each(['expired', 'missing timestamp', 'invalid timestamp', 'clock rollback'])
   expect(html).toContain('上次读取的数据');
   expect(html).toContain('执行观察：无法确认');
   expect(html).not.toContain('执行观察：在忙');
-  expect(html).toContain('上次：可接活');
+  expect(html).toContain('上次：已启用');
   expect(html).toContain('上次：在忙');
   expect(html).toContain(task.prompt);
   expect(html.match(/<button[^>]*>批准登记<\/button>/)?.[0]).toContain('disabled');
   expect(html.match(/<button[^>]*>刷新名录<\/button>/)?.[0]).not.toContain('disabled');
+});
+
+const renderStaff = (value = snapshot) => renderToStaticMarkup(<StaffView state={displayed(value)} onRefresh={noop} onStatus={noop} onDecide={noop} onBudgets={noop} />);
+const memberCard = (html: string) => {
+  const card = html.match(/<article\b[^>]*aria-label="日程专员"[^>]*>([\s\S]*?)<\/article>/)?.[1];
+  expect(card).toBeDefined();
+  return card!;
+};
+
+it('puts the registered roster before optional role and budget settings, with both closed initially', () => {
+  const value = structuredClone(snapshot);
+  value.budget_settings = { revision: 1, daily_tokens: 20_000, task_tokens: 5_000 };
+  value.usage = { total: 200 };
+  const html = renderStaff(value), roster = html.indexOf('aria-label="已登记专员"');
+  expect(roster).toBeGreaterThan(-1);
+  for (const label of ['岗位登记', '使用额度']) {
+    const disclosure = html.match(new RegExp(`<details\\b[^>]*aria-label="${label}"[^>]*>`))?.[0];
+    expect(disclosure).toBeDefined();
+    expect(disclosure).not.toMatch(/\bopen(?:=|\s|>)/);
+    expect(html.indexOf(`aria-label="${label}"`)).toBeGreaterThan(roster);
+  }
+});
+
+it('keeps member grants, task evidence and status controls inside the closed member details', () => {
+  const card = memberCard(renderStaff());
+  const disclosure = card.match(/<details\b[^>]*class="staff-member-details"[^>]*>/)?.[0];
+  expect(disclosure).toBeDefined();
+  expect(disclosure).not.toMatch(/\bopen(?:=|\s|>)/);
+  expect(card).toContain('<summary>查看详情</summary>');
+  const detailsAt = card.indexOf(disclosure!);
+  expect(card.slice(0, detailsAt)).toContain('已启用');
+  expect(card.slice(0, detailsAt)).not.toContain('可接活');
+  for (const text of ['calendar_events', '检查明天的安排', '暂停接活', '撤掉专员']) {
+    expect(card.indexOf(text)).toBeGreaterThan(detailsAt);
+  }
+});
+
+it.each(['missing role', 'disabled role', 'wrong engine', 'unbound project'])('keeps a dispatch blocker visible outside member details: %s', fault => {
+  const value = structuredClone(snapshot);
+  if (fault === 'missing role') value.roles = [];
+  if (fault === 'disabled role') value.roles[0].enabled = false;
+  if (fault === 'wrong engine') value.members[0].engine = 'opencode';
+  if (fault === 'unbound project') value.roles[0].grants.project = true;
+  const card = memberCard(renderStaff(value));
+  const firstDetails = card.indexOf('<details');
+  const visible = firstDetails < 0 ? card : card.slice(0, firstDetails);
+  expect(visible).toContain('role="alert"');
+  expect(visible).toMatch(/岗位|执行|项目/);
+  expect(visible).not.toContain('可接活');
+});
+
+it('keeps proposal grants visible before approval rather than hiding them with member details', () => {
+  const html = renderStaff();
+  const proposal = html.match(/<section\b[^>]*aria-label="待批登记"[^>]*>([\s\S]*?)<\/section>/)?.[1];
+  expect(proposal).toBeDefined();
+  const fullGrants = proposal!.indexOf('class="staff-grants"');
+  expect(fullGrants).toBeGreaterThan(-1);
+  expect(proposal!.indexOf('calendar_events')).toBeGreaterThan(fullGrants);
+  expect(proposal!.indexOf('plugin:calendar')).toBeGreaterThan(fullGrants);
+  expect(proposal!.indexOf('<details')).toBeGreaterThan(fullGrants);
+  expect(proposal!.indexOf('批准登记')).toBeGreaterThan(fullGrants);
+});
+
+it('does not claim previous records exist when the first registry read fails', () => {
+  const html = renderToStaticMarkup(<StaffView state={{ value: null, busy: false, error: '合成首次读取失败' }} onRefresh={noop} onStatus={noop} onDecide={noop} />);
+  expect(html).toContain('role="alert"');
+  expect(html).toContain('合成首次读取失败');
+  expect(html).not.toContain('上次读取的数据');
+  expect(html).not.toContain('已保留上次');
+});
+
+it.each([undefined, { error: '合成用量来源不可读取' }])('does not turn unavailable usage into zero: %j', usage => {
+  const html = renderToStaticMarkup(<StaffBudgets value={{ revision: 1, daily_tokens: 20_000, task_tokens: 5_000 }} usage={usage} disabled={false} onSave={noop} />);
+  expect(html).not.toContain('今天已记录 0 token');
+  if (usage?.error) expect(html).toContain(usage.error);
+  else expect(html).toMatch(/待核对|无法核对|尚未核对/);
+});
+
+it('keeps usage errors visible before the closed budget disclosure', () => {
+  const value = structuredClone(snapshot);
+  value.budget_settings = { revision: 1, daily_tokens: 20_000, task_tokens: 5_000 };
+  value.usage = { error: '合成用量来源不可读取' };
+  const html = renderStaff(value);
+  const errorAt = html.indexOf(value.usage.error!);
+  const disclosure = html.match(/<details\b[^>]*aria-label="使用额度"[^>]*>/)?.[0];
+  expect(disclosure).toBeDefined();
+  expect(errorAt).toBeGreaterThan(-1);
+  expect(errorAt).toBeLessThan(html.indexOf(disclosure!));
 });
