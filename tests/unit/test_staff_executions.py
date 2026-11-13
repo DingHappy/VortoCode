@@ -157,3 +157,27 @@ async def test_native_waiting_report_does_not_invoke_action_before_original_conf
     decide.set_result(True)
     assert await run == '整理结果' and invoked == [{}]
     assert execution_projection(work.get(task.id))['snapshot']['state'] == 'finished'
+
+
+@pytest.mark.parametrize('kind', ['web', 'cli', 'im'])
+@pytest.mark.parametrize('include_report', [False, True])
+async def test_staff_list_preserves_report_provenance_on_all_hosts(staff, kind, include_report):
+    from src.agents.taint import is_tainted, reset_taint
+    from src.gateway.agent_session import build_session
+    root, service, task, work = staff
+    if include_report:
+        binding = StaffExecution(work, task, 'vortocode')
+        assert binding.publish(observed(binding, ExecutionState.FINISHED,
+            result=ExecutionResult('fixture report from an untrusted execution')))
+    events = []
+    agent = build_session(str(root), kind=kind, workspace_scope='general', with_dev=False,
+        on_tool_event=lambda stage, payload: events.append((stage, payload)))
+    reset_taint()
+    try:
+        text = await agent._run_tool('staff_list', {}, 'plan', lambda _: None)
+        assert bool('fixture report from an untrusted execution' in text) == include_report
+        assert is_tainted() is include_report
+        finished = [payload for stage, payload in events if stage == 'finish'][-1]
+        assert finished['source_untrusted'] is include_report
+    finally:
+        reset_taint()

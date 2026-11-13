@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from src.agents.tool import Tool, PreparedToolCall
+from src.agents.tool import Tool, PreparedToolCall, SourcedToolText
 from src.agents.trust import READ, OWN_DATA, DRAFT, WRITE, EXECUTE, INTERACT
 
 
@@ -171,7 +171,12 @@ def build_staff_tools(root, *, confirm, owner, capabilities=None, service=None, 
         if args:
             raise ValueError('staff_list 不接受参数')
         from src.workflow.staff.service import staff_directory
-        return json.dumps(service.directory() if service is not None else staff_directory(root), ensure_ascii=False)
+        data = service.directory() if service is not None else staff_directory(root)
+        # Backend prose is data, including output from local/native specialists.
+        # Preserve provenance through the existing runtime/history mechanism.
+        untrusted = any(task.get('execution') is not None
+            for member in data.get('members', []) for task in member.get('recent_tasks', []))
+        return SourcedToolText(json.dumps(data, ensure_ascii=False), untrusted=untrusted)
 
     async def plan(args):
         from src.workflow.staff.standing import standing_plan
