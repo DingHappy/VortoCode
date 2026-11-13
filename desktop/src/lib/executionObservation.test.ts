@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import wire from "../../../tests/fixtures/execution_observation_v1.json";
-import { readExecutionObservation } from "./executionObservation";
+import { readExecutionObservation, readTaskExecutionObservation } from "./executionObservation";
 
 it("reads the same v1 wire fixture as the real Python observer", () => {
   const observation = readExecutionObservation(wire)!;
@@ -33,4 +33,22 @@ it.each([null, [], { ...wire, schema_version: 2 }, { ...wire, schema_version: tr
   { ...wire, progress: { total_steps: Number.MAX_SAFE_INTEGER + 1 } },
 ])("unusable observations never become an idle or successful state (%#)", value => {
   expect(readExecutionObservation(value)).toBeNull();
+});
+
+it.each(['vortocode', 'opencode', 'vendor.future'])("reads task-bound observations without vendor-specific interpretation: %s", backend => {
+  const value = { round: 2, stale: false, snapshot: { ...wire, state: 'finished', ref: { ...wire.ref, backend_id: backend, task_id: 'task-1' } } };
+  expect(readTaskExecutionObservation(value, 'task-1')).toMatchObject({ round: 2, stale: false, snapshot: { state: 'finished' } });
+  expect(readTaskExecutionObservation(value, 'another-task')).toBeNull();
+});
+
+it('keeps a stale report unknown without mutating its historical record', () => {
+  const value = { round: 1, stale: true, snapshot: { ...wire, state: 'finished', ref: { ...wire.ref, task_id: 'task-1' } } };
+  expect(readTaskExecutionObservation(value, 'task-1')?.snapshot.state).toBe('unknown');
+  expect(value.snapshot.state).toBe('finished');
+});
+
+it.each([null, {}, { round: 0, stale: false, snapshot: wire },
+  { round: 1, stale: 'false', snapshot: wire }, { round: 1, stale: false, snapshot: { ...wire, schema_version: 2 } },
+])('keeps missing, malformed and future task reports unavailable (%#)', value => {
+  expect(readTaskExecutionObservation(value, 'task-1')).toBeNull();
 });

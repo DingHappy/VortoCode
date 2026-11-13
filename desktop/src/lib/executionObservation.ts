@@ -42,3 +42,14 @@ export function readExecutionObservation(value: unknown): ExecutionObservation |
       total_steps: progress.total_steps as number | null | undefined },
   };
 }
+
+export interface TaskExecutionObservation { round: number; stale: boolean; snapshot: ExecutionObservation }
+/** The task's original service supplies the round/staleness envelope. Never bind by prose or backend name. */
+export function readTaskExecutionObservation(value: unknown, taskId: string): TaskExecutionObservation | null {
+  if (!object(value) || !Number.isSafeInteger(value.round) || (value.round as number) < 1
+      || typeof value.stale !== 'boolean' || !taskId) return null;
+  const snapshot = readExecutionObservation(value.snapshot);
+  if (!snapshot || snapshot.ref.task_id !== taskId) return null;
+  return { round: value.round as number, stale: value.stale,
+    snapshot: value.stale ? { ...snapshot, state: 'unknown' } : snapshot };
+}

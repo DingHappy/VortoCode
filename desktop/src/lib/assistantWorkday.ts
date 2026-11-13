@@ -1,6 +1,6 @@
 import type { TeamSummary, AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, NoticeItem, OpsHeartbeat, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
 import { progressLine } from "./assistantTask";
-import { readExecutionObservation } from "./executionObservation";
+import { codexExecutionObservation, CODEX_REPORT_FRESH_MS } from "./codexExecution";
 import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
 import { codexActionOutcome } from "./codexActionOutcome";
 import { freshAt } from "./readFreshness";
@@ -22,8 +22,6 @@ export interface AssistantWorkday {
   today: WorkdayItem[]; progress: WorkdayItem[]; completed: WorkdayItem[]; decisions: WorkdayItem[];
   warnings: string[];
 }
-// Matches the resident Codex watch's STALE_AFTER; report time is shown separately.
-const CODEX_REPORT_FRESH_MS = 30 * 60_000;
 const time = (value?: string) => Date.parse(value ?? "");
 const today = (value: string, now: Date) => {
   const parsed = new Date(value);
@@ -128,31 +126,20 @@ export function buildAssistantWorkday(input: {
     && freshAt(time(input.codex.data?.received_at), ms, CODEX_REPORT_FRESH_MS);
   if (!codexFresh) result.warnings.push(input.codex.status === "loading" ? "Codex 进度正在读取。" : "Codex 尚无新鲜报告，无法确认 Mac 上的当前进展。");
   for (const thread of input.codex.data?.threads ?? []) {
-    const hasExecution = Object.prototype.hasOwnProperty.call(thread, "execution");
-    const execution = hasExecution ? readExecutionObservation(thread.execution) : null;
-    const executionValid = execution !== null && execution.ref.backend_id === "codex"
-      && execution.ref.session_id === thread.id && execution.ref.turn_id === thread.turn?.id
-      && execution.ref.run_id === thread.turn?.id && !execution.ref.task_id
-      && freshAt(execution.observed_at * 1000, ms, CODEX_REPORT_FRESH_MS);
-    const active = thread.status === "active" || (executionValid && ["running", "waiting_user", "queued"].includes(execution.state));
+    const execution = codexExecutionObservation(thread, ms);
+    const active = execution.active;
     if (!active && !thread.turn) continue;
     const updated = typeof thread.updated_at === "number" && Number.isFinite(thread.updated_at)
       && thread.updated_at > 0 && thread.updated_at * 1000 <= ms
       ? new Date(thread.updated_at * 1000).toISOString() : "";
     if (!active && !today(updated, now)) continue;
-    const waiting = hasExecution ? executionValid && execution.state === "waiting_user"
-      : thread.flags.includes("waitingOnApproval") || thread.flags.includes("waitingOnUserInput");
-    const state: WorkdayItem["state"] = !codexFresh ? "unknown" : hasExecution
-      ? !executionValid ? "unknown" : execution.state === "running" ? "running"
-        : execution.state === "finished" ? "review"
-        : ["waiting_user", "failed", "cancelled"].includes(execution.state) ? "decision" : "unknown"
-      : !["active", "idle"].includes(thread.status) ? "unknown" : waiting ? "decision"
-      : active ? thread.turn?.status === "inProgress" ? "running" : "unknown"
-      : ["failed", "interrupted"].includes(thread.turn?.status ?? "") ? "decision"
-      : thread.turn?.status === "completed" ? "review" : "unknown";
+    const waiting = execution.state === 'waiting_user';
+    const state: WorkdayItem["state"] = !codexFresh ? "unknown"
+      : execution.state === 'running' ? 'running' : execution.state === 'finished' ? 'review'
+      : ['waiting_user', 'failed', 'cancelled'].includes(execution.state) ? 'decision' : 'unknown';
     const detail = !codexFresh ? "报告已过期或连接不可用，请核对 Codex 当前状态"
       : waiting ? "Codex 正在等你批准或回答，请到 Codex 处理"
-      : state === "running" ? execution?.progress.summary || thread.turn?.plan || thread.turn?.request || "Codex 报告正在执行"
+      : state === "running" ? execution.summary || thread.turn?.plan || thread.turn?.request || "Codex 报告正在执行"
       : state === "unknown" ? "Codex 状态尚不能确认，请核对原会话"
       : state === "decision" ? thread.turn?.error || "Codex 本轮失败或中断，请决定下一步"
       : "Codex 本轮已结束；最终回复不作为完成验收依据";

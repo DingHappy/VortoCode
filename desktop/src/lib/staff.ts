@@ -9,7 +9,7 @@ export interface StaffMember {
   id: string; name: string; role: string; engine: string; model: string; revision: number;
   status: "active" | "paused" | "retired"; busy: number;
   department?: string;
-  recent_tasks: Array<{ id: string; status: string; review: string; delivery: string; prompt?: string }>;
+  recent_tasks: Array<{ id: string; status: string; review: string; delivery: string; prompt?: string; execution?: unknown }>;
 }
 export interface StaffConfirmation { digest: string; nonce: string; round: number; instance: string }
 export interface StaffProposal extends StaffConfirmation {

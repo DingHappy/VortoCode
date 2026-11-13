@@ -60,6 +60,8 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 **共同执行观测**：`agents/backends/execution.py` 提供 ExecutionRef / ExecutionSnapshot v1 和只读 ExecutionReporter。自有 Agent、外部 CLI 包装器、ACP、Codex 会话适配器已接入；旧执行方法与台账保留。native 与固定项目开发专员的报告在原协作任务内关联，`workflow/staff/executions.py` 核对回调并提供只读投影。backend/feature 名称开放，未知状态保守 unknown，不兼容版本拒绝；默认身份仅进程有效，持久宿主身份必须显式提供。结果/证据不从模型自述或退出码推断验收，费用未知保留 null。此层不得导入上层、加载插件、授予权限或创建调度器，详见 `docs/EXECUTION_CONTRACT.md`。
 
+**执行报告展示**：Desktop `executionObservation` 是共同解码入口，原专员最近任务按 task_id 与 round/stale 包装核对；ExecutionDetails 只读显示，不参与批准或验收。今日工作不判断 Codex 原生状态/旗标，旧格式解释集中在 `codexExecution` 来源适配；显式无效报告不能回退旧字段。原任务状态、主人验收和执行状态分开，断线或过期保持未知。只删除已核对无生产调用的兼容包装，不因统一入口删除仍使用的旧来源。
+
 **薄执行入口**：`agents/backends/entry.py` 按生命周期提供 `execute_once` 和 `control_existing`，不创建执行池、不重试或自动接手。一次执行核对显式绑定与原宿主授权，已迁固定项目 OpenCode 开发专员与实验性 CLI 实现/审查；原配置/权限/清理及测试分支交付保留，CLI 实验开关仍默认关闭，恢复与提问仍在原包装器。已有 Codex 会话用固定来源的 SessionRequest 交回原控制合同，不经过一次执行、不新建 CLI；受理与完成继续分开。主核心和旧团队开发路径未迁。维护职责与顺序见 `docs/CURRENT_ARCHITECTURE.md`；入口同样不得反向导入 workflow/gateway/scheduling/web/im。
 
 **观测上报顺序**：`agents/backends/observation_order.py` 是纯数据的前序游标/代次/序号合同。Codex 观察循环先读现有 status 游标再采集，上报在原 state.json 的文件锁内核对并替换；重复包不更新时间或再次生成提醒。发送端冻结 pending 至回执，409 后旧来源停止上报、不自动抢回；已启用有序来源的状态槽拒绝旧格式覆盖。旧服务无协议声明时兼容旧方式。它不是完整事件补收或执行指令重试，见 `docs/OBSERVATION_ORDER.md`。

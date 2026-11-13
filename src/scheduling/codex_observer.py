@@ -446,14 +446,8 @@ class ReportPublisher:
             self._publishing = False
 
 
-async def execute_action(client: CodexClient, action: dict, threads: List[dict]) -> tuple:
-    """把一条已批准的动作交给 Codex。返回 (成功?, 失败原因)。"""
-    result = await run_action(client, action, threads)
-    return result["ok"], result["error"]
-
-
 async def run_action(client: CodexClient, action: dict, threads: List[dict]) -> dict:
-    """同 execute_action，另外分清「没发出去」和「说不准」：后者 uncertain=True，常驻助理记成结果无法确认。"""
+    """执行已批准动作，分清没发出去和结果不明；uncertain=True 交原记录核对，不重发。"""
     try:
         ok, error = await _execute(client, action, threads)
     except ControlOutcomeUnknown as error:

@@ -7,6 +7,8 @@
 .staff-record { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vc-font-mono); font-size: var(--vc-size-caption); border-radius: var(--vc-radius-control); padding: var(--vc-space-3); background: var(--vc-fill); color: var(--vc-text); }
 .staff-pane summary { cursor: pointer; color: var(--vc-text-secondary); }
 .staff-pane [role="alert"] { color: var(--vc-danger-text); }
+.staff-execution { margin-block: var(--vc-space-2); }
+.staff-execution > div { padding-block: var(--vc-space-3); }
 .staff-budget-settings { display: grid; gap: var(--vc-space-2); }
 .staff-budget-settings input { min-width: 0; padding: var(--vc-space-2); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-inner); background: var(--vc-fill); color: var(--vc-text); font: inherit; }
 .staff-field { display: grid; gap: var(--vc-space-2); font-size: var(--vc-size-small); }
