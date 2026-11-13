@@ -162,7 +162,11 @@ def _approval_fields(value: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(ref, str) and re.fullmatch(r"[0-9a-f]{64}", ref):
         fields["app_card_ref"] = ref
     seconds = value.get('wait_seconds')
-    if type(seconds) in (int, float) and math.isfinite(seconds) and seconds >= 0:
+    try:
+        valid_seconds = type(seconds) in (int, float) and math.isfinite(seconds) and seconds >= 0
+    except OverflowError:
+        valid_seconds = False
+    if valid_seconds:
         fields['wait_seconds'] = seconds
     source_id = value.get('source_id')
     if isinstance(source_id, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,160}', source_id):

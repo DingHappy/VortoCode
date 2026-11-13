@@ -22,7 +22,10 @@ def _instant(value):
 
 
 def _seconds(value):
-    return value if type(value) in (float, int) and math.isfinite(value) and value >= 0 else None
+    try:
+        return value if type(value) in (float, int) and math.isfinite(value) and value >= 0 else None
+    except OverflowError:
+        return None
 
 
 def _id(value):
@@ -144,12 +147,15 @@ def approval_statistics(root, *, days=7, now=None):
             created = _instant(payload.get('created'))
             decided = _instant(card.get('decided_at'))
             expires = payload.get('expires_at')
-            if type(expires) in (int, float) and math.isfinite(expires):
-                try:
+            try:
+                if type(expires) in (int, float) and math.isfinite(expires):
                     expires = datetime.fromtimestamp(expires, timezone.utc)
-                except (ValueError, OverflowError, OSError):
+                else:
+                    if expires is not None:
+                        coverage['tasks'] = 'partial'
                     expires = None
-            else:
+            except (ValueError, OverflowError, OSError):
+                coverage['tasks'] = 'partial'
                 expires = None
             if outcome == 'pending' and expires is not None and expires <= now:
                 outcome = 'expired'

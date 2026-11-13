@@ -74,6 +74,7 @@ async def test_live_staff_card_is_counted_once_before_and_after_owner_decides(tm
     service, member, waiting, _, invoked, _, _ = live_staff(tmp_path, monkeypatch)
     clock = [NOW.timestamp() - 60]
     service.actions.clock = lambda: clock[0]
+    monkeypatch.setattr('src.gateway.audit._now', lambda: datetime.fromtimestamp(clock[0], timezone.utc).isoformat())
     try:
         task = service.assign('owner', {'member': member['id'], 'prompt': 'PRIVATE TASK'})
         _, card = await next_card(waiting)
@@ -166,3 +167,24 @@ async def test_confirmation_timing_and_existing_scope_metadata_survive_auditing(
 def test_window_is_bounded(tmp_path, days):
     with pytest.raises(ValueError):
         stats(tmp_path, days=days)
+
+
+def test_unrepresentable_old_wait_duration_is_unknown_without_losing_decision(tmp_path):
+    row(tmp_path, wait_seconds=10 ** 1000)
+    result = stats(tmp_path)
+    assert result['totals']['count'] == result['totals']['approved'] == 1
+    assert result['totals']['median_wait_seconds'] is None
+    assert result['coverage']['missing_wait'] == 1
+
+
+def test_unrepresentable_old_card_expiry_is_unknown_without_breaking_statistics(tmp_path):
+    from src.workflow.tasks.tasks import BackgroundTask, TaskLedger
+    task = BackgroundTask.new('delegation', 'fixture')
+    task.collaboration = {'dispatch': {'source': 'staff', 'member': 'staff-reader'},
+        'approval': {'status': 'pending', 'payload': {'id': 'staff-action-old',
+            'created': NOW.isoformat(), 'expires_at': 10 ** 1000, 'kind': 'draft', 'tainted': False}}}
+    TaskLedger(str(tmp_path)).save(task)
+    result = stats(tmp_path)
+    assert result['totals']['pending'] == 1
+    assert result['totals']['median_wait_seconds'] is None
+    assert result['coverage']['tasks'] == 'partial'
