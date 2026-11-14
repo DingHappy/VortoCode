@@ -4,7 +4,7 @@ import asyncio
 import pytest
 
 from src.agents.gate import make_confirm_gate
-from src.agents.scoped_approval import approval_turn
+from src.agents.scoped_approval import approval_turn, TTL_SECONDS
 from src.agents.taint import reset_taint
 from src.gateway.turn_bindings import TurnBindings
 from src.gateway.audit import list_audit
@@ -35,7 +35,10 @@ async def test_scope_choice_uses_owner_future_and_durable_audit(tmp_path, monkey
     assert not task.done()
     record = realtime._PENDING_CONFIRMS[event["id"]]
     if failure == "scope": response["scope"] = "always"
-    elif failure == "expired": record["scope_offer"].state.clock = lambda: record["scope_offer"].state.born + 600
+    elif failure == "expired":
+        # A virtual origin keeps the exact TTL boundary independent of host uptime/rounding.
+        record["scope_offer"].state.born = 0.0
+        record["scope_offer"].state.clock = lambda: float(TTL_SECONDS)
     elif failure == "tainted": record["scope_offer"].state.revoke()
     elif failure == "grant_race":
         monkeypatch.setattr("src.agents.scoped_approval.ScopeOffer.grant", lambda _self: False)
