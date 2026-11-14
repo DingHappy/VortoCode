@@ -14,7 +14,7 @@ const snapshot: StaffSnapshot = { roles: [role], members: [{ id: "staff-calendar
 const displayed = (value = snapshot, error = '') => ({ value, busy: false, error, checkedAt: 1_000 });
 it("shows grants, sources, web, recent work and owner controls", () => {
   const markup = renderToStaticMarkup(<StaffView state={displayed()} onRefresh={noop} onStatus={noop} onDecide={noop} />);
-  for (const text of ["日程专员", "calendar_events", "plugin:calendar", "不联网", "检查明天的安排", "暂停接活", "撤掉专员", "批准登记"]) expect(markup).toContain(text);
+  for (const text of ["日程专员", "calendar_events", "plugin:calendar", "不联网", "检查明天的安排", "暂停接活", "撤掉角色", "批准登记"]) expect(markup).toContain(text);
   expect(markup).toContain("尚未登记或授予权限"); expect(markup).not.toContain("主人已验收");
   expect(markup.match(/<button[^>]*>批准登记<\/button>/)?.[0]).not.toContain("disabled");
   expect(markup).not.toContain("一次性授权码"); expect(markup).not.toContain("Touch ID");
@@ -144,7 +144,7 @@ it('puts the registered roster before optional role and budget settings, with bo
   const value = structuredClone(snapshot);
   value.budget_settings = { revision: 1, daily_tokens: 20_000, task_tokens: 5_000 };
   value.usage = { total: 200 };
-  const html = renderStaff(value), roster = html.indexOf('aria-label="已登记专员"');
+  const html = renderStaff(value), roster = html.indexOf('aria-label="已登记角色"');
   expect(roster).toBeGreaterThan(-1);
   for (const label of ['岗位登记', '使用额度']) {
     const disclosure = html.match(new RegExp(`<details\\b[^>]*aria-label="${label}"[^>]*>`))?.[0];
@@ -163,7 +163,7 @@ it('keeps member grants, task evidence and status controls inside the closed mem
   const detailsAt = card.indexOf(disclosure!);
   expect(card.slice(0, detailsAt)).toContain('已启用');
   expect(card.slice(0, detailsAt)).not.toContain('可接活');
-  for (const text of ['calendar_events', '检查明天的安排', '暂停接活', '撤掉专员']) {
+  for (const text of ['calendar_events', '检查明天的安排', '暂停接活', '撤掉角色']) {
     expect(card.indexOf(text)).toBeGreaterThan(detailsAt);
   }
 });

@@ -7,3 +7,14 @@
 .qa-redesign-footer svg { width: var(--vc-icon); height: var(--vc-icon); }
 .qa-redesign-shell .composer-footer { justify-content: space-between; }
 .qa-redesign-shell .composer-wrap > p { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+
+.qa-role-controls { position: fixed; bottom: var(--vc-space-2); left: var(--vc-space-2); z-index: 100; max-width: calc(100% - var(--vc-space-4)); opacity: .3; }
+.qa-role-controls:hover, .qa-role-controls:focus-within { opacity: 1; }
+.qa-role-controls:has([hidden]) { display: none; }
+.qa-role-controls .qa-redesign-controls { flex-wrap: wrap; border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); }
+.qa-role-notice { color: var(--vc-muted); font-size: var(--vc-size-caption); }
+
+.qa-settings-space { display: grid; gap: var(--vc-space-2); padding: var(--vc-space-5); color: var(--vc-text); }
+.qa-settings-space strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
+.qa-settings-space small { color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.qa-settings-reference .sidebar > .vc-role-navigation { padding: var(--vc-space-4); margin-bottom: auto; }

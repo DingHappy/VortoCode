@@ -165,3 +165,26 @@ dialog.settings-redesign.settings-layout {
 .settings-telemetry label strong { font-size: var(--vc-size-small); font-weight: var(--vc-weight-medium); color: var(--vc-text); }
 .settings-telemetry label small { font-size: var(--vc-size-caption); line-height: 1.6; color: var(--vc-muted); }
 .settings-telemetry button.link { justify-self: start; padding: 0; border: 0; background: none; color: var(--vc-accent); font: inherit; font-size: var(--vc-size-caption); cursor: pointer; }
+
+/* Inline settings share the workspace canvas; original forms and their leave guard stay mounted. */
+.settings-modal.settings-workspace-page.settings-layout { --settings-accent: var(--vc-ink); --settings-accent-bg: color-mix(in srgb, var(--settings-accent) 6%, var(--vc-workspace-bg)); position: relative; display: grid; grid-template-columns: var(--vc-settings-nav-w) minmax(0, 1fr); width: auto; max-width: none; height: 100%; max-height: none; min-width: 0; min-height: 0; margin: 0; padding: 0; background: var(--vc-workspace-bg); box-shadow: none; color: var(--vc-text); font-family: var(--vc-font-sans); }
+.settings-workspace-page.settings-redesign .settings-nav { background: var(--vc-workspace-bg); border-right: 1px solid var(--vc-border); }
+.settings-workspace-page .settings-brand > span { display: none; }
+.settings-workspace-page .settings-nav-footer { border-top: 0; }
+.settings-workspace-page.settings-redesign .settings-heading { border-bottom: 0; padding: var(--vc-space-6) var(--vc-space-8) var(--vc-space-4); }
+.settings-workspace-page .settings-content { padding-top: var(--vc-space-4); }
+.settings-section-tabs { flex: none; display: flex; gap: var(--vc-space-6); margin: 0 var(--vc-space-8); border-bottom: 1px solid var(--vc-border); overflow-x: auto; }
+.settings-modal.settings-redesign .settings-section-tabs > button { min-height: var(--vc-control-h-lg); flex: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: var(--vc-space-2) 0; color: var(--vc-muted); font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
+.settings-modal.settings-redesign .settings-section-tabs > button[aria-current="page"] { border-bottom-color: var(--vc-ink); color: var(--vc-text); }
+.settings-workspace-page .settings-context { margin-bottom: var(--vc-space-4); }
+.settings-workspace-page .settings-target-label { font-size: var(--vc-size-caption); }
+.settings-workspace-page .settings-pane { min-width: 0; }
+@media (max-width: 1100px) { .settings-modal.settings-workspace-page.settings-layout { grid-template-columns: var(--vc-settings-compact-nav-w) minmax(0, 1fr); } .settings-workspace-page .settings-content, .settings-workspace-page.settings-redesign .settings-heading { padding-inline: var(--vc-space-5); } .settings-workspace-page .settings-section-tabs { margin-inline: var(--vc-space-5); } }
+
+.settings-workspace-page .settings-section-tabs { margin-top: var(--vc-space-5); }
+.settings-workspace-page.settings-redesign .settings-heading h2 { font-size: var(--vc-size-page-title); font-weight: var(--vc-weight-strong); }
+.settings-workspace-page.settings-redesign .settings-heading p { font-size: var(--vc-size-body); }
+.settings-workspace-page .settings-context { display: flex; align-items: center; gap: var(--vc-space-4); flex-wrap: wrap; padding-bottom: var(--vc-space-3); }
+.settings-workspace-page .settings-context > .vc-preference-details { margin-left: auto; }
+.settings-workspace-page .settings-context > .vc-preference-details[open] { flex-basis: 100%; margin-left: 0; }
+.settings-workspace-page .settings-context .settings-target-warning { flex-basis: 100%; }

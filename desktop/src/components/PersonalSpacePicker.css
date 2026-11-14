@@ -28,3 +28,11 @@
 .vc-space-dialog .vc-space-choice { border: 0; padding: var(--vc-space-2); min-height: var(--vc-control-h-hero); }
 .vc-space-dialog li > .vc-preference-details { margin-top: var(--vc-space-1); padding: 0 var(--vc-space-2); }
 .vc-space-dialog li .vc-preference-details summary { font-size: var(--vc-size-caption); }
+
+.vc-space-trigger { border-color: transparent; padding: var(--vc-space-2); gap: var(--vc-space-3); }
+.vc-space-trigger > .vc-role-avatar { display: inline-grid; flex: none; }
+.vc-space-trigger > span:not(.vc-role-avatar) { flex: 1; }
+
+.vc-space-heading { display: flex; align-items: center; gap: var(--vc-space-1); }
+.vc-space-heading > .vc-space-trigger { min-width: 0; flex: 1; }
+.vc-space-heading > button:not(.vc-space-trigger) { flex: none; }

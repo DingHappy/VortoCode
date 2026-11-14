@@ -14,7 +14,8 @@ import { StaffBundleReview } from './StaffBundleReview';
 import type { DevelopmentProposal } from '../../lib/staff';
 import type { RoutinesClient } from '../../lib/routines';
 import { ExecutionDetails } from '../ExecutionDetails';
-import { UserRound, Layers, ChartNoAxesColumn } from 'lucide-react';
+import { RoleAvatar, staffCharacter } from "../RoleAvatar";
+import { Layers, ChartNoAxesColumn } from 'lucide-react';
 import "./StaffPane.css";
 
 const statuses = { active: "已启用", paused: "已暂停", retired: "已撤掉" };
@@ -74,19 +75,19 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
   const checkedAt = state.checkedAt;
   const hasReadTime = typeof checkedAt === 'number' && Number.isFinite(checkedAt) && checkedAt >= 0 && checkedAt <= Date.now();
   return <div className="staff-pane">
-    <div className="staff-directory-heading"><div><h3>专员名单</h3><p className="settings-card-note">{hasReadTime ? <>{current ? '本次' : '上次'}核对：<time dateTime={new Date(checkedAt).toISOString()}>{new Date(checkedAt).toLocaleString()}</time></> : '读取时间待核对'}</p></div>
+    <div className="staff-directory-heading"><div><h3>角色名单</h3><p className="settings-card-note">{hasReadTime ? <>{current ? '本次' : '上次'}核对：<time dateTime={new Date(checkedAt).toISOString()}>{new Date(checkedAt).toLocaleString()}</time></> : '读取时间待核对'}</p></div>
       <button disabled={busy} onClick={onRefresh}>{busy ? "正在核对…" : "刷新名录"}</button></div>
     {error && <p role="alert">{error}。{value ? '当前显示上次读取的数据，刷新核对后才能继续操作。' : '尚未取得名录，请刷新后重试。'}</p>}
     {!error && value && !current && <p role="status" className="settings-card-note">名录已过期或读取时间无法确认，以下为上次读取的数据。请刷新核对后再操作。</p>}
     {!value && !error && <p role="status">{busy ? "正在读取常驻助理的名录…" : "尚未核对名录，请刷新。"}</p>}
     {value && <>
-      <section aria-label="已登记专员" className="staff-roster">
-        <h3>已登记专员 <span className="staff-count">{value.members.length}</span></h3>
-        {!value.members.length ? <p className="staff-empty">还没有专员。在主要聊天里说“提议一个只读专员”，核对权限后再批准。</p> : value.members.map(member => {
+      <section aria-label="已登记角色" className="staff-roster">
+        <h3>已登记角色 <span className="staff-count">{value.members.length}</span></h3>
+        {!value.members.length ? <p className="staff-empty">还没有角色。先说明分工，核对完整提议后再批准添加。</p> : value.members.map(member => {
           const role = value.roles.find(role => role.id === member.role);
           const warnings = memberWarnings(member, role, state);
           return <article className="staff-member" aria-label={member.name} key={member.id}>
-            <div className="staff-member-overview"><UserRound aria-hidden="true" /><div className="staff-member-description"><strong>{member.name}</strong>
+            <div className="staff-member-overview"><RoleAvatar character={staffCharacter(role)} /><div className="staff-member-description"><strong>{member.name}</strong>
               {role && <p>{role.brief}</p>}
             </div><span className={`staff-member-status${current && member.status === 'active' && !warnings.length ? ' staff-member-enabled' : ''}`}>
               {!current && '上次：'}{statuses[member.status] ?? '状态待核对'}{member.busy ? ` · ${member.busy} 件在办` : ''}</span></div>
@@ -103,7 +104,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
                 <p className="settings-card-note">暂停或撤掉会阻止新任务与排队任务继续；已发出的只读请求可能仍会返回。撤掉后无法恢复，历史记录会保留。</p>
                 <div className="settings-card-actions">
                   <button disabled={disabled} onClick={() => onStatus(member, member.status === "active" ? "paused" : "active")}>{member.status === "active" ? "暂停接活" : "恢复接活"}</button>
-                  <button className="danger" disabled={disabled} onClick={() => onStatus(member, "retired")}>撤掉专员</button>
+                  <button className="danger" disabled={disabled} onClick={() => onStatus(member, "retired")}>撤掉角色</button>
                 </div>
               </>}
             </details>
@@ -145,11 +146,11 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
       </div>
       {onDevelopment && <DevelopmentStaff value={value} disabled={disabled} onPropose={onDevelopment} />}
       {Boolean(value.standing_specialists?.length) && <details className="staff-section">
-        <summary>查看三个常设专员的设置建议</summary>
+        <summary>查看三个常设角色的设置建议</summary>
         <div className="staff-section">
         <p className="settings-card-note">这些是登记建议，尚未开通。先在主要聊天说明汇报时间、时区和公开研究话题，再核对整张开通单后批准。</p>
         {value.standing_specialists?.map(item => <article className="settings-card" key={item.id}>
-          <strong>{item.title}</strong><p>{item.scope}</p><p className="settings-card-note">{item.guide}</p>
+          <div className="staff-suggestion-title"><RoleAvatar character={item.id === "calendar" ? "calendar" : item.id === "research" ? "research" : undefined} /><strong>{item.title}</strong></div><p>{item.scope}</p><p className="settings-card-note">{item.guide}</p>
         </article>)}
         <p className="settings-card-note">日程保持只读。原会前和新邮件提醒沿用现有规则，本步不改为实时提醒。</p>
         </div>
@@ -177,7 +178,7 @@ export function StaffPane({ projectId, client: injected }: { projectId?: string;
       current.dispose(); if (controller.current === current) controller.current = null;
     };
   }, [client]);
-  if (!client) return <p>请先在“电脑与连接”中登记常驻电脑。专员登记保存在常驻助理，不跟随本机项目切换。</p>;
+  if (!client) return <p>请先在“电脑与连接”中登记常驻电脑。角色登记保存在常驻助理，不跟随本机项目切换。</p>;
   return <><StaffView state={state} onRefresh={() => void controller.current?.refresh()} onDecide={(proposal, approve) => void controller.current?.decide(proposal, approve)}
     onDevelopment={client.proposeDevelopment ? data => void controller.current?.proposeDevelopment(data) : undefined}
     onBudgets={settings => void controller.current?.budgets(settings)}

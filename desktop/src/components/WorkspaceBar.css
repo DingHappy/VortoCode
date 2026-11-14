@@ -1,0 +1,20 @@
+.vc-workspace-bar { display: flex; align-items: center; gap: var(--vc-space-4); height: var(--vc-workspace-bar-h); padding: 0 var(--vc-space-3); color: var(--vc-text); background: var(--vc-workspace-app-bg); font-family: var(--vc-font-sans); }
+.vc-workspace-brand { display: flex; align-items: center; gap: var(--vc-space-2); flex: 1; min-width: 0; }
+.vc-workspace-brand > strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-strong); }
+.vc-workspace-search { display: flex; align-items: center; gap: var(--vc-space-2); width: min(44%, var(--vc-workspace-search-w)); min-height: var(--vc-control-h); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); padding: var(--vc-space-1) var(--vc-space-3); color: var(--vc-muted); background: var(--vc-workspace-bg); font: inherit; font-size: var(--vc-size-small); cursor: pointer; }
+.vc-workspace-search > svg { width: var(--vc-icon); height: var(--vc-icon); flex: none; }
+.vc-workspace-search > kbd { margin-left: auto; font-size: var(--vc-size-caption); font-family: var(--vc-font-sans); color: var(--vc-muted); }
+.vc-workspace-search:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
+.vc-workspace-bar-end { flex: 1; }
+:root[data-window="overlay"] .vc-workspace-bar { padding-left: calc(var(--vc-space-10) * 2 + var(--vc-space-1)); }
+.app-shell.vc-product-shell { grid-template-rows: var(--vc-workspace-bar-h) minmax(0, 1fr); background: var(--vc-workspace-app-bg); }
+.vc-product-shell .vc-mode-assistant { background: var(--vc-workspace-app-bg); padding-right: var(--vc-space-2); padding-bottom: var(--vc-space-2); }
+.vc-product-shell .vc-mode-assistant > .sidebar { background: transparent; border-right: 0; }
+.vc-product-shell .vc-mode-assistant > .conversation, .vc-product-shell .vc-mode-assistant > .assistant-panel--page,
+.vc-product-shell .vc-mode-assistant > .artifact-center, .vc-product-shell .vc-mode-assistant > .customize-page,
+.vc-product-shell .vc-mode-assistant > .department-page, .vc-product-shell .vc-mode-assistant > .team-chat,
+.vc-product-shell .settings-workspace-page { border: 1px solid var(--vc-border); border-radius: var(--vc-radius-input); overflow: hidden; }
+.vc-product-shell .vc-mode-assistant.inspector-open > .conversation { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.vc-product-shell .vc-mode-assistant.inspector-open > .assistant-panel { border-top-right-radius: var(--vc-radius-input); border-bottom-right-radius: var(--vc-radius-input); }
+
+.vc-product-shell .vc-mode-assistant > section:not(.sidebar) { border: 1px solid var(--vc-border); border-radius: var(--vc-radius-input); overflow: hidden; }

@@ -1,0 +1,7 @@
+.vc-role-avatar { display: inline-grid; place-items: center; flex: none; width: var(--vc-avatar-message); height: var(--vc-avatar-message); vertical-align: middle; }
+.vc-role-avatar > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.vc-role-avatar > svg { width: var(--vc-icon-step); height: var(--vc-icon-step); color: var(--vc-muted); }
+.vc-role-avatar--small { width: var(--vc-space-8); height: var(--vc-space-8); }
+.vc-role-avatar--portrait { width: var(--vc-avatar-portrait); height: var(--vc-avatar-portrait); }
+.vc-role-avatar--hero { width: var(--vc-avatar-hero); height: var(--vc-avatar-hero); }
+.vc-role-avatar--custom > img { object-fit: cover; border-radius: var(--vc-radius-control); }

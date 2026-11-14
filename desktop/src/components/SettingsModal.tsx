@@ -1,8 +1,8 @@
 // Keep real settings endpoints and native confirmation flows; page navigation retains unsaved forms.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDialogSurface } from "../hooks/useDialogSurface";
-import { SETTINGS_OWNER_LABELS, SETTINGS_SECTIONS, searchSettings, settingsPage, type SettingsPage, type SettingsSection } from "../lib/settingsNavigation";
+import { SETTINGS_OWNER_LABELS, SETTINGS_SECTIONS, SETTINGS_GROUPS, settingsGroup, searchSettings, settingsPage, type SettingsPage, type SettingsSection } from "../lib/settingsNavigation";
 import "./SettingsModal.css";
 import { SettingsTargetSection } from "./settings/SettingsTargetSection";
 import { type SettingsTargetLease } from "../lib/settingsTarget";
@@ -81,7 +81,7 @@ export function settingsBlockVisible(
 }
 
 const NAV_ICONS = { account: UserRound, model: Cpu, computer: Monitor, permissions: ShieldCheck, staff: UserRound, tools: Blocks, personal: SlidersHorizontal, advanced: Info };
-const MORE_SETTINGS: readonly SettingsPage[] = ["permissions", "tools", "advanced"];
+const MORE_SETTINGS: readonly SettingsPage[] = ["advanced"];
 type DraftState = { dirty: boolean; busy: boolean; conflict?: boolean };
 const DRAFT_ITEMS: Record<string, { label: string; page: SettingsPage; anchor: string }> = {
   provider: { label: "模型服务", page: "model", anchor: "provider-editor" },
@@ -91,7 +91,11 @@ const DRAFT_ITEMS: Record<string, { label: string; page: SettingsPage; anchor: s
   browser: { label: "浏览器操作", page: "permissions", anchor: "browser" },
 };
 
+export interface SettingsPageControl { leave: (action: () => void) => void; open: (page: SettingsSection, anchor?: string) => void }
+
 type SettingsModalProps = {
+  presentation?: "dialog" | "page";
+  navigationRef?: import("react").Ref<SettingsPageControl>;
   onOpenRuntimeSetup?: () => void;
   /** 打开插件页（MCP 服务与目录） */
   onOpenPlugins?: () => void;
@@ -177,6 +181,7 @@ type SettingsModalProps = {
 };
 
 export function SettingsModal({
+  presentation = "dialog", navigationRef,
   onOpenPlugins,
   hasResident = false,
   readCodexObserver, staffClient, runtimeSettings,
@@ -241,9 +246,11 @@ export function SettingsModal({
   const [section, setSection] = useState<SettingsPage>(settingsPage(
     initialSection ?? (llmProfile && !llmProfile.configured ? "model" : "account")));
   const [visited, setVisited] = useState<Set<SettingsPage>>(() => new Set([section]));
+  const selectedTabs = useRef<Partial<Record<SettingsPage, SettingsPage>>>({ [settingsGroup(section).id]: section });
   const [moreOpen, setMoreOpen] = useState(() => MORE_SETTINGS.includes(section));
   const [highlight, setHighlight] = useState(initialAnchor ?? "");
   const dialog = useDialogSurface();
+  const pageSurface = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [closeAction, setCloseAction] = useState<(() => void) | null>(null);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
@@ -254,6 +261,7 @@ export function SettingsModal({
   ])), []);
   const navigate = (next: SettingsPage, anchor = "") => {
     if (MORE_SETTINGS.includes(next)) setMoreOpen(true);
+    selectedTabs.current[settingsGroup(next).id] = next;
     setVisited(previous => new Set([...previous, next]));
     setSection(next); setHighlight(anchor); setQuery("");
     contentRef.current?.scrollTo({ top: 0 });
@@ -268,7 +276,7 @@ export function SettingsModal({
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 760px)");
     const reveal = () => {
-      if (!query && narrow.matches) dialog.current?.querySelector<HTMLElement>('.settings-nav-group [aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (!query && narrow.matches) (pageSurface.current ?? dialog.current)?.querySelector<HTMLElement>('.settings-nav-group [aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
     };
     reveal();
     narrow.addEventListener("change", reveal);
@@ -338,6 +346,13 @@ export function SettingsModal({
     if (pending.length) setCloseAction(() => action);
     else action();
   };
+  useImperativeHandle(navigationRef, () => ({ leave: requestLeave, open: (page, anchor = "") => navigate(settingsPage(page), anchor) }));
+  useEffect(() => {
+    if (presentation !== "page") return;
+    const previous = document.activeElement;
+    pageSurface.current?.querySelector<HTMLElement>("#settings-page-title")?.focus({ preventScroll: true });
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }); };
+  }, [presentation]);
   const resetModelDraft = useCallback(() => {
     if (!llmProfile) return;
     onLlmBaseChange(llmProfile.baseUrl); onLlmModelChange(llmProfile.model); onLlmKeyChange("");
@@ -352,21 +367,19 @@ export function SettingsModal({
     applyThemePreference(preference);
   };
 
-  const navigationItem = (id: SettingsPage) => {
-    const item = SETTINGS_SECTIONS.find(page => page.id === id)!;
-    const Icon = NAV_ICONS[id];
-    const dirty = pendingChanges.some(change => change.page === id);
-    return <button key={id} className={section === id ? "active" : ""} aria-current={section === id ? "page" : undefined}
-      aria-describedby={dirty ? `settings-pending-${id}` : undefined} onClick={() => navigate(id)}>
-      <Icon size={17} aria-hidden="true" /><span>{item.label}</span>
-      {dirty && <><Circle className="settings-pending-dot" size={6} fill="currentColor" aria-hidden="true" /><span id={`settings-pending-${id}`} hidden>有未保存的修改</span></>}
+  const currentGroup = settingsGroup(section);
+  const navigationItem = (groupId: SettingsPage) => {
+    const group = SETTINGS_GROUPS.find(item => item.id === groupId)!;
+    const Icon = NAV_ICONS[groupId];
+    const dirty = pendingChanges.some(change => group.pages.includes(change.page));
+    return <button key={group.id} className={currentGroup.id === group.id ? "active" : ""} aria-current={currentGroup.id === group.id ? "page" : undefined}
+      aria-describedby={dirty ? `settings-pending-${group.id}` : undefined} onClick={() => navigate(selectedTabs.current[group.id] ?? group.pages[0])}>
+      <Icon size={17} aria-hidden="true" /><span>{group.label}</span>{dirty && <><Circle className="settings-pending-dot" size={6} fill="currentColor" aria-hidden="true" /><span id={`settings-pending-${group.id}`} hidden>有未保存的修改</span></>}
     </button>;
   };
 
   const content = (
-    <dialog ref={dialog} className="settings-modal settings-layout settings-redesign" aria-label="设置"
-      onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); if (event.nativeEvent.isComposing) event.preventDefault(); } }}
-      onCancel={event => { event.preventDefault(); requestLeave(onClose); }}>
+    <>
       <nav className="settings-nav" aria-label="设置分类">
         <div className="settings-brand"><SlidersHorizontal size={18} /><h2>设置</h2><span>VortoOne</span></div>
         <div className="settings-search-wrap"><Search size={15} aria-hidden="true" /><input type="search" className="settings-search" value={query}
@@ -378,8 +391,7 @@ export function SettingsModal({
               <Icon size={17} aria-hidden="true" /><span>{item.label}<small>{SETTINGS_SECTIONS.find(page => page.id === item.page)?.label} · {SETTINGS_OWNER_LABELS[item.owner]}</small></span><ChevronRight size={14} aria-hidden="true" />
             </button>;
           }) : <>
-            <div className="settings-nav-section"><h3>个人</h3>{navigationItem("account")}{navigationItem("personal")}</div>
-            <div className="settings-nav-section"><h3>助理</h3>{navigationItem("model")}{navigationItem("computer")}{navigationItem("staff")}</div>
+            <div className="settings-nav-section">{SETTINGS_GROUPS.filter(group => !group.advanced).map(group => navigationItem(group.id))}</div>
             <div className="settings-nav-section settings-more">
               <button type="button" className="settings-more-toggle" aria-expanded={moreOpen} aria-controls="settings-more-pages" onClick={() => setMoreOpen(open => !open)}>
                 <span>更多设置{pendingChanges.some(change => MORE_SETTINGS.includes(change.page)) ? " · 有未保存的修改" : ""}</span><ChevronDown aria-hidden="true" />
@@ -392,7 +404,9 @@ export function SettingsModal({
         <div className="settings-nav-footer"><Monitor size={15} /><div>VortoOne<small>你的个人助理</small></div></div>
       </nav>
       <div className="settings-pane">
-        <header className="settings-heading"><div><h2 id="settings-page-title">{currentPage.label}</h2><p>{currentPage.description}</p></div>
+        {currentGroup.pages.length > 1 && <nav className="settings-section-tabs" aria-label={`${currentGroup.label}分类`}>{currentGroup.pages.map(page => <button key={page}
+          aria-current={section === page ? "page" : undefined} onClick={() => navigate(page)}>{SETTINGS_SECTIONS.find(item => item.id === page)!.label}</button>)}</nav>}
+        <header className="settings-heading"><div><h2 id="settings-page-title" tabIndex={-1}>{currentPage.label}</h2><p>{currentPage.description}</p></div>
           <button className="settings-close" disabled={saving} onClick={() => requestLeave(onClose)} aria-label="关闭设置"><X size={18} /></button></header>
         <div className="settings-content" ref={contentRef} aria-labelledby="settings-page-title">
           <SettingsContext lease={runtimeSettings} scope={currentPage.scope} />
@@ -732,9 +746,14 @@ export function SettingsModal({
           <button disabled={saving} onClick={() => requestLeave(onClose)}>完成</button>
         </footer>
       </div>
-    </dialog>
+    </>
   );
-  return <>{typeof document === "undefined" ? content : createPortal(content, document.body)}
+  const modal = <dialog ref={dialog} className="settings-modal settings-layout settings-redesign" aria-label="设置"
+    onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); if (event.nativeEvent.isComposing) event.preventDefault(); } }}
+    onCancel={event => { event.preventDefault(); requestLeave(onClose); }}>{content}</dialog>;
+  return <>{presentation === "page" ? <section ref={pageSurface} className="settings-modal settings-layout settings-redesign settings-workspace-page" aria-label="设置"
+    onKeyDown={event => { if (event.key === "Escape" && !event.nativeEvent.isComposing && !document.querySelector("dialog[open]")) { event.preventDefault(); event.stopPropagation(); requestLeave(onClose); } }}>{content}</section>
+    : typeof document === "undefined" ? modal : createPortal(modal, document.body)}
     {closeAction && <UnsavedSettingsDialog labels={pending} onStay={() => setCloseAction(null)} onDiscard={() => {
       resetModelDraft(); setCloseAction(null); closeAction();
     }} />}

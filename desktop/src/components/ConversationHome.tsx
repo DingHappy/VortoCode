@@ -1,6 +1,8 @@
 // 空白对话的首页：正在启动 / 助理模式的问候与上手示例 / 工作台的问候，下面可以挂首次接模型的卡片。
 // 只负责显示；打开设置、选示例都交回 App。
 import type { ReactNode } from "react";
+import { RoleAvatar } from "./RoleAvatar";
+import type { AssistantAvatar } from "../types";
 import { LoaderCircle } from "lucide-react";
 
 /** 按时段问候：首页唯一用衬线字的地方。 */
@@ -9,12 +11,13 @@ export function greeting(now: Date = new Date()): string {
   return hour >= 5 && hour < 11 ? "上午好" : hour >= 11 && hour < 13 ? "中午好" : hour >= 13 && hour < 18 ? "下午好" : "晚上好";
 }
 
-export function ConversationHome({ starting, showStarting, assistant, now, children }: {
+export function ConversationHome({ starting, showStarting, assistant, avatar, now, children }: {
   /** 本地引擎还没连上（冷启动、正在拉起或连接中） */
   starting: boolean;
   /** 延后 400ms 才露出「正在启动」，连得快就不闪 */
   showStarting: boolean;
   assistant: boolean;
+  avatar?: AssistantAvatar | null;
   now?: Date;
   children?: ReactNode;
 }) {
@@ -28,7 +31,7 @@ export function ConversationHome({ starting, showStarting, assistant, now, child
         ? <h1 className={`home-starting ${showStarting ? "" : "pending"}`} aria-hidden={!showStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
         : assistant
           // 在哪做、做完在哪看，写在输入框的占位文字里，这里只留一句问候
-          ? <h1 className="vc-greeting">{greeting(now)}，今天想交代点什么？</h1>
+          ? <><RoleAvatar character="general" avatar={avatar} size="hero" /><h1 className="vc-greeting">{greeting(now)}，今天想交代点什么？</h1></>
           : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
       {children}
     </div>

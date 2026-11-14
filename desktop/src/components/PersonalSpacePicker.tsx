@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
-import { Check, ChevronsUpDown, Laptop, Server, X } from "lucide-react";
-import type { ConnectionState, DesktopProjectProfile } from "../types";
+import { type ReactNode, useRef, useState } from "react";
+import { Check, ChevronsUpDown, X } from "lucide-react";
+import { RoleAvatar } from "./RoleAvatar";
+import { COPY } from "../lib/copy.generated";
+import type { AssistantAvatar, ConnectionState, DesktopProjectProfile } from "../types";
 import type { DesktopContext } from "../lib/desktopContext";
 import { personalSpaceDirectory } from "../lib/personalSpace";
 import { errorText } from "../lib/errorText";
@@ -15,19 +17,19 @@ function origin(value: string) {
   try { return new URL(value).origin; } catch { return "连接地址待核对"; }
 }
 
-export function PersonalSpacePicker({ context, profiles, localResidentId, connection, switching, onSelect, onManage }: {
-  context: DesktopContext; profiles: DesktopProjectProfile[]; localResidentId: string | null;
+export function PersonalSpacePicker({ context, profiles, localResidentId, connection, switching, avatar, collapseControl, onRequestOpen, onSelect, onManage }: {
+  context: DesktopContext; profiles: DesktopProjectProfile[]; localResidentId: string | null; avatar?: AssistantAvatar | null; collapseControl?: ReactNode; onRequestOpen?: (open: () => void) => void;
   connection: ConnectionState; switching: boolean; onSelect: (profile: DesktopProjectProfile) => Promise<void>; onManage: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const status = connection === "connected" && !context.ready ? "正在核对目标" : connectionLabel[connection];
   return <div className="vc-space-picker">
-    <button type="button" className="vc-space-trigger" aria-label={`当前空间：${context.runtimeLabel}，${status}。切换空间`}
-      aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
-      {!context.registrationId || context.registrationId === localResidentId ? <Laptop className="vc-space-symbol" aria-hidden="true" /> : <Server className="vc-space-symbol" aria-hidden="true" />}
-      <span><strong>{context.runtimeLabel}</strong><small><span>{context.location}</span><span className="vc-space-connection">· {status}</span></small></span>
+    <div className="vc-space-heading"><button type="button" className="vc-space-trigger" aria-label={`当前空间：${context.runtimeLabel}，${status}。切换空间`}
+      aria-haspopup="dialog" aria-expanded={open} onClick={() => onRequestOpen ? onRequestOpen(() => setOpen(true)) : setOpen(true)}>
+      <RoleAvatar character="general" avatar={avatar} />
+      <span><strong>{context.space ? COPY.characters.personal_space : context.runtimeLabel}</strong><small><span>{context.space ? context.runtimeLabel : context.location}</span><span className="vc-space-connection">· {status}</span></small></span>
       <ChevronsUpDown aria-hidden="true" />
-    </button>
+    </button>{collapseControl}</div>
     {open && <PersonalSpaceDialog context={context} profiles={profiles} localResidentId={localResidentId}
       switching={switching} onSelect={onSelect} onClose={() => setOpen(false)}
       onManage={() => { setOpen(false); onManage(); }} />}

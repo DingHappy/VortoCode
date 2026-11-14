@@ -1,0 +1,44 @@
+.vc-role-navigation { flex: none; margin-top: var(--vc-space-4); padding-bottom: var(--vc-space-4); }
+.vc-role-navigation-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--vc-space-2) var(--vc-space-2); }
+.vc-role-navigation-heading h3 { margin: 0; color: var(--vc-muted); font-size: var(--vc-size-small); font-weight: var(--vc-weight-medium); }
+.vc-role-row { display: flex; width: 100%; align-items: center; gap: var(--vc-space-3); min-height: calc(var(--vc-control-h) + var(--vc-space-6)); border: 0; border-radius: var(--vc-radius-control); padding: var(--vc-space-2); background: transparent; color: var(--vc-text); text-align: left; cursor: pointer; }
+.vc-role-row:hover, .vc-role-add:hover:not(:disabled) { background: var(--vc-hover); }
+.vc-role-row > span:last-child { display: grid; gap: var(--vc-space-1); min-width: 0; }
+.vc-role-row strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); overflow-wrap: anywhere; }
+.vc-role-row small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vc-role-row small, .vc-role-navigation-note { font-size: var(--vc-size-caption); color: var(--vc-muted); overflow-wrap: anywhere; }
+.vc-role-add { display: flex; align-items: center; gap: var(--vc-space-3); width: 100%; min-height: var(--vc-control-h-lg); padding: var(--vc-space-2); color: var(--vc-muted); background: transparent; border: 0; border-radius: var(--vc-radius-control); font: inherit; font-size: var(--vc-size-small); cursor: pointer; }
+.vc-role-add > svg { width: var(--vc-space-8); height: var(--vc-space-8); padding: var(--vc-space-2); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); }
+.vc-role-add:disabled { opacity: .45; cursor: default; }
+.vc-role-row:focus-visible, .vc-role-add:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
+.vc-role-profile-dialog { width: min(calc(100% - var(--vc-space-8)), var(--vc-role-profile-w)); height: calc(100% - var(--vc-space-8)); max-width: none; max-height: none; margin: var(--vc-space-4) var(--vc-space-4) var(--vc-space-4) auto; padding: var(--vc-space-6); color: var(--vc-text); background: var(--vc-workspace-bg); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-input); box-shadow: var(--vc-shadow-pop); font-family: var(--vc-font-sans); overflow: auto; }
+.vc-role-profile-dialog::backdrop { background: var(--vc-backdrop); }
+.vc-role-profile-heading { display: flex; align-items: center; gap: var(--vc-space-5); padding-bottom: var(--vc-space-6); }
+.vc-role-profile-heading > div { flex: 1; min-width: 0; }
+.vc-role-profile-heading h1 { font-size: var(--vc-size-greeting); font-weight: var(--vc-weight-strong); margin: 0 0 var(--vc-space-2); overflow-wrap: anywhere; }
+.vc-role-profile-heading p { margin: 0; color: var(--vc-muted); font-size: var(--vc-size-body); line-height: 1.7; overflow-wrap: anywhere; }
+.vc-role-profile-heading > button { align-self: flex-start; }
+.vc-role-profile-tabs { display: flex; gap: var(--vc-space-6); border-bottom: 1px solid var(--vc-border); margin-bottom: var(--vc-space-6); overflow-x: auto; }
+.vc-role-profile-tabs > button { flex: none; min-height: var(--vc-control-h-lg); color: var(--vc-muted); font-family: inherit; font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); background: transparent; border: 0; border-bottom: 2px solid transparent; padding: var(--vc-space-2) 0; cursor: pointer; }
+.vc-role-profile-tabs > button[aria-selected="true"] { color: var(--vc-text); border-bottom-color: var(--vc-ink); }
+.vc-role-profile-tabs > button:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: calc(-1 * var(--vc-space-1)); }
+.vc-role-profile-fields { min-width: 0; margin: 0; padding: 0; border: 0; display: grid; gap: var(--vc-space-6); }
+.vc-role-profile-fields > p { margin: 0; font-size: var(--vc-size-body); line-height: 1.7; color: var(--vc-text-secondary); }
+.vc-role-profile-fields .vc-preference-row { align-items: flex-start; }
+.vc-role-profile-fields .vc-preference-row > :last-child { max-width: 65%; overflow-wrap: anywhere; }
+.vc-role-profile-warning { color: var(--vc-danger-text); padding: var(--vc-space-3); background: var(--vc-danger-bg); border-radius: var(--vc-radius-control); font-size: var(--vc-size-small); line-height: 1.7; }
+.vc-role-profile-task { display: grid; gap: var(--vc-space-2); padding: var(--vc-space-4) 0; border-bottom: 1px solid var(--vc-border); font-size: var(--vc-size-body); }
+.vc-role-profile-task > span { color: var(--vc-muted); font-size: var(--vc-size-small); }
+.vc-role-profile-dialog [role="tabpanel"][hidden] { display: none; }
+.vc-new-role-dialog { width: min(calc(100% - var(--vc-space-8)), calc(var(--vc-sidebar-w) * 2)); max-height: calc(100% - var(--vc-space-8)); margin: auto; padding: var(--vc-space-6); background: var(--vc-surface); color: var(--vc-text); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-input); font-family: var(--vc-font-sans); overflow: auto; }
+.vc-new-role-dialog::backdrop { background: var(--vc-backdrop); }
+.vc-new-role-dialog header, .vc-new-role-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: var(--vc-space-3); }
+.vc-new-role-dialog h2 { font-size: var(--vc-size-title); margin: 0; }
+.vc-new-role-dialog p { color: var(--vc-muted); font-size: var(--vc-size-body); line-height: 1.7; }
+.vc-new-role-dialog form, .vc-new-role-dialog label { display: grid; gap: var(--vc-space-2); }
+.vc-new-role-dialog form { gap: var(--vc-space-4); font-size: var(--vc-size-body); }
+.vc-new-role-dialog input, .vc-new-role-dialog textarea, .vc-new-role-dialog select { min-width: 0; width: 100%; padding: var(--vc-space-3); font: inherit; color: var(--vc-text); background: var(--vc-bg); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); }
+.vc-new-role-dialog textarea { min-height: var(--vc-avatar-portrait); resize: vertical; }
+.vc-new-role-dialog footer { justify-content: flex-end; }
+.vc-new-role-dialog [role="alert"] { color: var(--vc-danger-text); }
+@media (max-width: 760px) { .vc-role-profile-dialog { padding: var(--vc-space-4); } .vc-role-profile-heading .vc-role-avatar { width: var(--vc-avatar-message); height: var(--vc-avatar-message); } .vc-role-profile-heading h1 { font-size: var(--vc-size-title); } }

@@ -52,12 +52,17 @@ public enum VCColor {
     public static let onTile = ThemeColor(light: RGBA(1, 1, 1, 1), dark: RGBA(1, 1, 1, 1))
     // 制品预览的纸面：发布的网页按白底写，深色模式下也保持白底，否则没写底色的页面黑字压黑底
     public static let paper = ThemeColor(light: RGBA(1, 1, 1, 1), dark: RGBA(1, 1, 1, 1))
+    // 个人空间与角色形象
+    public static let workspaceAppBg = ThemeColor(light: RGBA(0.9647, 0.9686, 0.9843, 1), dark: RGBA(0.0627, 0.0706, 0.0902, 1))
+    public static let workspaceSidebar = ThemeColor(light: RGBA(0.9569, 0.9647, 0.9725, 1), dark: RGBA(0.0471, 0.0549, 0.0706, 1))
+    public static let workspaceBg = ThemeColor(light: RGBA(1, 1, 1, 1), dark: RGBA(0.098, 0.098, 0.0941, 1))
 }
 
-/// 字号：8 级，含首次使用标题；不用 12 号以下，不用半号
+/// 字号：9 级，含页面与首次使用标题；不用 12 号以下，不用半号
 public enum VCFontSize {
     public static let greeting: Double = 34
     public static let title: Double = 22
+    public static let pageTitle: Double = 28
     public static let heading: Double = 18
     public static let chat: Double = 15
     public static let body: Double = 14

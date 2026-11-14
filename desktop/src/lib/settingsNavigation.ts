@@ -3,7 +3,7 @@ export const SETTINGS_SECTIONS = [
   { id: "model", label: "模型与执行", description: "选择模型服务，安排研究、实现与审查的分工。", scope: "保存在这台 Mac。模型与执行者配置不自动同步到常驻实例。" },
   { id: "computer", label: "电脑与连接", description: "管理本机常驻助理，或连接其他电脑。", scope: "常驻助理、远程画面和临时本机引擎分别运行，各自报告状态。连接画面不会授予助理操作权限。" },
   { id: "permissions", label: "权限与自动化", description: "决定助手能做什么，以及哪些操作需要你确认。", scope: "授权级别属于当前工作区；浏览器与桌面开关配置在本机。自动化仍遵守各自的能力限制。" },
-  { id: "staff", label: "团队与权限", description: "查看专员的岗位与权限，批准登记，暂停或撤掉专员。", scope: "登记保存在常驻助理。核对岗位权限和完整内容后，由主人确认批准。" },
+  { id: "staff", label: "角色与权限", description: "查看角色、权限方案和待你核对的提议。", scope: "登记保存在常驻助理。核对岗位权限和完整内容后，由主人确认批准。" },
   { id: "tools", label: "工具与集成", description: "为助手连接工具，检查项目加载的扩展。", scope: "MCP 按其配置加载；规则、Skills 与 Hooks 展示当前项目的状态。" },
   { id: "personal", label: "个性化", description: "调整助手资料、全局指令和界面外观。", scope: "外观在本机立即生效；本机全局指令影响同一用户目录下的新会话。助手资料在对应实例中管理。" },
   { id: "advanced", label: "高级与关于", description: "更新、版本与配置文件。", scope: "这里管理这台 Mac 上的客户端和本机配置文件。" },
@@ -32,7 +32,7 @@ export const SETTINGS_ITEMS: Array<{ id: string; page: SettingsPage; label: stri
   { id: "browser", owner: "desktop", page: "permissions", label: "浏览器操作", keywords: "网页 chrome 浏览器 自动化" },
   { id: "control", owner: "desktop", page: "permissions", label: "桌面操作权限", keywords: "电脑 截屏 窗口 点击 输入 应用 computer use" },
   { id: "schedule", owner: "space", page: "permissions", label: "定时任务", keywords: "计划 自动化 打卡 提醒 cron schedule" },
-  { id: "staff", owner: "space", page: "staff", label: "专员与岗位登记", keywords: "团队 专员 岗位 权限 批准 确认 暂停 撤掉" },
+  { id: "staff", owner: "space", page: "staff", label: "角色与权限方案", keywords: "角色 团队 专员 岗位 权限 批准 确认 暂停 撤掉" },
   { id: "codex", owner: "desktop", page: "tools", label: "Codex 动态观察", keywords: "助理 查看 任务 进展" },
   { id: "extensions", owner: "workspace", page: "tools", label: "MCP 工具服务", keywords: "插件 工具 集成" },
   { id: "project-extensions", owner: "project", page: "tools", label: "项目规则、Skills 与 Hooks", keywords: "项目 扩展 skills hooks 规则 信任" },
@@ -52,3 +52,13 @@ export function searchSettings(query: string) {
     return words.every(word => text.includes(word));
   });
 }
+
+/** UI groups only: stable section IDs, target leases and saved forms remain unchanged. */
+export const SETTINGS_GROUPS: Array<{ id: SettingsPage; label: string; pages: SettingsPage[]; advanced?: boolean }> = [
+  { id: "account", label: "你的账号", pages: ["account", "personal"] },
+  { id: "computer", label: "个人空间", pages: ["computer", "staff", "permissions"] },
+  { id: "model", label: "模型与执行", pages: ["model"] },
+  { id: "tools", label: "连接与工具", pages: ["tools"] },
+  { id: "advanced", label: "高级与关于", pages: ["advanced"], advanced: true },
+];
+export function settingsGroup(page: SettingsPage) { return SETTINGS_GROUPS.find(group => group.pages.includes(page))!; }

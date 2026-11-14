@@ -1,18 +1,24 @@
 import { useSettingsTargetFixture } from "./settings-target-fixture";
 // Real SettingsModal + real useLlmProfile, deterministic IPC only. Never reads or writes user settings.
+import { WorkspaceBar } from "../src/components/WorkspaceBar";
+import { SidebarFooter } from "../src/components/SidebarFooter";
+import { RoleNavigation } from "../src/components/RoleNavigation";
 import { invoke } from "@tauri-apps/api/core";
 import { ManagedRuntimes } from "../src/lib/managedRuntimes";
 import { useLocalRuntimeControls } from "../src/hooks/useLocalRuntimeControls";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { SettingsModal, type SettingsSection } from "../src/components/SettingsModal";
+import { SettingsModal, type SettingsSection, type SettingsPageControl } from "../src/components/SettingsModal";
 import { useLlmProfile } from "../src/hooks/useLlmProfile";
 import { staffSettingsFixture } from "./staff-settings-fixture";
 import type { DesktopLlmProfileStatus, TrustStatus, GatewayProcessStatus, WorkspaceScope } from "../src/types";
+import "../src/styles/tokens.css";
+import "../src/styles/components.css";
 import "../src/App.css";
 import "../src/daily.css";
 import "../src/styles/shell.css";
+import "./frontend-redesign.css";
 
 const params = new URLSearchParams(location.search);
 const staffFixture = params.has("staff") ? staffSettingsFixture(params.get("staff") || "ready") : undefined;
@@ -238,9 +244,13 @@ function Fixture() {
     return () => { Reflect.deleteProperty(window, "applyFreshSettingsProfile"); };
   }, [llm.applyLlmProfile]);
   const [trust, setTrust] = useState<TrustStatus>({ level: "ask", effective: "ask", ceiling: "reads", levels: ["ask", "reads", "full"], capability_profile: "local", workspace_scope: "project", local_file_reads: true, supervised: true });
+  const navigation = useRef<SettingsPageControl | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const embedded = params.get("presentation") === "page";
+  const leave = (url: string) => navigation.current ? navigation.current.leave(() => { location.href = url; }) : location.assign(url);
   const noop = () => { };
-  return <><main data-profile-checked={llm.llmProfileChecked} data-profile-loading={llm.llmProfileLoading} style={{ padding: 24 }}><p>真实设置组件 · 合成数据验收 · 不连接真实服务</p><button onClick={() => setOpen(true)}>打开设置</button><p role="status">{notice}</p></main>
-    {open && <SettingsModal runtimeSettings={settingsTarget} staffClient={staffFixture?.client} activeScope={lifecycleFixture ? fixtureScope : "project"} connection={runtimeConnected ? "connected" : "disconnected"} connectionText="未连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
+  const settings = <><main data-profile-checked={llm.llmProfileChecked} data-profile-loading={llm.llmProfileLoading} hidden={embedded} style={{ padding: 24 }}><p>真实设置组件 · 合成数据验收 · 不连接真实服务</p><button onClick={() => setOpen(true)}>打开设置</button><p role="status">{notice}</p></main>
+    {open && <SettingsModal presentation={embedded ? "page" : "dialog"} navigationRef={navigation} runtimeSettings={settingsTarget} staffClient={staffFixture?.client} activeScope={lifecycleFixture ? fixtureScope : "project"} connection={runtimeConnected ? "connected" : "disconnected"} connectionText="未连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
       processStatus={lifecycleFixture ? runtimeControls.target : { running: false, message: "本机引擎未运行" }}
       runtimeIsRemote={remote} runtimeActionBusy={runtimeControls.busy} runtimeActionNote={runtimeControls.note} onReloadRuntime={runtimeControls.reload} recoveryRecord={null} llmProfile={llm.llmProfile}
       llmBaseInput={llm.llmBaseInput} llmModelInput={llm.llmModelInput} llmKeyInput={llm.llmKeyInput} llmFastInput={llm.llmFastInput} llmStrongInput={llm.llmStrongInput}
@@ -254,5 +264,20 @@ function Fixture() {
       onEditAssistant={() => setNotice("资料入口")} onOpenPlugins={() => setNotice("插件入口")}
       onChooseRepo={noop} onDismissRecovery={noop} onRestoreRecovery={noop} onBaseUrlChange={noop} onTokenChange={noop} onStopRuntime={runtimeControls.stop}
       onConnectExisting={noop} onStartRuntime={runtimeControls.start} onSwitchScope={() => setRemote(false)} trust={trust} trustBusy={false} onTrustChange={level => setTrust({ ...trust, level, effective: level })} />}</>;
+  if (!embedded) return settings;
+  return <div className="app-shell vc-product-shell qa-settings-reference">
+    <div className="banner-slot" />
+    <WorkspaceBar collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} onSearch={() => leave("/qa/role-family.html?theme=light&search=1")} />
+    <div className={`workbench vc-mode-assistant inspector-closed ${collapsed ? "vc-sidebar-collapsed" : ""}`}>
+      <aside id="conversation-sidebar" className="sidebar vc-sidebar">
+        <div className="qa-settings-space"><strong>我的个人空间</strong><small>合成设置验收 · 不连接服务</small></div>
+        <nav className="vc-side-nav" aria-label="个人空间功能"><button className="vc-nav-item" onClick={() => leave("/qa/role-family.html?theme=light")}>主要聊天</button></nav>
+        <RoleNavigation name="VortoOne" directory={null} connected onAssistant={() => leave("/qa/role-family.html?theme=light")} onMember={noop} onAdd={() => leave("/qa/role-family.html?theme=light")} />
+        <SidebarFooter identity={{ initial: "", name: "我的账号", detail: "个人空间", title: "账号与设置" }} update={null}
+          onOpenSettings={target => { if (target) navigation.current?.open(target.section, target.anchor); setOpen(true); }} />
+      </aside>
+      {open ? <>{settings}</> : <section><button onClick={() => setOpen(true)}>打开设置</button></section>}
+    </div>
+  </div>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

@@ -59,9 +59,10 @@
   --vc-font-serif: "Noto Serif SC", "Songti SC", Georgia, serif;
   --vc-font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
 
-  /* 字号：8 级，含首次使用标题；不用 12 号以下，不用半号 */
+  /* 字号：9 级，含页面与首次使用标题；不用 12 号以下，不用半号 */
   --vc-size-greeting: 34px;
   --vc-size-title: 22px;
+  --vc-size-page-title: 28px;
   --vc-size-heading: 18px;
   --vc-size-chat: 15px;
   --vc-size-body: 14px;
@@ -109,6 +110,20 @@
   --vc-page-pad: 32px;
   --vc-setup-max-w: 1040px;
   --vc-settings-nav-w: 224px;
+
+  /* 个人空间与角色形象 */
+  --vc-avatar-message: 40px;
+  --vc-avatar-portrait: 112px;
+  --vc-avatar-hero: 144px;
+  --vc-workspace-chat-w: 800px;
+  --vc-role-profile-w: 900px;
+  --vc-workspace-bar-h: 48px;
+  --vc-workspace-search-w: 480px;
+  --vc-settings-compact-nav-w: 192px;
+  --vc-workspace-app-bg: #f6f7fb;
+  --vc-workspace-sidebar-w: 280px;
+  --vc-workspace-sidebar: #f4f6f8;
+  --vc-workspace-bg: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -147,6 +162,9 @@
     --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
     --vc-on-tile: #ffffff;
     --vc-paper: #ffffff;
+    --vc-workspace-app-bg: #101217;
+    --vc-workspace-sidebar: #0c0e12;
+    --vc-workspace-bg: #191918;
   }
 }
 
@@ -185,4 +203,7 @@
   --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
   --vc-on-tile: #ffffff;
   --vc-paper: #ffffff;
+  --vc-workspace-app-bg: #101217;
+  --vc-workspace-sidebar: #0c0e12;
+  --vc-workspace-bg: #191918;
 }

@@ -839,10 +839,10 @@
   }
 }
 
-/* 助理模式的首页：一句衬线问候，下面是输入框和一排建议，整组在页面中间 */
+/* 助理模式首页：角色、问候与输入框在页面中间。 */
 .vc-mode-assistant .conversation,
 .vc-mode-assistant .conversation.empty-state {
-  background: var(--vc-bg);
+  background: var(--vc-workspace-bg);
 }
 
 .vc-mode-assistant .conversation.empty-state {
@@ -922,7 +922,7 @@
   outline-offset: 2px;
 }
 
-/* 助理模式的对话：顶栏不画分隔线；用户的话是右侧浅灰气泡，回复不写名字，正文 15 号 */
+/* 助理模式的对话：角色与姓名在左，正文按同一列排版。 */
 .vc-mode-assistant .conversation-header {
   border-bottom-color: var(--vc-divider);
 }
@@ -2365,3 +2365,39 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
 .skill-learning .personal-skill-review { display: grid; gap: 10px; min-width: 0; }
 .skill-learning pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: var(--vc-space-3); border-radius: var(--vc-radius-inner); background: var(--vc-bg); font-size: var(--vc-size-caption); }
 .skill-learning button { max-width: 100%; height: auto !important; min-height: 32px; white-space: normal; overflow-wrap: anywhere; }
+
+/* 角色与频道式对话：与选定个人空间设计共用的正式布局。 */
+.vc-mode-assistant { --vc-sidebar-w: var(--vc-workspace-sidebar-w); --vc-chat-max-w: var(--vc-workspace-chat-w); font-family: var(--vc-font-sans); }
+.vc-mode-assistant .sidebar.vc-sidebar { background: var(--vc-workspace-sidebar); }
+.vc-mode-assistant .conversation { background: var(--vc-workspace-bg); }
+.vc-mode-assistant .message { display: grid; grid-template-columns: var(--vc-avatar-message) minmax(0, 1fr); column-gap: var(--vc-space-3); margin-bottom: var(--vc-space-6); width: 100%; max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.vc-mode-assistant .message.user { margin-left: 0; width: 100%; max-width: 100%; padding: 0; border-radius: 0; background: transparent; }
+.vc-mode-assistant .message-avatar { grid-row: 1 / span 2; grid-column: 1; }
+.vc-mode-assistant .message-author { grid-column: 2; display: flex; align-items: center; gap: var(--vc-space-2); margin: var(--vc-space-1) 0; color: var(--vc-text); font-size: var(--vc-size-body); }
+.vc-mode-assistant .message-author strong { font-weight: var(--vc-weight-strong); }
+.vc-mode-assistant .message-author .message-source { color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.vc-mode-assistant .message-body { grid-column: 2; min-width: 0; }
+.vc-mode-assistant .message-body > :first-child { margin-top: 0; }
+.vc-mode-assistant .turn-timeline { margin-left: calc(var(--vc-avatar-message) + var(--vc-space-3)); }
+.vc-mode-assistant .home-greeting .vc-greeting { font-family: var(--vc-font-sans); font-size: var(--vc-size-title); font-weight: var(--vc-weight-medium); margin-top: var(--vc-space-4); }
+.assistant-avatar-character { object-fit: contain; border-radius: 0; background: transparent; box-shadow: none; }
+.vc-mode-assistant .vc-side-footer { margin-top: 0; }
+
+.vc-mode-assistant .message.user .message-author { display: flex; }
+.vc-mode-assistant .vc-side-nav { margin-bottom: var(--vc-space-4); }
+.vc-mode-assistant .vc-workspace-navigation .vc-nav-item { height: var(--vc-control-h); min-height: var(--vc-control-h); }
+.vc-mode-assistant .vc-group-title:has(button) { display: flex; align-items: center; justify-content: space-between; }
+
+.vc-mode-assistant .vc-workspace-navigation { gap: 0; padding: 0 var(--vc-space-3) var(--vc-space-5); border-bottom: 0; margin-bottom: var(--vc-space-3); }
+.vc-mode-assistant .vc-side-search-trigger { height: var(--vc-control-h); background: var(--vc-workspace-bg); box-shadow: inset 0 0 0 1px var(--vc-border); }
+.vc-mode-assistant .vc-side-recent .vc-nav-item { height: var(--vc-control-h); }
+.vc-personal-window-drag { display: none; }
+:root[data-window="overlay"] .vc-mode-assistant .vc-personal-window-drag { display: block; height: var(--vc-control-h); flex: none; }
+
+.vc-conversation-role { display: flex; align-items: center; gap: var(--vc-space-3); border: 0; background: transparent; color: var(--vc-text); font-family: var(--vc-font-sans); padding: 0; text-align: left; cursor: pointer; }
+.vc-conversation-role > span:last-child { display: grid; gap: var(--vc-space-1); }
+.vc-conversation-role small { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.vc-conversation-role:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); border-radius: var(--vc-radius-control); }
+
+.vc-mode-assistant .vc-side-nav:empty { display: none; }
+.vc-mode-assistant .vc-workspace-navigation { padding-bottom: var(--vc-space-3); margin-bottom: var(--vc-space-2); }

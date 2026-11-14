@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { searchSettings, settingsPage, SETTINGS_ITEMS, SETTINGS_OWNER_LABELS } from "./settingsNavigation";
+import { searchSettings, settingsPage, settingsGroup, SETTINGS_GROUPS, SETTINGS_SECTIONS, SETTINGS_ITEMS, SETTINGS_OWNER_LABELS } from "./settingsNavigation";
 
 describe("settings navigation", () => {
+  it("keeps every existing settings page reachable exactly once through the compact groups", () => {
+    expect(SETTINGS_GROUPS.flatMap(group => group.pages).sort()).toEqual(SETTINGS_SECTIONS.map(page => page.id).sort());
+    expect(settingsGroup("staff").id).toBe("computer");
+    expect(settingsGroup("permissions").id).toBe("computer");
+    expect(settingsGroup("personal").id).toBe("account");
+    for (const item of searchSettings("角色")) expect(settingsGroup(item.page).pages).toContain(item.page);
+  });
   it("declares an owner for every searchable setting and keeps local and runtime writes distinct", () => {
     for (const item of SETTINGS_ITEMS) expect(SETTINGS_OWNER_LABELS[item.owner]).toBeTruthy();
     expect(SETTINGS_ITEMS.find(item => item.id === "services")?.owner).toBe("desktop");

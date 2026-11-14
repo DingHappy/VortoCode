@@ -35,7 +35,7 @@ export function SidebarSearch({ open, query, placeholder, onOpenChange, onQuery,
     else if (restoreTrigger.current) { restoreTrigger.current = false; trigger.current?.focus({ preventScroll: true }); }
   }, [open, focusRequest]);
   if (!open) {
-    return <NavItem buttonRef={trigger} icon={<Search aria-hidden="true" />} label="搜索" meta="⌘K" aria-expanded="false" onClick={() => onOpenChange(true)} />;
+    return <NavItem className="vc-side-search-trigger" buttonRef={trigger} icon={<Search aria-hidden="true" />} label="搜索" meta="⌘K" aria-expanded="false" onClick={() => onOpenChange(true)} />;
   }
   return (
     <div className={`vc-side-search-wrap${query ? " has-query" : ""}`} onKeyDown={event => {

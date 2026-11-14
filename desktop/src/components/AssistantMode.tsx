@@ -13,7 +13,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { tabKeyTarget } from "../lib/iconNavigation";
 import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
 import type { MemorySnapshot } from "../lib/memorySnapshot";
-import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
+import { avatarSrc } from "../lib/avatar";
+import { ROLE_ART } from "./RoleAvatar";
 import type { AssistantAvatar, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, SessionSummary } from "../types";
 export { PhoneChatDialog } from "./PhoneChatDialog";
 
@@ -57,7 +58,7 @@ export const SIDE_CHAT_LIMIT = 5;
 /** 日常入口与会话分组，主要聊天保留唯一待处理角标。 */
 export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
   search, query = "", onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam,
-  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment, onPage, onManageStaff,
+  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment, onPage, roles,
   channels, channelsDisabled, onNewChannel, onDeleteChannel }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
@@ -80,7 +81,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   onSelect: (sid: string) => void;
   /** 日常入口打开原有领域页面，不授予操作权限。 */
   onPage?: (page: AssistantPage) => void;
-  onManageStaff?: () => void;
+  roles?: ReactNode;
   onNewSideChat: () => void;
   channels?: SessionSummary[];
   channelsDisabled?: boolean;
@@ -122,20 +123,24 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   const mainMatches = matches("主要聊天", query);
   const channelMatches = channels?.some(row => sessionChannel(row) && matches(`${row.title}\n${sessionChannel(row)!.topic}`, query));
   const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !departmentGroups.length && !others.length && !channelMatches;
+  const mainBadge = badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
+    aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span>
+    : mainChat.busy ? <LiveDot /> : undefined;
   return <>
     <nav className="vc-side-nav" aria-label="助理">
-      <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
+      {!onPage && <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />}
       {search}
     </nav>
-    {onPage && !keyword && <WorkspaceNavigation current={page} onPage={onPage} onStaff={onManageStaff} />}
+    {onPage && !keyword && <WorkspaceNavigation current={page} onPage={onPage} mainChat={{ current: inChat && current === mainChat.sid, onOpen: () => onSelect(mainChat.sid), meta: mainBadge }} />}
     <div className="vc-side-recent">
-      {mainMatches && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
+      {mainMatches && (!onPage || keyword) && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
         title={mainChat.preview || "主要聊天"} current={inChat && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
         meta={badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
           aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span>
           : mainChat.busy ? <LiveDot /> : undefined} />}
       {channels && onNewChannel && <SidebarChannels channels={channels} current={inChat ? current : ""} query={query}
         disabled={channelsDisabled} onSelect={onSelect} onCreate={onNewChannel} onDelete={onDeleteChannel} />}
+      {roles}
       {(departmentGroups.length > 0 || departmentError) && <GroupTitle>部门</GroupTitle>}
       {departmentError && <p role="status">{departmentError}</p>}
       {departmentGroups.map(department => <NavItem key={department.id} className="vc-nav-item--recent"
@@ -146,12 +151,12 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
       {groups.map((team) => <NavItem key={team.id} className="vc-nav-item--recent vc-nav-item--team" icon={<Users aria-hidden="true" />}
         label={team.title} title={`任务小组：${team.title}`} current={currentTeam === team.id} onClick={() => onOpenTeam?.(team.id)}
         meta={team.status === "active" ? <LiveDot /> : TEAM_BADGE[team.status] ? <span className="vc-team-badge">{TEAM_BADGE[team.status]}</span> : undefined} />)}
-      {others.length > 0 && <GroupTitle>旁聊</GroupTitle>}
+      {(onPage || others.length > 0) && <GroupTitle>旁聊{onPage && <IconButton label="新对话" icon={<SquarePen aria-hidden="true" />} onClick={onNewSideChat} />}</GroupTitle>}
       {others.length > 0 && <div className="vc-side-chats" id={chatsId}>{others.slice(0, limit)}</div>}
       {!keyword && others.length > collapsedLimit && <button ref={moreButton} type="button" className="vc-side-more" aria-expanded={showAll} aria-controls={chatsId}
         onClick={() => { scrollToggle.current = true; setShowAll(value => !value); }}>{showAll ? "收起" : `显示全部 ${others.length} 条`}</button>}
       {noMatches && <p className="vc-side-hint vc-side-search-empty" role="status">未找到匹配的会话。试试其它标题关键词，或清除搜索。</p>}
-      {!keyword && others.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
+      {!keyword && others.length === 0 && <p className="vc-side-hint">{onPage ? "还没有旁聊" : "岔开的话题点「新对话」开个旁聊，不打扰主要聊天。"}</p>}
     </div>
   </>;
 }
@@ -488,14 +493,10 @@ export function AssistantStarterTips({ tips, onPick, onDismiss }: {
   </div>;
 }
 
-/** 助理头像：有图用图，没有就用名字首字（颜色随名字）。 */
+/** 自定义头像优先；未设置时使用主人选定的总助手形象。 */
 export function AssistantAvatarImage({ name, avatar, size }: { name: string; avatar?: AssistantAvatar | null; size?: number }) {
-  const src = avatarSrc(avatar);
-  const style = size ? { width: size, height: size, fontSize: Math.round(size * 0.42) } : undefined;
-  if (src) return <img className="assistant-avatar-image" src={src} alt="" style={style} />;
-  const hue = avatarHue(name);
-  return <span className="assistant-avatar-initial" aria-hidden="true"
-    style={{ ...style, background: `linear-gradient(135deg, hsl(${hue} 62% 60%), hsl(${(hue + 24) % 360} 58% 44%))` }}>
-    {avatarInitial(name)}
-  </span>;
+  const custom = avatarSrc(avatar);
+  const style = size ? { width: size, height: size } : undefined;
+  return <img className={`assistant-avatar-image${custom ? "" : " assistant-avatar-character"}`}
+    src={custom || ROLE_ART.general} alt="" title={name} style={style} />;
 }
