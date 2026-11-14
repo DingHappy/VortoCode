@@ -4,6 +4,7 @@ import type { AssistantAvatar, ConversationMessage, TurnActivity } from "../type
 import { MarkdownMessage } from "./MarkdownMessage";
 import { RoleAvatar } from "./RoleAvatar";
 import { TurnTimeline } from "./TurnTimeline";
+import { MessageActions } from "./MessageActions";
 
 /** Shared by saved messages and the live streaming reply. */
 export function MessageIdentity({ role, name = "VortoOne", avatar, source }: {
@@ -46,9 +47,10 @@ export const ChatHistory = memo(function ChatHistory({ messages, activityGroups,
         {message.images && message.images.length > 0 && <div className="message-images">
           {message.images.map((src, index) => <img key={index} src={src} alt={`发送的图片 ${index + 1}`} />)}
         </div>}
-        {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text}
+        {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text ? <div className="message-text">{message.text}</div> : null}
         {message.card && renderCard?.(message)}
       </div>
+      {assistant && message.role !== "system" && <MessageActions text={message.text} />}
     </article>
     {message.role === "user" && message.rid && activityGroups.has(message.rid) && (
       <TurnTimeline items={activityGroups.get(message.rid)!} active={busy && activeTurnRid === message.rid}

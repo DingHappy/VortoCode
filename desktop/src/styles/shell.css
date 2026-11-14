@@ -343,7 +343,7 @@
   outline-offset: 2px;
 }
 
-/* 右侧助理面板：名片（大头像 + 一行状态）+ 只有图标的标签条。规格见 docs/DESIGN_SYSTEM.md 第 4 节 */
+/* 助理资料与栏目：共享角色形象、可读名称、运行信息和原有五个标签。 */
 .assistant-panel.vc-panel {
   border-left: 1px solid var(--vc-divider);
   background: var(--vc-bg);
@@ -363,14 +363,21 @@
   flex-direction: column;
   align-items: stretch;
   gap: var(--vc-space-2);
-  padding: var(--vc-space-10) var(--vc-space-5) var(--vc-space-3);
+  padding: var(--vc-space-10) var(--vc-space-5) var(--vc-space-4);
   text-align: left;
 }
 
-.vc-panel-identity-row { display: flex; align-items: center; gap: var(--vc-space-3); min-width: 0; }
-.vc-panel-identity-row > div { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: var(--vc-space-1); }
-.vc-panel-identity-row .vc-panel-name { font-size: var(--vc-size-body); }
-.vc-panel-identity-row .vc-panel-status { line-height: 1.5; overflow-wrap: anywhere; }
+.vc-panel-identity-row { position: relative; display: flex; flex-direction: column; align-items: center; gap: var(--vc-space-2); min-width: 0; text-align: center; }
+.vc-panel-identity-row > div { display: flex; flex-direction: column; align-items: center; min-width: 0; gap: var(--vc-space-2); }
+.vc-panel-identity-row .vc-panel-name { font-size: var(--vc-size-heading); overflow-wrap: anywhere; }
+.vc-panel-identity-row .vc-panel-status { justify-content: center; line-height: 1.5; overflow-wrap: anywhere; }
+.vc-panel-portrait { display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--vc-radius-card); background: transparent; cursor: pointer; }
+.vc-panel-portrait:hover { background: var(--vc-hover); }
+.vc-panel-portrait:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
+.vc-panel-identity-row > button:last-child:not(.vc-panel-portrait) { position: absolute; right: 0; bottom: 0; }
+.assistant-panel--page .vc-panel-identity-row { flex-direction: row; text-align: left; }
+.assistant-panel--page .vc-panel-identity-row > div { align-items: flex-start; }
+.assistant-panel--page .vc-panel-identity-row .vc-panel-name { font-size: var(--vc-size-body); }
 .vc-panel-context { font-size: var(--vc-size-small); color: var(--vc-muted); }
 .vc-panel-context > summary { cursor: pointer; padding: var(--vc-space-1) 0; }
 .vc-panel-context[open] { padding-bottom: var(--vc-space-2); }
@@ -460,47 +467,35 @@
 .vc-panel-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 2px;
-  margin: 0 var(--vc-space-4) var(--vc-space-1);
-  padding: 3px;
-  border-radius: var(--vc-radius-full);
+  gap: var(--vc-space-1);
+  margin: 0 var(--vc-space-4) var(--vc-space-3);
+  padding: var(--vc-space-1);
+  border-radius: var(--vc-radius-card);
   background: var(--vc-fill);
 }
 
 .vc-panel-tab {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 34px;
-  padding: 0;
+  gap: var(--vc-space-1);
+  min-height: var(--vc-control-h-hero);
+  padding: var(--vc-space-1) 0;
   border: 0;
-  border-radius: var(--vc-radius-full);
+  border-radius: var(--vc-radius-control);
   background: transparent;
   color: var(--vc-muted);
+  font-family: var(--vc-font-sans);
   cursor: pointer;
 }
+.vc-panel-tab-label { font-size: var(--vc-size-caption); line-height: 1.5; white-space: nowrap; }
 
 .vc-panel-tab svg {
   width: var(--vc-icon-step);
   height: var(--vc-icon-step);
   stroke-width: var(--vc-icon-stroke);
-}
-
-/* 标签之间的细竖线；选中段两侧不画 */
-.vc-panel-tab + .vc-panel-tab::before {
-  content: "";
-  position: absolute;
-  left: -2px;
-  top: 10px;
-  bottom: 10px;
-  width: 1px;
-  background: var(--vc-border);
-}
-
-.vc-panel-tab[aria-selected="true"]::before,
-.vc-panel-tab[aria-selected="true"] + .vc-panel-tab::before {
-  display: none;
 }
 
 .vc-panel-tab:hover:not([aria-selected="true"]) {
@@ -515,8 +510,8 @@
 
 .vc-panel-tab-dot {
   position: absolute;
-  top: 6px;
-  right: calc(50% - 14px);
+  top: var(--vc-space-1);
+  right: var(--vc-space-1);
   width: 7px;
   height: 7px;
   border-radius: var(--vc-radius-full);
@@ -2371,19 +2366,33 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
 .vc-mode-assistant .sidebar.vc-sidebar { background: var(--vc-workspace-sidebar); }
 .vc-mode-assistant .conversation { background: var(--vc-workspace-bg); }
 .vc-mode-assistant .message { display: grid; grid-template-columns: var(--vc-avatar-message) minmax(0, 1fr); column-gap: var(--vc-space-3); margin-bottom: var(--vc-space-6); width: 100%; max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; text-align: left; }
-.vc-mode-assistant .message.user { margin-left: 0; width: 100%; max-width: 100%; padding: 0; border-radius: 0; background: transparent; }
 .vc-mode-assistant .message-avatar { grid-row: 1 / span 2; grid-column: 1; }
-.vc-mode-assistant .message-author { grid-column: 2; display: flex; align-items: center; gap: var(--vc-space-2); margin: var(--vc-space-1) 0; color: var(--vc-text); font-size: var(--vc-size-body); }
+.vc-mode-assistant .message-author { grid-column: 2; display: flex; align-items: center; flex-wrap: wrap; gap: var(--vc-space-2); margin: var(--vc-space-1) 0; color: var(--vc-text); font-size: var(--vc-size-body); }
 .vc-mode-assistant .message-author strong { font-weight: var(--vc-weight-strong); }
 .vc-mode-assistant .message-author .message-source { color: var(--vc-muted); font-size: var(--vc-size-caption); }
-.vc-mode-assistant .message-body { grid-column: 2; min-width: 0; }
+.vc-mode-assistant .message-body { grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
 .vc-mode-assistant .message-body > :first-child { margin-top: 0; }
+.vc-mode-assistant .message.user { grid-template-columns: minmax(0, 1fr); margin-left: 0; width: 100%; max-width: 100%; padding: 0; border-radius: 0; background: transparent; }
+/* The visible sides identify the owner; keep the author accessible without repeating a face. */
+.vc-mode-assistant .message.user .message-avatar,
+.vc-mode-assistant .message.user .message-author { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.vc-mode-assistant .message.user .message-body { grid-column: 1; justify-self: end; max-width: 76%; }
+.vc-mode-assistant .message.user .message-text { width: fit-content; margin-left: auto; padding: var(--vc-space-2) var(--vc-space-4); border-radius: var(--vc-radius-bubble) var(--vc-radius-bubble) var(--vc-radius-inner) var(--vc-radius-bubble); background: var(--vc-fill); white-space: pre-wrap; }
+.vc-mode-assistant .message.user .message-source { margin-bottom: var(--vc-space-1); text-align: right; }
+.vc-mode-assistant .message-images { max-width: 100%; }
+.message-actions { grid-column: 2; display: flex; align-items: center; flex-wrap: wrap; gap: var(--vc-space-2); min-height: var(--vc-control-h); color: var(--vc-muted); font-size: var(--vc-size-caption); opacity: 0; }
+.message:hover .message-actions, .message:focus-within .message-actions, .message-actions.has-error { opacity: 1; }
+.message-copy { display: inline-grid; place-items: center; flex: none; width: var(--vc-control-h); height: var(--vc-control-h); padding: 0; border: 0; border-radius: var(--vc-radius-control); background: transparent; color: var(--vc-muted); cursor: pointer; }
+.message-copy:hover { background: var(--vc-hover); color: var(--vc-text); }
+.message-copy:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
+.message-copy svg { width: var(--vc-icon); height: var(--vc-icon); }
+.message.user .message-actions { grid-column: 1; justify-content: flex-end; }
+@media (hover: none) { .message-actions { opacity: 1; } }
 .vc-mode-assistant .turn-timeline { margin-left: calc(var(--vc-avatar-message) + var(--vc-space-3)); }
 .vc-mode-assistant .home-greeting .vc-greeting { font-family: var(--vc-font-sans); font-size: var(--vc-size-title); font-weight: var(--vc-weight-medium); margin-top: var(--vc-space-4); }
 .assistant-avatar-character { object-fit: contain; border-radius: 0; background: transparent; box-shadow: none; }
 .vc-mode-assistant .vc-side-footer { margin-top: 0; }
 
-.vc-mode-assistant .message.user .message-author { display: flex; }
 .vc-mode-assistant .vc-side-nav { margin-bottom: var(--vc-space-4); }
 .vc-mode-assistant .vc-workspace-navigation .vc-nav-item { height: var(--vc-control-h); min-height: var(--vc-control-h); }
 .vc-mode-assistant .vc-group-title:has(button) { display: flex; align-items: center; justify-content: space-between; }
@@ -2401,3 +2410,19 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
 
 .vc-mode-assistant .vc-side-nav:empty { display: none; }
 .vc-mode-assistant .vc-workspace-navigation { padding-bottom: var(--vc-space-3); margin-bottom: var(--vc-space-2); }
+
+/* Compact chat composer; project mode keeps its existing stacked controls. */
+.vc-mode-assistant .composer-writing-row { display: grid; grid-template-columns: var(--vc-control-h) minmax(0, 1fr) var(--vc-control-h); gap: var(--vc-space-2); align-items: end; padding: var(--vc-space-2) var(--vc-space-3); }
+.vc-mode-assistant .composer-writing-row textarea { min-width: 0; width: 100%; min-height: var(--vc-control-h); margin: 0; padding: var(--vc-space-1) 0; border-radius: 0; line-height: 1.6; }
+.vc-mode-assistant .empty-state .composer-writing-row textarea { min-height: var(--vc-control-h); }
+.vc-mode-assistant .composer-writing-row > .composer-attach,
+.vc-mode-assistant .composer-writing-row > .composer-send { display: grid; place-items: center; width: var(--vc-control-h); height: var(--vc-control-h); padding: 0; border: 0; border-radius: var(--vc-radius-control); cursor: pointer; }
+.vc-mode-assistant .composer-writing-row > .composer-attach { background: transparent; color: var(--vc-muted); box-shadow: none; }
+.vc-mode-assistant .composer-writing-row > .composer-attach:hover:not(:disabled) { color: var(--vc-text); background: var(--vc-hover); }
+.vc-mode-assistant .composer-writing-row > .composer-send { background: var(--vc-ink); color: var(--vc-on-ink); }
+.vc-mode-assistant .composer-writing-row > .composer-send:disabled { background: var(--vc-fill); color: var(--vc-muted); cursor: default; }
+.vc-mode-assistant .composer-writing-row > button:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
+.vc-mode-assistant .composer-command-host--inline > .composer-footer { display: flex; flex-wrap: wrap; gap: var(--vc-space-2); padding: 0 var(--vc-space-4) var(--vc-space-2); }
+.vc-mode-assistant .composer-command-host--inline .composer-tools,
+.vc-mode-assistant .composer-command-host--inline .composer-actions { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.vc-mode-assistant .composer-command-host--inline .composer-model { min-width: 0; max-width: 100%; }

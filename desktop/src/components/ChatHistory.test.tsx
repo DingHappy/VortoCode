@@ -63,3 +63,24 @@ it("a team note is labelled as the team, not as a phone reply, and renders its c
     renderCard={message => <span>卡片 {message.card?.id}</span>} />);
   expect(html).toContain("任务小组"); expect(html).not.toContain("回复在手机上"); expect(html).toContain("卡片 task-1");
 });
+
+it("offers copy for loaded user and assistant text, preserving system notes and card-only messages", () => {
+  const more: ConversationMessage[] = [...messages,
+    { id: "system", role: "system", text: "断开连接" },
+    { id: "card", role: "assistant", text: "", card: { kind: "team", id: "t", status: "review" } },
+  ];
+  const html = renderToStaticMarkup(<ChatHistory {...props} messages={more} renderCard={() => <button>核对交付</button>} />);
+  expect(html.match(/aria-label="复制消息"/g)).toHaveLength(2);
+  expect(html).toContain("断开连接");
+  expect(html).toContain("核对交付");
+  expect(renderToStaticMarkup(<ChatHistory {...props} assistant={false} />)).not.toContain("复制消息");
+});
+
+it("an image-only message keeps its attachment without an empty text bubble or copy action", () => {
+  const html = renderToStaticMarkup(<ChatHistory {...props} activityGroups={new Map()}
+    messages={[{ id: "image", role: "user", text: "", images: ["data:image/png;base64,AA=="], source: "telegram" }]} />);
+  expect(html).toContain("发送的图片 1");
+  expect(html).toContain("Telegram");
+  expect(html).not.toContain('class="message-text"');
+  expect(html).not.toContain("复制消息");
+});

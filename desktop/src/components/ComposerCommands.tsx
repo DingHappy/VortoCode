@@ -18,9 +18,11 @@ export function matchingCommands(prompt: string, project: boolean) {
   return COMPOSER_COMMANDS.filter(item => (project || item.id !== "files") && `${item.id} ${item.label} ${item.description}`.toLowerCase().includes(query));
 }
 
-export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction, onSend, onPaste, placeholder = "描述任务，输入 / 查看快捷操作，Shift+Enter 换行…", children }: {
+export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction, onSend, onPaste, placeholder = "描述任务，输入 / 查看快捷操作，Shift+Enter 换行…", children, sendControl }: {
   prompt: string; onPrompt: (value: string) => void; project: boolean; disabled: boolean; placeholder?: string;
   onAction: (command: ComposerCommand) => void; onSend: () => void; onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void; children?: ReactNode;
+  /** Assistant chat keeps attachment, text and send in one row; workbench retains its original toolbar. */
+  sendControl?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -55,7 +57,7 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
     if (!node) return;
     node.style.height = "auto";
     node.style.height = `${node.scrollHeight}px`;
-  }, [prompt]);
+  }, [prompt, Boolean(sendControl)]);
   const act = (id: ComposerCommand) => {
     if (disabled) return;
     dismiss(true);
@@ -91,7 +93,12 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
       else onSend();
     }
   };
-  return <div ref={host} className="composer-command-host" onKeyDown={keyDown} onBlur={event => {
+  const input = <textarea ref={textarea} rows={sendControl ? 1 : undefined} onPaste={onPaste} aria-label="任务输入" aria-controls={open ? menuId : undefined}
+    aria-describedby={open ? `${menuId}-help` : undefined} value={prompt} onChange={event => onPrompt(event.target.value)}
+    onFocus={() => { if (expanded) dismiss(); }} placeholder={placeholder} />;
+  const add = <HintButton className="composer-attach" aria-label="添加与快捷操作" hint="添加附件、引用源码或选择项目" aria-haspopup="dialog" aria-controls={open ? menuId : undefined}
+    aria-expanded={open} disabled={disabled} onClick={() => { setExpanded(value => !value); setDismissed(false); }}><Plus size={17} aria-hidden="true" /></HintButton>;
+  return <div ref={host} className={`composer-command-host${sendControl ? " composer-command-host--inline" : ""}`} onKeyDown={keyDown} onBlur={event => {
     if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) dismiss();
   }}>
     {open && <div ref={menu} id={menuId} className="composer-command-menu" role="dialog" aria-label="快捷操作" aria-describedby={`${menuId}-help`}>
@@ -108,13 +115,7 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
       </div>
       <span className="composer-command-selection" role="status">{choices[active] ? `已选择 ${choices[active].label}，共 ${choices.length} 项` : "没有匹配项"}</span>
     </div>}
-    <textarea ref={textarea} onPaste={onPaste} aria-label="任务输入" aria-controls={open ? menuId : undefined}
-      aria-describedby={open ? `${menuId}-help` : undefined} value={prompt} onChange={event => onPrompt(event.target.value)}
-      onFocus={() => { if (expanded) dismiss(); }} placeholder={placeholder} />
-    <div className="composer-command-toolbar">
-      <HintButton className="composer-attach" aria-label="添加与快捷操作" hint="添加附件、引用源码或选择项目" aria-haspopup="dialog" aria-controls={open ? menuId : undefined}
-        aria-expanded={open} disabled={disabled} onClick={() => { setExpanded(value => !value); setDismissed(false); }}><Plus size={17} aria-hidden="true" /></HintButton>
-      {children}
-    </div>
+    {sendControl ? <><div className="composer-writing-row">{add}{input}{sendControl}</div>{children}</>
+      : <>{input}<div className="composer-command-toolbar">{add}{children}</div></>}
   </div>;
 }
