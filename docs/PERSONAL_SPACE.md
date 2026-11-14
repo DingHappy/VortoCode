@@ -25,11 +25,11 @@ P0 不写回登记、不搬历史或配置，也不猜测项目归属：同名�
 
 | 步骤 | 范围与完成标准 | 当前状态 |
 | --- | --- | --- |
-| P0 | 只读兼容映射；旧聊天键与选择行为不变，同名项目不自动归属 | [#872](https://github.com/DingHappy/VortoOne/pull/872)，待审 |
+| P0 | 只读兼容映射；旧聊天键与选择行为不变，同名项目不自动归属 | [#872](https://github.com/DingHappy/VortoOne/pull/872)，已合并 |
 | P1 | 分离内部服务/诊断入口；迁 Desktop 回退、服务示例与部署脚本，保留公开包装兼容 | [#873](https://github.com/DingHappy/VortoOne/pull/873)，已合并 |
-| P2 | 本机/远端选择、检测、安装、主人连接、模型准备；失败可返回、中断可续做 | [#874](https://github.com/DingHappy/VortoOne/pull/874)，待审 |
-| P3 | 主壳统一目标上下文，核对运行端/空间/项目/会话及请求代次，隔离迟到回包与草稿 | [#875](https://github.com/DingHappy/VortoOne/pull/875)，待审 |
-| P4 | 设置区分客户端、当前运行端/空间、项目；每次写入显示并绑定目标 | 本 PR，待审 |
+| P2 | 本机/远端选择、检测、安装、主人连接、模型准备；失败可返回、中断可续做 | [#874](https://github.com/DingHappy/VortoOne/pull/874)，已合并 |
+| P3 | 主壳统一目标上下文，核对运行端/空间/项目/会话及请求代次，隔离迟到回包与草稿 | [#875](https://github.com/DingHappy/VortoOne/pull/875)，已合并 |
+| P4 | 设置区分客户端、当前运行端/空间、项目；每次写入显示并绑定目标 | [#876](https://github.com/DingHappy/VortoOne/pull/876)，已实现；随本 PR 交付，P6 真实验收待完成 |
 | P5 | 盘点实际服务和旧作业依赖，提供显式迁移后退出公开 CLI | [#877](https://github.com/DingHappy/VortoOne/pull/877)，迁移准备待审；实际迁移与入口撤除尚未完成 |
 | P6 | 授权环境下的新装、旧用户恢复、切换、退出重开、升级失败恢复与实际任务验收 | 待完成 |
 
