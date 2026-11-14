@@ -1,3 +1,4 @@
+import { useSettingsTargetFixture } from "./settings-target-fixture";
 // 设置页逐页截图用：模拟「已登录的中度会员、正在用会员模型」。不写配置、不连任何服务。
 // 用法：qa/dist/qa/settings-member.html?section=account&theme=dark
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -41,9 +42,10 @@ mockIPC((cmd) => {
 });
 const noop = () => {};
 function Fixture() {
+  const settingsTarget = useSettingsTargetFixture(true, "general");
   const [trust, setTrust] = useState<TrustStatus>({ level: "ask", effective: "ask", ceiling: "full", levels: ["ask", "reads", "full"], capability_profile: "local", workspace_scope: "project", local_file_reads: true, supervised: true });
   const [roles, setRoles] = useState<Record<string, string>>({});
-  return <SettingsModal activeScope="general" connection="connected" connectionText="已连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
+  return <SettingsModal runtimeSettings={settingsTarget} activeScope="general" connection="connected" connectionText="已连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
     processStatus={{ running: true, message: "本机引擎运行中" }} recoveryRecord={null} llmProfile={profile}
     llmBaseInput={profile.baseUrl} llmModelInput={profile.model} llmKeyInput="" llmFastInput="" llmStrongInput="" llmRolesInput={roles} onLlmRolesChange={setRoles}
     llmProfileBusy={false} repoRoot="/Users/me/projects/demo" baseUrl="http://127.0.0.1:8080" token="" modelPicks={null} initialSection={section}

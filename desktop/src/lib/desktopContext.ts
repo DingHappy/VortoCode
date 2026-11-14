@@ -35,7 +35,8 @@ export function desktopContext(input: {
   const draftKey = JSON.stringify([targetKey, sid]);
   const ready = input.connection === "connected" && Boolean(source && source.registrationId === registrationId
     && source.baseUrl === input.baseUrl && source.sid === sid);
-  return { space, runtimeLabel, location, targetKey, draftKey, sid, ready,
+  return { space, registrationId, runtimeLabel, location, targetKey, draftKey, sid, ready,
+    clientGeneration: source?.generation, clientEpoch: source?.epoch,
     projectRoot: scope === "project" ? input.repoRoot : null,
     // A→B→A, reconnecting the same client, and replacing a client all invalidate prior reads.
     readKey: JSON.stringify([targetKey, sid, input.baseUrl, input.runtimeId, input.connection,

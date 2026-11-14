@@ -42,7 +42,7 @@ export function PersonalizePane({ onDraftStateChange }: { onDraftStateChange?: (
   useEffect(() => { onDraftStateChange?.({ dirty, busy: saving }); }, [dirty, saving, onDraftStateChange]);
   return (
     <div className="settings-stack">
-      <p className="settings-intro">为你与 VortoOne 的所有对话和任务提供额外说明和上下文（包括通用会话与自动化任务），新会话生效。</p>
+      <p className="settings-intro">保存到本机用户目录。临时引擎及同一用户目录下的本机常驻助手会在新会话和任务中读取；其它电脑不会自动同步。</p>
       <section className="settings-card" aria-label="全局指令" aria-busy={setting.loading}>
         <div className="settings-card-head"><strong>全局指令</strong></div>
         <SettingsReadFeedback label="全局指令" loading={setting.loading} error={setting.error} onRetry={setting.reload} />

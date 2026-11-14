@@ -79,6 +79,7 @@ export function CodexWatchCard({ hasResident, readSnapshot }: {
       : "需要先连接常驻电脑（助理 → 连接常驻电脑）。"}</p>
     {note && <p className="settings-card-note" role="status">{note}</p>}
     <p className="settings-card-note">开关表示下次启动时的配置；下面是当前本机引擎的运行状态。</p>
+    <p className="settings-card-note">接收助手沿用本机引擎启动时的连接；切换当前空间不会自动更换正在运行的观察员的接收位置。</p>
     <CodexObserverStatus value={health} busy={busy} now={now} onRefresh={() => { void refreshRef.current?.(); }} />
   </section>;
 }

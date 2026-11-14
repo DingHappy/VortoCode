@@ -80,6 +80,24 @@ def test_resident_launch_uses_snapshot_and_cannot_inherit_desktop_authority(tmp_
     assert "LLM_MODEL_POWERFUL" not in env
 
 
+def test_resident_keeps_user_home_for_shared_global_instructions(tmp_path, monkeypatch):
+    from desktop.local_resident_config import prepare_resident
+    from src.agents import project
+
+    home = tmp_path / "user-home"
+    instructions = home / ".vortoone" / "AGENTS.md"
+    instructions.parent.mkdir(parents=True)
+    instructions.write_text("Shared local instruction fixture", encoding="utf-8")
+    env = {"HOME": str(home)}
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path(env["HOME"])))
+    monkeypatch.setattr(project, "USER_INSTRUCTIONS_PATH", None)
+    before = project.load_user_instructions()
+    prepare_resident(private_config(tmp_path), environ=env)
+    assert env["HOME"] == str(home)
+    assert project.load_user_instructions() == before
+    assert "Shared local instruction fixture" in before
+
+
 def test_each_resident_process_gets_a_new_launch_identity_and_cron_is_explicit(
     tmp_path, monkeypatch
 ):

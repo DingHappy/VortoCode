@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ACCOUNT_CHANGED_EVENT } from "../../lib/vortoAccount";
 import { errorText } from "../../lib/errorText";
 import { readResidentAccount, updateResidentAccount, residentAccountController, type ResidentAccountState } from "../../lib/residentAccount";
+import type { SettingsTargetGuard } from "../../lib/settingsTarget";
 
 export function ResidentAccountStatus({ state, onRefresh, onUpdate }: {
   state: ResidentAccountState; onRefresh: () => void; onUpdate: (bind: boolean) => void;
@@ -27,14 +28,15 @@ export function ResidentAccountStatus({ state, onRefresh, onUpdate }: {
   </section>;
 }
 
-export function ResidentAccountCard({ projectId }: { projectId?: string }) {
+export function ResidentAccountCard({ projectId, guard }: { projectId?: string; guard?: SettingsTargetGuard }) {
   const [state, setState] = useState<ResidentAccountState>({ busy: false, value: null, error: "" });
   const controller = useRef<ReturnType<typeof residentAccountController> | null>(null);
   useEffect(() => {
     setState({ busy: false, value: null, error: "" });
     if (!projectId) return;
     const current = residentAccountController(projectId, {
-      read: () => readResidentAccount(projectId), update: (value, bind) => updateResidentAccount(projectId, value, bind),
+      read: () => guard ? guard.run(() => readResidentAccount(projectId)) : readResidentAccount(projectId),
+      update: (value, bind) => guard ? guard.run(() => updateResidentAccount(projectId, value, bind)) : updateResidentAccount(projectId, value, bind),
       publish: setState, error: error => errorText(error, "无法读取账号关联，请刷新后重试"),
     });
     controller.current = current;
@@ -42,7 +44,7 @@ export function ResidentAccountCard({ projectId }: { projectId?: string }) {
     const changed = () => { current.invalidate(); void current.refresh(); };
     window.addEventListener(ACCOUNT_CHANGED_EVENT, changed);
     return () => { current.dispose(); if (controller.current === current) controller.current = null; window.removeEventListener(ACCOUNT_CHANGED_EVENT, changed); };
-  }, [projectId]);
+  }, [projectId, guard]);
   if (!projectId) return <section className="settings-card" aria-label="手机与常驻助手"><strong>手机与常驻助手</strong><p className="settings-card-note">请先在“电脑与连接”中登记常驻电脑，再关联当前 VortoOne 账号。手机入口连接常驻助手，本机项目不会自动成为手机助手。</p></section>;
   return <ResidentAccountStatus state={state} onRefresh={() => void controller.current?.refresh()} onUpdate={bind => void controller.current?.update(bind)} />;
 }
