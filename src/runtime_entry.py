@@ -9,6 +9,7 @@ from pathlib import Path
 from collections.abc import Sequence
 
 from src.runtime_bootstrap import prepare_runtime
+from src.runtime_jobs import JOB_COMMANDS, add_job_commands, validate_job_args, run_job_command
 from src.utils.state_dir import state_dir
 
 
@@ -26,12 +27,41 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument("--mode", choices=["plan", "build"], default="plan")
     commands.add_parser("doctor", help="run existing diagnostics (may contact configured services)")
     commands.add_parser("canary", help="run offline delivery checks")
+    inventory = commands.add_parser("legacy-inventory", help="read explicitly selected legacy launch/job files; never migrate them")
+    inventory.add_argument("--path", action="append", required=True, help="explicit file or bounded launch/job directory")
+    inventory.add_argument("--output", help="create a new private report; never overwrite an existing file")
+    verify = commands.add_parser("legacy-verify", help="re-read declared inventory sources; never authorize removal")
+    verify.add_argument("report")
+    add_job_commands(commands)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    validate_job_args(parser, args)
+    if args.command in {"legacy-inventory", "legacy-verify"}:
+        import json
+        from src.cli_migration import inventory, verify_report, write_report
+
+        try:
+            if args.command == "legacy-verify":
+                report = verify_report(args.report)
+                code = 2 if not report["complete_for_declared_inputs"] else 0 if report["unchanged"] else 1
+            else:
+                report = inventory(args.path)
+                code = 0 if report["complete_for_declared_inputs"] else 2
+                if args.output:
+                    write_report(args.output, report)
+                    report = {key: report[key] for key in ("schema_version", "review_digest", "legacy_references", "manual_reviews", "complete_for_declared_inputs", "retirement_authorized", "runtime_migration_verified")}
+            print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+            return code
+        except (OSError, ValueError, TypeError, RecursionError):
+            print(json.dumps({"schema_version": 1, "error": "inventory_or_report_unavailable", "retirement_authorized": False, "runtime_migration_verified": False}))
+            return 2
     prepare_runtime()
+    if args.command in JOB_COMMANDS:
+        return run_job_command(args)
     if args.command == "server":
         run_server(args.host, args.port, im=args.im)
         return 0

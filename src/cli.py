@@ -6,7 +6,6 @@ import asyncio
 import sys
 import textwrap
 from pathlib import Path
-from src.utils.state_dir import state_dir
 
 from src.runtime_bootstrap import resolve_log_level
 # Temporary public wrappers share implementations with the internal service entry.
@@ -29,15 +28,15 @@ def _setup_logging() -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="VortoOne · 多 Agent 协作开发框架",
+        description="VortoOne 旧命令兼容入口（迁移期间保留；日常使用请打开 Desktop）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
-            常用示例:
-              %(prog)s agent "列出 src 下有哪些模块"         headless 跑主 agent（仿 claude -p；可管道/脚本化，需 key）
-              %(prog)s agent -b "实现阶乘函数及其单测"       build 模式：主 agent 用隔离 dev 流水线实现（取代已退役的 run）
-              %(prog)s server --port 8080                 启动 Web 控制台
-
-            每个命令都有自己的帮助，例如:  %(prog)s agent -h
+            迁移提示：
+              日常对话与任务请使用 Desktop；本入口暂为旧服务和作业保持兼容。
+              后台运维使用 vortoone-runtime；先盘点并核对旧依赖，再明确迁移。
+              vortoone-runtime legacy-inventory --path <配置文件或目录> --output <新报告>
+              vortoone-runtime legacy-verify <报告>
+              预览和摘要不代表已迁移，也不授权删除兼容入口。
         """),
     )
     sub = parser.add_subparsers(dest="command", metavar="<命令>",
@@ -117,46 +116,8 @@ def main():
     p = sub.add_parser("im-pair", help="Telegram 私聊一次性配对（输出短时配对码，不需预知用户 ID）")
     p.add_argument("channel", choices=["telegram"])
 
-    p = sub.add_parser("cron", help="定时作业（.vortoone/cron.yaml）：list 看表 / run <name> 手动触发一次")
-    p.add_argument("action", choices=["list", "run"], help="list 列出作业 / run 手动跑一个")
-    p.add_argument("name", nargs="?", help="run 时的作业名")
-
-    p = sub.add_parser("collect", help="信号采集：抓 HN/GitHub/RSS/V2EX，落一条 signals 产出物"
-                                      "（确定性、零 LLM，给 cron 的 command: 档用）")
-    p.add_argument("-q", "--quiet", action="store_true", help="只报结果，不列条目")
-
-    p = sub.add_parser("stats", help="渠道数据查询：把已登记的发布链接查一遍，落一条 channel_stats")
-    p.add_argument("-q", "--quiet", action="store_true", help="只报结果，不列条目")
-
-    p = sub.add_parser("digest", help="把最新一份 signals 渲染成早报（零 LLM，给 cron 的 command: 档用）")
-    p.add_argument("-n", "--limit", type=int, default=12, help="最多列几条（默认 12）")
-
-    p = sub.add_parser("pipeline", help="作业流水线（.vortoone/pipelines/*.yaml）：非代码流程的工序 + 人批闸门")
-    p.add_argument("action", choices=["list", "show", "start", "advance", "review", "tick"],
-                   help="list 看全部 / show <run> 看细节 / start <名字> 开一轮 / "
-                        "advance <run> 推一道工序 / review <run> 给人批回执 / "
-                        "tick 无人值守扫一遍（给 cron 用，状态有变化才通报）")
-    p.add_argument("name", nargs="?", default="",
-                   help="run id（show/advance/review）、流水线名（start，或 tick 时只扫这一条）")
-    p.add_argument("--approve", dest="verdict", action="store_const", const="approve",
-                   help="review：放行，下次 advance 继续")
-    p.add_argument("--reject", dest="verdict", action="store_const", const="reject",
-                   help="review：驳回重做（意见落成产出物进血缘，旧版不删）")
-    p.add_argument("--defer", dest="verdict", action="store_const", const="defer",
-                   help="review：挂起——不推进也不失败")
-    p.add_argument("-m", "--comment", default="", help="人批意见（驳回时会进血缘）")
-    p.add_argument("--review-token", default="", help="show 显示的产出版本凭据，review 时必须提供")
-    p.add_argument("--rollback-to", default="",
-                   help="驳回时退回哪道工序（默认退回当前这道）；退回点由你指定，不让模型猜")
-    p.add_argument("--max-stages", type=int, default=1,
-                   help="一次最多推几道工序（默认 1——每道都是一次真 LLM 回合）")
-    p.add_argument("--yes", action="store_true",
-                   help="自动批准允许的类别；outbound 工序仍需主人确认，非交互终端拒绝外发")
-    p.add_argument("--if-idle", action="store_true",
-                   help="start 时：已有未完成的运行就不开新的（定时开轮必备，防堆积）")
-
-    p = sub.add_parser("heartbeat", help="心跳值班一次（读 .vortoone/HEARTBEAT.md + 领 BACKLOG.md）")
-    p.add_argument("action", choices=["run"], help="run：立刻值班一次（隔离会话、便宜模型）")
+    from src.runtime_jobs import add_job_commands
+    add_job_commands(sub)
 
     sub.add_parser("doctor", help="一键自检：git/凭证/中转站/serve/权限文件/gh/IM——常驻化后'用不了'大多是管道问题")
 
@@ -401,81 +362,17 @@ async def run_im_pair(channel: str) -> int:
     return 0
 
 
-async def run_cron(action: str, name=None):
-    """cron 子命令：list 列出作业 / run <name> 手动触发一次（隔离会话真跑，进度到 stderr）。"""
-    from src.scheduling import cron as _cron
-    cwd = str(Path.cwd())
-    if action == "list":
-        jobs = _cron.load_jobs(cwd)
-        if not jobs:
-            print("（无 cron 作业；在 .vortoone/cron.yaml 里定义 jobs）")
-            return
-        state = _cron.CronState(cwd)
-        for j in jobs:
-            last = state.last_run(j.name)
-            flag = "" if j.enabled else "（禁用）"
-            print(f"· {j.name}{flag}  [{j.schedule.raw}]  announce={j.announce}  "
-                  f"上次={last.isoformat(timespec='minutes') if last else '从未'}")
-        return
-    # action == "run"
-    if not name:
-        print("用法：vortocode cron run <name>", file=sys.stderr)
-        sys.exit(2)
-    if not any(j.name == name for j in _cron.load_jobs(cwd)):
-        print(f"✗ 找不到 cron 作业 {name}（vortocode cron list 看有哪些）", file=sys.stderr)
-        sys.exit(2)
-    print(f"⏰ 手动触发 cron [{name}]（隔离会话）…", file=sys.stderr)
-    result = await _cron.run_job_by_name(cwd, name)
-    print((result or "（无输出）").strip())
+from src.runtime_jobs import run_cron as run_cron
 
 
 def make_background_development_worker(root):
-    from src.agents.main_agent import build_dev_tools
-    from src.agents.dev_plan import load_plan
-    from src.workflow.tasks.development_worker import execute_development
-
-    async def worker(task, on_progress):
-        return await execute_development(root, task, on_progress,
-                                         build_tools=build_dev_tools, load_plan=load_plan)
-    return worker
+    from src.runtime_jobs import make_background_development_worker as make_worker
+    return make_worker(root)
 
 
 async def run_heartbeat_cli():
-    """heartbeat run：立刻值班一次（隔离会话、便宜模型）。领 backlog 时 submit 并**等它真跑完**。
-
-    这是一次性命令：若领了 backlog 活就 submit 到本地 runner，然后 **drain（await）** 那个任务——
-    否则 asyncio.run 退出时 pending 任务会被取消，backlog 却已被标 [~]（领走了没干完，误导，#129 评审）。
-    """
-    from src.scheduling import heartbeat as _hb
-    from src.gateway.runtime import RuntimeServices
-    from src.gateway.process_lease import ProcessLease
-    from src.gateway.workspace_scope import current_workspace_scope
-    cwd = str(Path.cwd())
-    if current_workspace_scope() != "project":
-        raise RuntimeError("Autonomous scheduling requires a Project workspace")
-    with ProcessLease(state_dir(cwd) / "runtime.lock"):
-        worker = make_background_development_worker(cwd)
-        runner = RuntimeServices(cwd, development_worker=worker).runner
-        try:
-            submitted: list = []
-
-            async def _submit(item):
-                t = await runner.submit(item, kind="dev")
-                submitted.append(t.id)                 # 记下来，函数返回前 drain，别让进程退出把它取消
-
-            async def _notify(text):
-                print(text)
-
-            print("🫀 心跳值班一次…", file=sys.stderr)
-            res = await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify)
-            for tid in submitted:                      # 等领到的活真正跑完（否则 backlog 标了 [~] 却没干完）
-                print(f"⏳ 等后台任务 {tid} 跑完…", file=sys.stderr)
-                await runner.join(tid)
-                done = runner.get(tid)
-                print(f"[task {tid}] {done.status if done else '?'}", file=sys.stderr)
-            print(f"[heartbeat] action={res['action']}", file=sys.stderr)
-        finally:
-            await runner.shutdown()
+    from src.runtime_jobs import run_heartbeat_cli as run_heartbeat
+    return await run_heartbeat(worker_factory=make_background_development_worker)
 
 
 def _read_prompt_arg(raw):

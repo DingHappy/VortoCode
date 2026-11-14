@@ -22,7 +22,8 @@ def test_no_command_prints_overview_and_exits_zero(monkeypatch, capsys):
     assert "可用命令" in out
     assert "agent" in out and "analyze" in out             # 仍支持主 Agent 和任务分析
     assert "self-" not in out
-    assert "常用示例" in out                                  # 有示例
+    assert "迁移提示" in out
+    assert "legacy-inventory" in out and "legacy-verify" in out
 
 
 @pytest.mark.parametrize("command", ["self-analyze", "self-improve", "self-fix"])

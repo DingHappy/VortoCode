@@ -6,7 +6,7 @@
 
 **一个替你盯着事情的个人 AI Agent：它会记住、会跟进，还会带一支团队。**
 
-VortoOne 原名 VortoCode（2026-11-08 改名，见 ADR-018）；命令行、包名和部分内部标识正在逐步改名。
+VortoOne 原名 VortoCode（2026-11-08 改名，见 ADR-018）。日常入口是 Desktop 与手机；旧命令只在服务和作业迁移期间保留兼容。
 
 它记得你在忙什么，你离开电脑后它还在跟进。遇到大任务，它会组一个小组，分派给不同的 Agent 去做。
 你只和它一个说话。看它们干活。关键的事，你来拍板。
@@ -171,17 +171,19 @@ flowchart LR
 
 完整步骤见 [只用 Desktop 上手](docs/GETTING_STARTED_DESKTOP.md)。
 
-### 在常驻主机上运行
+### 运维：在常驻主机上运行
 
 ```bash
 git clone https://github.com/DingHappy/VortoCode.git && cd VortoOne
 pip install -e '.[llm]'      # 需要 Python 3.10+；全部功能用 '.[all]'
 cp .env.example .env         # 填模型服务地址、Key 和模型名
-vc doctor                    # 一屏自检：凭据、模型服务、权限、沙箱……
-vc server                    # 默认只监听 127.0.0.1:8080
+vortoone-runtime doctor       # 会检查已配置的服务；不是离线检查
+vortoone-runtime server       # 默认只监听 127.0.0.1:8080
 ```
 
 > 对外暴露之前**必须**设置 `VORTOONE_API_TOKEN`，设置后所有 `/api/*` 和 `/ws` 请求都要鉴权。全部配置见 [环境变量](docs/ENVIRONMENT.md) 和 [模型配置](docs/MODEL_CONFIGURATION.md)。
+
+旧服务和作业迁移前请先做[兼容入口依赖盘点](docs/CLI_RETIREMENT.md)。预览不会改配置、重启服务或运行作业；实际迁移和撤除旧入口需要分别核对。Codex、Claude、OpenCode 等第三方执行器继续保留。
 
 ## 参与开发
 

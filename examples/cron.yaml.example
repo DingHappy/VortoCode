@@ -1,9 +1,9 @@
 # VortoOne cron 作业表示例——放到目标仓库的 `.vortoone/cron.yaml` 才生效。
 #
 # 调度循环默认**关**：仅当以 opt-in 方式起服务才跑（不擅自跑自主 LLM 作业）——
-#   VORTOONE_CRON=1 vortocode server      # 起 cron
-#   VORTOONE_HEARTBEAT=1 vortocode server # 起 heartbeat
-# 也可手动触发单个作业（不起常驻）：vortocode cron run <name>
+#   VORTOONE_CRON=1 vortoone-runtime server      # 起 cron
+#   VORTOONE_HEARTBEAT=1 vortoone-runtime server # 起 heartbeat
+# 也可手动触发单个作业（不起常驻）：vortoone-runtime cron run <name>
 #
 # schedule 支持三种：
 #   at HH:MM          每天该时刻一次（如 at 02:30）
@@ -39,7 +39,7 @@ jobs:
   # signals 里已经带着分数/增量/标题/链接，**按分数挑是确定性的**——更准、零 token、编不了。
   - name: daily_digest
     schedule: "at 09:00"
-    command: "vc digest"
+    command: "vortoone-runtime digest"
     announce: im              # 命令输出即早报，cron 推给你
     enabled: false
 
@@ -58,7 +58,7 @@ jobs:
   # 那会让台账里全是红的、人反而不看了；失败的源名会进产出物，scout 据此知道自己看到的是一部分。
   - name: signal_collect
     schedule: "0 8,20 * * *"   # 早晚各一次
-    command: "vc collect --quiet"
+    command: "vortoone-runtime collect --quiet"
     announce: silent
     enabled: false             # 默认关，确认要采再改 true
 
@@ -66,7 +66,7 @@ jobs:
   # 注意力，而 signals 的跨天去重会让第二轮拿到的素材更差。有活着的就静静走开。
   - name: pipeline_start
     schedule: "10 8,20 * * *"  # 采集之后 10 分钟——scout 读的是最新那条 signals
-    command: "vc pipeline start content-ops --if-idle"
+    command: "vortoone-runtime pipeline start content-ops --if-idle"
     announce: silent
     enabled: false
 
@@ -75,7 +75,7 @@ jobs:
   # measure 据此知道"这条没数据"而不是"这条表现差"——0 次阅读和查不到是两件事。
   - name: channel_stats
     schedule: "5 8,20 * * *"   # 采集之后、开轮之前
-    command: "vc stats --quiet"
+    command: "vortoone-runtime stats --quiet"
     announce: silent
     enabled: false
 
@@ -87,6 +87,6 @@ jobs:
   - name: pipeline_tick
     schedule: "20 8,20 * * *"  # 开轮之后 10 分钟。不用 every 2h：状态变化才通报，
                                # 空转一天十几次只是白跑；真要更勤快改成 every 2h 也行。
-    command: "vc pipeline tick"
+    command: "vortoone-runtime pipeline tick"
     announce: silent           # 通报由 tick 自己按状态变化发，别再叠一层"作业跑完了"
     enabled: false             # 默认关，配好 .vortoone/pipelines/*.yaml 再改 true
