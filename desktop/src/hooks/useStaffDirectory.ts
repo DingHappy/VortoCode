@@ -17,7 +17,7 @@ export function useStaffDirectory(clientRef: RefObject<GatewayClient | null>, sc
         if (active && clientRef.current === client) setState({ client, scope, value, error: "" });
       } catch {
         if (active && clientRef.current === client) setState(previous => ({ client, scope,
-          value: previous.client === client && previous.scope === scope ? previous.value : null, error: "部门名录暂不可读取" }));
+          value: previous.client === client && previous.scope === scope ? previous.value : null, error: "角色与部门名录暂不可读取" }));
       }
     };
     const stop = startPolling(read, { intervalMs: 30000, hiddenIntervalMs: 120000, immediate: true, visibility: document });

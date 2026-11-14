@@ -1,15 +1,16 @@
-/** Real presentation components, synthetic records. Never accesses a runtime or credentials. */
+/** Real components, synthetic owner records and transport. No runtime, model or private data. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { StaffWorkspace, AssistantIdentityLink } from "../src/components/StaffWorkspace";
-import { StaffView } from "../src/components/settings/StaffPane";
+import { ArrowUp } from "lucide-react";
+import { RoleNavigation } from "../src/components/RoleNavigation";
+import { RoleProfileDialog, type RoleProfileSection } from "../src/components/RoleProfile";
+import { NewRoleDialog } from "../src/components/NewRoleDialog";
+import { WorkspaceBar } from "../src/components/WorkspaceBar";
+import { RoleGrants } from "../src/components/settings/StaffPane";
+import { staffCharacter } from "../src/components/RoleAvatar";
 import { ConversationHome } from "../src/components/ConversationHome";
-import type { StaffRole, StaffSnapshot } from "../src/lib/staff";
-import { IconButton } from "../src/components/ui";
-import { ArrowUp, Settings, PanelLeftClose } from "lucide-react";
-import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, PAGE_PANEL, type AssistantPage, type AssistantTab } from "../src/components/AssistantMode";
+import { AssistantPanel, AssistantSidebar, AssistantSchedule, AssistantAudit, PAGE_PANEL, type AssistantPage, type AssistantTab } from "../src/components/AssistantMode";
 import { AssistantActivity } from "../src/components/AssistantActivity";
-import { AssistantGoals } from "../src/components/AssistantGoals";
 import { ArtifactCenter } from "../src/components/ArtifactCenter";
 import { CustomizePage } from "../src/components/CustomizePage";
 import { ChatHistory } from "../src/components/ChatHistory";
@@ -17,10 +18,13 @@ import { ComposerCommands } from "../src/components/ComposerCommands";
 import { ConversationHeader } from "../src/components/ConversationHeader";
 import { PersonalSpacePicker } from "../src/components/PersonalSpacePicker";
 import { SidebarSearch } from "../src/components/SidebarChrome";
+import { SidebarFooter } from "../src/components/SidebarFooter";
+import { Button, PreferenceGroup, PreferenceRow } from "../src/components/ui";
 import { useComposerDraft } from "../src/hooks/useComposerDraft";
 import { desktopContext } from "../src/lib/desktopContext";
-import type { PersonalGoalClient } from "../src/lib/personalGoals";
-import type { ConversationMessage, DesktopProjectProfile, TurnActivity } from "../src/types";
+import { settingsTargetLease, type SettingsTargetLease } from "../src/lib/settingsTarget";
+import type { ConversationMessage, DesktopProjectProfile } from "../src/types";
+import type { StaffRole, StaffSnapshot, StaffMember } from "../src/lib/staff";
 import "../src/styles/tokens.css";
 import "../src/styles/components.css";
 import "../src/App.css";
@@ -33,20 +37,10 @@ const profiles: DesktopProjectProfile[] = [
   { id: "resident", name: "个人助手", kind: "remote", repoRoot: "@assistant", baseUrl: "https://assistant.example", lastOpenedAt: 0 },
 ];
 const messages: ConversationMessage[] = [
-  { id: "question", role: "user", rid: "demo", text: "把本周的资料整理成一份简短摘要。" },
-  { id: "answer", role: "assistant", rid: "demo", text: "资料已按主题整理。\n\n- **项目进展**：界面与使用流程的资料已经归在一起。\n- **待你决定**：先看本机运行，还是连接常驻电脑。\n- **下一步**：可从资料库回查完整记录。\n\n这是一段合成示例，用于检查中文排版；没有读取你的资料，也没有执行任务。" },
+  { id: "user", role: "user", rid: "demo", text: "把本周的资料整理成一份简短摘要。" },
+  { id: "assistant", role: "assistant", rid: "demo", text: "资料已按主题整理。\n\n- **项目进展**：界面与使用流程的资料已经归在一起。\n- **待你决定**：先看本机运行，还是连接常驻电脑。\n- **下一步**：可从资料库回查完整记录。\n\n这是一段合成示例，没有读取你的资料或执行任务。" },
 ];
-const activities = new Map<string, TurnActivity[]>([["demo", [{ id: "read", rid: "demo", kind: "tool", status: "completed", label: "读取示例资料", tool: "read_file", result: "合成内容" }]]]);
 const date = "2026-11-14T09:00:00Z";
-const artifacts = [{ id: "brief", title: "本周资料摘要 · 合成示例", kind: "markdown", version: 2, bytes: 2048, created_at: date, updated_at: date, url: "" }];
-const goalClient: PersonalGoalClient = {
-  listPersonalGoals: async () => [],
-  createPersonalGoal: async () => { throw Error("此界面夹具不创建真实目标"); },
-  updatePersonalGoal: async () => { throw Error("此界面夹具不更新目标"); },
-  confirmPersonalGoal: async () => { throw Error("此界面夹具不批准目标"); },
-  configurePersonalGoalFollowUp: async () => { throw Error("此界面夹具不创建提醒"); },
-  acknowledgePersonalGoalFollowUp: async () => { throw Error("此界面夹具不确认提醒"); },
-};
 const roles: StaffRole[] = [
   { id: "public-researcher", title: "资料专员", brief: "核对公开来源，整理资料摘要。", enabled: true, revision: 1, builtin: true,
     grants: { operations: ["read"], tools: ["web_search", "web_fetch"], sees: [], web: true, project: false }, engine: ["vortocode"], max_steps: 12, timeout_seconds: 600 },
@@ -56,78 +50,106 @@ const roles: StaffRole[] = [
     grants: { operations: ["read", "write"], tools: ["read_file", "edit_file"], sees: [], web: false, project: true }, engine: ["opencode"], max_steps: 40, timeout_seconds: 1800,
     project: "示例项目", project_binding: { name: "示例项目", repo_root: "/example/project", port: 8080 } },
 ];
-const roster: StaffSnapshot = { roles, proposals: [], members: roles.map((role, index) => ({ id: `demo-${index}`, name: role.title,
+const roster: StaffSnapshot = { roles, proposals: [], members: roles.map((role, index) => ({ id: `demo-${index}`, name: ({ "public-researcher": "研究助手", "calendar-reader": "日程助手", developer: "开发助手" } as Record<string, string>)[role.id] || role.title,
   role: role.id, engine: role.engine[0], model: "示例模型", revision: 1, status: "active", busy: 0, recent_tasks: [] })) };
 function Fixture() {
-  const [staff, setStaff] = useState(new URLSearchParams(location.search).get("screen") === "staff");
-  const [rosterState, setRosterState] = useState("ready");
-
-  const [host, setHost] = useState(profiles[1]), [sid, setSid] = useState("main"), [generation, setGeneration] = useState(1);
+  const params = new URLSearchParams(location.search);
+  const [host, setHost] = useState(profiles[0]), [sid, setSid] = useState("main"), [generation, setGeneration] = useState(1);
+  const [theme, setTheme] = useState(params.get("theme") || "light"), [collapsed, setCollapsed] = useState(false);
+  const [search, setSearch] = useState(params.has("search")), [query, setQuery] = useState(""), [rosterState, setRosterState] = useState("ready");
   const [page, setPage] = useState<AssistantPage | null>(null), [tab, setTab] = useState<AssistantTab>("feed"), [panel, setPanel] = useState(false);
-  const [theme, setTheme] = useState(new URLSearchParams(location.search).get("theme") === "light" ? "light" : "dark");
-  const [search, setSearch] = useState(false), [query, setQuery] = useState(""), [notice, setNotice] = useState("");
-  const [selected, setSelected] = useState(""), [version, setVersion] = useState(2), [collapsed, setCollapsed] = useState(false);
-  const [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
-  const trigger = useRef<HTMLElement | null>(null), sequence = useRef(0);
-  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  const [notice, setNotice] = useState(""), [localMessages, setLocalMessages] = useState<ConversationMessage[]>([]);
   const context = desktopContext({ registrationId: host.id, assistantId: host.id, scope: "general", repoRoot: "", sid,
     baseUrl: host.baseUrl, runtimeId: "", connection: "connected", profiles, localResidentId: "mac",
     source: { registrationId: host.id, baseUrl: host.baseUrl, sid, generation, epoch: 1 } });
+  const client = useMemo(() => ({ connectionEpoch: generation, desktopSource: { registrationId: host.id, baseUrl: host.baseUrl, sid, generation, epoch: 1 } }), [host, sid, generation]);
+  const source = useRef({ context, client }); source.current = { context, client };
   const composer = useComposerDraft(context, setNotice);
+  const [selection, setSelection] = useState<{ member?: StaffMember; role?: StaffRole; lease: SettingsTargetLease<typeof client> } | null>(null);
+  const [add, setAdd] = useState<SettingsTargetLease<typeof client> | null>(null);
+  const [artifact, setArtifact] = useState("");
   const sources = useMemo(() => (["turns", "dispatches", "codexActions", "notices"] as const).map(name => ({ name, status: "current" as const, checkedAt: Date.now() })), []);
+  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  const openRole = (memberId?: string) => {
+    const member = roster.members.find(member => member.id === memberId);
+    setSelection({ member, role: roles.find(role => role.id === member?.role), lease: settingsTargetLease(() => source.current) });
+  };
   const openPage = (next: AssistantPage) => {
-    trigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setPage(next); setPanel(false); setStaff(false);
+    if (next === "identity") { openRole(); return; }
+    setPage(next); setPanel(false);
     if (next !== "library" && next !== "customize") setTab(PAGE_PANEL[next]);
   };
-  const closePage = () => { setPage(null); requestAnimationFrame(() => trigger.current?.focus()); };
+  const current = Boolean(selection?.lease.current()) && (!selection?.member || rosterState === "ready");
+  const sections: RoleProfileSection[] = selection ? [
+    { id: "settings", label: "设置", content: <><PreferenceGroup title="角色资料">
+      <PreferenceRow title="名字">{selection.member?.name || "VortoOne"}</PreferenceRow>
+      <PreferenceRow title="权限方案">{selection.role?.title || "总助手"}</PreferenceRow>
+      <PreferenceRow title="模型">{selection.member?.model || "示例模型"}</PreferenceRow>
+      <PreferenceRow title="状态">{current ? "已核对" : "待核对"}</PreferenceRow></PreferenceGroup>
+      <Button onClick={() => setNotice("完整应用中使用原有角色管理与主人批准流程")}>角色与权限</Button>
+      {params.has("stress") && <Button onClick={() => setGeneration(value => value + 1)}>模拟来源变化</Button>}</> },
+    { id: "access", label: "工具与权限", content: selection.role ? <RoleGrants role={selection.role} />
+      : <PreferenceGroup title="操作确认"><PreferenceRow title="工具与连接" description="沿用会话能力与原确认规则">示例，不授予权限</PreferenceRow></PreferenceGroup> },
+    selection.member ? { id: "activity", label: "工作记录", content: <p>还没有工作记录。</p> }
+      : { id: "memory", label: "记忆", content: <p>还没有记忆。这份界面验收没有读取个人资料。</p> },
+  ] : [];
   const send = () => {
     if (!composer.prompt.trim()) return;
-    setLocalMessages(items => [...items, { id: `sent-${++sequence.current}`, role: "user", text: composer.prompt },
-      { id: `receipt-${sequence.current}`, role: "system", text: "仅展示输入效果，没有调用模型或发送到服务。" }]);
-    composer.setPromptState("");
+    setLocalMessages(items => [...items, { id: `demo-${items.length}`, role: "user", text: composer.prompt }]);
+    composer.setPromptState(""); setNotice("仅展示输入效果，没有调用模型或发送到服务。");
   };
   const content = tab === "schedule" ? <AssistantSchedule connected items={[
-    { id: "brief", kind: "report", title: "每日早报", schedule: "每天 09:00", detail: "示例排期；此处不会执行", enabled: true },
-    { id: "weekly", kind: "cron", title: "本周资料跟踪", schedule: "每周五 17:00", detail: "合成例行工作", enabled: false },
-  ]} /> : tab === "audit" ? <AssistantAudit entries={[{ id: "audit-demo", category: "decision", operation: "外发示例草稿", decision: "denied", ts: date }]} />
-    : tab === "identity" ? <AssistantIdentity profile={{ name: "小 V", soul: "简洁、清楚，有依据地汇报。", about_you: "个人空间的合成示例" }} memories={[]} onEdit={() => setNotice("在完整应用中打开原有资料编辑器")} onDeleteMemory={() => {}} />
-    : tab === "goals" ? <AssistantGoals client={goalClient} connected />
-    : <AssistantActivity connected items={[{ id: "record", title: "本周资料摘要 · 合成示例", summary: "仅用于界面验收，没有实际运行任务", status: "done", sourceLabel: "示例记录", at: date }]} sources={sources} onOpen={() => setNotice("示例记录，不对应真实任务")} />;
-  return <div className="app-shell qa-redesign-shell">
-    <header className="qa-redesign-controls"><span>真实组件 · 合成界面验收 · 不连接服务</span>
-      <button onClick={() => { setSid("empty"); setStaff(false); setPage(null); setLocalMessages([]); }}>空白对话</button>
+    { id: "daily", kind: "report", title: "每日早报", schedule: "每天 09:00", detail: "合成排期，不执行", enabled: true }]} />
+    : tab === "audit" ? <AssistantAudit entries={[]} />
+    : <AssistantActivity connected items={[]} sources={sources} onOpen={() => {}} />;
+  return <div className="app-shell vc-product-shell qa-reference-shell">
+    <div className="qa-role-controls"><header className="qa-redesign-controls" hidden={params.has("capture")}><span>正式组件 · 合成资料 · 不连接服务</span>
+      <button onClick={() => setTheme(theme === "light" ? "dark" : "light")}>切换主题</button>
+      <button onClick={() => { setSid("empty"); setPage(null); }}>空白对话</button>
       <select aria-label="名录状态" value={rosterState} onChange={event => setRosterState(event.target.value)}><option value="ready">已核对名录</option><option value="empty">空名录</option><option value="error">读取失败</option><option value="stale">旧名录</option></select>
-      <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>切换主题</button>
-      {collapsed && <button onClick={() => setCollapsed(false)}>展开侧栏</button>}</header>
-    <div className={`workbench vc-mode-assistant ${collapsed ? "vc-sidebar-collapsed" : ""} ${!page && panel ? "inspector-open" : "inspector-closed"}`}>
-      <aside className="sidebar vc-sidebar"><div className="vc-personal-window-drag" data-tauri-drag-region="deep" aria-hidden="true" />
+      <a href="/qa/settings-redesign.html?presentation=page&section=account&theme=light">全局设置</a>
+      <a href="/qa/runtime-onboarding.html?theme=light">安装引导</a></header></div>
+    <WorkspaceBar collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} onSearch={() => { setCollapsed(false); setSearch(true); }} />
+    <div className={`workbench vc-mode-assistant ${collapsed ? "vc-sidebar-collapsed" : ""} ${panel && !page ? "inspector-open" : "inspector-closed"}`}>
+      <aside id="conversation-sidebar" className="sidebar vc-sidebar">
         <PersonalSpacePicker context={context} profiles={profiles} localResidentId="mac" connection="connected" switching={false}
-          collapseControl={<IconButton label="收起侧栏" onClick={() => setCollapsed(true)} icon={<PanelLeftClose />} />}
-          onSelect={async profile => { setHost(profile); setSid("main"); setGeneration(value => value + 1); setPage(null); setLocalMessages([]); }} onManage={() => { location.href = "/qa/settings-redesign.html?section=computer"; }} />
+          onSelect={async next => { setHost(next); setGeneration(value => value + 1); setSid("main"); }} onManage={() => { location.href = "/qa/settings-redesign.html?presentation=page&section=computer"; }} />
         <AssistantSidebar mainChat={{ sid: "main" }} current={sid} sideChats={composer.draftChats.filter(chat => chat.sid !== "main")} page={page}
-          channels={[{ sid: "channel:daily", title: "日常", updated: Date.parse(date) / 1000, messages: 0, channel: { version: 1, topic: "日常讨论" } }, { sid: "channel:research", title: "资料研究", updated: Date.parse(date) / 1000, messages: 0, channel: { version: 1, topic: "公开资料" } }]}
-          onNewChannel={() => setNotice("此处仅展示角色界面；频道使用正式版既有创建流程")} onPage={openPage} staffOpen={staff} onManageStaff={() => { setStaff(true); setPage(null); setPanel(false); }}
-          search={<SidebarSearch open={search} query={query} placeholder="搜索聊天" onOpenChange={setSearch} onQuery={setQuery} />} query={query}
-          onNewSideChat={() => { setSid(`draft-${++sequence.current}`); setPage(null); setLocalMessages([]); }} onSelect={id => { setStaff(false); setSid(id); setPage(null); setPanel(false); setLocalMessages([]); }} />
-        <AssistantIdentityLink name="VortoOne" onOpen={() => openPage("identity")} /><footer className="qa-redesign-footer"><a href="/qa/settings-redesign.html?section=appearance"><Settings aria-hidden="true" />设置</a></footer>
+          onPage={openPage} onSelect={next => { setSid(next); setPage(null); }} onNewSideChat={() => { setSid(`side-${Date.now()}`); setPage(null); }}
+          search={search ? <SidebarSearch open={search} query={query} placeholder="搜索聊天" onOpenChange={setSearch} onQuery={setQuery} /> : undefined} query={query}
+          channels={[{ sid: "channel-daily", title: "日常", updated: Date.parse(date) / 1000, messages: 0, channel: { version: 1, topic: "日常事项" } },
+            { sid: "channel-research", title: "资料研究", updated: Date.parse(date) / 1000, messages: 0, channel: { version: 1, topic: "公开资料" } }]}
+          onNewChannel={() => setNotice("频道沿用正式版原创建流程，此夹具不保存记录")}
+          roles={<RoleNavigation name="VortoOne" directory={rosterState === "empty" ? { ...roster, members: [] } : roster}
+            connected={context.ready && rosterState !== "stale"} error={rosterState === "error" ? "合成读取失败" : ""} onRefresh={() => setRosterState("ready")}
+            onAssistant={() => openRole()} onMember={openRole} onAdd={() => setAdd(settingsTargetLease(() => source.current))} />} />
+        <SidebarFooter identity={{ initial: "", name: "我的账号", detail: "个人空间", title: "设置与账号" }} update={null}
+          resident={{ state: "online", name: host.name, onClick: () => openPage("tasks") }}
+          onOpenSettings={target => { location.href = `/qa/settings-redesign.html?presentation=page&theme=${theme}&section=${target?.section || "account"}`; }} />
       </aside>
-      {staff ? <StaffWorkspace onBack={() => setStaff(false)} onSettings={() => setNotice("完整应用中打开电脑与连接设置")}><StaffView
-        state={{ value: rosterState === "empty" ? { ...roster, members: [] } : roster, busy: false, error: rosterState === "error" ? "合成读取失败" : "", checkedAt: rosterState === "stale" ? 0 : Date.now() }}
-        onRefresh={() => setRosterState("ready")} onStatus={() => setNotice("仅供界面验收，没有修改真实专员")} onDecide={() => setNotice("仅供界面验收，没有批准真实登记")} /></StaffWorkspace>
-        : page === "library" ? <ArtifactCenter artifacts={artifacts} loading={false} error="" selectedId={selected} version={version} versions={{ id: "brief", current: 2, versions: [{ v: 1, ts: date, bytes: 1024 }, { v: 2, ts: date, bytes: 2048 }] }}
-        previewLoading={false} previewHtml={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'"><h1>合成资料摘要 v${version}</h1><p>没有读取真实文件。</p>`} onRefresh={() => setNotice("合成资料已刷新")} onOpen={setSelected} onVersion={(_, next) => setVersion(next)} onOpenExternal={() => setNotice("此处不打开外部页面")} />
-        : page === "customize" ? <CustomizePage plugins={[]} checks={{}} busy="" onCheck={() => {}} onRemove={() => {}} onSave={async () => false} connectors={[]} onConnector={() => {}} skills={<p>合成环境没有登记技能。</p>} connected />
-        : page ? null : <section className={`conversation ${sid === "empty" && !localMessages.length ? "empty-state" : ""}`}>
-          <ConversationHeader title={sid === "main" ? "主要聊天" : "新的旁聊"} place={null} panelOpen={panel} panelId="qa-assistant-panel" waiting={0} plan={{ done: 0, total: 0 }} busy={false} onTogglePanel={() => setPanel(!panel)} onStop={() => {}} />
-          <div className="conversation-body"><div className="conversation-scroll">{sid === "empty" && !localMessages.length && <ConversationHome starting={false} showStarting={false} assistant now={new Date("2026-11-14T09:00:00")} />}<ChatHistory messages={[...(sid === "main" ? messages : []), ...localMessages]} activityGroups={activities} busy={false} activeTurnRid={null} assistant /></div></div>
-          <div className="composer-wrap"><div className="composer"><ComposerCommands prompt={composer.prompt} onPrompt={text => { composer.markComposerEdited(); composer.setPromptState(text); }} project={false} disabled={false} onSend={send} onAction={action => setNotice(`示例操作：${action}，没有调用服务`)} placeholder="交代一件事…">
+      {page === "library" ? <ArtifactCenter artifacts={[{ id: "sample", title: "本周资料摘要", kind: "markdown", version: 1, bytes: 512, created_at: date, updated_at: date, url: "" }]} loading={false} error="" selectedId={artifact} version={1} versions={null}
+        previewLoading={false} previewHtml="<h1>合成摘要</h1><p>没有读取真实资料。</p>" onRefresh={() => {}} onOpen={setArtifact} onVersion={() => {}} onOpenExternal={() => {}} />
+        : page === "customize" ? <CustomizePage plugins={[]} checks={{}} busy="" onCheck={() => {}} onRemove={() => {}} onSave={async () => false} connectors={[]} onConnector={() => {}} skills={<p>没有登记技能。</p>} connected />
+        : page ? <AssistantPanel name="VortoOne" connected host={{ kind: "resident", name: host.name }} tab={tab} onTab={setTab} onClose={() => setPage(null)} onAddResident={() => {}} onRetryResident={() => {}} presentation="page">{content}</AssistantPanel>
+        : <section className={`conversation ${sid === "empty" && !localMessages.length ? "empty-state" : ""}`}>
+          <ConversationHeader title={sid === "main" ? "主要聊天" : sid.startsWith("channel-") ? "频道" : "旁聊"} roleIdentity={{ name: "VortoOne", onOpen: () => openRole() }}
+            place={null} panelOpen={panel} waiting={0} plan={{ done: 0, total: 0 }} busy={false} onTogglePanel={() => setPanel(value => !value)} onStop={() => {}} />
+          <div className="conversation-body"><div className="conversation-scroll">
+            {sid === "empty" && !localMessages.length && <ConversationHome assistant starting={false} showStarting={false} now={new Date("2026-11-14T09:00:00")} />}
+            <ChatHistory messages={[...(sid === "main" ? messages : []), ...localMessages]} assistant activityGroups={new Map()} busy={false} activeTurnRid={null} />
+          </div></div>
+          <div className="composer-wrap"><div className="composer"><ComposerCommands prompt={composer.prompt} onPrompt={composer.setPromptState} project={false} disabled={false} onSend={send} onAction={() => {}} placeholder="交代一件事…">
             <div className="composer-footer"><span>示例模型 · 无请求</span><button className="composer-send" aria-label="发送" disabled={!composer.prompt.trim()} onClick={send}><ArrowUp aria-hidden="true" /></button></div>
-          </ComposerCommands></div><p role="status">{notice}</p></div>
+          </ComposerCommands></div><p role="status" className="qa-role-notice">{notice}</p></div>
         </section>}
-      {(page && page !== "library" && page !== "customize" || !page && panel) && <AssistantPanel id="qa-assistant-panel" presentation={page ? "page" : "panel"} name="小 V" connected host={{ kind: "resident", name: host.name }}
-        modelLabel="示例模型" onAddResident={() => {}} onRetryResident={() => {}} tab={tab} onTab={setTab} onClose={page ? closePage : () => setPanel(false)}>{content}</AssistantPanel>}
+      {!page && panel && <AssistantPanel name="VortoOne" connected host={{ kind: "resident", name: host.name }} tab={tab} onTab={setTab} onClose={() => setPanel(false)} onAddResident={() => {}} onRetryResident={() => {}}>{content}</AssistantPanel>}
     </div>
+    {selection && <RoleProfileDialog name={selection.member?.name || "VortoOne"} description={selection.role?.brief || "总助手 · 由你决定如何行动"}
+      character={selection.member ? staffCharacter(selection.role) : "general"} current={current} sections={sections} onClose={() => setSelection(null)} />}
+    {add && <NewRoleDialog roles={roles} current={add.current} onClose={() => setAdd(null)} onPrepare={draft => {
+      if (!add.current()) return;
+      composer.setPromptState(previous => previous.trim() ? `${previous}\n\n${draft}` : draft); setAdd(null); setPage(null); setNotice("已准备草稿，尚未发送或添加角色。");
+    }} />}
   </div>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

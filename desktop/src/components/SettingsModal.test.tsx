@@ -82,11 +82,19 @@ it("describes an exact local resident connection without offering temporary cont
   expect(markup).not.toContain(">停止本机引擎</button>");
   expect(markup).not.toContain(">重新加载本机引擎</button>");
 });
-it("opens the legacy abilities entry at permissions and exposes seven clear categories", () => {
+it("opens the legacy abilities entry on its original permissions tab in compact groups", () => {
   const markup = renderSettings({ initialSection: "abilities" });
-  expect(markup).toContain('id="settings-page-title">权限与自动化');
-  for (const label of ["账号与用量", "模型与执行", "电脑与连接", "工具与集成", "个性化", "高级与关于"]) expect(markup).toContain(label);
+  expect(markup).toContain('id="settings-page-title" tabindex="-1">权限与自动化');
+  for (const label of ["你的账号", "个人空间", "模型与执行", "连接与工具", "高级与关于"]) expect(markup).toContain(label);
   expect(markup).toContain("当前目标尚未连接");
+});
+it("embeds settings in the workspace with the same save action and target warning", () => {
+  const markup = renderSettings({ presentation: "page", initialSection: "model", llmRolesInput: { implement: "default:draft" } });
+  expect(markup).not.toContain("<dialog");
+  expect(markup).toContain('<section class="settings-modal settings-layout settings-redesign settings-workspace-page" aria-label="设置"');
+  expect(markup).toContain("有未保存的修改");
+  expect(markup.match(/<button[^>]*>保存模型配置<\/button>/)?.[0]).not.toContain("disabled");
+  expect(renderSettings({ presentation: "page", initialSection: "permissions" })).toContain("当前目标尚未连接");
 });
 it("shows a retryable read error without claiming an unknown profile is empty", () => {
   const markup = renderSettings({ initialSection: "model", llmProfile: null, llmProfileError: "读取失败", onReloadLlmProfile: noop });

@@ -1,10 +1,13 @@
 // 对话区标题栏：会话名、在哪台电脑上做（登记了常驻电脑时）、右侧面板开关或任务胶囊、停止按钮。只负责显示。
 import type { ReactNode, RefObject } from "react";
+import type { AssistantAvatar } from "../types";
+import { RoleAvatar } from "./RoleAvatar";
 import { Hash, Laptop, PanelRightClose, PanelRightOpen, Server, Square } from "lucide-react";
 import { HintButton } from "./ui";
 
-export function ConversationHeader({ title, channelTopic, place, panelOpen, panelLabel = "任务动态", panelId, panelButtonRef, waiting, waitingUncertain = false, plan, busy, taskPill, status, onTogglePanel, onStop }: {
+export function ConversationHeader({ title, roleIdentity, channelTopic, place, panelOpen, panelLabel = "任务动态", panelId, panelButtonRef, waiting, waitingUncertain = false, plan, busy, taskPill, status, onTogglePanel, onStop }: {
   title: string;
+  roleIdentity?: { name: string; avatar?: AssistantAvatar | null; onOpen: () => void };
   channelTopic?: string;
   /** 登记了常驻电脑、又在工作台项目里时才显示 */
   place: "resident" | "local" | null;
@@ -27,14 +30,16 @@ export function ConversationHeader({ title, channelTopic, place, panelOpen, pane
   return (
     // 窗口没有标题栏：顶栏的空白处用来拖动窗口
     <div className="conversation-header" data-tauri-drag-region="deep">
-      <div>
+      {roleIdentity ? <button type="button" className="vc-conversation-role" aria-haspopup="dialog" aria-label={`角色资料：${roleIdentity.name}`} onClick={roleIdentity.onOpen}>
+        <RoleAvatar character="general" avatar={roleIdentity.avatar} /><span><strong>{roleIdentity.name}</strong><small>{title}</small></span>
+      </button> : <div>
         <div className="conversation-channel-name">{channelTopic !== undefined && <Hash aria-label="频道" />}<strong title={title}>{title}</strong></div>
         {channelTopic && <span className="conversation-channel-topic" title={channelTopic}>{channelTopic}</span>}
         {place && (
           <span className={`conversation-place ${place}`}>
             {place === "resident" ? <><Server size={12} aria-hidden="true" />常驻电脑</> : <><Laptop size={12} aria-hidden="true" />本机</>}
           </span>)}
-      </div>
+      </div>}
       <div className="conversation-actions">
         {status}
         {taskPill ?? <HintButton

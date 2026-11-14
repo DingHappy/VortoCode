@@ -2393,3 +2393,11 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
 .vc-mode-assistant .vc-side-recent .vc-nav-item { height: var(--vc-control-h); }
 .vc-personal-window-drag { display: none; }
 :root[data-window="overlay"] .vc-mode-assistant .vc-personal-window-drag { display: block; height: var(--vc-control-h); flex: none; }
+
+.vc-conversation-role { display: flex; align-items: center; gap: var(--vc-space-3); border: 0; background: transparent; color: var(--vc-text); font-family: var(--vc-font-sans); padding: 0; text-align: left; cursor: pointer; }
+.vc-conversation-role > span:last-child { display: grid; gap: var(--vc-space-1); }
+.vc-conversation-role small { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.vc-conversation-role:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); border-radius: var(--vc-radius-control); }
+
+.vc-mode-assistant .vc-side-nav:empty { display: none; }
+.vc-mode-assistant .vc-workspace-navigation { padding-bottom: var(--vc-space-3); margin-bottom: var(--vc-space-2); }

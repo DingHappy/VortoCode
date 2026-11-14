@@ -124,19 +124,34 @@ public enum VCCopy {
         public static let remove = "删除频道"
     }
 
-    /// 角色家族与专员工作区
+    /// 角色家族形象
     public enum Characters {
         public static let general = "总助手"
         public static let research = "研究助手"
         public static let development = "开发助手"
         public static let calendar = "日程助手"
-        public static let family = "角色家族"
-        public static let familyHint = "形象帮助辨认分工，实际能力以你批准的岗位为准。"
-        public static let workspace = "专员"
-        public static let workspaceHint = "查看分工、登记状态与待你批准的提议。"
         public static let personalSpace = "我的个人空间"
-        public static let roster = "登记与权限"
-        public static let openChat = "回到主要聊天"
-        public static let manageConnection = "核对连接"
+    }
+
+    /// 统一角色入口与资料
+    public enum Role {
+        public static let list = "角色"
+        public static let profile = "角色资料"
+        public static let add = "添加角色"
+        public static let refresh = "刷新角色"
+        public static let close = "关闭角色资料"
+        public static let settings = "设置"
+        public static let access = "工具与权限"
+        public static let memory = "记忆"
+        public static let activity = "工作记录"
+        public static let active = "已启用"
+        public static let paused = "已暂停"
+        public static let retired = "已撤掉"
+        public static let busy = "在忙"
+        public static let unknown = "岗位待核对"
+        public static let unverified = "名录待核对"
+        public static let sourceChanged = "运行端或连接已变化，当前资料仅供回查。请关闭后重新打开角色资料核对。"
+        public static let manage = "角色与权限"
+        public static let manageHint = "查看已批准的角色与权限方案，核对待批提议。"
     }
 }

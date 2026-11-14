@@ -51,7 +51,7 @@ describe("design tokens", () => {
 
   it("uses the shared type scale including a first-use display size and 3 weights", () => {
     const sizes = [...light].filter(([name]) => name.startsWith("--vc-size-")).map(([, v]) => v);
-    expect(sizes).toEqual(["34px", "22px", "18px", "15px", "14px", "13px", "12px", "44px"]);
+    expect(sizes).toEqual(["34px", "22px", "28px", "18px", "15px", "14px", "13px", "12px", "44px"]);
     const weights = [...light].filter(([name]) => name.startsWith("--vc-weight-")).map(([, v]) => v);
     expect(weights).toEqual(["400", "500", "600"]);
   });

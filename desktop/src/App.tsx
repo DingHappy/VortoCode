@@ -26,9 +26,16 @@ import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat } from "./lib/mainChat";
-import { StaffWorkspace, AssistantIdentityLink } from "./components/StaffWorkspace";
-import { StaffPane } from "./components/settings/StaffPane";
-import { SettingsTargetSection } from "./components/settings/SettingsTargetSection";
+import { WorkspaceBar } from "./components/WorkspaceBar";
+import { roleProfileSnapshot } from "./lib/roleProfileSnapshot";
+import { RoleNavigation } from "./components/RoleNavigation";
+import { RoleProfileDialog, type RoleProfileSection } from "./components/RoleProfile";
+import { NewRoleDialog } from "./components/NewRoleDialog";
+import { staffCharacter, type RoleCharacter } from "./components/RoleAvatar";
+import { RoleGrants } from "./components/settings/StaffPane";
+import { ExecutionDetails } from "./components/ExecutionDetails";
+import type { StaffMember, StaffRole } from "./lib/staff";
+import { COPY } from "./lib/copy.generated";
 import { ChatHistory, MessageIdentity } from "./components/ChatHistory";
 import { ConversationLocation } from "./components/ConversationLocation";
 import { useConversationLocation } from "./hooks/useConversationLocation";
@@ -36,7 +43,7 @@ import { useStickToBottom } from "./hooks/useStickToBottom";
 import { startPolling } from "./lib/polling";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, BackToAssistant, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantMemories, MemoryProposals, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, BackToAssistant, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
 import { assistantFeed, isPhoneSession, taskFeedItem, type FeedItem } from "./lib/activityFeed";
 import { AssistantActivity, AssistantActivityDetail } from "./components/AssistantActivity";
@@ -61,7 +68,7 @@ import {
   GitCompareArrows,
   Inbox,
   Library,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftOpen,
   ListChecks,
   Server,
   FolderPlus,
@@ -127,7 +134,7 @@ import { SidebarFooter } from "./components/SidebarFooter";
 import { AttachmentChips, AttachmentReadStatus, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
 import { ConversationHome, FirstRunCard } from "./components/ConversationHome";
 import { SidebarBrand, SidebarSearch, SidebarSectionTitle, WorkNav } from "./components/SidebarChrome";
-import { IconButton } from "./components/ui";
+import { Button, PreferenceGroup, PreferenceRow, IconButton } from "./components/ui";
 import { ConversationHeader } from "./components/ConversationHeader";
 import { assistantPanelActions } from "./lib/assistantPanelActions";
 import { SidebarProjects } from "./components/SidebarProjects";
@@ -144,7 +151,7 @@ import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
-import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { SettingsModal, type SettingsSection, type SettingsPageControl } from "./components/SettingsModal";
 import { localGeneral, readLocalCodexObserver } from "./lib/codexObserverHealth";
 import { countUsage } from "./lib/telemetry";
 import { diag } from "./lib/diagnostics";
@@ -259,6 +266,11 @@ function App() {
   const [projectSwitching, setProjectSwitching] = useState(false);
   coordinator.listen({ switching: setProjectSwitching, starting: setRuntimeStarting });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsNavigation = useRef<SettingsPageControl | null>(null);
+  const navigateFromSettings = (action: () => void) => {
+    const leave = () => { setSettingsOpen(false); action(); };
+    if (settingsNavigation.current) settingsNavigation.current.leave(leave); else leave();
+  };
   const [localResidentStatus, setLocalResidentStatus] = useState<LocalResidentStatus | null>(null);
   const localResidentStatusRef = useRef<LocalResidentStatus | null>(null);
   const updateLocalResidentStatus = (status: LocalResidentStatus) => {
@@ -275,7 +287,7 @@ function App() {
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
   // 主区复用原领域页面；切换会话时回到对话。
-  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team" | "department" | "assistant" | "staff">("chat");
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team" | "department" | "assistant">("chat");
   const assistantPageTrigger = useRef<HTMLElement | null>(null);
   // 任务小组（ADR-014 S3）：侧栏「最近」里每个小组一条，点开在中间看群聊
   const [teamList, setTeamList] = useState<TeamSummary[]>([]);
@@ -304,7 +316,8 @@ function App() {
       event.preventDefault();
       if (action === "settings") { countUsage("settings.open"); setSettingsOpen(true); return; }
       countUsage("search.open");
-      sidebar.setCollapsed(false); setSidebarSearchOpen(true); setSidebarSearchFocus(value => value + 1);
+      const search = () => { setSettingsOpen(false); sidebar.setCollapsed(false); setSidebarSearchOpen(true); setSidebarSearchFocus(value => value + 1); };
+      if (settingsNavigation.current) settingsNavigation.current.leave(search); else search();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -370,7 +383,9 @@ function App() {
   const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   const [profileDialogLease, setProfileDialogLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
-  const [staffWorkspaceLease, setStaffWorkspaceLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
+  const [roleSelection, setRoleSelection] = useState<{ lease: SettingsTargetLease<GatewayClient>; name: string;
+    description: string; character?: RoleCharacter; member?: StaffMember; role?: StaffRole; assistant?: ReturnType<typeof roleProfileSnapshot> } | null>(null);
+  const [newRoleRequest, setNewRoleRequest] = useState<{ lease: SettingsTargetLease<GatewayClient>; roles: StaffRole[] } | null>(null);
   const [channelDialogLease, setChannelDialogLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
   // 常驻电脑连不上时在本机聊过的会话：连回常驻电脑后列在「本机（离线时）」，见 lib/offlineChats.ts
@@ -2853,8 +2868,163 @@ function App() {
     setAvatar: setAssistantAvatar,
   });
 
+  const openRoleProfile = (memberId?: string) => {
+    const member = memberId ? departmentDirectory.value?.members.find(item => item.id === memberId) : undefined;
+    if (memberId && !member) return;
+    const role = member ? departmentDirectory.value?.roles.find(item => item.id === member.role) : undefined;
+    setRoleSelection({ lease: settingsTargetLease(() => ({ context: settingsTargetRef.current, client: clientRef.current })),
+      name: member?.name || assistantProfile.name || "VortoOne", description: member ? role?.brief || COPY.role.unknown : COPY.characters.general,
+      character: member ? staffCharacter(role) : "general", member: member ? structuredClone(member) : undefined, role: role ? structuredClone(role) : undefined,
+      assistant: member ? undefined : roleProfileSnapshot(assistantProfile, assistantAvatar, assistantMemories, memoryProposals) });
+  };
+  const manageSelectedRole = () => {
+    if (!roleSelection?.lease.current()) return;
+    setRoleSelection(null); setSettingsSection("staff"); setSettingsOpen(true);
+  };
+  const roleCurrent = Boolean(roleSelection?.lease.current());
+  const roleSections: RoleProfileSection[] = roleSelection ? roleSelection.member ? [
+    { id: "settings", label: COPY.role.settings, content: <>
+      <PreferenceGroup title="角色资料"><PreferenceRow title="名字">{roleSelection.name}</PreferenceRow>
+        <PreferenceRow title="权限方案">{roleSelection.role?.title || COPY.role.unknown}</PreferenceRow>
+        <PreferenceRow title="状态">{roleCurrent ? ({ active: COPY.role.active, paused: COPY.role.paused, retired: COPY.role.retired }[roleSelection.member.status] || COPY.role.unverified) : COPY.role.unverified}</PreferenceRow>
+        <PreferenceRow title="执行者">{roleSelection.member.engine}</PreferenceRow>
+        <PreferenceRow title="模型">{roleSelection.member.model || "沿用登记配置"}</PreferenceRow></PreferenceGroup>
+      <Button onClick={manageSelectedRole}>{COPY.role.manage}</Button>
+      <p>接活时核对已批准的权限方案、部门和额度；从总助手安排任务。</p>
+    </> },
+    { id: "access", label: COPY.role.access, content: <>{roleSelection.role ? <RoleGrants role={roleSelection.role} /> : <p>{COPY.role.unknown}</p>}
+      <Button onClick={manageSelectedRole}>核对权限与待批提议</Button></> },
+    { id: "activity", label: COPY.role.activity, content: <>{!roleSelection.member.recent_tasks.length && <p>还没有工作记录。</p>}
+      {roleSelection.member.recent_tasks.map(task => <article className="vc-role-profile-task" key={task.id}>
+        <strong>{task.prompt || task.id}</strong><span>任务状态：{({ queued: "待开始", running: "在忙", blocked: "等回答", done: "已交回", failed: "失败", interrupted: "中断", cancelled: "已取消" } as Record<string, string>)[task.status] ?? "状态待核对"} · 核对状态：{task.review === "accepted" ? task.delivery === "review" ? "主人已验收" : "已核对汇报" : ({ pending: "待核对", rework_requested: "待返工", not_submitted: "尚未交付" } as Record<string, string>)[task.review] ?? "审查待核对"}</span>
+        <ExecutionDetails taskId={task.id} value={task.execution} current={roleCurrent} /></article>)}</> },
+  ] : [
+    { id: "settings", label: COPY.role.settings, content: <>
+      <PreferenceGroup title="角色资料"><PreferenceRow title="名字">{roleSelection.assistant?.profile.name || "VortoOne"}</PreferenceRow>
+        <PreferenceRow title="性格与说话方式">{roleSelection.assistant?.profile.soul || "还没填写"}</PreferenceRow>
+        <PreferenceRow title="关于你">{roleSelection.assistant?.profile.about_you || "还没填写"}</PreferenceRow></PreferenceGroup>
+      <div className="settings-card-actions"><Button onClick={() => { if (!roleSelection.lease.current()) return; setRoleSelection(null); openProfileDialog(); }}>编辑资料</Button>
+        <Button onClick={() => { if (!roleSelection.lease.current()) return; setRoleSelection(null); void openMainChat(); }}>打开主要聊天</Button></div>
+    </> },
+    { id: "access", label: COPY.role.access, content: <><PreferenceGroup title="工具与权限">
+      <PreferenceRow title="当前运行端">{roleSelection.lease.target.runtimeLabel}</PreferenceRow>
+      <PreferenceRow title="操作确认" description="工具调用仍按会话权限、污点和主人确认规则检查。">由原确认门判断</PreferenceRow></PreferenceGroup>
+      <Button onClick={() => { if (!roleSelection.lease.current()) return; setRoleSelection(null); sessionResources.refresh(); setCapabilitiesOpen(true); }}>查看此对话的能力与连接</Button>
+    </> },
+    { id: "memory", label: COPY.role.memory, content: <>
+      <AssistantMemories memories={roleSelection.assistant?.memories ?? []} onDelete={memory => { if (roleSelection.lease.current()) void panelActions.deleteMemory(memory); }} />
+      <MemoryProposals proposals={roleSelection.assistant?.proposals ?? []} onDecide={(proposal, approve, replace) => { if (roleSelection.lease.current()) void panelActions.decideProposal(proposal, approve, replace); }} />
+    </> },
+  ] : [];
+
+  const settingsView = settingsOpen ? (
+<SettingsModal presentation={appMode === "assistant" ? "page" : "dialog"} navigationRef={settingsNavigation}
+          runtimeSettings={runtimeSettings}
+          onOpenRuntimeSetup={() => {
+            try {
+              const previousRaw = localStorage.getItem(STORAGE_KEYS.runtimeSetup);
+              const record = { version: 1, status: "pending", choice: null } as const;
+              writeRuntimeSetup(localStorage, record);
+              setSettingsOpen(false); setRuntimeSetup({ record, manual: true, previousRaw }); setStartupState("setup");
+            } catch { setBanner("无法保存引导进度，请检查本机存储后重试"); }
+          }}
+          residentAccountProjectId={residentHost?.id}
+          readCodexObserver={readCodexObserver}
+          activeScope={activeScope}
+          connection={connection}
+          connectionText={connectionText}
+          connectionNote={connectionNote}
+          runtimeStarting={runtimeStarting}
+          projectSwitching={projectSwitching}
+          processStatus={runtimeControlStatus}
+          runtimeActionBusy={runtimeActionBusy}
+          runtimeActionNote={runtimeActionNote}
+          runtimeIsRemote={Boolean(remoteProjectRef.current)}
+          onReloadRuntime={reloadRuntime}
+          recoveryRecord={recoveryRecord}
+          llmProfile={llmProfile}
+          llmBaseInput={llmBaseInput}
+          llmModelInput={llmModelInput}
+          llmKeyInput={llmKeyInput}
+          llmFastInput={llmFastInput}
+          llmStrongInput={llmStrongInput}
+          llmRolesInput={llmRolesInput}
+          onLlmRolesChange={setLlmRolesInput}
+          engineWorkers={engineWorkers}
+          llmProfileBusy={llmProfileBusy}
+          repoRoot={repoRoot}
+          baseUrl={baseUrl}
+          token={token}
+          trust={trust}
+          trustBusy={trustBusy}
+          onTrustChange={changeTrustLevel}
+          onClose={() => { setSettingsOpen(false); setSettingsSection(undefined); setSettingsAnchor(undefined); }}
+          onLlmBaseChange={setLlmBaseInput}
+          onLlmModelChange={setLlmModelInput}
+          onLlmFastChange={setLlmFastInput}
+          onLlmStrongChange={setLlmStrongInput}
+          onRestartRuntime={restartCurrentRuntimeForLlmProfile}
+          onLlmProfileChange={applyLlmProfile}
+          modelPicks={modelPicks}
+          onModelPicksChange={changeModelPicks}
+          initialSection={settingsSection}
+          initialAnchor={settingsAnchor}
+          onOpenPlugins={() => { setMainView("plugins"); }}
+          hasResident={Boolean(otherResidentHost)}
+          residentName={otherResidentHost?.name}
+          residentConnected={onAssistantHost() && connection === "connected"}
+          selectedAssistantHostId={onAssistantHost() ? assistantHostRef.current ?? undefined : undefined}
+          localResidentProjectId={localResidentStatus?.projectId}
+          remoteResidentProjectId={otherResidentHost?.id}
+          residentRegistrationKnown={Boolean(localResidentStatus)}
+          onLocalResidentStatus={updateLocalResidentStatus}
+          onUseLocalResident={useRegisteredAssistant}
+          onOpenResidentSetup={() => setRemoteDialogOpen("assistant")}
+          onConnectResident={() => { if (otherResidentHost) void useRegisteredAssistant(otherResidentHost)
+            .catch(error => setBanner(errorText(error, "连接常驻助手失败"))); }}
+          onOpenSchedule={() => { setAppMode("assistant"); openAssistantPage("schedule"); }}
+          llmSaveNote={llmSaveNote}
+          llmSaveKind={llmSaveKind}
+          llmProfileLoading={llmProfileLoading}
+          llmProfileError={llmProfileError} llmProfileConflict={llmProfileConflict}
+          onReloadLlmProfile={reloadLlmProfile}
+          onEditAssistant={openProfileDialog}
+          onLlmKeyChange={setLlmKeyInput}
+          onSaveLlmProfile={saveLlmProfile}
+          onClearLlmProfile={clearLlmProfile}
+          onChooseRepo={chooseRepo}
+          onDismissRecovery={dismissRecoveryRecord}
+          onRestoreRecovery={restoreRecoveryConfig}
+          onBaseUrlChange={setBaseUrl}
+          onTokenChange={setToken}
+          onStopRuntime={stopRuntime}
+          onConnectExisting={() => { if (!coordinator.switching) void connectToRuntime(activeSid, { baseUrl }); }}
+          onStartRuntime={startRuntime}
+          onSwitchScope={(scope) => void (async () => {
+            // An explicit local settings action leaves Assistant mode; otherwise
+            // its resident retry would reconnect the remote host after 10 seconds.
+            const leavingAssistant = appMode === "assistant";
+            if (!await switchManagedScope(scope) || !leavingAssistant) return;
+            workReturnRef.current = null;
+            setAppMode("work");
+          })()}
+        >
+          {activeScope === "project" && (
+            <ExtensionsInspector
+              extensionsInspect={extensionsInspect}
+              extensionsInspectBusy={extensionsInspectBusy}
+              hookStatus={hookStatus}
+              hookTrustBusy={hookTrustBusy}
+              connection={connection}
+              onRefresh={() => { if (runtimeSettings?.current()) void Promise.all([refreshExtensionsInspect(), refreshHookStatus()]); }}
+              onToggleHookTrust={() => { if (runtimeSettings?.current()) void toggleHookTrust(); }}
+            />
+          )}
+        </SettingsModal>
+  ) : null;
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${appMode === "assistant" ? "vc-product-shell" : ""}`}>
       <div className="banner-slot">
         {banner && (
           <div className="banner">
@@ -2864,16 +3034,16 @@ function App() {
         )}
       </div>
 
-      <div inert={runtimeSetupOpen} className={`workbench vc-mode-${appMode} ${sidebar.collapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
-        {sidebar.collapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeftOpen />} buttonRef={sidebar.reopenButton}
+      {appMode === "assistant" && <WorkspaceBar disabled={runtimeSetupOpen} collapsed={sidebar.collapsed} toggleRef={sidebar.collapsed ? sidebar.reopenButton : sidebar.collapseButton}
+        onToggle={() => sidebar.toggle(!sidebar.collapsed)} onSearch={() => navigateFromSettings(() => { sidebar.setCollapsed(false); setSidebarSearchOpen(true); setSidebarSearchFocus(value => value + 1); })} />}
+      <div inert={runtimeSetupOpen} className={`workbench vc-mode-${appMode} ${sidebar.collapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen && !settingsOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+        {sidebar.collapsed && appMode !== "assistant" && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeftOpen />} buttonRef={sidebar.reopenButton}
           aria-expanded="false" aria-controls="conversation-sidebar" onClick={() => sidebar.toggle(false)} />}
         <aside id="conversation-sidebar" className="sidebar vc-sidebar">
           {appMode !== "assistant" && <SidebarBrand sidebarId="conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)} />}
-          {appMode === "assistant" && <div className="vc-personal-window-drag" data-tauri-drag-region="deep" aria-hidden="true" />}
           {appMode === "assistant" && <PersonalSpacePicker context={currentTarget} profiles={projects}
             localResidentId={localResidentStatus?.projectId ?? null} connection={connection} switching={projectSwitching} avatar={assistantAvatar}
-            collapseControl={<IconButton label="收起侧栏" icon={<PanelLeftClose />} buttonRef={sidebar.collapseButton} aria-expanded="true" aria-controls="conversation-sidebar" onClick={() => sidebar.toggle(true)} />}
-            onSelect={useRegisteredAssistant} onManage={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
+            onRequestOpen={open => navigateFromSettings(open)} onSelect={useRegisteredAssistant} onManage={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
@@ -2881,10 +3051,10 @@ function App() {
                 title: item.members.length === 1 ? departmentDirectory.value?.members.find(member => member.id === item.members[0])?.name || item.name : item.name,
                 status: item.status, pending: (item.pending_notes ?? 0) + (item.notes_pending_save ? 1 : 0) }))}
               currentDepartment={mainView === "department" ? activeDepartment?.id ?? "" : ""}
-              departmentError={departmentDirectory.error} onOpenDepartment={openDepartmentChat}
+              departmentError={departmentDirectory.error} onOpenDepartment={id => navigateFromSettings(() => openDepartmentChat(id))}
               teams={attentionTeams.map(team => ({ id: team.id, title: team.objective, status: team.status }))}
               currentTeam={mainView === "team" ? openTeamId ?? "" : ""}
-              onOpenTeam={openTeamChat}
+              onOpenTeam={id => navigateFromSettings(() => openTeamChat(id))}
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
               channels={sessions.filter(session => session.sid !== mainChatSid && !isPhoneSession(session.sid) && sessionChannel(session))}
               channelsDisabled={!currentTarget.space || !currentTarget.ready || coordinator.switching}
@@ -2908,22 +3078,21 @@ function App() {
               ]}
               current={activeSid}
               page={mainView === "assistant" || mainView === "artifacts" || mainView === "customize" ? assistantPage : null}
-              search={sidebarSearch("搜索聊天")}
+              search={sidebarSearchOpen ? sidebarSearch("搜索聊天") : undefined}
               query={sidebarQuery}
               waiting={assistantWaiting}
               waitingUncertain={!activityComplete}
-              onPage={openAssistantPage}
-              staffOpen={mainView === "staff"}
-              onManageStaff={() => {
-                setStaffWorkspaceLease(settingsTargetLease(() => ({ context: settingsTargetRef.current, client: clientRef.current })));
-                setMainView("staff"); setInspectorOpen(false);
-              }}
-              onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
+              onPage={page => navigateFromSettings(() => page === "identity" ? openRoleProfile() : openAssistantPage(page))}
+              roles={<RoleNavigation name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar}
+                directory={departmentDirectory.value} error={departmentDirectory.error} connected={Boolean(currentTarget.space && currentTarget.ready)}
+                onRefresh={departmentDirectory.refresh} onAssistant={() => navigateFromSettings(() => openRoleProfile())}
+                onMember={id => navigateFromSettings(() => openRoleProfile(id))} onAdd={() => navigateFromSettings(() => setNewRoleRequest({ lease: settingsTargetLease(() => ({ context: settingsTargetRef.current, client: clientRef.current })), roles: structuredClone(departmentDirectory.value?.roles ?? []) }))} />}
+              onSelect={(sid) => navigateFromSettings(() => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); })}
               phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
               onOpenPhoneChat={openPhoneChat}
               offlineChats={onResidentNow ? offlineChats.map((chat) => ({ sid: chat.sid, title: chat.title })) : []}
               onOpenOfflineChat={setOfflineChatSid}
-              onNewSideChat={() => void newSideChat()}
+              onNewSideChat={() => navigateFromSettings(() => { void newSideChat(); })}
             />
           ) : <>
           <WorkNav connected={connection === "connected"} search={sidebarSearch("搜索会话和项目")} waiting={feedWaiting}
@@ -2989,7 +3158,6 @@ function App() {
             />
           )}
           </>}
-          {appMode === "assistant" && <AssistantIdentityLink name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} onOpen={() => openAssistantPage("identity")} />}
           <SidebarFooter
             identity={identity}
             update={availableUpdate}
@@ -2997,21 +3165,13 @@ function App() {
               ? { state: connection === "connected" ? "online" : "offline", name: currentTarget.runtimeLabel,
                 onClick: () => connection === "connected" ? openAssistantPage("tasks") : residentHost ? void connectAssistantHost(residentHost) : setSettingsOpen(true) }
               : { state: "local", onClick: () => findAssistantHost(projects) ? void changeAppMode("assistant") : setRemoteDialogOpen("assistant") }}
-            onOpenSettings={(target) => { countUsage("settings.open"); setSettingsSection(target?.section); setSettingsAnchor(target?.anchor); setSettingsOpen(true); }}
-            onLibrary={appMode === "assistant" ? () => openAssistantPage("library") : undefined}
-            onCustomize={appMode === "assistant" ? () => openAssistantPage("customize") : undefined}
+            onOpenSettings={(target) => { countUsage("settings.open"); if (target) settingsNavigation.current?.open(target.section, target.anchor); setSettingsSection(target?.section); setSettingsAnchor(target?.anchor); setSettingsOpen(true); }}
+            onLibrary={appMode === "assistant" ? () => navigateFromSettings(() => openAssistantPage("library")) : undefined}
+            onCustomize={appMode === "assistant" ? () => navigateFromSettings(() => openAssistantPage("customize")) : undefined}
           />
         </aside>
 
-        {mainView === "staff" && appMode === "assistant" ? (
-          <StaffWorkspace avatar={assistantAvatar} onBack={() => { setMainView("chat"); setStaffWorkspaceLease(null); }}
-            onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }}>
-            <SettingsTargetSection owner="space" label="专员登记与权限" lease={staffWorkspaceLease ?? undefined}
-              unavailable={!staffWorkspaceLease?.target.space?.runtime.registrationId}>
-              <StaffPane client={staffWorkspaceLease?.client ?? undefined} />
-            </SettingsTargetSection>
-          </StaffWorkspace>
-        ) : mainView === "plugins" ? (
+        {appMode === "assistant" && settingsOpen ? settingsView : mainView === "plugins" ? (
           <PluginsPage
             activeScope={activeScope}
             mcpServers={<McpServersCard key={`mcp-${pluginsRevision}`} client={clientRef.current} connection={connection} />}
@@ -3074,6 +3234,7 @@ function App() {
         ) : (
         <section className={`conversation ${currentChannel ? "conversation-channel" : ""} ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
           <ConversationHeader
+            roleIdentity={appMode === "assistant" && !currentChannel ? { name: assistantProfile.name || "VortoOne", avatar: assistantAvatar, onOpen: () => openRoleProfile() } : undefined}
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             channelTopic={currentChannel?.topic}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
@@ -3298,7 +3459,7 @@ function App() {
         </section>
         )}
 
-        {(mainView === "assistant" || mainView === "chat" && inspectorOpen) && appMode === "assistant" && (
+        {!settingsOpen && (mainView === "assistant" || mainView === "chat" && inspectorOpen) && appMode === "assistant" && (
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
           : <AssistantPanel id="assistant-panel" presentation={mainView === "assistant" ? "page" : "panel"} toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
@@ -3705,6 +3866,17 @@ function App() {
             if (!connected) setBanner("频道已保存，连接尚未完成。请从原空间的频道列表重新打开。");
           }).catch(error => setBanner(errorText(error, "频道已保存，连接失败。请从原空间的频道列表重新打开。")));
         }} />}
+      {roleSelection && <RoleProfileDialog name={roleSelection.name} description={roleSelection.description}
+        character={roleSelection.character} avatar={roleSelection.assistant?.avatar} current={roleCurrent}
+        sections={roleSections} onClose={() => setRoleSelection(null)} />}
+      {newRoleRequest && <NewRoleDialog roles={newRoleRequest.roles} current={newRoleRequest.lease.current} onClose={() => setNewRoleRequest(null)}
+        onPrepare={draft => {
+          if (!newRoleRequest.lease.current()) return;
+          setPrompt(current => current.trim() ? `${current}\n\n${draft}` : draft);
+          setNewRoleRequest(null); setMainView("chat"); setInspectorOpen(false);
+          setBanner("角色提议已放入当前对话，原有草稿保留；检查后再发送。");
+        }} />}
+      {appMode !== "assistant" && settingsView}
       {profileDialogLease && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogLease(null)}
         onSave={async (next) => {
           if (!profileDialogLease.client) throw new Error("还没连上助理");
@@ -3748,111 +3920,7 @@ function App() {
         if (isAssistantHost(profile)) await changeAppMode("assistant", known);
         else await switchProject(profile);
       }} />}
-      {settingsOpen && (
-        <SettingsModal
-          runtimeSettings={runtimeSettings}
-          onOpenRuntimeSetup={() => {
-            try {
-              const previousRaw = localStorage.getItem(STORAGE_KEYS.runtimeSetup);
-              const record = { version: 1, status: "pending", choice: null } as const;
-              writeRuntimeSetup(localStorage, record);
-              setSettingsOpen(false); setRuntimeSetup({ record, manual: true, previousRaw }); setStartupState("setup");
-            } catch { setBanner("无法保存引导进度，请检查本机存储后重试"); }
-          }}
-          residentAccountProjectId={residentHost?.id}
-          readCodexObserver={readCodexObserver}
-          activeScope={activeScope}
-          connection={connection}
-          connectionText={connectionText}
-          connectionNote={connectionNote}
-          runtimeStarting={runtimeStarting}
-          projectSwitching={projectSwitching}
-          processStatus={runtimeControlStatus}
-          runtimeActionBusy={runtimeActionBusy}
-          runtimeActionNote={runtimeActionNote}
-          runtimeIsRemote={Boolean(remoteProjectRef.current)}
-          onReloadRuntime={reloadRuntime}
-          recoveryRecord={recoveryRecord}
-          llmProfile={llmProfile}
-          llmBaseInput={llmBaseInput}
-          llmModelInput={llmModelInput}
-          llmKeyInput={llmKeyInput}
-          llmFastInput={llmFastInput}
-          llmStrongInput={llmStrongInput}
-          llmRolesInput={llmRolesInput}
-          onLlmRolesChange={setLlmRolesInput}
-          engineWorkers={engineWorkers}
-          llmProfileBusy={llmProfileBusy}
-          repoRoot={repoRoot}
-          baseUrl={baseUrl}
-          token={token}
-          trust={trust}
-          trustBusy={trustBusy}
-          onTrustChange={changeTrustLevel}
-          onClose={() => { setSettingsOpen(false); setSettingsSection(undefined); setSettingsAnchor(undefined); }}
-          onLlmBaseChange={setLlmBaseInput}
-          onLlmModelChange={setLlmModelInput}
-          onLlmFastChange={setLlmFastInput}
-          onLlmStrongChange={setLlmStrongInput}
-          onRestartRuntime={restartCurrentRuntimeForLlmProfile}
-          onLlmProfileChange={applyLlmProfile}
-          modelPicks={modelPicks}
-          onModelPicksChange={changeModelPicks}
-          initialSection={settingsSection}
-          initialAnchor={settingsAnchor}
-          onOpenPlugins={() => { setMainView("plugins"); }}
-          hasResident={Boolean(otherResidentHost)}
-          residentName={otherResidentHost?.name}
-          residentConnected={onAssistantHost() && connection === "connected"}
-          selectedAssistantHostId={onAssistantHost() ? assistantHostRef.current ?? undefined : undefined}
-          localResidentProjectId={localResidentStatus?.projectId}
-          remoteResidentProjectId={otherResidentHost?.id}
-          residentRegistrationKnown={Boolean(localResidentStatus)}
-          onLocalResidentStatus={updateLocalResidentStatus}
-          onUseLocalResident={useRegisteredAssistant}
-          onOpenResidentSetup={() => setRemoteDialogOpen("assistant")}
-          onConnectResident={() => { if (otherResidentHost) void useRegisteredAssistant(otherResidentHost)
-            .catch(error => setBanner(errorText(error, "连接常驻助手失败"))); }}
-          onOpenSchedule={() => { setAppMode("assistant"); openAssistantPage("schedule"); }}
-          llmSaveNote={llmSaveNote}
-          llmSaveKind={llmSaveKind}
-          llmProfileLoading={llmProfileLoading}
-          llmProfileError={llmProfileError} llmProfileConflict={llmProfileConflict}
-          onReloadLlmProfile={reloadLlmProfile}
-          onEditAssistant={openProfileDialog}
-          onLlmKeyChange={setLlmKeyInput}
-          onSaveLlmProfile={saveLlmProfile}
-          onClearLlmProfile={clearLlmProfile}
-          onChooseRepo={chooseRepo}
-          onDismissRecovery={dismissRecoveryRecord}
-          onRestoreRecovery={restoreRecoveryConfig}
-          onBaseUrlChange={setBaseUrl}
-          onTokenChange={setToken}
-          onStopRuntime={stopRuntime}
-          onConnectExisting={() => { if (!coordinator.switching) void connectToRuntime(activeSid, { baseUrl }); }}
-          onStartRuntime={startRuntime}
-          onSwitchScope={(scope) => void (async () => {
-            // An explicit local settings action leaves Assistant mode; otherwise
-            // its resident retry would reconnect the remote host after 10 seconds.
-            const leavingAssistant = appMode === "assistant";
-            if (!await switchManagedScope(scope) || !leavingAssistant) return;
-            workReturnRef.current = null;
-            setAppMode("work");
-          })()}
-        >
-          {activeScope === "project" && (
-            <ExtensionsInspector
-              extensionsInspect={extensionsInspect}
-              extensionsInspectBusy={extensionsInspectBusy}
-              hookStatus={hookStatus}
-              hookTrustBusy={hookTrustBusy}
-              connection={connection}
-              onRefresh={() => { if (runtimeSettings?.current()) void Promise.all([refreshExtensionsInspect(), refreshHookStatus()]); }}
-              onToggleHookTrust={() => { if (runtimeSettings?.current()) void toggleHookTrust(); }}
-            />
-          )}
-        </SettingsModal>
-      )}
+
     </main>
   );
 }

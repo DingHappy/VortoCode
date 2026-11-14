@@ -86,7 +86,7 @@ function Fixture() {
         <PersonalSpacePicker context={context} profiles={profiles} localResidentId="mac" connection="connected" switching={false}
           onSelect={async profile => { setHost(profile); setSid("main"); setGeneration(value => value + 1); setPage(null); setLocalMessages([]); }} onManage={() => { location.href = "/qa/settings-redesign.html?section=computer"; }} />
         <AssistantSidebar mainChat={{ sid: "main" }} current={sid} sideChats={composer.draftChats.filter(chat => chat.sid !== "main")} page={page}
-          onPage={openPage} onManageStaff={() => { location.href = "/qa/settings-redesign.html?section=staff&staff=ready"; }}
+          onPage={openPage}
           search={<SidebarSearch open={search} query={query} placeholder="搜索聊天" onOpenChange={setSearch} onQuery={setQuery} />} query={query}
           onNewSideChat={() => { setSid(`draft-${++sequence.current}`); setPage(null); setLocalMessages([]); }} onSelect={id => { setSid(id); setPage(null); setPanel(false); setLocalMessages([]); }} />
         <footer className="qa-redesign-footer"><a href="/qa/settings-redesign.html?section=appearance"><Settings aria-hidden="true" />设置</a></footer>

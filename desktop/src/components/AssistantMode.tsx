@@ -58,7 +58,7 @@ export const SIDE_CHAT_LIMIT = 5;
 /** 日常入口与会话分组，主要聊天保留唯一待处理角标。 */
 export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
   search, query = "", onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam,
-  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment, onPage, onManageStaff, staffOpen = false,
+  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment, onPage, roles,
   channels, channelsDisabled, onNewChannel, onDeleteChannel }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
@@ -81,8 +81,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   onSelect: (sid: string) => void;
   /** 日常入口打开原有领域页面，不授予操作权限。 */
   onPage?: (page: AssistantPage) => void;
-  onManageStaff?: () => void;
-  staffOpen?: boolean;
+  roles?: ReactNode;
   onNewSideChat: () => void;
   channels?: SessionSummary[];
   channelsDisabled?: boolean;
@@ -106,7 +105,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   }, [showAll]);
   const keyword = query.trim();
   const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
-  const inChat = !page && !staffOpen && !currentTeam && !currentDepartment;
+  const inChat = !page && !currentTeam && !currentDepartment;
   const groups = teams.filter((team) => matches(team.title, query));
   const departmentGroups = departments.filter(item => matches(item.title, query));
   const others = [
@@ -132,7 +131,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
       {!onPage && <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />}
       {search}
     </nav>
-    {onPage && !keyword && <WorkspaceNavigation current={page} staffOpen={staffOpen} onPage={onPage} onStaff={onManageStaff} mainChat={{ current: inChat && current === mainChat.sid, onOpen: () => onSelect(mainChat.sid), meta: mainBadge }} />}
+    {onPage && !keyword && <WorkspaceNavigation current={page} onPage={onPage} mainChat={{ current: inChat && current === mainChat.sid, onOpen: () => onSelect(mainChat.sid), meta: mainBadge }} />}
     <div className="vc-side-recent">
       {mainMatches && (!onPage || keyword) && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
         title={mainChat.preview || "主要聊天"} current={inChat && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
@@ -141,6 +140,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
           : mainChat.busy ? <LiveDot /> : undefined} />}
       {channels && onNewChannel && <SidebarChannels channels={channels} current={inChat ? current : ""} query={query}
         disabled={channelsDisabled} onSelect={onSelect} onCreate={onNewChannel} onDelete={onDeleteChannel} />}
+      {roles}
       {(departmentGroups.length > 0 || departmentError) && <GroupTitle>部门</GroupTitle>}
       {departmentError && <p role="status">{departmentError}</p>}
       {departmentGroups.map(department => <NavItem key={department.id} className="vc-nav-item--recent"

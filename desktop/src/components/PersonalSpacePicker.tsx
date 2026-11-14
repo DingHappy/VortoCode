@@ -17,15 +17,15 @@ function origin(value: string) {
   try { return new URL(value).origin; } catch { return "连接地址待核对"; }
 }
 
-export function PersonalSpacePicker({ context, profiles, localResidentId, connection, switching, avatar, collapseControl, onSelect, onManage }: {
-  context: DesktopContext; profiles: DesktopProjectProfile[]; localResidentId: string | null; avatar?: AssistantAvatar | null; collapseControl?: ReactNode;
+export function PersonalSpacePicker({ context, profiles, localResidentId, connection, switching, avatar, collapseControl, onRequestOpen, onSelect, onManage }: {
+  context: DesktopContext; profiles: DesktopProjectProfile[]; localResidentId: string | null; avatar?: AssistantAvatar | null; collapseControl?: ReactNode; onRequestOpen?: (open: () => void) => void;
   connection: ConnectionState; switching: boolean; onSelect: (profile: DesktopProjectProfile) => Promise<void>; onManage: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const status = connection === "connected" && !context.ready ? "正在核对目标" : connectionLabel[connection];
   return <div className="vc-space-picker">
     <div className="vc-space-heading"><button type="button" className="vc-space-trigger" aria-label={`当前空间：${context.runtimeLabel}，${status}。切换空间`}
-      aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
+      aria-haspopup="dialog" aria-expanded={open} onClick={() => onRequestOpen ? onRequestOpen(() => setOpen(true)) : setOpen(true)}>
       <RoleAvatar character="general" avatar={avatar} />
       <span><strong>{context.space ? COPY.characters.personal_space : context.runtimeLabel}</strong><small><span>{context.space ? context.runtimeLabel : context.location}</span><span className="vc-space-connection">· {status}</span></small></span>
       <ChevronsUpDown aria-hidden="true" />

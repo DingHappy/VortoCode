@@ -83,20 +83,34 @@ export const COPY = {
     saved: "频道已保存",
     remove: "删除频道",
   },
-  /** 角色家族与专员工作区 */
+  /** 角色家族形象 */
   characters: {
     general: "总助手",
     research: "研究助手",
     development: "开发助手",
     calendar: "日程助手",
-    family: "角色家族",
-    family_hint: "形象帮助辨认分工，实际能力以你批准的岗位为准。",
-    workspace: "专员",
-    workspace_hint: "查看分工、登记状态与待你批准的提议。",
     personal_space: "我的个人空间",
-    roster: "登记与权限",
-    open_chat: "回到主要聊天",
-    manage_connection: "核对连接",
+  },
+  /** 统一角色入口与资料 */
+  role: {
+    list: "角色",
+    profile: "角色资料",
+    add: "添加角色",
+    refresh: "刷新角色",
+    close: "关闭角色资料",
+    settings: "设置",
+    access: "工具与权限",
+    memory: "记忆",
+    activity: "工作记录",
+    active: "已启用",
+    paused: "已暂停",
+    retired: "已撤掉",
+    busy: "在忙",
+    unknown: "岗位待核对",
+    unverified: "名录待核对",
+    source_changed: "运行端或连接已变化，当前资料仅供回查。请关闭后重新打开角色资料核对。",
+    manage: "角色与权限",
+    manage_hint: "查看已批准的角色与权限方案，核对待批提议。",
   },
 } as const;
 
