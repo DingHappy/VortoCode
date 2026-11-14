@@ -4,9 +4,10 @@ import { ExternalLink, FileText, Globe, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 
 import { formatBytes } from "../lib/labels";
-import { groupArtifacts, artifactTimeLabel } from "../lib/libraryGroups";
+import { groupArtifacts, artifactTimeLabel, filterArtifacts, type ArtifactKindFilter } from "../lib/libraryGroups";
 import type { ArtifactMeta, ArtifactVersionSnapshot } from "../types";
-import { EmptyState, GroupTitle, IconButton } from "./ui";
+import { Button, EmptyState, GroupTitle, IconButton } from "./ui";
+import { CollectionToolbar } from "./CollectionToolbar";
 
 type Props = {
   artifacts: ArtifactMeta[];
@@ -29,6 +30,9 @@ const kindLabel = (artifact: ArtifactMeta) => artifact.kind === "markdown" ? "�
 export function ArtifactCenter({ artifacts, loading, error, selectedId, version, versions, previewLoading, previewHtml,
   onRefresh, onOpen, onVersion, onOpenExternal }: Props) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(""), [kind, setKind] = useState<ArtifactKindFilter>("all");
+  const shown = filterArtifacts(artifacts, query, kind);
+  const filtered = query.trim().length > 0 || kind !== "all";
   const selected = open ? artifacts.find((artifact) => artifact.id === selectedId) ?? null : null;
   return (
     <section className={`vc-library${selected ? " has-detail" : ""}`}>
@@ -40,10 +44,19 @@ export function ArtifactCenter({ artifacts, loading, error, selectedId, version,
           </div>
           <IconButton label="刷新资料库" icon={<RefreshCw />} onClick={onRefresh} disabled={loading} />
         </header>
+        <CollectionToolbar query={query} onQuery={setQuery} searchLabel="搜索已载入资料" filter={kind}
+          onFilter={next => setKind(next as ArtifactKindFilter)} filterLabel="资料类型"
+          filters={[{ id: "all", label: "全部", count: artifacts.length },
+            { id: "markdown", label: "文档", count: artifacts.filter(item => item.kind === "markdown").length },
+            { id: "html", label: "网页", count: artifacts.filter(item => item.kind === "html").length }]}
+          summary={loading ? `正在读取，已载入 ${artifacts.length} 项` : error ? `读取未完成，保留 ${artifacts.length} 项已载入资料`
+            : `显示 ${shown.length} 项 · 已载入 ${artifacts.length} 项`} />
         {error && <p className="vc-page-error" role="alert">{error}</p>}
         {artifacts.length === 0 ? (
-          <EmptyState message={loading ? "正在读取…" : "还没有资料。让助理「把结果做成网页或报告」，发布后会出现在这里。"} />
-        ) : groupArtifacts(artifacts).map((group) => (
+          <EmptyState message={loading ? "正在读取…" : error ? "资料暂时无法读取，请刷新后重试。" : "还没有资料。让助理「把结果做成网页或报告」，发布后会出现在这里。"} />
+        ) : !shown.length ? <div className="vc-collection-empty"><p>没有匹配的资料。</p>
+          {filtered && <Button onClick={() => { setQuery(""); setKind("all"); }}>清除筛选</Button>}</div>
+        : groupArtifacts(shown).map((group) => (
           <section key={group.key} className="vc-library-group" aria-label={group.label}>
             <GroupTitle>{group.label}</GroupTitle>
             <ul className="vc-list">
@@ -66,6 +79,7 @@ export function ArtifactCenter({ artifacts, loading, error, selectedId, version,
       </div>
       {selected && (
         <aside className="vc-library-detail" aria-label={`${selected.title} 预览`}>
+          {!shown.some(item => item.id === selected.id) && <p className="vc-collection-note">当前筛选未包含这份资料，预览仍保留。</p>}
           <header>
             <div>
               <strong title={selected.title}>{selected.title}</strong>

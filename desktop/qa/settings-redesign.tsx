@@ -50,6 +50,9 @@ if (params.get("providers") === "1") profile.providers = [
   { id: "alpha", name: "Alpha", baseUrl: "https://alpha.example.test/v1", hasKey: true, models: ["alpha-model"] },
   { id: "beta", name: "Beta", baseUrl: "https://beta.example.test/v1", hasKey: true, models: ["beta-model"] },
 ];
+if (params.has("long") && profile.providers?.length) {
+  profile.providers[0] = { ...profile.providers[0], name: "较长的自定义模型服务名称 · 团队日常使用", baseUrl: "https://example.test/" + "long-path/".repeat(20) + "v1" };
+}
 let confirmationsAllowed = params.get("confirm") !== "cancel";
 const probeTargets: Array<{ providerId: string | null; baseUrl: string; explicitKey: boolean }> = [];
 let instructions = "回答用中文，报告任务进展和需要我决定的事项。";

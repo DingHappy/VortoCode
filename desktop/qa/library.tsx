@@ -27,13 +27,14 @@ const preview = `<!doctype html><html><body style="font-family: -apple-system, s
 if (new URLSearchParams(location.search).get("theme") === "dark") document.documentElement.dataset.theme = "dark";
 
 function Harness() {
-  const [selected, setSelected] = useState("");
-  const empty = new URLSearchParams(location.search).has("empty");
+  const [selected, setSelected] = useState(""), [version, setVersion] = useState(3);
+  const params = new URLSearchParams(location.search);
+  const empty = params.has("empty"), loading = params.has("loading"), error = params.has("error") ? "合成读取失败" : "";
   return <div style={{ display: "grid", gridTemplateColumns: "256px minmax(0, 1fr)", height: "100vh", background: "var(--vc-bg)" }}>
     <div style={{ background: "var(--vc-sidebar)" }} />
-    <ArtifactCenter artifacts={empty ? [] : items} loading={false} error="" selectedId={selected}
-      version={3} versions={{ id: "plan", current: 3, versions: [{ v: 1, ts: "", bytes: 1 }, { v: 2, ts: "", bytes: 1 }, { v: 3, ts: "", bytes: 1 }] }}
-      previewLoading={false} previewHtml={preview} onRefresh={() => {}} onOpen={setSelected} onVersion={() => {}} onOpenExternal={() => {}} />
+    <ArtifactCenter artifacts={empty ? [] : items} loading={loading} error={error} selectedId={selected}
+      version={version} versions={{ id: "plan", current: 3, versions: [{ v: 1, ts: "", bytes: 1 }, { v: 2, ts: "", bytes: 1 }, { v: 3, ts: "", bytes: 1 }] }}
+      previewLoading={false} previewHtml={preview} onRefresh={() => {}} onOpen={id => { setSelected(id); setVersion(items.find(item => item.id === id)?.version ?? 1); Object.assign(window, { libraryQASelected: id }); }} onVersion={(id, version) => { setVersion(version); Object.assign(window, { libraryQAVersion: { id, version } }); }} onOpenExternal={() => Object.assign(window, { libraryQAExternal: selected })} />
   </div>;
 }
 

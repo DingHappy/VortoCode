@@ -1,0 +1,12 @@
+.model-services .model-services-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--vc-space-3); margin-bottom: var(--vc-space-2); }
+.model-services .model-services-heading h3 { margin: 0; font-size: var(--vc-size-body); font-weight: var(--vc-weight-strong); }
+.model-services .model-services-toolbar { flex-wrap: wrap; gap: var(--vc-space-2); }
+.model-services .model-service-list { border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.model-services .model-service { padding: var(--vc-space-4) 0; flex-wrap: wrap; gap: var(--vc-space-3); }
+.model-services .model-service-copy { flex: 1 1 var(--vc-settings-compact-nav-w); }
+.model-services .model-service-copy strong { flex-wrap: wrap; }
+.model-services .model-service-copy span { white-space: normal; overflow-wrap: anywhere; }
+.model-services .model-service-actions { flex-wrap: wrap; gap: var(--vc-space-2); }
+.model-services .model-service-actions button { background: transparent; border-color: transparent; }
+.model-services .model-service-actions button:hover:not(:disabled) { background: var(--vc-hover); border-color: var(--vc-border); }
+.model-services .model-service-chooser { margin-top: var(--vc-space-3); }

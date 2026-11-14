@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { modelConfigurationSummary, ModelConfigurationState, parseModelConfigurationRead, type ModelConfigurationRead } from "./ModelConfigurationState";
+import { modelConfigurationSummary, ModelConfigurationState, ModelConfigurationView, parseModelConfigurationRead, type ModelConfigurationRead } from "./ModelConfigurationState";
 
 it("does not reuse a success for a different saved revision", () => {
   const read: ModelConfigurationRead = { schemaVersion: 1, savedRevision: "old", runtimes: [{ runtimeId: "a", status: "applied" }] };
@@ -36,4 +36,20 @@ it("rejects future schemas, malformed entries and duplicate runtimes instead of 
     { ...valid, runtimes: [valid.runtimes[0], valid.runtimes[0]] }]) {
     expect(parseModelConfigurationRead(bad)).toBeNull();
   }
+});
+
+it("shows separate current, restart and unknown counts only for the exact saved revision", () => {
+  const read: ModelConfigurationRead = { schemaVersion: 1, savedRevision: "v1", runtimes: [
+    { runtimeId: "loaded", status: "applied" }, { runtimeId: "old", status: "pending" }, { runtimeId: "unread", status: "unknown" },
+  ] };
+  const render = (revision: string, failed = false) => renderToStaticMarkup(<ModelConfigurationView read={read} revision={revision} failed={failed} onRefresh={() => {}} />);
+  const current = render("v1");
+  for (const text of ["1 个已载入", "1 个需重启", "1 个待核对", "仍使用旧配置，等待重启", "不代表模型服务可用或任务已完成"]) expect(current).toContain(text);
+  const stale = render("v2");
+  expect(stale).toContain("尚未同步");
+  expect(stale).not.toContain("个已载入");
+  const failed = render("v1", true);
+  expect(failed).toContain("暂时无法核对");
+  expect(failed).not.toContain("个已载入");
+  expect(failed).not.toContain("loaded");
 });

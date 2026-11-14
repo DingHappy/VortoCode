@@ -1,5 +1,11 @@
 // 资料库的分组和时间：按更新时间倒序，分成今天 / 昨天 / 这 7 天 / 更早；时间读不出来的归「更早」。
 import type { ArtifactMeta } from "../types";
+import { matchesCollectionQuery } from "./collectionQuery";
+
+export type ArtifactKindFilter = "all" | "markdown" | "html";
+export function filterArtifacts(artifacts: ArtifactMeta[], query: string, kind: ArtifactKindFilter) {
+  return artifacts.filter(item => (kind === "all" || item.kind === kind) && matchesCollectionQuery(query, [item.title]));
+}
 
 export type ArtifactGroup = { key: string; label: string; items: ArtifactMeta[] };
 
