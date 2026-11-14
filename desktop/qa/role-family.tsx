@@ -8,7 +8,7 @@ import { RoleProfileDialog, type RoleProfileSection } from "../src/components/Ro
 import { NewRoleDialog } from "../src/components/NewRoleDialog";
 import { WorkspaceBar } from "../src/components/WorkspaceBar";
 import { RoleGrants } from "../src/components/settings/StaffPane";
-import { staffCharacter } from "../src/components/RoleAvatar";
+import { staffCharacter, ROLE_ART } from "../src/components/RoleAvatar";
 import { ConversationHome } from "../src/components/ConversationHome";
 import { AssistantPanel, AssistantSidebar, AssistantSchedule, AssistantAudit, PAGE_PANEL, type AssistantPage, type AssistantTab } from "../src/components/AssistantMode";
 import { AssistantActivity } from "../src/components/AssistantActivity";
@@ -140,7 +140,7 @@ function Fixture() {
             place={null} panelOpen={panel} waiting={0} plan={{ done: 0, total: 0 }} busy={busy} onTogglePanel={() => setPanel(value => !value)} onStop={() => {}} />
           <div className="conversation-body"><div className="conversation-scroll">
             {sid === "empty" && !localMessages.length && <ConversationHome assistant starting={false} showStarting={false} now={new Date("2026-11-14T09:00:00")} />}
-            <ChatHistory messages={[...(sid === "main" ? messages : []), ...(params.has("stress") ? [{ id: "long", role: "assistant" as const, text: "### 较长的资料示例\n\n```text\n" + "long_file_name_".repeat(40) + "\n```\n\n| 标题 | 进展 |\n| --- | --- |\n| 资料整理 | 等待核对 |\n\nhttps://example.com/" + "longpath".repeat(40) }] : []), ...localMessages]} assistant activityGroups={new Map()} busy={false} activeTurnRid={null} />
+            <ChatHistory messages={[...(sid === "main" ? messages : []), ...(params.has("image") ? [{ id: "image-only", role: "user" as const, text: "", source: "telegram", images: [ROLE_ART.general] }] : []), ...(params.has("stress") ? [{ id: "long", role: "assistant" as const, text: "### 较长的资料示例\n\n```text\n" + "long_file_name_".repeat(40) + "\n```\n\n| 标题 | 进展 |\n| --- | --- |\n| 资料整理 | 等待核对 |\n\nhttps://example.com/" + "longpath".repeat(40) }] : []), ...localMessages]} assistant activityGroups={new Map()} busy={false} activeTurnRid={null} />
             {params.has("confirm") && <ConfirmCard confirm={{ id: "example", text: "合成示例：发送这份摘要？", tainted: true, operation_kind: "deliver" }} trust={null} trustBusy={false} connected={!disconnected} onTrust={() => {}} onCheck={() => {}} onAnswer={() => setNotice("合成确认，不执行操作")} />}
           </div></div>
           <div className="composer-wrap"><div className="composer"><ComposerCommands prompt={composer.prompt} onPrompt={composer.setPromptState} project={false} disabled={false} onSend={send} onAction={command => setNotice(`已选择快捷操作：${command}`)} sendControl={sendControl} placeholder="交代一件事…">

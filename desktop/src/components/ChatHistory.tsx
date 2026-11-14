@@ -47,7 +47,7 @@ export const ChatHistory = memo(function ChatHistory({ messages, activityGroups,
         {message.images && message.images.length > 0 && <div className="message-images">
           {message.images.map((src, index) => <img key={index} src={src} alt={`发送的图片 ${index + 1}`} />)}
         </div>}
-        {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : <div className="message-text">{message.text}</div>}
+        {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text ? <div className="message-text">{message.text}</div> : null}
         {message.card && renderCard?.(message)}
       </div>
       {assistant && message.role !== "system" && <MessageActions text={message.text} />}

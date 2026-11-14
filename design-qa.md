@@ -26,7 +26,7 @@ final result: passed
 
 最终再次比较：`/private/tmp/vortoone-conversation-final-crop.png` 与本轮参考同一图像输入；
 与第一轮 `/private/tmp/vortoone-conversation-after1.png` 相比，输入起步高度和操作对齐已修复。
-本范围没有未处理的 P0/P1/P2。
+收尾核对还发现纯图片消息会产生空文字气泡（P2）；已改为仅有正文时渲染气泡，并补纯图片消息的离线渲染回归。本范围没有未处理的 P0/P1/P2。
 
 ## 五个必查面
 
@@ -52,7 +52,7 @@ final result: passed
 ## 检查结果
 
 `./scripts/ci-local.sh`：ruff、mypy、Python 7274 通过，e2e canary 30 通过，
-Desktop TypeScript、201 文件 / 1656 个前端测试、Rust 201 通过、Cargo check 通过。
+Desktop TypeScript、201 文件 / 1657 个前端测试、Rust 201 通过、Cargo check 通过。
 Python 11 跳过：缺 textual、tool_sandbox 各 1；真实模型/评测 4；需显式启用 Chromium 的浏览器 5。
 Rust 2 忽略：真实账号和真实 SSH。跳过与忽略不算通过。
 另有现有 Starlette cookies 弃用警告；`npm run build` 成功，仍报告现有大分块警告。

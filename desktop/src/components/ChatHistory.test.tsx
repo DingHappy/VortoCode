@@ -75,3 +75,12 @@ it("offers copy for loaded user and assistant text, preserving system notes and 
   expect(html).toContain("核对交付");
   expect(renderToStaticMarkup(<ChatHistory {...props} assistant={false} />)).not.toContain("复制消息");
 });
+
+it("an image-only message keeps its attachment without an empty text bubble or copy action", () => {
+  const html = renderToStaticMarkup(<ChatHistory {...props} activityGroups={new Map()}
+    messages={[{ id: "image", role: "user", text: "", images: ["data:image/png;base64,AA=="], source: "telegram" }]} />);
+  expect(html).toContain("发送的图片 1");
+  expect(html).toContain("Telegram");
+  expect(html).not.toContain('class="message-text"');
+  expect(html).not.toContain("复制消息");
+});
