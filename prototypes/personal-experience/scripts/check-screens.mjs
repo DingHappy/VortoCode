@@ -21,6 +21,7 @@ try {
     "remote",
     "ready",
     "chat",
+    "channel",
     "staff",
     "routines",
     "library",

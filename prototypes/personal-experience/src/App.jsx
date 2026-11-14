@@ -13,6 +13,7 @@ import {
   Clock3,
   FileText,
   Folder,
+  Hash,
   Laptop,
   Menu,
   MessageSquare,
@@ -37,6 +38,11 @@ import research from "../../../docs/design/personal-experience/assets/research.p
 import development from "../../../docs/design/personal-experience/assets/development.png";
 import calendar from "../../../docs/design/personal-experience/assets/calendar.png";
 import family from "../../../docs/design/personal-experience/assets/role-family-reference.png";
+import {
+  PREVIEW_CHANNELS,
+  CHANNEL_MESSAGES,
+  CHANNEL_REPLIES,
+} from "./channels.mjs";
 
 const ART = { general, research, development, calendar };
 const EXAMPLE_MESSAGES = [
@@ -111,13 +117,14 @@ const SCREENS = [
   ["remote", "05 · 连接已有助手"],
   ["ready", "06 · 开始使用"],
   ["chat", "07 · 个人空间与对话"],
-  ["staff", "08 · 专员"],
-  ["routines", "09 · 定时工作"],
-  ["library", "10 · 资料库"],
-  ["settings", "11 · 设置"],
-  ["approval", "12 · 主人确认"],
-  ["recovery", "13 · 断连与恢复"],
-  ["brand", "14 · 角色规范"],
+  ["channel", "08 · 频道"],
+  ["staff", "09 · 专员"],
+  ["routines", "10 · 定时工作"],
+  ["library", "11 · 资料库"],
+  ["settings", "12 · 设置"],
+  ["approval", "13 · 主人确认"],
+  ["recovery", "14 · 断连与恢复"],
+  ["brand", "15 · 角色规范"],
 ];
 const CATEGORIES = [
   ["personal", "个性化", UserRound],
@@ -271,17 +278,30 @@ export function App() {
     [more, setMore] = useState(false),
     [search, setSearch] = useState("");
   const [project, setProject] = useState("个人空间"),
-    [chatId, setChatId] = useState("main"),
+    [chatId, setChatId] = useState(
+      new URLSearchParams(location.search).get("screen") === "channel"
+        ? "channel:research"
+        : "main",
+    ),
     [chats, setChats] = usePreviewSpaceState(space, []),
     [drafts, setDrafts] = useState({}),
     [messages, setMessages] = useState(() =>
       new URLSearchParams(location.search).get("example") === "conversation"
-        ? { "这台 Mac:个人空间:main": EXAMPLE_MESSAGES }
-        : {},
+        ? { ...CHANNEL_MESSAGES, "这台 Mac:个人空间:main": EXAMPLE_MESSAGES }
+        : CHANNEL_MESSAGES,
     ),
     [process, setProcess] = useState(
-      new URLSearchParams(location.search).get("example") === "conversation",
+      new URLSearchParams(location.search).get("example") === "conversation" ||
+        new URLSearchParams(location.search).get("screen") === "channel",
     );
+  const [channels, setChannels] = usePreviewSpaceState(space, PREVIEW_CHANNELS),
+    [channelForm, setChannelForm] = useState(false),
+    [channelName, setChannelName] = useState(""),
+    [channelTopic, setChannelTopic] = useState(""),
+    [channelProject, setChannelProject] = useState("个人空间"),
+    [channelError, setChannelError] = useState(""),
+    [replyTarget, setReplyTarget] = useState(null),
+    [replies, setReplies] = useState(CHANNEL_REPLIES);
   const [model, setModel] = useState(""),
     [endpoint, setEndpoint] = useState(""),
     [apiKey, setApiKey] = useState(""),
@@ -315,6 +335,7 @@ export function App() {
     [documentOpen, setDocumentOpen] = useState(false),
     [version, setVersion] = useState("2"),
     [category, setCategory] = useState("personal"),
+    [settingsReturn, setSettingsReturn] = useState("chat"),
     [settingsQuery, setSettingsQuery] = useState(""),
     [name, setName] = usePreviewSpaceState(space, "小 V"),
     [savedName, setSavedName] = usePreviewSpaceState(space, "小 V"),
@@ -330,10 +351,18 @@ export function App() {
     [notice, setNotice] = useState("");
   const sequence = useRef(0),
     surface = useRef(null),
+    replyTrigger = useRef(null),
     trigger = useRef(null);
   const draftKey = `${space}:${project}:${chatId}`,
     draft = drafts[draftKey] || "",
     thread = messages[draftKey] || [];
+  const currentChannel = channels.find(
+      (item) => chatId === `channel:${item.id}`,
+    ),
+    activeReply = replyTarget?.key === draftKey ? replyTarget : null,
+    replyKey = activeReply ? `${draftKey}:${activeReply.index}` : "",
+    replyMessages = replies[replyKey] || [],
+    replyDraft = drafts[`reply:${replyKey}`] || "";
   const setDraft = (text) =>
     setDrafts((values) => ({ ...values, [draftKey]: text }));
   useEffect(() => {
@@ -341,7 +370,7 @@ export function App() {
   }, [theme]);
   useEffect(() => {
     surface.current?.querySelector("h1")?.focus({ preventScroll: true });
-  }, [route]);
+  }, [route, chatId]);
   useEffect(() => {
     const searchShortcut = (event) => {
       if (
@@ -357,7 +386,7 @@ export function App() {
             .querySelector(
               route === "settings"
                 ? 'input[aria-label="搜索设置"]'
-                : 'input[aria-label="搜索对话"]',
+                : 'input[aria-label="搜索频道和对话"]',
             )
             ?.focus(),
         );
@@ -366,14 +395,22 @@ export function App() {
     document.addEventListener("keydown", searchShortcut);
     return () => document.removeEventListener("keydown", searchShortcut);
   }, [route]);
-  function go(next) {
+  function go(next, target) {
     if (
       route === "settings" &&
       next !== "settings" &&
       (name !== savedName || persona !== savedPersona)
     ) {
-      setLeaveTo(next);
+      setLeaveTo({ next, target });
       return;
+    }
+    navigate(next, target);
+  }
+  function navigate(next, target) {
+    if (next === "settings" && route !== "settings") setSettingsReturn(route);
+    if (target) {
+      setChatId(target.chatId);
+      setProject(target.project);
     }
     setRoute(next);
     setSpaceMenu(false);
@@ -382,13 +419,76 @@ export function App() {
     setNotice("");
     setRole(null);
     setRoutineForm(false);
+    setReplyTarget(null);
+  }
+  function openChannel(item) {
+    go("channel", { chatId: `channel:${item.id}`, project: item.project });
+  }
+  function createChannel(event) {
+    event.preventDefault();
+    const cleanName = channelName.trim().replace(/^#+/, "").trim();
+    if (!cleanName || cleanName.length > 30) {
+      setChannelError("频道名称请填写 1～30 个字。");
+      return;
+    }
+    if (
+      channels.some(
+        (item) =>
+          item.name.toLocaleLowerCase() === cleanName.toLocaleLowerCase(),
+      )
+    ) {
+      setChannelError("这个空间已经有同名频道，请换一个名称。");
+      return;
+    }
+    const item = {
+      id: `custom-${++sequence.current}`,
+      name: cleanName,
+      topic: channelTopic.trim(),
+      project: channelProject,
+    };
+    setChannels((items) => [...items, item]);
+    setChannelForm(false);
+    setChatId(`channel:${item.id}`);
+    setProject(item.project);
+    setRoute("channel");
+    setReplyTarget(null);
+    setNotice("已创建演示频道，只保存在当前页面内存。");
+  }
+  function sendReply() {
+    if (!replyDraft.trim() || !activeReply) return;
+    setReplies((values) => ({
+      ...values,
+      [replyKey]: [
+        ...replyMessages,
+        { role: "user", text: replyDraft.trim(), time: "现在" },
+      ],
+    }));
+    setDrafts((values) => ({ ...values, [`reply:${replyKey}`]: "" }));
+  }
+  function openReply(index, event) {
+    replyTrigger.current = event.currentTarget;
+    setReplyTarget({ key: draftKey, index });
+    setProcess(true);
+    requestAnimationFrame(() =>
+      document.querySelector('textarea[aria-label="回复这条消息"]')?.focus(),
+    );
+  }
+  function closeReply() {
+    setReplyTarget(null);
+    setProcess(false);
+    requestAnimationFrame(
+      () => replyTrigger.current?.isConnected && replyTrigger.current.focus(),
+    );
   }
   function ask(kind, payload) {
     trigger.current = document.activeElement;
-    setRequest({ kind, payload, space, project });
+    setRequest({ kind, payload, space, project, chatId });
   }
   const currentRequest =
-    request && request.space === space && request.project === project;
+    request &&
+    request.space === space &&
+    request.project === project &&
+    request.chatId === chatId;
   function decide(allowed) {
     if (!currentRequest) return;
     setAudit((items) => [...items, { kind: request.kind, allowed }]);
@@ -936,8 +1036,8 @@ export function App() {
           <label className="sidebar-search">
             <Search />
             <input
-              aria-label="搜索对话"
-              placeholder="搜索对话…"
+              aria-label="搜索频道和对话"
+              placeholder="搜索频道或对话…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -966,8 +1066,12 @@ export function App() {
                   : undefined
               }
               onClick={() => {
-                if (id === "chat") setChatId("main");
-                go(id);
+                go(
+                  id,
+                  id === "chat"
+                    ? { chatId: "main", project: "个人空间" }
+                    : undefined,
+                );
               }}
             >
               <Icon />
@@ -988,9 +1092,55 @@ export function App() {
             </div>
           )}
         </nav>
+        <div className="channel-navigation">
+          <div className="nav-group-head">
+            <span>频道</span>
+            <button
+              className="icon-button"
+              aria-label="新建频道"
+              onClick={() => {
+                setChannelName("");
+                setChannelTopic("");
+                setChannelProject("个人空间");
+                setChannelError("");
+                setChannelForm(true);
+              }}
+            >
+              <Plus />
+            </button>
+          </div>
+          {channels
+            .filter(
+              (item) =>
+                !search || `${item.name} ${item.topic}`.includes(search),
+            )
+            .map((item) => (
+              <button
+                className="channel-link"
+                key={item.id}
+                aria-label={`频道 ${item.name}`}
+                aria-current={
+                  route === "channel" && item.id === currentChannel?.id
+                    ? "page"
+                    : undefined
+                }
+                onClick={() => openChannel(item)}
+              >
+                <Hash />
+                <span>{item.name}</span>
+                {item.project !== "个人空间" && (
+                  <Folder className="channel-project-mark" />
+                )}
+              </button>
+            ))}
+          {search &&
+            !channels.some((item) =>
+              `${item.name} ${item.topic}`.includes(search),
+            ) && <p className="channel-no-results">没有匹配的频道</p>}
+        </div>
         <div className="recent">
           <div className="nav-group-head">
-            <span>对话</span>
+            <span>旁聊</span>
             <button
               className="icon-button"
               aria-label="新对话"
@@ -998,6 +1148,7 @@ export function App() {
                 const id = `side-${++sequence.current}`;
                 setChats((values) => [...values, id]);
                 setChatId(id);
+                setProject("个人空间");
                 go("chat");
               }}
             >
@@ -1010,8 +1161,7 @@ export function App() {
               <button
                 key={id}
                 onClick={() => {
-                  setChatId(id);
-                  go("chat");
+                  go("chat", { chatId: id, project: "个人空间" });
                 }}
               >
                 <MessageSquare />
@@ -1030,7 +1180,9 @@ export function App() {
               className="staff-shortcut"
               key={item.id}
               onClick={() =>
-                item.id === "general" ? go("chat") : setRole(item)
+                item.id === "general"
+                  ? go("chat", { chatId: "main", project: "个人空间" })
+                  : setRole(item)
               }
             >
               <Avatar kind={item.id} size={44} />
@@ -1067,19 +1219,35 @@ export function App() {
   function chat() {
     return (
       <section
-        className={`chat ${thread.length ? "has-messages" : ""} ${process ? "with-detail" : ""}`}
+        className={`chat ${thread.length ? "has-messages" : ""} ${process ? "with-detail" : ""} ${activeReply ? "with-thread" : ""}`}
       >
         <header className="conversation-head">
           <div>
-            <MessageSquare />
-            <h1 tabIndex={-1}>{chatId === "main" ? "主要聊天" : "新的旁聊"}</h1>
-            <span>{project}</span>
+            {route === "channel" ? <Hash /> : <MessageSquare />}
+            <h1
+              tabIndex={-1}
+              title={route === "channel" ? currentChannel?.name : undefined}
+            >
+              {route === "channel" && currentChannel
+                ? currentChannel.name
+                : chatId === "main"
+                  ? "主要聊天"
+                  : "新的旁聊"}
+            </h1>
+            <span title={route === "channel" ? currentChannel?.topic : project}>
+              {route === "channel"
+                ? currentChannel?.topic || "给这个话题留一个地方"
+                : project}
+            </span>
           </div>
           <button
             className="icon-button"
-            aria-label="对话详情"
+            aria-label={route === "channel" ? "频道详情" : "对话详情"}
             aria-expanded={process}
-            onClick={() => setProcess(!process)}
+            onClick={() => {
+              setReplyTarget(null);
+              setProcess(!process);
+            }}
           >
             <PanelRight />
           </button>
@@ -1105,18 +1273,34 @@ export function App() {
           )}
           {!thread.length ? (
             <div className="chat-welcome">
-              <Avatar size={140} />
-              <h1>今天，想先做什么？</h1>
-              <p>交代一件事。进展、结果和需要你决定的地方，都会留在这里。</p>
+              {route === "channel" ? (
+                <span className="channel-empty-icon">
+                  <Hash />
+                </span>
+              ) : (
+                <Avatar size={140} />
+              )}
+              <h1>
+                {route === "channel"
+                  ? `从 #${currentChannel?.name || "新频道"} 开始。`
+                  : "今天，想先做什么？"}
+              </h1>
+              <p>
+                {route === "channel"
+                  ? currentChannel?.topic ||
+                    "写下第一条消息，让后续讨论和结果都留在这里。"
+                  : "交代一件事。进展、结果和需要你决定的地方，都会留在这里。"}
+              </p>
               <div className="suggestions">
-                {["整理今天的安排", "查一份公开资料", "看看项目进展"].map(
-                  (text) => (
-                    <button key={text} onClick={() => setDraft(text)}>
-                      {text}
-                      <ArrowUp />
-                    </button>
-                  ),
-                )}
+                {(route === "channel"
+                  ? ["梳理这个话题", "列出待确认的问题", "整理下一步"]
+                  : ["整理今天的安排", "查一份公开资料", "看看项目进展"]
+                ).map((text) => (
+                  <button key={text} onClick={() => setDraft(text)}>
+                    {text}
+                    <ArrowUp />
+                  </button>
+                ))}
               </div>
             </div>
           ) : (
@@ -1127,7 +1311,7 @@ export function App() {
               {thread.map((item, index) => (
                 <article key={index} className={item.role}>
                   {item.role === "assistant" ? (
-                    <Avatar size={44} />
+                    <Avatar kind={item.kind || "general"} size={44} />
                   ) : (
                     <span className="owner-avatar">
                       <UserRound />
@@ -1136,8 +1320,13 @@ export function App() {
                   <div>
                     <header className="message-meta">
                       <strong>
-                        {item.role === "assistant" ? savedName : "你"}
+                        {item.role === "assistant"
+                          ? item.kind
+                            ? ROLES.find((role) => role.id === item.kind)?.name
+                            : savedName
+                          : "你"}
                       </strong>
+                      {item.label && <span>{item.label}</span>}
                       <time>{item.time || "现在"}</time>
                     </header>
                     {item.progress && (
@@ -1168,6 +1357,21 @@ export function App() {
                         <ChevronRight />
                       </button>
                     )}
+                    {route === "channel" && (
+                      <button
+                        className="message-replies"
+                        aria-label={`回复第 ${index + 1} 条消息`}
+                        onClick={(event) => openReply(index, event)}
+                      >
+                        <MessageSquare />
+                        <span>
+                          {(replies[`${draftKey}:${index}`] || []).length
+                            ? `${replies[`${draftKey}:${index}`].length} 条回复`
+                            : "回复"}
+                        </span>
+                        <ChevronRight />
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -1180,6 +1384,7 @@ export function App() {
             <select
               aria-label="当前项目"
               value={project}
+              disabled={route === "channel"}
               onChange={(e) => setProject(e.target.value)}
             >
               <option>个人空间</option>
@@ -1190,7 +1395,11 @@ export function App() {
             <textarea
               aria-label="交代一件事"
               rows={1}
-              placeholder="交代一件事…"
+              placeholder={
+                route === "channel"
+                  ? `发到 #${currentChannel?.name || "频道"}…`
+                  : "交代一件事…"
+              }
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
@@ -1231,56 +1440,153 @@ export function App() {
           <p className="composer-note">重要操作仍会先请你确认。</p>
         </div>
         {process && (
-          <aside className="work-detail">
+          <aside
+            className={`work-detail ${activeReply ? "thread-panel" : ""}`}
+            aria-label={
+              activeReply
+                ? "消息回复"
+                : route === "channel"
+                  ? "频道详情"
+                  : "本次对话"
+            }
+            onKeyDown={(event) => {
+              if (activeReply && event.key === "Escape") {
+                event.stopPropagation();
+                closeReply();
+              }
+            }}
+          >
             <header>
-              <h2>本次对话</h2>
+              <h2>
+                {activeReply
+                  ? "回复"
+                  : route === "channel"
+                    ? "频道详情"
+                    : "本次对话"}
+              </h2>
               <button
                 className="icon-button"
-                aria-label="收起对话详情"
-                onClick={() => setProcess(false)}
+                aria-label={
+                  activeReply
+                    ? "关闭回复"
+                    : route === "channel"
+                      ? "收起频道详情"
+                      : "收起对话详情"
+                }
+                onClick={() => {
+                  if (activeReply) closeReply();
+                  else setProcess(false);
+                }}
               >
                 <X />
               </button>
             </header>
-            <h3>当前助手</h3>
-            <div className="detail-person">
-              <Avatar size={52} />
-              <span>
-                <strong>{savedName}</strong>
-                <small>总助手</small>
-              </span>
-            </div>
-            <h3>资料范围</h3>
-            <div className="detail-line">
-              <Folder />
-              <span>
-                {project}
-                <small>沿用这份会话的权限</small>
-              </span>
-            </div>
-            <h3>运行位置</h3>
-            <div className="detail-line">
-              <Laptop />
-              <span>
-                {space}
-                <small>这份个人空间的资料与配置</small>
-              </span>
-            </div>
-            <h3>记录与结果</h3>
-            <button className="detail-link" onClick={() => go("library")}>
-              <FileText />
-              交付资料
-              <ChevronRight />
-            </button>
-            <button
-              className="detail-link"
-              onClick={() => settingsLink("permissions")}
-            >
-              <ShieldCheck />
-              确认与审核记录
-              <ChevronRight />
-            </button>
-            <p className="detail-footnote">尚未确认的动作仍需由你决定。</p>
+            {activeReply ? (
+              <div className="thread-content">
+                <article className="thread-origin">
+                  <strong>
+                    {thread[activeReply.index]?.role === "user"
+                      ? "你"
+                      : thread[activeReply.index]?.kind
+                        ? ROLES.find(
+                            (role) =>
+                              role.id === thread[activeReply.index].kind,
+                          )?.name
+                        : savedName}
+                  </strong>
+                  <p>{thread[activeReply.index]?.text}</p>
+                </article>
+                <p className="thread-count">{replyMessages.length} 条回复</p>
+                <div className="thread-messages">
+                  {replyMessages.map((item, index) => (
+                    <article key={index}>
+                      <header>
+                        <strong>
+                          {item.role === "user" ? "你" : savedName}
+                        </strong>
+                        <time>{item.time}</time>
+                      </header>
+                      <p>{item.text}</p>
+                    </article>
+                  ))}
+                </div>
+                <div className="thread-composer">
+                  <textarea
+                    aria-label="回复这条消息"
+                    placeholder="在这条消息下继续…"
+                    rows={3}
+                    value={replyDraft}
+                    onChange={(event) =>
+                      setDrafts((values) => ({
+                        ...values,
+                        [`reply:${replyKey}`]: event.target.value,
+                      }))
+                    }
+                  />
+                  <Button
+                    primary
+                    disabled={!replyDraft.trim()}
+                    onClick={sendReply}
+                  >
+                    发送回复
+                    <ArrowUp />
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {route === "channel" && (
+                  <div className="channel-about">
+                    <Hash />
+                    <h3>{currentChannel?.name}</h3>
+                    <p>{currentChannel?.topic || "还没有频道说明"}</p>
+                  </div>
+                )}
+                <h3>当前助手</h3>
+                <div className="detail-person">
+                  <Avatar size={52} />
+                  <span>
+                    <strong>{savedName}</strong>
+                    <small>总助手</small>
+                  </span>
+                </div>
+                <h3>资料范围</h3>
+                <div className="detail-line">
+                  <Folder />
+                  <span>
+                    {project}
+                    <small>沿用这份会话的权限</small>
+                  </span>
+                </div>
+                <h3>运行位置</h3>
+                <div className="detail-line">
+                  <Laptop />
+                  <span>
+                    {space}
+                    <small>这份个人空间的资料与配置</small>
+                  </span>
+                </div>
+                <h3>记录与结果</h3>
+                <button className="detail-link" onClick={() => go("library")}>
+                  <FileText />
+                  交付资料
+                  <ChevronRight />
+                </button>
+                <button
+                  className="detail-link"
+                  onClick={() => settingsLink("permissions")}
+                >
+                  <ShieldCheck />
+                  确认与审核记录
+                  <ChevronRight />
+                </button>
+                <p className="detail-footnote">
+                  {route === "channel"
+                    ? "频道不额外授予权限，也不会把整段历史自动分享给专员。"
+                    : "尚未确认的动作仍需由你决定。"}
+                </p>
+              </>
+            )}
           </aside>
         )}
       </section>
@@ -1475,7 +1781,7 @@ export function App() {
             <button
               className="icon-button"
               aria-label="返回个人空间"
-              onClick={() => go("chat")}
+              onClick={() => go(settingsReturn)}
             >
               <ArrowLeft />
             </button>
@@ -1813,7 +2119,19 @@ export function App() {
         <select
           aria-label="切换设计页面"
           value={route}
-          onChange={(e) => go(e.target.value)}
+          onChange={(e) =>
+            e.target.value === "channel"
+              ? openChannel(
+                  channels.find((item) => item.id === "research") ||
+                    channels[0],
+                )
+              : go(
+                  e.target.value,
+                  ["chat", "approval"].includes(e.target.value)
+                    ? { chatId: "main", project: "个人空间" }
+                    : undefined,
+                )
+          }
         >
           {SCREENS.map(([id, label]) => (
             <option key={id} value={id}>
@@ -1848,7 +2166,7 @@ export function App() {
               </button>
             )}
             <div className="main-surface">
-              {["chat", "approval"].includes(route)
+              {["chat", "approval", "channel"].includes(route)
                 ? chat()
                 : route === "staff"
                   ? specialists()
@@ -1865,6 +2183,76 @@ export function App() {
           </>
         )}
       </main>
+      {channelForm && (
+        <Modal
+          labelledby="channel-form-title"
+          onClose={() => setChannelForm(false)}
+        >
+          <form className="sheet channel-form" onSubmit={createChannel}>
+            <button
+              type="button"
+              className="icon-button sheet-close"
+              aria-label="关闭新建频道"
+              onClick={() => setChannelForm(false)}
+            >
+              <X />
+            </button>
+            <Hash className="channel-form-icon" />
+            <h1 id="channel-form-title">新建频道</h1>
+            <p>给需要持续讨论的话题留一个地方。</p>
+            <Field label="频道名称">
+              <input
+                autoFocus
+                aria-label="频道名称"
+                placeholder="例如：产品想法"
+                maxLength={32}
+                value={channelName}
+                onChange={(event) => {
+                  setChannelName(event.target.value);
+                  setChannelError("");
+                }}
+                required
+              />
+            </Field>
+            <Field label="频道说明">
+              <textarea
+                aria-label="频道说明"
+                placeholder="这里主要讨论什么？"
+                rows={3}
+                value={channelTopic}
+                onChange={(event) => setChannelTopic(event.target.value)}
+              />
+            </Field>
+            <Field
+              label="所属范围"
+              hint="选择已登记项目不增加文件访问或执行权限。"
+            >
+              <select
+                aria-label="频道所属范围"
+                value={channelProject}
+                onChange={(event) => setChannelProject(event.target.value)}
+              >
+                <option>个人空间</option>
+                <option>VortoOne · 已登记项目</option>
+              </select>
+            </Field>
+            {channelError && (
+              <p className="alert" role="alert">
+                {channelError}
+              </p>
+            )}
+            <div className="form-actions">
+              <Button type="button" onClick={() => setChannelForm(false)}>
+                取消
+              </Button>
+              <Button primary type="submit">
+                创建频道
+                <ArrowRight />
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {leaveTo && (
         <Modal
           labelledby="leave-title"
@@ -1883,7 +2271,7 @@ export function App() {
                 onClick={() => {
                   setName(savedName);
                   setPersona(savedPersona);
-                  setRoute(leaveTo);
+                  navigate(leaveTo.next, leaveTo.target);
                   setLeaveTo(null);
                 }}
               >

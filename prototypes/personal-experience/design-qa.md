@@ -43,6 +43,15 @@ final result: passed
 - 参考对话是多人频道，本稿是主人与总助手的个人对话；不复制成员、权限、文案或尚未支持的富文本功能。设置没有拿到同状态的登录后截图，只依据已核对的设置组件与页面源码设计，未声称完成其视觉逐像素验收。
 - 最终复查没有遗留 P0/P1/P2；P3 的角色透明边缘仍按原说明保留。
 
+### 频道与消息回复复查
+
+- 主人补充要求加入 channel。本轮增加侧栏主题频道、频道说明／范围、新建频道与原消息下的回复。只修改合成原型，不增加后台存储、派活或跨人共享权限。
+- 对照证据为本地导出的 `comparison-channels.png`：源图 2880 × 2000 以 1440 × 1000 呈现，实现 [`channel-dark.png`](../../docs/design/personal-experience/screenshots/channel-dark.png) 为同尺寸 1x。两张图在同一浏览器画面内捕获并一起查看，核对列宽、选中频道、消息、头像、过程与交付卡；个人模式、中文与交付回传为有意差异。
+- 字体／文案：沿用本轮 sans 层级；频道名与说明分开，回复注明原消息和计数，交付注明研究助手来源。图片／颜色：复用所选角色与已审中性色，无新图片或上游资产。布局：频道区与旁聊分组，详情仍可收纳，回复栏桌面宽 336px、窄窗覆盖显示。
+- [P2，已修] 允许的 30 字中文频道名在 720 宽度下，标题右缘达 706px，而详情按钮从 664px 开始，形成重叠。改为标题收缩与省略，完整名保留 title；复查右缘约 558px，按钮仍从 664px 开始。证据：[`channel-long-name-720.png`](../../docs/design/personal-experience/screenshots/channel-long-name-720.png)。
+- [P2，已修] 初次窄窗回复截图中，绝对定位的回复栏仍绑定桌面第二列，宽度缩到 41px。窄窗清除 grid-column／grid-row 后复查：720px 窗口中回复栏 x=384、width=336、right=720。实际填写、Escape 关闭与重新打开保留草稿。证据：[`channel-thread-720.png`](../../docs/design/personal-experience/screenshots/channel-thread-720.png) 与 [`channel-thread-960.png`](../../docs/design/personal-experience/screenshots/channel-thread-960.png)。仅检查页面无水平溢出不足以发现这个问题，因此另核对了面板和按钮的位置。
+- 另打开 [`channel-thread-dark.png`](../../docs/design/personal-experience/screenshots/channel-thread-dark.png)、[`channel-create.png`](../../docs/design/personal-experience/screenshots/channel-create.png) 检查可读性与表单，未发现遗留 P0/P1/P2。上游回复面板没有相同状态的实跑截图，未声称其逐像素复刻。
+
 ## 实际走过的交互
 
 - 本机模型表单 → 复制同意 → 安装 → 启动 → 使用；未勾同意时安装按钮不可用。所有回执均为合成。
@@ -51,14 +60,15 @@ final result: passed
 - 暂停排期 → 重新开启弹出确认 → 拒绝，排期仍暂停。
 - 设置搜索 → 修改资料 → 切分类再返回草稿保留 → 离开提示 → 继续编辑／放弃离开。
 - 资料类型空状态 → 文档预览 → v1 历史版 → 关闭预览。
-- 浏览器遍历 15 个页面，检查过浅深色；960、720 宽度检查运行位置、对话、专员、定时、资料库、设置、确认入口与恢复。最终遍历未捕获运行异常。
+- 浏览器遍历 16 个页面，检查过浅深色；960、720 宽度另外检查频道回复与长标题。最终遍历未捕获运行异常。
 - 本轮额外实测：示例对话／空白对话切换、详情展开收起、消息发送与原文入口、收起侧栏后用 Cmd+K 恢复搜索、旁聊草稿切空间再打开仍保留、改版后的设置未保存确认、专员批准与拒绝重新开启排期。
+- 频道轮额外实测：两频道独立草稿；回复草稿关闭重开仍在；发送后计数由 2 变 3 且主频道仍为 4 条消息；另一频道回复为 0；重名创建不新增记录；新频道空状态与第一条消息；搜索；另一运行端没有本机创建的频道；设置未保存提示后仍返回原频道；项目频道范围固定，回主要聊天恢复个人范围。
 
 未完整键盘审计所有控件、所有设置字段或浏览器读屏，也未验证真实服务、远程连接与模型。合成批准不能作为安全合同测试的替代。
 
 ## 自动检查与后续
 
-- `npm run test:render`：15 页与示例对话状态通过。
+- `npm run test:render`：16 页与示例对话状态通过。
 - `npm run build`：通过。
 - `npm run test:sites`：4 项通过，只验证模板产物与本地 worker 合同，未发布。
 - 本轮重新运行仓库 `./scripts/ci-local.sh`：ruff、mypy、Python 7261、e2e 30、Desktop TypeScript、Vitest 1629、Rust 201 与 cargo check 通过。Python 11 项跳过，Rust 2 项 ignored；跳过不算通过，分类见 PR 描述。最终原型调整后另重跑其渲染、构建与 worker 检查。
