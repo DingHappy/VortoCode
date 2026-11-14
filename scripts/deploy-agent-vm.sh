@@ -94,14 +94,14 @@ echo "✓ 8080 已监听"
 # 服务 active、commit 对、单测全绿，而 cron 作业跑完主人在钉钉一无所获（cron_run 漏传 notify）。
 # canary 跑在临时目录里（不碰远端真 .vortoone/cron.yaml）、不触网、不烧 token，十几秒。
 say "交付链路 canary（端到端验收）"
-if ! remote "cd ~/$REMOTE_DIR && .venv/bin/python -m src.cli canary 2>&1 | tail -12"; then
+if ! remote "cd ~/$REMOTE_DIR && .venv/bin/python -m src.runtime_entry canary 2>&1 | tail -12"; then
   die "交付链路验收未通过——服务虽然起来了，但「消息进来→结果送出去」这条链是断的。
      上面逐条列了断在哪一截。本次部署判定失败（代码已在远端，服务已重启；
      要强行放行就手动 systemctl --user restart $SERVICE 后自行验收）。"
 fi
 
 say "doctor（远端自检）"
-remote "cd ~/$REMOTE_DIR && .venv/bin/python -m src.cli doctor 2>&1 | tail -12" || true
+remote "cd ~/$REMOTE_DIR && .venv/bin/python -m src.runtime_entry doctor 2>&1 | tail -12" || true
 
 printf '\n════ 部署完成 ════\n'
 printf '  主机     %s:~/%s\n' "$HOST" "$REMOTE_DIR"

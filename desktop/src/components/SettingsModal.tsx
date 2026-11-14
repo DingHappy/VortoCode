@@ -87,6 +87,7 @@ const DRAFT_ITEMS: Record<string, { label: string; page: SettingsPage; anchor: s
 };
 
 type SettingsModalProps = {
+  onOpenRuntimeSetup?: () => void;
   /** 打开插件页（MCP 服务与目录） */
   onOpenPlugins?: () => void;
   /** 登记了常驻电脑（「让助理查看 Codex」要报给它） */
@@ -175,7 +176,7 @@ export function SettingsModal({
   readCodexObserver, staffClient,
   onEditAssistant,
   residentName, residentAccountProjectId, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", llmProfileConflict = false, onReloadLlmProfile,
-  selectedAssistantHostId, localResidentProjectId, remoteResidentProjectId, onUseLocalResident, onLocalResidentStatus, residentRegistrationKnown = true,
+  onOpenRuntimeSetup, selectedAssistantHostId, localResidentProjectId, remoteResidentProjectId, onUseLocalResident, onLocalResidentStatus, residentRegistrationKnown = true,
   activeScope,
   connection,
   connectionText,
@@ -479,6 +480,7 @@ export function SettingsModal({
             </fieldset>}
           </div>}
           {visited.has("computer") && <div hidden={section !== "computer"} className="settings-page">
+            {onOpenRuntimeSetup && <section className="settings-card"><div className="settings-card-head"><strong>安装与连接引导</strong><button disabled={saving || projectSwitching} onClick={() => requestLeave(() => { onClose(); onOpenRuntimeSetup(); })}>选择助理运行位置</button></div><p className="settings-card-note">核对本机环境或连接已有助手，当前资料保持原位。</p></section>}
             <div id="setting-local-resident" className={anchorClass("local-resident")} tabIndex={-1}><LocalResidentCard
               onUse={onUseLocalResident ? async profile => { if (pending.length || otherSaving) throw new Error("请先处理未保存的设置，再连接本机常驻助理"); await onUseLocalResident(profile); } : undefined}
               selectedHostId={selectedAssistantHostId} connected={residentConnected} onBusyChange={setLocalResidentBusy}

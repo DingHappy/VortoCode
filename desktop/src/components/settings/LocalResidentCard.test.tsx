@@ -8,6 +8,13 @@ function render(value: LocalResidentStatus | null = status, overrides: Partial<L
   return renderToStaticMarkup(<LocalResidentView state={{ ...INITIAL_LOCAL_RESIDENT, value, ...overrides }} onRefresh={() => {}} onAction={() => {}} canUse selectedHostId={selectedHostId} connected={connected} />);
 }
 describe('local resident card', () => {
+  it('onboarding keeps model-copy consent and schedules disabled', () => {
+    const markup = renderToStaticMarkup(<LocalResidentView onboarding state={{ ...INITIAL_LOCAL_RESIDENT, value: { ...status, installed: false, state: 'not_installed' } }}
+      onRefresh={() => {}} onAction={() => {}} canUse />);
+    expect(markup.match(/type="checkbox"/g)).toHaveLength(1);
+    expect(markup).not.toContain('启用定时作业');
+    expect(markup.match(/<button[^>]*>安装本机常驻助理<\/button>/)?.[0]).toContain('disabled');
+  });
   it('keeps an unknown status explicit and offers no lifecycle mutation', () => {
     const markup = render(null);
     expect(markup).toContain('状态尚未核对');

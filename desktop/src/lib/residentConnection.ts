@@ -31,7 +31,7 @@ export async function persistResidentSelection(profile: DesktopProjectProfile, l
     if (local.state !== "running" || !local.revision || !local.launchId) throw new Error("本机常驻运行实例尚未核对，请刷新后重试");
     await invoke("local_resident_select", { expectedRevision: local.revision, expectedLaunchId: local.launchId });
   } else {
-    await invoke("select_registered_assistant", { projectId: profile.id });
+    await invoke("select_registered_assistant", { projectId: profile.id, ...(profile.assistantPending ? { prepared: true } : {}) });
   }
 }
 

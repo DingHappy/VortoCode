@@ -43,7 +43,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 产品定位、当前执行接入矩阵与近期投入顺序见 `docs/CURRENT_ARCHITECTURE.md`；`docs/ARCHITECTURE.md` 是历史蓝图。
 
-**入口**：`vc`/`vortocode` → `src/cli.py:main`（`main.py` 是薄壳）。包采用**扁平布局**：包名就是 `src`，一律 `from src.xxx import ...`。
+**入口**：内部服务/诊断 `vortoone-runtime` → `src/runtime_entry.py:main`，见 `docs/INTERNAL_RUNTIME.md`。`vc`/`vortocode` → `src/cli.py:main` 与 `main.py` 暂留兼容，依赖迁完后退出用户入口。包采用**扁平布局**：包名就是 `src`，一律 `from src.xxx import ...`。
 
 **一个 runtime，多个前端（"三端同源"）**：Desktop（经 Web API + `/ws`）/ 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（**`src/agents/agent_loop.py`**；`main_agent.py` 再导出，存量 `from src.agents.main_agent import MainAgent` 照常可用）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。终端 TUI 已于 2026-10-17 退役删除。
 
@@ -76,7 +76,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 - `scheduling/`：cron/heartbeat/自愈/通知台账/中转巡检。
 - `sandbox/`：OS 沙箱**策略** `policy.py`（seatbelt/bwrap 决策、写路径白名单、子进程密钥剥离——安全内核，被 shell/hooks/skills/MCP 共用）。代码片段执行入口 `runner.py`/`docker_sandbox.py` 只有 TUI 在用，2026-10 已删除。
 - 内核**不得导入** `web/`（制品工具已下沉为 `agents/tools/artifacts.py`，cron 排期计算在 `scheduling/cron.py:next_due`）。新业务模块别再往 `gateway/` 塞。
-- **下层一律不导入前端**：除 `web/` `im/` 与入口 `cli.py` 外，任何模块（含函数内延迟 import）都不得导入 `src.web`。下层需要通知前端时用注册钩子（如 `scheduling/notices.py:set_notice_broadcaster`，由 Web 启动时注册）。会话存盘在 `gateway/session_store.py`。SQLite 会话/记忆存储另在 `memory/conversation_db.py`，保留 `SessionStore` / `SessionManager` 类名与原数据库路径。`tests/unit/test_layering.py` 钉住。
+- **下层一律不导入前端**：除 `web/` `im/` 与入口 `cli.py` / `runtime_entry.py` 外，任何模块（含函数内延迟 import）都不得导入 `src.web`。下层需要通知前端时用注册钩子（如 `scheduling/notices.py:set_notice_broadcaster`，由 Web 启动时注册）。会话存盘在 `gateway/session_store.py`。SQLite 会话/记忆存储另在 `memory/conversation_db.py`，保留 `SessionStore` / `SessionManager` 类名与原数据库路径。`tests/unit/test_layering.py` 钉住。
 - **宿主机命令执行开关全仓唯一一份**：`sandbox/policy.py:shell_enabled`（Web 的 `require_shell`、cron 的 command 作业都只认它，均函数内导入以便统一打桩）。别在别处再读 `VORTOONE_ENABLE_SHELL`。
 - 外层（web/im/cli/gateway/agents）只用 `workflow` 的**公开名字**：不导入下划线私有函数，也不拿台账锁 `TASK_STATE_LOCK` 自己拼锁内读写——要在锁内完成的操作由 workflow 提供成一个函数（如 `snapshot_runtime_inbox`、`audit_owner_dependencies`）。`tests/unit/test_workflow_boundary.py` 钉住。刻意**不**在 `workflow/__init__` 堆再导出：只改 import 路径不改依赖，不算解耦。
 

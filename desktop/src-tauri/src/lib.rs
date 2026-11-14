@@ -3648,7 +3648,7 @@ mod tests {
             command.get_args().collect::<Vec<_>>(),
             [
                 "-m",
-                "src.cli",
+                "src.runtime_entry",
                 "server",
                 "--host",
                 "127.0.0.1",
@@ -3665,6 +3665,17 @@ mod tests {
             key == OsStr::new("VORTOONE_WORKSPACE_SCOPE")
                 && value == Some(OsStr::new(PROJECT_SCOPE))
         }));
+    }
+
+    #[test]
+    fn installed_fallback_uses_internal_runner_with_fixed_gateway_arguments() {
+        let command = crate::gateway_process::build_installed_runtime_command(
+            Path::new("/tmp/project"), 8123, "", GENERAL_SCOPE,
+        );
+        assert_eq!(command.get_program(), OsStr::new("vortoone-runtime"));
+        assert_eq!(command.get_args().collect::<Vec<_>>(),
+            ["server", "--host", "127.0.0.1", "--port", "8123"].map(OsStr::new));
+        assert_eq!(command.get_current_dir(), Some(Path::new("/tmp/project")));
     }
 
     #[test]

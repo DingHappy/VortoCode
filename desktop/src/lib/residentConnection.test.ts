@@ -1,5 +1,11 @@
 import { expect, it, vi } from "vitest";
 import { connectResidentSelection, discardResidentConnection, persistCurrentResidentSelection, persistResidentSelection } from "./residentConnection";
+
+it("explicitly selects a prepared remote assistant only after the connection flow reaches persistence", async () => {
+  const invoke = vi.fn(async () => undefined);
+  await persistResidentSelection({ id: "prepared", name: "fixture", kind: "remote", repoRoot: "@assistant", baseUrl: "https://remote.example", lastOpenedAt: 0, assistantPending: true }, null, invoke);
+  expect(invoke).toHaveBeenCalledWith("select_registered_assistant", { projectId: "prepared", prepared: true });
+});
 import type { DesktopProjectProfile } from "../types";
 import { ConnectionCoordinator } from "../connection/connectionCoordinator";
 import { localResidentController, type LocalResidentClient, type LocalResidentStatus } from "./localResident";

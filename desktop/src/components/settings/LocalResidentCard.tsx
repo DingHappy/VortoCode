@@ -11,10 +11,11 @@ type LocalResidentViewProps = {
   connected?: boolean;
   canUse?: boolean;
   blocked?: boolean;
+  onboarding?: boolean;
 };
 const STATE_LABELS: Record<LocalResidentStatus['state'], string> = { not_installed: '尚未安装', stopped: '已停止', cleanup_required: '登录项待清理', starting: '正在启动', running: '正在运行', unavailable: '状态无法确认' };
 
-export function LocalResidentView({ state, onRefresh, onAction, selectedHostId, connected = false, canUse = false, blocked = false }: LocalResidentViewProps) {
+export function LocalResidentView({ state, onRefresh, onAction, selectedHostId, connected = false, canUse = false, blocked = false, onboarding = false }: LocalResidentViewProps) {
   const [copyModelProfile, setCopyModelProfile] = useState(false);
   const [cronEnabled, setCronEnabled] = useState(false);
   const { value, busy, error, notice, checkedAt } = state;
@@ -34,23 +35,23 @@ export function LocalResidentView({ state, onRefresh, onAction, selectedHostId, 
           <div className="local-resident-options">
             <label><input type="checkbox" checked={copyModelProfile} disabled={busy || blocked} onChange={event => setCopyModelProfile(event.target.checked)} /><span>同意复制当前已保存的模型配置</span></label>
             <p className="settings-card-note">配置独立保存；Desktop 退出模型账号不会撤销这份配置。</p>
-            <label><input type="checkbox" checked={cronEnabled} disabled={busy || blocked} onChange={event => setCronEnabled(event.target.checked)} /><span>启用定时作业</span></label>
+            {!onboarding && <label><input type="checkbox" checked={cronEnabled} disabled={busy || blocked} onChange={event => setCronEnabled(event.target.checked)} /><span>启用定时作业</span></label>}
           </div>
-          <div className="settings-actions"><button className="primary" disabled={!ready || !copyModelProfile} onClick={() => onAction('install', { cronEnabled, copyModelProfile })}>安装本机常驻助理</button></div>
+          <div className="settings-actions"><button className="primary" disabled={!ready || !copyModelProfile} onClick={() => onAction('install', { cronEnabled: onboarding ? false : cronEnabled, copyModelProfile })}>安装本机常驻助理</button></div>
         </> : <>
           <p className="settings-card-note">程序 {value.version || '版本待核对'} · Desktop 提供 {value.availableVersion || '版本待核对'} · 定时作业{value.cronEnabled ? '已开启' : '未开启'}</p>
           <div className="settings-actions" aria-label="本机常驻助理控制">
             {value.state === 'stopped' && <button className="primary" disabled={!ready} onClick={() => onAction('start')}>启动本机常驻助理</button>}
             {!using && <button className="primary" disabled={!ready || value.state !== 'running' || !value.launchId || !canUse} onClick={() => onAction('connect')}>使用本机常驻助理</button>}
           </div>
-          <details className="settings-runtime-details"><summary>程序与模型配置</summary>
+          {!onboarding && <details className="settings-runtime-details"><summary>程序与模型配置</summary>
             <p className="settings-card-note">更新程序保留常驻配置。模型配置需单独应用；Desktop 退出模型账号不会撤销这份配置。</p>
             <div className="settings-actions">
               <button disabled={!ready || cleanupRequired} onClick={() => onAction('update')}>更新程序</button>
               <button disabled={!ready || cleanupRequired} onClick={() => onAction('apply_model')}>应用当前模型配置</button>
               {(value.state === 'running' || cleanupRequired) && <button className="danger" disabled={!ready || !cleanupRequired && !value.launchId} onClick={() => onAction('stop')}>{cleanupRequired ? '重试移除登录项' : '停止本机常驻助理'}</button>}
             </div>
-          </details>
+          </details>}
         </>}
       <details className="settings-runtime-details"><summary>运行范围</summary><p className="settings-card-note">启动后随登录运行；停止后不再自动启动。只接受本机连接。安装不会启动服务或切换当前对话；即时通讯与定时心跳不会启用。停止、更新和应用配置前会由原生窗口核对活动并确认。</p></details>
     </> : <p className="settings-card-note">{busy ? '正在读取本机常驻状态…' : '状态尚未核对，请刷新。'}</p>}
@@ -67,8 +68,9 @@ export type LocalResidentCardProps = {
   onBusyChange?: (busy: boolean) => void;
   blocked?: boolean;
   client?: LocalResidentClient;
+  onboarding?: boolean;
 };
-export function LocalResidentCard({ onUse, selectedHostId, connected, onStatus, onBusyChange, blocked = false, client = localResidentClient }: LocalResidentCardProps) {
+export function LocalResidentCard({ onUse, selectedHostId, connected, onStatus, onBusyChange, blocked = false, client = localResidentClient, onboarding = false }: LocalResidentCardProps) {
   const [state, setState] = useState<LocalResidentState>(INITIAL_LOCAL_RESIDENT);
   const callbacks = useRef({ onUse, onStatus, onBusyChange, blocked });
   callbacks.current = { onUse, onStatus, onBusyChange, blocked };
@@ -84,5 +86,5 @@ export function LocalResidentCard({ onUse, selectedHostId, connected, onStatus, 
   }, [client]);
   return <LocalResidentView state={state} onRefresh={() => void controller.current?.refresh()} onAction={(action, options) => {
     if (!callbacks.current.blocked) void controller.current?.change(action, options);
-  }} selectedHostId={selectedHostId} connected={connected} canUse={Boolean(onUse)} blocked={blocked} />;
+  }} selectedHostId={selectedHostId} connected={connected} canUse={Boolean(onUse)} blocked={blocked} onboarding={onboarding} />;
 }

@@ -3,6 +3,7 @@
 // 避免 key 拼写漂移。notifiedDecisions 的读写 + 200 条截断也一并收在这里。
 
 export const STORAGE_KEYS = {
+  runtimeSetup: "vortoone.desktop.runtimeSetup",
   baseUrl: "vortocode.desktop.baseUrl",
   sid: "vortocode.desktop.sid",
   repoRoot: "vortocode.desktop.repoRoot",

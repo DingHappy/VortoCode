@@ -7,6 +7,10 @@ fn select_registered_assistant_at(
     path: &Path,
     project_id: &str,
 ) -> Result<DesktopProjectProfile, String> {
+    select_assistant_at(path, project_id, false)
+}
+
+fn select_assistant_at(path: &Path, project_id: &str, prepared: bool) -> Result<DesktopProjectProfile, String> {
     if crate::local_resident::is_local_resident_project(project_id) {
         return Err("本机常驻助手必须核对当前运行实例后选择".into());
     }
@@ -18,7 +22,7 @@ fn select_registered_assistant_at(
             profile.id == project_id
                 && profile.kind == PROJECT_KIND_REMOTE
                 && profile.repo_root == ASSISTANT_HOST_ROOT
-                && !profile.assistant_pending
+                && (!profile.assistant_pending || prepared)
         })
         .ok_or("未找到已登记的常驻助手；默认位置未改变")?;
     let mut profile = registry.projects[index].clone();
@@ -26,6 +30,7 @@ fn select_registered_assistant_at(
     if base != profile.base_url || remote_project_id(&base, ASSISTANT_HOST_ROOT) != project_id {
         return Err("常驻助手登记身份不符；默认位置未改变".into());
     }
+    profile.assistant_pending = false;
     profile.last_opened_at = now_epoch_seconds()?.max(
         registry
             .projects
@@ -45,8 +50,13 @@ fn select_registered_assistant_at(
 pub(crate) fn select_registered_assistant(
     app: AppHandle,
     project_id: String,
+    prepared: Option<bool>,
 ) -> Result<DesktopProjectProfile, String> {
-    select_registered_assistant_at(&project_registry_path(&app)?, &project_id)
+    if prepared.unwrap_or(false) {
+        select_assistant_at(&project_registry_path(&app)?, &project_id, true)
+    } else {
+        select_registered_assistant_at(&project_registry_path(&app)?, &project_id)
+    }
 }
 
 #[cfg(test)]
@@ -141,6 +151,40 @@ mod assistant_selection_tests {
         }
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn onboarding_registration_stays_pending_until_explicit_successful_selection() {
+        let (root, path) = fixture();
+        let old = assistant("https://old.example", 5);
+        save_project_registry(&path, &DesktopProjectRegistry { projects: vec![old.clone()] }).unwrap();
+        let id = remote_project_id("https://new.example", ASSISTANT_HOST_ROOT);
+        assert!(prepare_remote_assistant_at(&path, "https://new.example", "New", &id, false, false).is_err());
+        let prepared = prepare_remote_assistant_at(&path, "https://new.example", "New", &id, false, true).unwrap();
+        assert!(prepared.assistant_pending);
+        assert_eq!(load_project_registry(&path).unwrap().projects[0], old);
+        assert!(select_registered_assistant_at(&path, &id).is_err());
+        let selected = select_assistant_at(&path, &id, true).unwrap();
+        assert!(!selected.assistant_pending);
+        assert_eq!(load_project_registry(&path).unwrap().projects[0].id, id);
+        let before = std::fs::read(&path).unwrap();
+        prepare_remote_assistant_at(&path, &old.base_url, "Changed", &old.id, true, false).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(select_assistant_at(&path, "unknown", true).is_err());
+        assert!(select_assistant_at(&path, "local-resident-fixture", true).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_registration_does_not_evict_existing_connections_at_capacity() {
+        let (root, path) = fixture();
+        let projects = (0..MAX_DESKTOP_PROJECTS).map(|index| assistant(&format!("https://host-{index}.example"), index as u64)).collect();
+        save_project_registry(&path, &DesktopProjectRegistry { projects }).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let id = remote_project_id("https://new.example", ASSISTANT_HOST_ROOT);
+        assert!(prepare_remote_assistant_at(&path, "https://new.example", "New", &id, false, true).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 // ── 远程工作区注册（R3a）──────────────────────────────────────────────────────
@@ -228,6 +272,21 @@ pub(crate) fn remember_remote_flow(
     remember_remote_at(path, normalized_url, remote_repo_root, name, id)
 }
 
+fn prepare_remote_assistant_at(path: &Path, base: &str, name: &str, id: &str, known: bool, confirmed: bool) -> Result<DesktopProjectProfile, String> {
+    if !known && !confirmed { return Err("新远程工作区注册未获用户确认，已取消".into()); }
+    let mut registry = load_project_registry(path)?;
+    if let Some(profile) = registry.projects.iter().find(|p| p.id == id) { return Ok(profile.clone()); }
+    if registry.projects.len() >= MAX_DESKTOP_PROJECTS { return Err("连接登记已满，请先在设置中核对已有连接".into()); }
+    let profile = DesktopProjectProfile {
+        id: id.into(), name: remote_project_name(name, ASSISTANT_HOST_ROOT, base),
+        repo_root: ASSISTANT_HOST_ROOT.into(), base_url: base.into(), last_opened_at: 0,
+        kind: PROJECT_KIND_REMOTE.into(), assistant_pending: true,
+    };
+    registry.projects.push(profile.clone());
+    save_project_registry(path, &registry)?;
+    Ok(profile)
+}
+
 pub(crate) async fn confirm_remote_registration(app: &AppHandle, server_url: &str) -> Result<bool, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     // 原生对话框在 webview 进程之外：被注入的页面脚本无法替用户点确认，静默把 token 发往
@@ -257,7 +316,11 @@ pub(crate) async fn remember_remote_project(
     token: String,
     remote_repo_root: String,
     name: String,
+    defer_selection: Option<bool>,
 ) -> Result<DesktopProjectProfile, String> {
+    if defer_selection.unwrap_or(false) && remote_repo_root.trim() != ASSISTANT_HOST_ROOT {
+        return Err("待选登记只适用于常驻助手".into());
+    }
     let path = project_registry_path(&app)?;
     let normalized = validate_remote_server_url(&server_url)?;
     let token = normalize_remote_token(&token)?;
@@ -276,15 +339,11 @@ pub(crate) async fn remember_remote_project(
         return Err("新远程工作区注册未获用户确认，已取消".into());
     }
     remote_token_keychain::write(&id, token.trim())?;
-    let result = remember_remote_flow(
-        &path,
-        &normalized,
-        remote_repo_root.trim(),
-        &name,
-        &id,
-        known,
-        confirmed,
-    );
+    let result = if defer_selection.unwrap_or(false) {
+        prepare_remote_assistant_at(&path, &normalized, &name, &id, known, confirmed)
+    } else {
+        remember_remote_flow(&path, &normalized, remote_repo_root.trim(), &name, &id, known, confirmed)
+    };
     // 新远端落库失败 → 清掉刚写的 token，不留孤儿凭据。已注册的重注册不清（那条 token
     // 是刚更新的、且旧注册表条目仍在，删了会让在用条目失去凭据）。
     if result.is_err() && !known {
