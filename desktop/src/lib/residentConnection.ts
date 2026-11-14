@@ -1,12 +1,13 @@
 import type { DesktopProjectProfile } from "../types";
-import type { LocalResidentStatus } from "./localResident";
+import { localResidentClient, type LocalResidentStatus } from "./localResident";
 import { errorText } from "./errorText";
 
 type SelectionOptions = {
   prepare?: (profile: DesktopProjectProfile) => Promise<true | string>;
   switchWorkspace: (body: () => Promise<boolean>) => Promise<boolean>;
-  persist: (profile: DesktopProjectProfile) => Promise<void>;
+  persist: (profile: DesktopProjectProfile, current: () => boolean) => Promise<void>;
   connection?: () => unknown;
+  connectionEpoch?: () => number | undefined;
   isSelected?: (profile: DesktopProjectProfile) => boolean;
   discard?: (profile: DesktopProjectProfile, attached: unknown) => Promise<void>;
   onError?: (message: string) => void;
@@ -35,6 +36,20 @@ export async function persistResidentSelection(profile: DesktopProjectProfile, l
   }
 }
 
+/** The space picker can open before Settings has ever loaded the managed-local launch identity. */
+export async function persistCurrentResidentSelection(profile: DesktopProjectProfile,
+  observed: (status: LocalResidentStatus) => void,
+  invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>,
+  current: () => boolean,
+  read: () => Promise<LocalResidentStatus | null> = localResidentClient.read): Promise<void> {
+  if (!current()) throw new Error("连接位置已变化，未保存默认助手");
+  const status = await read().catch(() => null);
+  if (!current()) throw new Error("连接位置已变化，未保存默认助手");
+  if (status) observed(status);
+  if (!current()) throw new Error("连接位置已变化，未保存默认助手");
+  await persistResidentSelection(profile, status, invoke);
+}
+
 /** Attachment, persistence and activation belong to the same workspace switch. */
 export async function connectResidentSelection(profile: DesktopProjectProfile,
   connect: (profile: DesktopProjectProfile) => Promise<true | string>,
@@ -50,10 +65,12 @@ export async function connectResidentSelection(profile: DesktopProjectProfile,
         const result = await connect(profile);
         if (result !== true) throw new Error(result || "连接常驻助手失败");
         attached = options.connection?.();
+        const epoch = options.connectionEpoch?.();
         current = () => (!options.isSelected || options.isSelected(profile))
-          && (!options.connection || Boolean(attached) && options.connection() === attached);
+          && (!options.connection || Boolean(attached) && options.connection() === attached)
+          && (!options.connectionEpoch || options.connectionEpoch() === epoch);
         if (!current()) throw new Error("连接位置已变化，未切换当前对话");
-        await options.persist(profile);
+        await options.persist(profile, current);
         if (!current()) throw new Error("连接位置已变化，未切换当前对话");
         activate(profile);
         return true;

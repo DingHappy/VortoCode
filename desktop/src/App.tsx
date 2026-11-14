@@ -1,3 +1,5 @@
+import { desktopContext, retryAssistant } from "./lib/desktopContext";
+import { PersonalSpacePicker } from "./components/PersonalSpacePicker";
 import { AssistantTimeline } from "./components/AssistantTimeline";
 import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
 import { useSidebarVisibility } from "./hooks/useSidebarVisibility";
@@ -147,7 +149,7 @@ import { CustomizePage } from "./components/CustomizePage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, isLocalNetworkBlocked, mainChatKey, probeAssistantHost, relaunchApp, workProjects } from "./lib/assistantHost";
-import { connectResidentSelection, discardResidentConnection, persistResidentSelection } from "./lib/residentConnection";
+import { connectResidentSelection, discardResidentConnection, persistCurrentResidentSelection } from "./lib/residentConnection";
 import { localResidentClient, type LocalResidentStatus } from "./lib/localResident";
 import { RuntimeOnboarding } from "./components/RuntimeOnboarding";
 import { LoaderCircle } from "lucide-react";
@@ -188,7 +190,7 @@ import {
 } from "./protocol/transcript";
 import { errorText } from "./lib/errorText";
 import { confirmAction } from "./lib/confirm";
-import { useAttachments } from "./hooks/useAttachments";
+import { useComposerDraft } from "./hooks/useComposerDraft";
 import { reportComposerFailure } from "./lib/composerFailure";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
@@ -330,7 +332,6 @@ function App() {
   // 不再区分 Plan / Build：每轮都按可修改的模式运行，写盘、执行、外发照旧逐次过确认门
   //（授权档位决定问不问，污点回合一律问人）。只读规划交给模型自己判断，不再让用户先选模式。
   const mode = "build" as const;
-  const [prompt, setPromptState] = useState("");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const sessionResources = useSessionResources(clientRef, activeSid, connection);
   const confirmationViewRef = useRef({client:clientRef.current,scope:activeSid,id:"",state:pendingConfirm?.responseState});
@@ -368,7 +369,11 @@ function App() {
   const [offlineChatSid, setOfflineChatSid] = useState<string | null>(null);
   const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
   // Snapshots are bound to the loaded host before they can expose actions.
-  const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
+  const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
+  const currentTarget = desktopContext({ registrationId: remoteProjectRef.current, assistantId: assistantHostRef.current,
+    scope: activeScope, repoRoot, sid: activeSid, baseUrl, runtimeId: processStatus.runtimeId ?? "", connection,
+    profiles: projects, localResidentId: localResidentStatus?.projectId ?? null, source: clientRef.current?.desktopSource ?? null });
+  const assistantScope = currentTarget.readKey;
   const [waitingDisclosure, setWaitingDisclosure] = useState({ scope: "", open: false });
   useEffect(() => setCapabilitiesOpen(false), [assistantScope, activeSid]);
   const assistantScopeRef = useRef(assistantScope);
@@ -471,13 +476,11 @@ function App() {
     if (typeof value === "string" && value) diag("ui.banner", value, "warn");
     setBannerState(value);
   }, []);
-  const { attachments, attachmentsReading, addFiles, addAttachment, removeAttachment, resetAttachments,
-    takeAttachments, attachmentRevision, isCurrentAttachments, isReadingAttachments, markComposerEdited, cancelAttachmentReads } = useAttachments(setBanner,
-    // A managed local engine may move to another loopback port during startup.
-    JSON.stringify([remoteProjectRef.current ?? "local", remoteProjectRef.current ? baseUrl : "", repoRoot, activeSid]));
+  const { prompt, setPromptState, draftChats, attachments, attachmentsReading, addFiles, addAttachment, removeAttachment,
+    takeAttachments, attachmentRevision, isCurrentAttachments, isReadingAttachments, markComposerEdited, cancelAttachmentReads } = useComposerDraft(currentTarget, setBanner);
   const setPrompt = useCallback((value: SetStateAction<string>) => {
     markComposerEdited(); setPromptState(value);
-  }, [markComposerEdited]);
+  }, [markComposerEdited, setPromptState]);
   const { plugins, pluginBusy, pluginChecks, savePlugin, pluginAction } = usePlugins(
     clientRef, assistantScopeRef, assistantScope, connection, mainView === "customize", setBanner);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -569,7 +572,6 @@ function App() {
   } = useWorkspaceFiles({ clientRef, remoteProjectRef, repoRoot, runtimeWorkdir: runtime.workdir, connection, protocolVersion, onBanner: setBanner });
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
-  const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
   /** 精选目录装完东西后递增，让插件页的 MCP 服务 / 项目技能卡重新加载。 */
   const [pluginsRevision, setPluginsRevision] = useState(0);
   /** 启动时自动检查更新（每天最多一次，设置里可关）；有新版才非空。 */
@@ -1310,7 +1312,7 @@ function App() {
 
 
   const clearSessionView = () => {
-    resetAttachments();
+    cancelAttachmentReads();
     conversationLocation.reset();
     autoScrollRef.current = true;
     confirmationReplyRef.current?.close();
@@ -1624,7 +1626,7 @@ function App() {
     }
     // Already on an unused draft: clear attachments without creating another server slot.
     if (!currentSession && !busy && !messages.length && !streaming && !plan.length
-        && !activities.length && !pendingConfirm && !promptQueue.length) {
+        && !activities.length && !pendingConfirm && !promptQueue.length && !prompt.trim() && !attachments.length) {
       clearSessionView();
       return;
     }
@@ -1641,21 +1643,29 @@ function App() {
 
   // ── 助理模式 ─────────────────────────────────────────────────────────────
   // 常驻电脑上有哪些项目（它的登记表）：工作台「在哪做」据此判断能不能切到常驻电脑。
-  const residentHost = findAssistantHost(projects);
+  const residentHost = retryAssistant(projects, assistantHostRef.current);
   const otherResidentHost = localResidentStatus
     ? projects.find(item => isAssistantHost(item) && !item.assistantPending && item.id !== localResidentStatus.projectId) : undefined;
-  const [residentProjects, setResidentProjects] = useState<ResidentProject[]>([]);
+  const [residentProjectSnapshot, setResidentProjectSnapshot] = useState<{ scope: string; items: ResidentProject[] } | null>(null);
+  const residentProjects = residentProjectSnapshot?.scope === assistantScope ? residentProjectSnapshot.items : [];
   // 空白对话里的上手示例（用熟了或点了「不再显示」就收起）
   const [showStarterTips, setShowStarterTips] = useState(() => shouldShowStarterTips());
   useEffect(() => {
-    if (!residentHost) { setResidentProjects([]); return undefined; }
+    if (!residentHost) { setResidentProjectSnapshot(null); return undefined; }
+    const selectedClient = coordinator.onAssistantHost ? clientRef.current : null;
+    if (appMode === "assistant" && (!selectedClient || !currentTarget.ready)) {
+      setResidentProjectSnapshot(null); return undefined;
+    }
     let cancelled = false;
-    new GatewayClient({ baseUrl: residentHost.baseUrl, token: "", remoteProjectId: residentHost.id })
-      .listResidentProjects()
-      .then((items) => { if (!cancelled) setResidentProjects(items); })
-      .catch(() => { if (!cancelled) setResidentProjects([]); });   // 连不上常驻电脑：只是不提供「常驻电脑」选项
+    const scope = assistantScope;
+    const current = () => !cancelled && assistantScopeRef.current === scope
+      && (!selectedClient || clientRef.current === selectedClient);
+    const client = selectedClient ?? new GatewayClient({ baseUrl: residentHost.baseUrl, token: "", remoteProjectId: residentHost.id });
+    void client.listResidentProjects()
+      .then(items => { if (current()) setResidentProjectSnapshot({ scope, items }); })
+      .catch(() => { if (current()) setResidentProjectSnapshot({ scope, items: [] }); });
     return () => { cancelled = true; };
-  }, [residentHost?.id, residentHost?.baseUrl]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [residentHost?.id, residentHost?.baseUrl, assistantScope, appMode, currentTarget.ready]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // 常驻电脑上各项目的会话（侧栏里与本机会话合在一起显示）。在常驻电脑那份上时直接用当前会话列表。
   const [residentSessions, setResidentSessions] = useState<Record<string, SessionSummary[]>>({});
@@ -1809,8 +1819,9 @@ function App() {
     }, {
       prepare: prepareAssistantHost,
       switchWorkspace: body => runWorkspaceSwitch("连接常驻电脑失败", body),
-      persist: selected => persistResidentSelection(selected, localResidentStatusRef.current, invoke),
+      persist: (selected, current) => persistCurrentResidentSelection(selected, updateLocalResidentStatus, invoke, current),
       connection: () => clientRef.current,
+      connectionEpoch: () => clientRef.current?.connectionEpoch,
       isSelected: selected => remoteProjectRef.current === selected.id && assistantHostRef.current === selected.id,
       discard: (selected, attached) => discardResidentConnection(selected, attached, {
         connection: () => clientRef.current,
@@ -1899,9 +1910,10 @@ function App() {
     if (!residentRetry || busy) return;
     const timer = window.setTimeout(() => {
       residentRetryRef.current += 1;
-      const host = findAssistantHost(projects);
+      const host = retryAssistant(projects, assistantHostRef.current);
       if (!host) return;
       void retryResident({
+        current: () => assistantScopeRef.current === assistantScope,
         reachable: () => probeAssistantHost(host.id),
         connect: residentRetry === "dropped"
           // 断线后只连回常驻电脑，连不上就留在原处等下一轮；不走启动时那条「退回本机」的路——
@@ -1922,7 +1934,7 @@ function App() {
     return () => window.clearTimeout(timer);
     // changeAppMode 每次渲染都是新函数；只按状态变化重排定时器
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [residentRetry, busy, residentRetryRound]);
+  }, [residentRetry, busy, residentRetryRound, assistantScope]);
 
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
     if (coordinator.switching) return;
@@ -2033,6 +2045,8 @@ function App() {
       return false;
     }
     const client = clientRef.current;
+    const sendEpoch = client.connectionEpoch;
+    const currentSend = () => isCurrentAttachments() && clientRef.current === client && client.connectionEpoch === sendEpoch;
     const willQueue = busy;
     const outgoing = { text, context: selectedContext, attachments: selectedAttachments, rid: createSessionId().slice(0, 64) };
     const { rid } = outgoing;
@@ -2057,10 +2071,11 @@ function App() {
       void client.confirmDelivery().then((delivered) => {
         if (delivered) return;
         diag("send.unconfirmed", `rid=${rid}`, "warn");
-        reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+        reportComposerFailure({ current: currentSend(), restore: () => attachmentReceipt?.restore() ?? false,
           recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
           notify: setBanner, message: "这条消息没确认送达，连接可能断了", followUp: "连上后先核对，再决定要不要重发",
           markFailed: () => {
+            if (!currentSend()) return;
             if (activeTurnRidRef.current === rid) {
               setBusy(false);
               updateActiveTurnRid(null);
@@ -2073,9 +2088,10 @@ function App() {
       });
       return true;
     } catch (error) {
-      reportComposerFailure({ current: isCurrentAttachments(), restore: () => attachmentReceipt?.restore() ?? false,
+      reportComposerFailure({ current: currentSend(), restore: () => attachmentReceipt?.restore() ?? false,
         recover: () => { setPromptState(text); setContextItems(current => current.length ? current : selectedContext); },
         notify: setBanner, message: errorText(error, "发送失败"), markFailed: () => {
+          if (!currentSend()) return;
           if (!willQueue) {
             if (activeTurnRidRef.current === rid) { setBusy(false); updateActiveTurnRid(null); }
             setActivities((previous) => upsertActivity(previous, {
@@ -2829,6 +2845,9 @@ function App() {
           aria-expanded="false" aria-controls="conversation-sidebar" onClick={() => sidebar.toggle(false)} />}
         <aside id="conversation-sidebar" className="sidebar vc-sidebar">
           <SidebarBrand sidebarId="conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)} />
+          {appMode === "assistant" && <PersonalSpacePicker context={currentTarget} profiles={projects}
+            localResidentId={localResidentStatus?.projectId ?? null} connection={connection} switching={projectSwitching}
+            onSelect={useRegisteredAssistant} onManage={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
             <AssistantSidebar
@@ -2841,8 +2860,12 @@ function App() {
               currentTeam={mainView === "team" ? openTeamId ?? "" : ""}
               onOpenTeam={openTeamChat}
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
-              sideChats={sessions.filter((session) => session.sid !== mainChatSid && !isPhoneSession(session.sid) && (session.messages > 0 || session.sid === activeSid))
-                .map((session) => ({ sid: session.sid, title: session.title, busy: session.status === "working" }))}
+              sideChats={[
+                ...sessions.filter(session => session.sid !== mainChatSid && !isPhoneSession(session.sid)
+                  && (session.messages > 0 || session.sid === activeSid || draftChats.some(draft => draft.sid === session.sid)))
+                  .map(session => ({ sid: session.sid, title: session.title || draftChats.find(draft => draft.sid === session.sid)?.title || "新的旁聊", busy: session.status === "working" })),
+                ...draftChats.filter(draft => draft.sid !== mainChatSid && !sessions.some(session => session.sid === draft.sid)),
+              ]}
               current={activeSid}
               page={assistantPage === "library" || assistantPage === "customize" ? assistantPage : null}
               search={sidebarSearch("搜索聊天")}
@@ -2925,8 +2948,8 @@ function App() {
             identity={identity}
             update={availableUpdate}
             resident={appMode !== "assistant" ? undefined : onAssistantHost()
-              ? { state: connection === "connected" ? "online" : "offline", name: findAssistantHost(projects)?.name,
-                onClick: () => connection === "connected" ? openAssistantPage("tasks") : void changeAppMode("assistant") }
+              ? { state: connection === "connected" ? "online" : "offline", name: currentTarget.runtimeLabel,
+                onClick: () => connection === "connected" ? openAssistantPage("tasks") : residentHost ? void connectAssistantHost(residentHost) : setSettingsOpen(true) }
               : { state: "local", onClick: () => findAssistantHost(projects) ? void changeAppMode("assistant") : setRemoteDialogOpen("assistant") }}
             onOpenSettings={(target) => { countUsage("settings.open"); setSettingsSection(target?.section); setSettingsAnchor(target?.anchor); setSettingsOpen(true); }}
             onLibrary={appMode === "assistant" ? () => openAssistantPage("library") : undefined}
@@ -3224,9 +3247,9 @@ function App() {
           : <AssistantPanel id="assistant-panel" toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
-            host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
+            host={onAssistantHost() ? { kind: "resident", name: currentTarget.runtimeLabel, reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
-            onRetryResident={() => void changeAppMode("assistant")}
+            onRetryResident={() => residentHost ? void connectAssistantHost(residentHost) : setSettingsOpen(true)}
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting} waitingUncertain={!activityComplete}
             onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setMemoryFocus(0); setAssistantTab(tab); panelActions.tabOpened(tab); }}>

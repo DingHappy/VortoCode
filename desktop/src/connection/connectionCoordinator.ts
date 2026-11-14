@@ -55,11 +55,14 @@ export function localConnectUrl(current: string, remoteUrls: string[], lastLocal
  * 通了才走完整切换。返回是否切过去了。
  */
 export async function retryResident(deps: {
+  current?: () => boolean;
   reachable: Reachability;
   connect: () => Promise<boolean>;
   onUnreachable: (reason: string) => void;
 }): Promise<boolean> {
+  if (deps.current && !deps.current()) return false;
   const reason = await deps.reachable();
+  if (deps.current && !deps.current()) return false;
   if (reason) {
     deps.onUnreachable(reason);
     return false;

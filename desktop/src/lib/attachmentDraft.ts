@@ -82,6 +82,8 @@ export function createAttachmentDraft(read: AttachmentReader = readAttachment) {
     remove(id: string) { view = { ...view, items: view.items.filter(item => item.id !== id) }; revision++; publish(); },
     clear,
     cancelPending,
+    /** Keep completed files when leaving a draft, but invalidate reads and send receipts. */
+    suspend() { epoch++; cancelPending(); },
     reset() { epoch++; clear(); },
     /** Consume exactly the selection the user reviewed. A newer draft is never overwritten on failure. */
     take(expected: Attachment[], expectedRevision = revision) {
