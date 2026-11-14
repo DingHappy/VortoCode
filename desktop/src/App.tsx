@@ -26,7 +26,10 @@ import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { assistantAttention } from "./lib/assistantAttention";
 import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat } from "./lib/mainChat";
-import { ChatHistory } from "./components/ChatHistory";
+import { StaffWorkspace, AssistantIdentityLink } from "./components/StaffWorkspace";
+import { StaffPane } from "./components/settings/StaffPane";
+import { SettingsTargetSection } from "./components/settings/SettingsTargetSection";
+import { ChatHistory, MessageIdentity } from "./components/ChatHistory";
 import { ConversationLocation } from "./components/ConversationLocation";
 import { useConversationLocation } from "./hooks/useConversationLocation";
 import { useStickToBottom } from "./hooks/useStickToBottom";
@@ -58,7 +61,7 @@ import {
   GitCompareArrows,
   Inbox,
   Library,
-  PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen,
   ListChecks,
   Server,
   FolderPlus,
@@ -108,6 +111,7 @@ import type {
   DesktopLlmProfileStatus,
   ProjectSessionSummary, CodexAction, PhoneChat, TeamSummary} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
+import { connectionAddress } from "./connection/connectionAddress";
 import { ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, residentRetryReason, residentRetrySettled, retryResident } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
 import { TasksPanel } from "./tasks/TasksPanel";
@@ -271,7 +275,7 @@ function App() {
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
   // 主区复用原领域页面；切换会话时回到对话。
-  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team" | "department" | "assistant">("chat");
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team" | "department" | "assistant" | "staff">("chat");
   const assistantPageTrigger = useRef<HTMLElement | null>(null);
   // 任务小组（ADR-014 S3）：侧栏「最近」里每个小组一条，点开在中间看群聊
   const [teamList, setTeamList] = useState<TeamSummary[]>([]);
@@ -366,6 +370,7 @@ function App() {
   const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   const [profileDialogLease, setProfileDialogLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
+  const [staffWorkspaceLease, setStaffWorkspaceLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
   const [channelDialogLease, setChannelDialogLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
   // 常驻电脑连不上时在本机聊过的会话：连回常驻电脑后列在「本机（离线时）」，见 lib/offlineChats.ts
@@ -1092,10 +1097,11 @@ function App() {
         && assistantHostRef.current === (options.remoteProjectId ?? remoteProjectRef.current);
       // 刚从常驻电脑退回本机时，这一轮渲染里的 baseUrl 还是常驻电脑的地址：连本机就用本机最近一次的地址。
       // 真机 2026-10-28：断线后退回本机、再打开主要聊天，拿常驻电脑地址连本机，报「V0 只允许连接 127.0.0.1」。
-      const requestedBaseUrl = options.baseUrl
-        ?? (options.remoteProjectId ?? remoteProjectRef.current ? baseUrl : localConnectUrl(baseUrl,
+      const selectedRegistration = options.remoteProjectId ?? remoteProjectRef.current;
+      const requestedBaseUrl = connectionAddress(options.baseUrl, selectedRegistration,
+        selectedRegistration ? baseUrl : localConnectUrl(baseUrl,
           projects.filter((project) => project.kind === "remote").map((project) => project.baseUrl),
-          localStorage.getItem(STORAGE_KEYS.baseUrl)));
+          localStorage.getItem(STORAGE_KEYS.baseUrl)), clientRef.current?.desktopSource ?? null);
       const requestedScope = remoteAssistant ? "general"
         : options.scope ?? runtime.scope ?? (requestedRepoRoot.trim() ? "project" : "general");
       setBanner(null);
@@ -2862,9 +2868,11 @@ function App() {
         {sidebar.collapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeftOpen />} buttonRef={sidebar.reopenButton}
           aria-expanded="false" aria-controls="conversation-sidebar" onClick={() => sidebar.toggle(false)} />}
         <aside id="conversation-sidebar" className="sidebar vc-sidebar">
-          <SidebarBrand sidebarId="conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)} />
+          {appMode !== "assistant" && <SidebarBrand sidebarId="conversation-sidebar" collapseRef={sidebar.collapseButton} onCollapse={() => sidebar.toggle(true)} />}
+          {appMode === "assistant" && <div className="vc-personal-window-drag" data-tauri-drag-region="deep" aria-hidden="true" />}
           {appMode === "assistant" && <PersonalSpacePicker context={currentTarget} profiles={projects}
-            localResidentId={localResidentStatus?.projectId ?? null} connection={connection} switching={projectSwitching}
+            localResidentId={localResidentStatus?.projectId ?? null} connection={connection} switching={projectSwitching} avatar={assistantAvatar}
+            collapseControl={<IconButton label="收起侧栏" icon={<PanelLeftClose />} buttonRef={sidebar.collapseButton} aria-expanded="true" aria-controls="conversation-sidebar" onClick={() => sidebar.toggle(true)} />}
             onSelect={useRegisteredAssistant} onManage={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
           {appMode !== "assistant" && <BackToAssistant onBack={() => void changeAppMode("assistant")} />}
           {appMode === "assistant" ? (
@@ -2905,7 +2913,11 @@ function App() {
               waiting={assistantWaiting}
               waitingUncertain={!activityComplete}
               onPage={openAssistantPage}
-              onManageStaff={() => { setSettingsSection("staff"); setSettingsOpen(true); }}
+              staffOpen={mainView === "staff"}
+              onManageStaff={() => {
+                setStaffWorkspaceLease(settingsTargetLease(() => ({ context: settingsTargetRef.current, client: clientRef.current })));
+                setMainView("staff"); setInspectorOpen(false);
+              }}
               onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
               phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
               onOpenPhoneChat={openPhoneChat}
@@ -2977,6 +2989,7 @@ function App() {
             />
           )}
           </>}
+          {appMode === "assistant" && <AssistantIdentityLink name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} onOpen={() => openAssistantPage("identity")} />}
           <SidebarFooter
             identity={identity}
             update={availableUpdate}
@@ -2990,7 +3003,15 @@ function App() {
           />
         </aside>
 
-        {mainView === "plugins" ? (
+        {mainView === "staff" && appMode === "assistant" ? (
+          <StaffWorkspace avatar={assistantAvatar} onBack={() => { setMainView("chat"); setStaffWorkspaceLease(null); }}
+            onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }}>
+            <SettingsTargetSection owner="space" label="专员登记与权限" lease={staffWorkspaceLease ?? undefined}
+              unavailable={!staffWorkspaceLease?.target.space?.runtime.registrationId}>
+              <StaffPane client={staffWorkspaceLease?.client ?? undefined} />
+            </SettingsTargetSection>
+          </StaffWorkspace>
+        ) : mainView === "plugins" ? (
           <PluginsPage
             activeScope={activeScope}
             mcpServers={<McpServersCard key={`mcp-${pluginsRevision}`} client={clientRef.current} connection={connection} />}
@@ -3092,7 +3113,7 @@ function App() {
           >
             {messages.length === 0 && !streaming && (
               currentChannel ? <ChannelWelcome title={currentSession!.title} topic={currentChannel.topic} /> :
-              <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"}>
+              <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"} avatar={assistantAvatar}>
                 {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && (
                   <FirstRunCard signedIn={Boolean(vortoAccount.status?.signedIn)}
                     onAccount={() => { setSettingsSection("account"); setSettingsOpen(true); }}
@@ -3108,7 +3129,7 @@ function App() {
             )}
 
             <ChatHistory messages={messages} activityGroups={activityGroups} busy={busy} activeTurnRid={activeTurnRid}
-              assistant={appMode === "assistant"} focusedRid={conversationLocation.rid}
+              assistant={appMode === "assistant"} assistantName={assistantProfile.name || "VortoOne"} assistantAvatar={assistantAvatar} focusedRid={conversationLocation.rid}
               renderCard={renderChatCard} />
 
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
@@ -3125,7 +3146,7 @@ function App() {
 
             {streaming && (
               <article className="message assistant streaming">
-                {appMode !== "assistant" && <div className="message-author">VortoOne <span>正在回复</span></div>}
+                {appMode === "assistant" ? <MessageIdentity role="assistant" name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} /> : <div className="message-author">VortoOne <span>正在回复</span></div>}
                 <div className="message-body"><MarkdownMessage text={streaming} /><i className="cursor" data-rid={streamingRid} /></div>
               </article>
             )}
@@ -3808,7 +3829,7 @@ function App() {
           onBaseUrlChange={setBaseUrl}
           onTokenChange={setToken}
           onStopRuntime={stopRuntime}
-          onConnectExisting={() => { if (!coordinator.switching) void connectToRuntime(activeSid); }}
+          onConnectExisting={() => { if (!coordinator.switching) void connectToRuntime(activeSid, { baseUrl }); }}
           onStartRuntime={startRuntime}
           onSwitchScope={(scope) => void (async () => {
             // An explicit local settings action leaves Assistant mode; otherwise

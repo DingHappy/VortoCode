@@ -52,6 +52,9 @@ public enum VCColor {
     public static let onTile = ThemeColor(light: RGBA(1, 1, 1, 1), dark: RGBA(1, 1, 1, 1))
     // 制品预览的纸面：发布的网页按白底写，深色模式下也保持白底，否则没写底色的页面黑字压黑底
     public static let paper = ThemeColor(light: RGBA(1, 1, 1, 1), dark: RGBA(1, 1, 1, 1))
+    // 个人空间与角色形象
+    public static let workspaceSidebar = ThemeColor(light: RGBA(0.9569, 0.9647, 0.9725, 1), dark: RGBA(0.0471, 0.0549, 0.0706, 1))
+    public static let workspaceBg = ThemeColor(light: RGBA(1, 1, 1, 1), dark: RGBA(0.098, 0.098, 0.0941, 1))
 }
 
 /// 字号：8 级，含首次使用标题；不用 12 号以下，不用半号

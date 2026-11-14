@@ -16,9 +16,9 @@ it("preserves phone attribution, attachments, Markdown and the completed turn ti
   for (const text of ["Telegram", "回复在手机上", "发送的图片 1", "<strong>检查完成</strong>", 'aria-expanded="false"']) {
     expect(html).toContain(text);
   }
-  // 助理模式不写「你」和助理名字，左右位置已经说明是谁说的
-  expect(html).not.toContain(">你<");
-  expect(renderToStaticMarkup(<ChatHistory {...props} messages={[{ ...messages[1], source: undefined }]} />)).not.toContain("message-author");
+  expect(html).toContain(">你</strong>");
+  expect(html).toContain(">VortoOne</strong>");
+  expect(html).toContain("general.png");
   expect(renderToStaticMarkup(<ChatHistory {...props} assistant={false} />)).toContain('<div class="message-author">你</div>');
   expect(html).not.toContain("读取结果");
 });

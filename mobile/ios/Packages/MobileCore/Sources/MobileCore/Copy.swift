@@ -123,4 +123,20 @@ public enum VCCopy {
         public static let saved = "频道已保存"
         public static let remove = "删除频道"
     }
+
+    /// 角色家族与专员工作区
+    public enum Characters {
+        public static let general = "总助手"
+        public static let research = "研究助手"
+        public static let development = "开发助手"
+        public static let calendar = "日程助手"
+        public static let family = "角色家族"
+        public static let familyHint = "形象帮助辨认分工，实际能力以你批准的岗位为准。"
+        public static let workspace = "专员"
+        public static let workspaceHint = "查看分工、登记状态与待你批准的提议。"
+        public static let personalSpace = "我的个人空间"
+        public static let roster = "登记与权限"
+        public static let openChat = "回到主要聊天"
+        public static let manageConnection = "核对连接"
+    }
 }

@@ -14,7 +14,8 @@ import { StaffBundleReview } from './StaffBundleReview';
 import type { DevelopmentProposal } from '../../lib/staff';
 import type { RoutinesClient } from '../../lib/routines';
 import { ExecutionDetails } from '../ExecutionDetails';
-import { UserRound, Layers, ChartNoAxesColumn } from 'lucide-react';
+import { RoleAvatar, staffCharacter } from "../RoleAvatar";
+import { Layers, ChartNoAxesColumn } from 'lucide-react';
 import "./StaffPane.css";
 
 const statuses = { active: "已启用", paused: "已暂停", retired: "已撤掉" };
@@ -86,7 +87,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
           const role = value.roles.find(role => role.id === member.role);
           const warnings = memberWarnings(member, role, state);
           return <article className="staff-member" aria-label={member.name} key={member.id}>
-            <div className="staff-member-overview"><UserRound aria-hidden="true" /><div className="staff-member-description"><strong>{member.name}</strong>
+            <div className="staff-member-overview"><RoleAvatar character={staffCharacter(role)} /><div className="staff-member-description"><strong>{member.name}</strong>
               {role && <p>{role.brief}</p>}
             </div><span className={`staff-member-status${current && member.status === 'active' && !warnings.length ? ' staff-member-enabled' : ''}`}>
               {!current && '上次：'}{statuses[member.status] ?? '状态待核对'}{member.busy ? ` · ${member.busy} 件在办` : ''}</span></div>
@@ -149,7 +150,7 @@ export function StaffView({ state, onRefresh, onStatus, onDecide, onBudgets, onD
         <div className="staff-section">
         <p className="settings-card-note">这些是登记建议，尚未开通。先在主要聊天说明汇报时间、时区和公开研究话题，再核对整张开通单后批准。</p>
         {value.standing_specialists?.map(item => <article className="settings-card" key={item.id}>
-          <strong>{item.title}</strong><p>{item.scope}</p><p className="settings-card-note">{item.guide}</p>
+          <div className="staff-suggestion-title"><RoleAvatar character={item.id === "calendar" ? "calendar" : item.id === "research" ? "research" : undefined} /><strong>{item.title}</strong></div><p>{item.scope}</p><p className="settings-card-note">{item.guide}</p>
         </article>)}
         <p className="settings-card-note">日程保持只读。原会前和新邮件提醒沿用现有规则，本步不改为实时提醒。</p>
         </div>

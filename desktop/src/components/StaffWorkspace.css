@@ -1,0 +1,32 @@
+.vc-staff-workspace { min-width: 0; overflow: auto; padding: var(--vc-space-8); background: var(--vc-workspace-bg); color: var(--vc-text); }
+.vc-staff-workspace-header { display: flex; align-items: center; justify-content: space-between; gap: var(--vc-space-4); max-width: var(--vc-setup-max-w); margin: 0 auto var(--vc-space-8); }
+.vc-staff-workspace-header h1 { margin: var(--vc-space-4) 0 var(--vc-space-2); font-size: var(--vc-size-title); font-weight: var(--vc-weight-strong); }
+.vc-staff-workspace-header p, .vc-role-family p { color: var(--vc-muted); font-size: var(--vc-size-body); line-height: 1.7; margin: 0; }
+.vc-role-family { max-width: var(--vc-setup-max-w); margin: 0 auto var(--vc-space-8); border-bottom: 1px solid var(--vc-border); padding-bottom: var(--vc-space-8); }
+.vc-role-family h2 { margin: 0 0 var(--vc-space-2); font-size: var(--vc-size-heading); font-weight: var(--vc-weight-medium); }
+.vc-role-family-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--vc-space-6); margin-top: var(--vc-space-4); }
+.vc-role-family figure { display: grid; justify-items: center; margin: 0; padding: var(--vc-space-3) 0; gap: var(--vc-space-2); }
+.vc-role-family figcaption { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
+.vc-staff-workspace-registry { max-width: var(--vc-setup-max-w); margin: auto; }
+.vc-staff-workspace .staff-pane button { cursor: pointer; min-height: var(--vc-control-h); padding: var(--vc-space-1) var(--vc-space-3); font-family: var(--vc-font-sans); font-size: var(--vc-size-small); color: var(--vc-text); background: var(--vc-surface); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); }
+.vc-staff-workspace .staff-pane button:hover:not(:disabled) { background: var(--vc-hover); }
+.vc-staff-workspace .staff-pane button:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
+.vc-staff-workspace .staff-pane button:disabled { opacity: .45; cursor: default; }
+.vc-staff-workspace .staff-pane button.primary { background: var(--vc-ink); color: var(--vc-on-ink); }
+.vc-staff-workspace .staff-pane button.danger { color: var(--vc-danger-text); }
+.vc-staff-workspace .settings-card-note { color: var(--vc-muted); font-size: var(--vc-size-small); line-height: 1.7; }
+.vc-staff-workspace .settings-card { padding: var(--vc-space-4); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); margin-top: var(--vc-space-3); }
+.staff-suggestion-title { display: flex; align-items: center; gap: var(--vc-space-3); }
+.vc-assistant-link-group { padding: var(--vc-space-4) var(--vc-space-3); margin-top: auto; }
+.vc-assistant-link-group > span { display: block; padding: 0 var(--vc-space-2) var(--vc-space-2); color: var(--vc-muted); font-size: var(--vc-size-caption); }
+.vc-assistant-link { display: flex; width: 100%; gap: var(--vc-space-3); padding: var(--vc-space-2); align-items: center; text-align: left; border: 0; border-radius: var(--vc-radius-control); color: var(--vc-text); background: transparent; cursor: pointer; }
+.vc-assistant-link:hover { background: var(--vc-hover); }
+.vc-assistant-link:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
+.vc-assistant-link > span:last-child { display: grid; gap: var(--vc-space-1); min-width: 0; }
+.vc-assistant-link strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); overflow-wrap: anywhere; }
+.vc-assistant-link small { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+@media (max-width: 760px) {
+  .vc-staff-workspace { padding: var(--vc-space-4); }
+  .vc-staff-workspace-header { flex-wrap: wrap; }
+  .vc-role-family-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--vc-space-3); }
+}

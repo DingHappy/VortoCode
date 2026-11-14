@@ -109,6 +109,15 @@
   --vc-page-pad: 32px;
   --vc-setup-max-w: 1040px;
   --vc-settings-nav-w: 224px;
+
+  /* 个人空间与角色形象 */
+  --vc-avatar-message: 40px;
+  --vc-avatar-portrait: 112px;
+  --vc-avatar-hero: 144px;
+  --vc-workspace-chat-w: 800px;
+  --vc-workspace-sidebar-w: 280px;
+  --vc-workspace-sidebar: #f4f6f8;
+  --vc-workspace-bg: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -147,6 +156,8 @@
     --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
     --vc-on-tile: #ffffff;
     --vc-paper: #ffffff;
+    --vc-workspace-sidebar: #0c0e12;
+    --vc-workspace-bg: #191918;
   }
 }
 
@@ -185,4 +196,6 @@
   --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
   --vc-on-tile: #ffffff;
   --vc-paper: #ffffff;
+  --vc-workspace-sidebar: #0c0e12;
+  --vc-workspace-bg: #191918;
 }
