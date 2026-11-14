@@ -18,3 +18,17 @@ it('marks interrupted migration as paused across both old and new scheduling', (
   const html = renderToStaticMarkup(<RoutinesView state={{ value, busy: false, error: '' }} {...actions} />);
   expect(html).toContain('相关新旧作业均不调度'); expect(html).toContain('继续同一次迁移');
 });
+
+it('keeps failures, active work and explicit migration approval visible in the compact view', () => {
+  const value = routineFixture();
+  value.items[0].state.error = '需主人核对这条工作'; value.items[0].state.task = 'task-running';
+  value.items[0].last_delivery!.status = 'failed';
+  const html = renderToStaticMarkup(<RoutinesView state={{ value, busy: false, error: '' }} {...actions} />);
+  expect(html).toContain('role="alert">需主人核对这条工作');
+  expect(html).toContain('本条不会叠加派发');
+  expect(html).toContain('已发出的请求仍可能返回');
+  expect(html).toContain('主人核对并确认后才接管');
+  expect(html).toContain('aria-label="搜索例行工作"');
+  expect(html).toContain('role="status">最近任务：失败</span>');
+  expect(html).not.toContain('已删除记录');
+});

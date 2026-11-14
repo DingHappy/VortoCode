@@ -1,0 +1,9 @@
+.model-configuration-state { display: grid; gap: var(--vc-space-2); padding: var(--vc-space-3) 0; border-bottom: 1px solid var(--vc-divider); margin-bottom: var(--vc-space-4); }
+.model-configuration-state .model-configuration-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--vc-space-3); }
+.model-configuration-heading strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
+.model-configuration-counts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--vc-space-2); }
+.model-configuration-state .model-configuration-message { margin: 0; color: var(--vc-muted); font-size: var(--vc-size-small); line-height: 1.6; }
+.model-configuration-state .model-configuration-message.is-failed { color: var(--vc-danger-text); }
+.model-configuration-state .vc-preference-details > summary { padding: var(--vc-space-1) 0; }
+.model-configuration-state .vc-preference-details-body ul { margin: var(--vc-space-2) 0; padding-left: var(--vc-space-5); }
+.model-configuration-state .vc-preference-details-body li { overflow-wrap: anywhere; }

@@ -32,3 +32,14 @@ it("a remembered selection alone does not open the preview: only a click in this
   expect(html).not.toContain("vc-library-detail");
   expect(html).not.toContain("has-detail");
 });
+
+it("distinguishes a failed empty read from an empty library and preserves loaded rows on refresh failure", () => {
+  const failed = page({ error: "离线读取失败" });
+  expect(failed).toContain('role="alert"');
+  expect(failed).toContain("资料暂时无法读取");
+  expect(failed).not.toContain("还没有资料");
+  const retained = page({ artifacts: [artifact("a")], error: "离线读取失败" });
+  expect(retained).toContain("标题 a");
+  expect(retained).toContain("保留 1 项已载入资料");
+  expect(retained).toContain('aria-label="搜索已载入资料"');
+});
