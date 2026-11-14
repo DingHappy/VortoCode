@@ -8,50 +8,23 @@ import textwrap
 from pathlib import Path
 from src.utils.state_dir import state_dir
 
+from src.runtime_bootstrap import resolve_log_level
+# Temporary public wrappers share implementations with the internal service entry.
+from src.runtime_entry import (
+    run_server as run_server,
+    run_im as run_im,
+    run_doctor as run_doctor,
+    run_canary_cli as run_canary_cli,
+)
+
 
 def _resolve_log_level(raw) -> int:
-    """把 ``LOG_LEVEL`` 的原始值解析成 logging 级别；**认不出一律 WARNING**。
-
-    抽成纯函数是为了能确定性地测"没设置""拼错了"这些分支——``_setup_logging`` 会去读
-    仓库根的 ``.env``，在开发机上"未设置"这个分支根本构造不出来。
-
-    写错不能让进程起不来：日志级别拼错就炸掉整个服务是荒谬的。
-    """
-    import logging
-
-    level = getattr(logging, str(raw or "WARNING").strip().upper(), None)
-    return level if isinstance(level, int) else logging.WARNING
+    return resolve_log_level(raw)
 
 
 def _setup_logging() -> int:
-    """按 ``LOG_LEVEL`` 配日志。**不设则 WARNING**——与今天的实际行为逐字节一致。
-
-    为什么非有这段不可：全仓**一处日志配置都没有**。根 logger 没 handler，Python 就回落到
-    ``logging.lastResort``，而那个只处理 WARNING 及以上。后果是全仓 60 处 ``.info()``
-    一行都产不出来，同时 ``.env`` 里那个 ``LOG_LEVEL`` **没有任何代码读它**，纯摆设。
-
-    于是日志里**只有失败、没有成功**。2026-08-01 真机排查"点了按钮没反应"时就卡死在这：
-    加了成功日志照样一片空白，分不清是"回调没到"还是"到了但没效果"——而这两者修法完全不同。
-
-    返回实际生效的级别（int），好让测试断解析结果而不必依赖全局 logging 状态。
-    """
-    import logging
-    import os
-
-    # LOG_LEVEL 写在 .env 里，而 .env 要等 src.llm.client 被导入才加载——这里显式再读一次。
-    # （load_dotenv 默认不覆盖已存在的环境变量，重复调用无害。）
-    from src.env_compat import load_env_file
-
-    load_env_file(Path(__file__).parent.parent / ".env")
-
-    level = _resolve_log_level(os.getenv("LOG_LEVEL"))
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if level > logging.DEBUG:
-        # 第三方库一到 INFO 就每个 HTTP 请求刷一行，会把自己的日志淹得找不着
-        for noisy in ("aiohttp", "asyncio", "httpx", "httpcore", "openai", "urllib3",
-                      "websockets", "charset_normalizer"):
-            logging.getLogger(noisy).setLevel(logging.WARNING)
-    return level
+    from src.runtime_bootstrap import setup_logging
+    return setup_logging(Path(__file__).parent.parent / ".env")
 
 
 def main():
@@ -257,20 +230,9 @@ def main():
         print(json.dumps(report, ensure_ascii=True))
         sys.exit(0)  # Deliberately before env/log/provider setup, including configured log-file writes.
 
-    # 结构化日志（opt-in）：VORTOONE_JSON_LOGS=1 控制台 JSON；VORTOONE_LOG_FILE=路径 落盘（ELK-ready）
     from src.env_compat import env_compat
-    if env_compat("VORTOONE_JSON_LOGS", "AUTODEV_JSON_LOGS") \
-            or env_compat("VORTOONE_LOG_FILE", "AUTODEV_LOG_FILE"):
-        from src.core.tracing import setup_structured_logging
-        setup_structured_logging(log_file=env_compat("VORTOONE_LOG_FILE", "AUTODEV_LOG_FILE") or None)
-    else:
-        _setup_logging()      # 没开结构化日志时的兜底配置（否则整个进程只剩 WARNING，见其 docstring）
-
-    # 状态目录 .vortocode → .vortoone（ADR-018 批次 C）：大多数地方经 state_dir() 按需搬，
-    # 这里先把当前目录和家目录搬好，相对路径写法（.vortoone/sessions.db、~/.vortoone/skills）也就对上了。
-    from src.utils.state_dir import home_state_dir, state_dir
-    state_dir(Path.cwd())
-    home_state_dir()
+    from src.runtime_bootstrap import prepare_runtime
+    prepare_runtime(log_setup=_setup_logging)
 
     if args.command == "agent":
         # argparse 的 --attach [URL]（nargs="?"）会把紧跟的任务文本吞成 URL：
@@ -385,28 +347,6 @@ def main():
         sys.exit(run_roster_cli(args.action, args.arg or "", args.roster_file))
 
 
-async def run_doctor() -> int:
-    """一键自检：逐项查管道（git/凭证/中转站/serve/权限/gh/IM），返回退出码（硬伤=1）。"""
-    from src.gateway.doctor import run_checks, summarize
-    print("VortoOne doctor · 自检中…\n", file=sys.stderr)
-    checks = await run_checks(str(Path.cwd()))
-    text, code = summarize(checks)
-    print(text)
-    return code
-
-
-async def run_canary_cli() -> int:
-    """端到端交付验收：逐条报告哪条交付链路通、哪条断。有断的返回 1（部署脚本据此拦住上线）。"""
-    from src.gateway.canary import run_canary, summarize
-    print("VortoOne canary · 端到端交付验收（假通道 + 脚本模型，不触网）…\n", file=sys.stderr)
-    lanes = await run_canary()
-    for ln in lanes:
-        print(f"{ln.glyph} {ln.name:<12} {ln.detail}")
-    ok, text = summarize(lanes)
-    print(f"\n{'✅' if ok else '⛔'} {text}")
-    return 0 if ok else 1
-
-
 def run_roster_cli(action: str, arg: str, roster_file: str) -> int:
     """多助手名册：看名单 / 体检 / 出 env 模板。**从不打印凭证值**，只报键名与"有没有撞车"。"""
     from src.gateway.roster import (check_roster, env_template, load_roster, roster_path,
@@ -440,39 +380,6 @@ def run_roster_cli(action: str, arg: str, roster_file: str) -> int:
     ok, text = summarize(findings)
     print(f"\n{'✅' if ok else '⛔'} {text}")
     return 0 if ok else 1
-
-
-async def run_im(channel: str, *, mode: str = "plan"):
-    """IM 通道桥入口：常驻长轮询，把主 agent 搬上 IM。fail-closed：缺配对凭证直接拒启。"""
-    cwd = str(Path.cwd())
-    from src.gateway.im_service import IMConfigError, build_adapter, load_allow_from, load_conversation, load_session_role
-    try:
-        adapter, owner = build_adapter(channel)      # 凭证解析/fail-closed 与 serve 内嵌同源，不抄两份
-        conversation = load_conversation()
-        session_role = load_session_role()
-    except IMConfigError as e:
-        print(f"✗ {e}", file=sys.stderr)
-        sys.exit(2)
-    from src.im.bridge import IMBridge
-    bridge = IMBridge(cwd, adapter, owner, channel=channel, mode=mode,   # standalone：自己的 runner
-                      allow_from=load_allow_from(channel), conversation=conversation,
-                      session_role=session_role)
-    who = "、".join(sorted(bridge.allow_from)) if bridge.allow_from else "空 → 拒绝一切入站"
-    print(f"🌉 {channel} 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。入站白名单：{who}；"
-          f"群聊须显式 @ 本机器人。Ctrl-C 退出。", file=sys.stderr)
-    warn = bridge.allow_from_warning()      # 白名单配错（空 / 漏了 owner）→ 开机就在终端讲清楚：
-    if warn:                                # 不是坏了，是配置把你自己也挡在门外了
-        print(warn, file=sys.stderr)
-    from src.gateway.process_lease import ProcessLease
-    try:
-        with ProcessLease(state_dir(cwd) / "runtime.lock"):
-            try:
-                await bridge.run()
-            finally:
-                if bridge._runner is not None:
-                    await bridge._runner.shutdown()
-    finally:
-        await adapter.close()
 
 
 async def run_im_pair(channel: str) -> int:
@@ -1188,12 +1095,6 @@ async def _with_progress(coro, label: str = "运行中"):
         done.set()
         await tick
         print("\r\033[K", end="", file=sys.stderr, flush=True)   # 清掉计时行，给真正的结果让位
-
-
-def run_server(host: str, port: int, im: str = ""):
-    """运行服务器（im 非空 = 内嵌 IM 桥，见 gateway/im_service）"""
-    from src.web.server import start_server
-    start_server(host, port, im=im)
 
 
 async def analyze_task(task: str):
