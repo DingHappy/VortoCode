@@ -11,6 +11,8 @@ import { useLlmProfile } from "../src/hooks/useLlmProfile";
 import { staffSettingsFixture } from "./staff-settings-fixture";
 import type { DesktopLlmProfileStatus, TrustStatus, GatewayProcessStatus, WorkspaceScope } from "../src/types";
 import "../src/App.css";
+import "../src/daily.css";
+import "../src/styles/shell.css";
 
 const params = new URLSearchParams(location.search);
 const staffFixture = params.has("staff") ? staffSettingsFixture(params.get("staff") || "ready") : undefined;
@@ -45,9 +47,9 @@ if (params.get("providers") === "1") profile.providers = [
 let confirmationsAllowed = params.get("confirm") !== "cancel";
 const probeTargets: Array<{ providerId: string | null; baseUrl: string; explicitKey: boolean }> = [];
 let instructions = "回答用中文，报告任务进展和需要我决定的事项。";
-let desktop = { target: "ssh:vorto-97", sshConnected: false, viewerUrl: null, computer: null, checkedAt: null, error: null };
+let desktop = { target: "ssh:demo-resident", sshConnected: false, viewerUrl: null, computer: null, checkedAt: null, error: null };
 let browser = { enabled: false, browserPath: "/Applications/Chromium.app" };
-let control = { enabled: params.get("desktopEnabled") === "1", target: "ssh:vorto-97", apps: "firefox, mousepad" };
+let control = { enabled: params.get("desktopEnabled") === "1", target: "ssh:demo-resident", apps: "firefox, mousepad" };
 let experimental = false;
 let reads = 0;
 let restarts = 0;
@@ -78,6 +80,8 @@ mockIPC(async (cmd, raw) => {
   const args = (raw ?? {}) as Record<string, string | boolean | Record<string, string>>;
   calls.push(cmd);
   switch (cmd) {
+    case "local_resident_status": return { supported: true, installed: false, state: "not_installed", availableVersion: "0.2.61",
+      cronEnabled: false, revision: "qa-resident-1", message: "合成环境，不操作真实服务。" };
     case "gateway_process_status": return nativeRuntime;
     case "list_gateway_processes": return nativeRuntime.running ? [nativeRuntime] : [];
     case "get_gateway_recovery": return null;
@@ -246,7 +250,7 @@ function Fixture() {
       onLlmFastChange={llm.setLlmFastInput} onLlmStrongChange={llm.setLlmStrongInput} onRestartRuntime={restart} onLlmProfileChange={llm.applyLlmProfile}
       onModelPicksChange={noop} onSaveLlmProfile={llm.saveLlmProfile} onClearLlmProfile={llm.clearLlmProfile} llmSaveNote={llm.llmSaveNote}
       llmProfileConflict={llm.llmProfileConflict} llmSaveKind={llm.llmSaveKind} llmProfileLoading={llm.llmProfileLoading} llmProfileError={llm.llmProfileError} onReloadLlmProfile={llm.reloadLlmProfile}
-      hasResident residentName="vorto-97" residentConnected={false} onOpenResidentSetup={() => setNotice("常驻连接入口")} onOpenSchedule={() => setNotice("计划入口")}
+      hasResident residentName="demo-resident" residentConnected={false} onOpenResidentSetup={() => setNotice("常驻连接入口")} onOpenSchedule={() => setNotice("计划入口")}
       onEditAssistant={() => setNotice("资料入口")} onOpenPlugins={() => setNotice("插件入口")}
       onChooseRepo={noop} onDismissRecovery={noop} onRestoreRecovery={noop} onBaseUrlChange={noop} onTokenChange={noop} onStopRuntime={runtimeControls.stop}
       onConnectExisting={noop} onStartRuntime={runtimeControls.start} onSwitchScope={() => setRemote(false)} trust={trust} trustBusy={false} onTrustChange={level => setTrust({ ...trust, level, effective: level })} />}</>;

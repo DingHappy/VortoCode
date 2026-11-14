@@ -8,6 +8,21 @@ function render(value: LocalResidentStatus | null = status, overrides: Partial<L
   return renderToStaticMarkup(<LocalResidentView state={{ ...INITIAL_LOCAL_RESIDENT, value, ...overrides }} onRefresh={() => {}} onAction={() => {}} canUse selectedHostId={selectedHostId} connected={connected} />);
 }
 describe('local resident card', () => {
+  it('keeps installation choices out of the model-preparation step', () => {
+    const markup = renderToStaticMarkup(<LocalResidentView onboarding awaitingModel
+      state={{ ...INITIAL_LOCAL_RESIDENT, value: { ...status, installed: false, state: 'not_installed' } }}
+      onRefresh={() => {}} onAction={() => {}} canUse blocked />);
+    expect(markup).toContain('保存模型配置后继续');
+    expect(markup).not.toContain('type="checkbox"');
+    expect(markup).not.toMatch(/<button[^>]*>安装本机常驻助理/);
+  });
+  it('keeps an existing service usable without copying this Desktop model configuration', () => {
+    const markup = renderToStaticMarkup(<LocalResidentView onboarding awaitingModel
+      state={{ ...INITIAL_LOCAL_RESIDENT, value: status }} onRefresh={() => {}} onAction={() => {}} canUse />);
+    expect(markup).toContain('>使用本机常驻助理</button>');
+    expect(markup).not.toContain('type="checkbox"');
+    expect(markup).not.toContain('保存模型配置后继续');
+  });
   it('onboarding keeps model-copy consent and schedules disabled', () => {
     const markup = renderToStaticMarkup(<LocalResidentView onboarding state={{ ...INITIAL_LOCAL_RESIDENT, value: { ...status, installed: false, state: 'not_installed' } }}
       onRefresh={() => {}} onAction={() => {}} canUse />);

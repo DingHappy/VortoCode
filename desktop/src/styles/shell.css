@@ -115,7 +115,7 @@
 
 /* 「最近」里的条目：高 32，除主要聊天外不带图标 */
 .vc-nav-item.vc-nav-item--recent {
-  height: var(--vc-control-h);
+  height: var(--vc-control-h-form);
   gap: var(--vc-space-2);
 }
 
@@ -924,11 +924,11 @@
 
 /* 助理模式的对话：顶栏不画分隔线；用户的话是右侧浅灰气泡，回复不写名字，正文 15 号 */
 .vc-mode-assistant .conversation-header {
-  border-bottom-color: transparent;
+  border-bottom-color: var(--vc-divider);
 }
 
 .vc-mode-assistant .conversation-header strong {
-  font-size: var(--vc-size-body);
+  font-size: var(--vc-size-chat);
   font-weight: var(--vc-weight-medium);
   color: var(--vc-text);
 }
@@ -978,7 +978,7 @@
 .vc-mode-assistant .empty-state .composer {
   max-width: var(--vc-chat-max-w);
   border: 0;
-  border-radius: var(--vc-radius-input);
+  border-radius: var(--vc-radius-bubble);
   background: var(--vc-surface);
   box-shadow: var(--vc-shadow-input), inset 0 0 0 1px var(--vc-border);
 }
@@ -1006,11 +1006,11 @@
 
 .vc-mode-assistant .composer-command-toolbar > .composer-attach {
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: var(--vc-control-h);
+  height: var(--vc-control-h);
   padding: 0;
   border: 0;
-  border-radius: var(--vc-radius-full);
+  border-radius: var(--vc-radius-control);
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--vc-border);
   color: var(--vc-text-secondary);
@@ -1027,9 +1027,9 @@
 }
 
 .vc-mode-assistant .composer-footer button.composer-send {
-  width: 34px;
-  height: 34px;
-  border-radius: var(--vc-radius-full);
+  width: var(--vc-control-h);
+  height: var(--vc-control-h);
+  border-radius: var(--vc-radius-control);
   background: var(--vc-ink);
   color: var(--vc-on-ink);
   box-shadow: none;

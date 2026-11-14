@@ -10,7 +10,7 @@ it("工作台已撤：没有模式切换，项目界面里只有「回到助理�
   expect(html).not.toContain("工作台");
 });
 
-it("左侧只放会话（ADR-016）：没有动态 / 定时 / 目标等入口，等你处理的件数挂在主要聊天上", () => {
+it("没有提供日常页面处理器时保持会话列表，等你处理仍归主要聊天", () => {
   const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" waiting={3}
     onSelect={() => {}} onNewSideChat={() => {}} />);
   for (const label of ["动态", "定时", "目标", "资料库", "定制"]) expect(html).not.toContain(`>${label}</span>`);
@@ -78,10 +78,10 @@ it("blank chat titles have searchable names and long titles keep their full hint
   }
 });
 
-it("每个面板入口都对得上一个标签，审核记录不占一级入口", () => {
+it("日常页面复用相同的领域标签，插件仍使用独立页面", () => {
   for (const [page, tab] of Object.entries(PAGE_PANEL)) expect(PANEL_PAGE[tab]).toBe(page);
-  expect(PANEL_PAGE.audit).toBeNull();
-  expect(PANEL_PAGE.identity).toBeNull();                       // 「定制」是独立页面，不再打开身份标签
+  expect(PANEL_PAGE.audit).toBe("audit");
+  expect(PANEL_PAGE.identity).toBe("identity");
   expect("customize" in PAGE_PANEL).toBe(false);
 });
 

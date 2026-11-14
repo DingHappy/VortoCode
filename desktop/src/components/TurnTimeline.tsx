@@ -66,17 +66,22 @@ export function TurnTimeline({ items, active, hasOutput = false }: { items: Turn
     .reduce((total, item) => total + (item.durationMs ?? 0), 0);
   const tools = items.filter((item) => item.kind === "tool");
   const hooks = items.filter((item) => item.kind === "hook");
+  const singleTool = !active && tools.length === 1 && hooks.length === 0 ? tools[0] : null;
+  const summaryDuration = singleTool ? singleTool.durationMs ?? 0 : phaseDuration;
+  const recap = turnRecap(items);
+  const specificRecap = recap.filesChanged.length > 0 || recap.tests.runs > 0 || recap.commands > 0 || recap.devRuns > 0;
   const attention = items.filter(item => unknownStatus(item.status) || (!active && item.status === "running")
     || ["failed", "blocked", "cancelled", "timed_out"].includes(item.status));
   return (
     <section className={`turn-timeline ${active ? "active" : ""}`} aria-label="Agent 执行过程" aria-live={active ? "polite" : "off"}>
       <button type="button" className="timeline-heading" aria-expanded={open} onClick={() => setOpenOverride(!open)}>
         <ChevronDown size={14} className={open ? "" : "timeline-collapsed"} />
-        <span>{active ? "正在工作" : "执行过程"}{phaseDuration > 0 ? ` · ${formatActivityDuration(phaseDuration)}` : ""}</span>
+        <span>{singleTool ? singleTool.label || singleTool.name || "工具调用" : active ? "正在工作" : "执行过程"}{summaryDuration > 0 ? ` · ${formatActivityDuration(summaryDuration)}` : ""}</span>
         {attention.length > 0 && <strong className="timeline-attention">{attention.length} 项需要关注</strong>}
         {(tools.length > 0 || hooks.length > 0) && <small>{[
           // 结束后折叠的标题就是这一轮的回顾（改了几个文件、测试过没过…），不用展开也知道做了什么
-          ...(active ? (tools.length > 0 ? [`${tools.length} 个工具`] : []) : recapPhrases(turnRecap(items))),
+          ...(singleTool ? [activityStatus(singleTool, active), ...(!active && specificRecap ? recapPhrases(recap) : [])]
+            : active ? (tools.length > 0 ? [`${tools.length} 个工具`] : []) : recapPhrases(recap)),
           ...(hooks.length > 0 ? [`${hooks.length} 个 Hook`] : []),
         ].join(" · ")}</small>}
       </button>

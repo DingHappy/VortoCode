@@ -5,13 +5,14 @@ import { useDialogSurface } from "../hooks/useDialogSurface";
 import { SETTINGS_OWNER_LABELS, SETTINGS_SECTIONS, searchSettings, settingsPage, type SettingsPage, type SettingsSection } from "../lib/settingsNavigation";
 import "./SettingsModal.css";
 import { SettingsTargetSection } from "./settings/SettingsTargetSection";
-import { settingsTargetSummary, type SettingsTargetLease } from "../lib/settingsTarget";
+import { type SettingsTargetLease } from "../lib/settingsTarget";
+import { SettingsContext } from "./settings/SettingsContext";
 export type { SettingsSection } from "../lib/settingsNavigation";
 import { invoke } from "@tauri-apps/api/core";
 import { errorText } from "../lib/errorText";
 import type { CodexObserverRead } from "../lib/codexObserverHealth";
 import type { ReactNode } from "react";
-import { UserRound, Cpu, Monitor, ShieldCheck, Blocks, SlidersHorizontal, Info, Search, X, MapPin, ChevronRight, Check, CircleAlert, Circle, LoaderCircle } from "lucide-react";
+import { UserRound, Cpu, Monitor, ShieldCheck, Blocks, SlidersHorizontal, Info, Search, X, ChevronDown, ChevronRight, Check, CircleAlert, Circle, LoaderCircle } from "lucide-react";
 import { Eye, EyeOff } from "lucide-react";
 import { BuildVersion } from "./BuildVersion";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -42,6 +43,7 @@ import { ModelServices } from "./settings/ModelServices";
 import { CodexWatchCard } from "./settings/CodexWatchCard";
 import { ModelPicks } from "./settings/ModelPicks";
 import { ModelRoles } from "./settings/ModelRoles";
+import { PreferenceGroup, PreferenceRow } from "./ui";
 import { PersonalizePane } from "./settings/PersonalizePane";
 import { UsagePane } from "./settings/UsagePane";
 import {
@@ -79,6 +81,7 @@ export function settingsBlockVisible(
 }
 
 const NAV_ICONS = { account: UserRound, model: Cpu, computer: Monitor, permissions: ShieldCheck, staff: UserRound, tools: Blocks, personal: SlidersHorizontal, advanced: Info };
+const MORE_SETTINGS: readonly SettingsPage[] = ["permissions", "tools", "advanced"];
 type DraftState = { dirty: boolean; busy: boolean; conflict?: boolean };
 const DRAFT_ITEMS: Record<string, { label: string; page: SettingsPage; anchor: string }> = {
   provider: { label: "模型服务", page: "model", anchor: "provider-editor" },
@@ -238,6 +241,7 @@ export function SettingsModal({
   const [section, setSection] = useState<SettingsPage>(settingsPage(
     initialSection ?? (llmProfile && !llmProfile.configured ? "model" : "account")));
   const [visited, setVisited] = useState<Set<SettingsPage>>(() => new Set([section]));
+  const [moreOpen, setMoreOpen] = useState(() => MORE_SETTINGS.includes(section));
   const [highlight, setHighlight] = useState(initialAnchor ?? "");
   const dialog = useDialogSurface();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -249,6 +253,7 @@ export function SettingsModal({
     (state: DraftState) => setDrafts(previous => ({ ...previous, [key]: state })),
   ])), []);
   const navigate = (next: SettingsPage, anchor = "") => {
+    if (MORE_SETTINGS.includes(next)) setMoreOpen(true);
     setVisited(previous => new Set([...previous, next]));
     setSection(next); setHighlight(anchor); setQuery("");
     contentRef.current?.scrollTo({ top: 0 });
@@ -260,6 +265,15 @@ export function SettingsModal({
     node?.focus({ preventScroll: true });
   }, [section, highlight]);
   const [query, setQuery] = useState("");
+  useEffect(() => {
+    const narrow = window.matchMedia("(max-width: 760px)");
+    const reveal = () => {
+      if (!query && narrow.matches) dialog.current?.querySelector<HTMLElement>('.settings-nav-group [aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
+    reveal();
+    narrow.addEventListener("change", reveal);
+    return () => narrow.removeEventListener("change", reveal);
+  }, [section, moreOpen, query, dialog]);
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [showKey, setShowKey] = useState(false);
@@ -338,6 +352,17 @@ export function SettingsModal({
     applyThemePreference(preference);
   };
 
+  const navigationItem = (id: SettingsPage) => {
+    const item = SETTINGS_SECTIONS.find(page => page.id === id)!;
+    const Icon = NAV_ICONS[id];
+    const dirty = pendingChanges.some(change => change.page === id);
+    return <button key={id} className={section === id ? "active" : ""} aria-current={section === id ? "page" : undefined}
+      aria-describedby={dirty ? `settings-pending-${id}` : undefined} onClick={() => navigate(id)}>
+      <Icon size={17} aria-hidden="true" /><span>{item.label}</span>
+      {dirty && <><Circle className="settings-pending-dot" size={6} fill="currentColor" aria-hidden="true" /><span id={`settings-pending-${id}`} hidden>有未保存的修改</span></>}
+    </button>;
+  };
+
   const content = (
     <dialog ref={dialog} className="settings-modal settings-layout settings-redesign" aria-label="设置"
       onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); if (event.nativeEvent.isComposing) event.preventDefault(); } }}
@@ -352,25 +377,25 @@ export function SettingsModal({
             return <button key={item.id} className="settings-search-result" onClick={() => navigate(item.page, item.id)}>
               <Icon size={17} aria-hidden="true" /><span>{item.label}<small>{SETTINGS_SECTIONS.find(page => page.id === item.page)?.label} · {SETTINGS_OWNER_LABELS[item.owner]}</small></span><ChevronRight size={14} aria-hidden="true" />
             </button>;
-          }) : SETTINGS_SECTIONS.map(item => {
-            const Icon = NAV_ICONS[item.id];
-            return <button key={item.id} className={section === item.id ? "active" : ""} aria-current={section === item.id ? "page" : undefined}
-              aria-describedby={pendingChanges.some(change => change.page === item.id) ? `settings-pending-${item.id}` : undefined}
-              onClick={() => navigate(item.id)}><Icon size={17} aria-hidden="true" /><span>{item.label}</span>
-              {pendingChanges.some(change => change.page === item.id) && <><Circle className="settings-pending-dot" size={6} fill="currentColor" aria-hidden="true" /><span id={`settings-pending-${item.id}`} hidden>有未保存的修改</span></>}
-            </button>;
-          })}
+          }) : <>
+            <div className="settings-nav-section"><h3>个人</h3>{navigationItem("account")}{navigationItem("personal")}</div>
+            <div className="settings-nav-section"><h3>助理</h3>{navigationItem("model")}{navigationItem("computer")}{navigationItem("staff")}</div>
+            <div className="settings-nav-section settings-more">
+              <button type="button" className="settings-more-toggle" aria-expanded={moreOpen} aria-controls="settings-more-pages" onClick={() => setMoreOpen(open => !open)}>
+                <span>更多设置{pendingChanges.some(change => MORE_SETTINGS.includes(change.page)) ? " · 有未保存的修改" : ""}</span><ChevronDown aria-hidden="true" />
+              </button>
+              <div id="settings-more-pages" hidden={!moreOpen}>{MORE_SETTINGS.map(navigationItem)}</div>
+            </div>
+          </>}
           {query.trim() && !searchResults.length && <p className="settings-nav-empty">没有匹配的设置项<br />试试「远程」「模型」或「权限」</p>}
         </div>
-        <div className="settings-nav-footer"><Monitor size={15} /><div>按区块核对保存位置<small>本机、空间和项目分别管理</small></div></div>
+        <div className="settings-nav-footer"><Monitor size={15} /><div>VortoOne<small>你的个人助理</small></div></div>
       </nav>
       <div className="settings-pane">
         <header className="settings-heading"><div><h2 id="settings-page-title">{currentPage.label}</h2><p>{currentPage.description}</p></div>
           <button className="settings-close" disabled={saving} onClick={() => requestLeave(onClose)} aria-label="关闭设置"><X size={18} /></button></header>
         <div className="settings-content" ref={contentRef} aria-labelledby="settings-page-title">
-          <div className="settings-target-current"><strong>打开设置时的运行目标</strong><span>{runtimeSettings ? settingsTargetSummary(runtimeSettings.target) : "目标尚未核对"}</span>
-            {runtimeSettings && !runtimeSettings.current() && <small role="status">当前目标已失效或尚未连接；运行端设置已停用。关闭后重开以核对新目标。</small>}</div>
-          <div className="settings-scope"><MapPin size={16} aria-hidden="true" /><p>{currentPage.scope}</p></div>
+          <SettingsContext lease={runtimeSettings} scope={currentPage.scope} />
           {visited.has("account") && <div hidden={section !== "account"} className="settings-page">
             <div id="setting-account" className={anchorClass("account")} tabIndex={-1}>
               <SettingsTargetSection owner="desktop"><VortoAccountCard
@@ -662,12 +687,8 @@ export function SettingsModal({
             </SettingsTargetSection>
             <SettingsTargetSection owner="desktop"><div id="setting-instructions" className={anchorClass("instructions")} tabIndex={-1}><PersonalizePane onDraftStateChange={draftCallbacks.instructions} /></div>
 
-            <section id="setting-appearance" tabIndex={-1} className={`${anchorClass("appearance")} appearance-card`} aria-label="外观">
-              <div className="appearance-row">
-                <div>
-                  <strong>主题</strong>
-                  <span>界面配色；跟随系统时随 macOS 的浅色/深色自动切换</span>
-                </div>
+            <section id="setting-appearance" tabIndex={-1} className={anchorClass("appearance")} aria-label="外观">
+              <PreferenceGroup title="外观"><PreferenceRow title="主题" description="跟随系统，或选择浅色、深色。">
                 <div className="segmented" role="radiogroup" aria-label="主题">
                   {THEME_OPTIONS.map((option) => (
                     <button
@@ -679,7 +700,7 @@ export function SettingsModal({
                     >{option.label}</button>
                   ))}
                 </div>
-              </div>
+              </PreferenceRow></PreferenceGroup>
             </section>
             </SettingsTargetSection>
           </div>}

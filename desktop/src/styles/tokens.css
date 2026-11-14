@@ -59,7 +59,7 @@
   --vc-font-serif: "Noto Serif SC", "Songti SC", Georgia, serif;
   --vc-font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
 
-  /* 字号：7 级，不用 12 号以下，不用半号 */
+  /* 字号：8 级，含首次使用标题；不用 12 号以下，不用半号 */
   --vc-size-greeting: 34px;
   --vc-size-title: 22px;
   --vc-size-heading: 18px;
@@ -67,6 +67,7 @@
   --vc-size-body: 14px;
   --vc-size-small: 13px;
   --vc-size-caption: 12px;
+  --vc-size-display: 44px;
 
   /* 字重：只用三种 */
   --vc-weight-regular: 400;
@@ -96,14 +97,18 @@
   --vc-icon-step: 18px;
   --vc-icon-stroke: 1.75;
   --vc-control-h: 32px;
-  --vc-control-h-lg: 34px;
-  --vc-nav-item-h: 34px;
+  --vc-control-h-lg: 40px;
+  --vc-nav-item-h: 40px;
+  --vc-control-h-form: 40px;
+  --vc-control-h-hero: 48px;
 
   /* 区域宽度 */
-  --vc-sidebar-w: 256px;
-  --vc-chat-max-w: 736px;
-  --vc-detail-w: 352px;
+  --vc-sidebar-w: 272px;
+  --vc-chat-max-w: 960px;
+  --vc-detail-w: 336px;
   --vc-page-pad: 32px;
+  --vc-setup-max-w: 1040px;
+  --vc-settings-nav-w: 224px;
 }
 
 @media (prefers-color-scheme: dark) {

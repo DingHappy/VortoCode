@@ -1,0 +1,23 @@
+.vc-preference-group { min-width: 0; }
+.vc-preference-group > header { margin-bottom: var(--vc-space-3); }
+.vc-preference-group h3 { margin: 0; font-size: var(--vc-size-body); font-weight: var(--vc-weight-strong); }
+.vc-preference-group header p { margin: var(--vc-space-1) 0 0; color: var(--vc-muted); font-size: var(--vc-size-small); }
+.vc-preference-list { border: 1px solid var(--vc-border); border-radius: var(--vc-radius-card); background: var(--vc-surface); padding: 0 var(--vc-space-4); }
+.vc-preference-row { display: flex; align-items: center; justify-content: space-between; gap: var(--vc-space-4); padding: var(--vc-space-4) 0; min-width: 0; }
+.vc-preference-row + .vc-preference-row { border-top: 1px solid var(--vc-divider); }
+.vc-preference-copy { display: grid; gap: var(--vc-space-1); min-width: 0; }
+.vc-preference-copy > strong, .vc-preference-copy > label { color: var(--vc-text); font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
+.vc-preference-description, .vc-preference-status { color: var(--vc-muted); font-size: var(--vc-size-small); line-height: 1.6; overflow-wrap: anywhere; }
+.vc-preference-control { flex: none; }
+.vc-preference-details { color: var(--vc-muted); font-size: var(--vc-size-small); min-width: 0; }
+.vc-preference-details > summary { display: flex; align-items: center; gap: var(--vc-space-2); width: fit-content; max-width: 100%; cursor: pointer; list-style: none; padding: var(--vc-space-2) 0; }
+.vc-preference-details > summary::-webkit-details-marker { display: none; }
+.vc-preference-details > summary > svg { width: var(--vc-icon); height: var(--vc-icon); flex: none; }
+.vc-preference-details > summary > svg:last-child { transition: transform .15s ease; }
+.vc-preference-details[open] > summary > svg:last-child { transform: rotate(180deg); }
+.vc-preference-details > summary:focus-visible { outline: 2px solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); border-radius: var(--vc-radius-inner); }
+.vc-preference-details-body { margin-top: var(--vc-space-1); padding: var(--vc-space-3) var(--vc-space-4); background: var(--vc-fill); border-radius: var(--vc-radius-control); line-height: 1.7; overflow-wrap: anywhere; }
+.vc-preference-details-body p { margin: 0; }
+.vc-preference-details-body p + p { margin-top: var(--vc-space-2); }
+@media (prefers-reduced-motion: reduce) { .vc-preference-details > summary > svg:last-child { transition: none; } }
+@media (max-width: 540px) { .vc-preference-row { flex-wrap: wrap; } .vc-preference-control { max-width: 100%; } }
