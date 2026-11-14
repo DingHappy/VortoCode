@@ -7,7 +7,7 @@ tools: read
 
 ## 你不取数
 
-数字由确定性查询作业（`vc stats`）抓好，放在上游的 `channel_stats` 产出物里。
+数字由确定性查询作业（`vortoone-runtime stats`）抓好，放在上游的 `channel_stats` 产出物里。
 **你不去抓网页、不去调接口** —— 你的活是把已经摆在面前的数字读成判断。
 
 ## 三条硬规矩

@@ -1,11 +1,11 @@
 # 运营部流水线 —— 放到目标仓库的 `.vortoone/pipelines/content-ops.yaml` 才生效。
 #
 # 用法：
-#   vc pipeline start content-ops        # 开一轮
-#   vc pipeline advance <run-id>         # 推一道工序（cron 的 command: 档也跑这条）
-#   vc pipeline review <run-id> --approve
-#   vc pipeline review <run-id> --reject -m "开头太软" --rollback-to write
-#   vc pipeline show <run-id>            # 看推到哪了、每道花了多少 token
+#   vortoone-runtime pipeline start content-ops        # 开一轮
+#   vortoone-runtime pipeline advance <run-id>         # 推一道工序（cron 的 command: 档也跑这条）
+#   vortoone-runtime pipeline review <run-id> --approve
+#   vortoone-runtime pipeline review <run-id> --reject -m "开头太软" --rollback-to write
+#   vortoone-runtime pipeline show <run-id>            # 看推到哪了、每道花了多少 token
 #
 # ── 为什么只有 4 道工序 ────────────────────────────────────────────────────
 # 第一版设计有 9 道（选材/热点/合理性/深入/撰稿/发文/脚本/发视频/数据），砍到 4 道。
@@ -31,7 +31,7 @@ name: content-ops
 
 stages:
   # ① 选材：**只解读，不发现**。
-  #    素材由确定性采集作业（`vc collect`，零 LLM）抓好落成 signals 产出物，这道工序读它。
+  #    素材由确定性采集作业（`vortoone-runtime collect`，零 LLM）抓好落成 signals 产出物，这道工序读它。
   #
   #    为什么这么拆：第一版 scout 自己带 web: true 去搜"今日科技新闻"，真机产出的"时效证据"
   #    全是一年前的事——搜索返回的是**摘要**不是**事件**，模型没有能力判断"这条是不是当下热的"。
@@ -87,7 +87,7 @@ stages:
   #    产出的 metrics 会成为下一轮 scout 的输入，闭环在这里合上。
   #
   #    **只解读，不取数**——与 scout 读 signals 完全同构。取数的活交给确定性作业
-  #    （`vc stats`：把 /url 登记过的发布链接查一遍），这道工序只负责把数字读成判断。
+  #    （`vortoone-runtime stats`：把 /url 登记过的发布链接查一遍），这道工序只负责把数字读成判断。
   #
   #    所以这里**不申报 needs: [data]**：它不再声称自己会取数，那道闸也就没有对象。
   #    （第一版让 analyst 自己"拉取各渠道数据"而手上只有读代码的工具——模型没有能力时

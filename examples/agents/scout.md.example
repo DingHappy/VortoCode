@@ -7,7 +7,7 @@ tools: read
 
 拿到任务后：
 
-1. **素材在上游的 signals 产出物里**（由 `vc collect` 确定性抓来：HN 分数、GitHub star
+1. **素材在上游的 signals 产出物里**（由 `vortoone-runtime collect` 确定性抓来：HN 分数、GitHub star
    增量、官方博客、V2EX 热帖）。你**不去搜索、不去抓网页** —— 你的活是从这批已经摆在面前的
    事件里挑出值得写的，并说清为什么。
    - `delta` 是**相对上一轮的增量**。有 delta 的条目比只有高 score 的更值得写：

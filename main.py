@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""VortoOne 命令行入口（薄壳）。
+"""VortoOne 迁移期旧命令兼容薄壳。
 
 实际实现在 src/cli.py —— 它同时作为 console_scripts 入口（`vortocode` / `vc`）。
-保留本文件是为了 `python main.py ...` 这种本地直跑方式仍然可用。
+迁移期间保留 `python main.py ...`；日常使用 Desktop，后台服务使用内部运行入口。
 """
 
 from src.cli import main

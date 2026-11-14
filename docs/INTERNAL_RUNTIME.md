@@ -7,8 +7,9 @@
 ## 调用合同
 
 安装包提供内部 `vortoone-runtime`，开发或固定部署目录可用 `python -m src.runtime_entry`。
-两者支持 `server`（含原内嵌 IM 参数）、独立 `im`、`canary` 与 `doctor`；不提供 agent、attach
-或交互会话产品入口。`canary` 使用离线脚本模型；`doctor` 仍可能检查已配置服务，不应把它
+两者支持 `server`（含原内嵌 IM 参数）、独立 `im`、`canary` 与 `doctor`；P5 准备增加
+cron / collect / stats / digest / pipeline / heartbeat，以及只读 legacy-inventory / legacy-verify。
+不提供 agent、attach 或交互会话产品入口。`canary` 使用离线脚本模型；`doctor` 仍可能检查已配置服务，不应把它
 当作离线自检。参数解析和帮助先于准备，非法命令不创建状态目录。
 
 `runtime_bootstrap.prepare_runtime` 复用原日志、环境名兼容和工作/家目录状态迁移顺序。
@@ -28,9 +29,13 @@ heartbeat，并保留原 supervisor、token 与 workspace scope 环境。App 内
 - 部署脚本的 canary / doctor 调用。
 
 跨项目的服务示例使用安装生成的内部可执行入口，保持从固定安装位置加载包，不能改成在
-不可信项目目录执行 `python -m`。实际主机配置、已安装包与旧定时作业本轮未盘点或修改；
+不可信项目目录执行 `python -m`。P1 未盘点或修改实际主机配置、已安装包与旧定时作业；
 删除公开 CLI 前必须确认它们的依赖并显式迁移。内部 runner 并不是第三方执行器适配器，
 原登录、原生权限与执行合同保持。
+
+P5 准备的盘点范围、报告限制与撤除前的实际迁移步骤见 [旧入口迁移](CLI_RETIREMENT.md)。
+新增作业入口直接复用原调度/流水线实现；兼容 CLI 共用作业解析和 cron / heartbeat 适配，
+不另建调度器、权限或任务记录。仓库示例改用内部入口，不会自动修改已安装服务与旧作业。
 
 ## 验证
 
