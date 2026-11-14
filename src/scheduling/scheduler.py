@@ -10,6 +10,7 @@ async def scheduler_loop(stop_event, *, cwd, runner, notify):
     from datetime import datetime, timezone
     from src.scheduling import cron as _cron
     from src.scheduling import heartbeat as _hb
+    from src.gateway.workspace_scope import GENERAL, current_workspace_scope
 
     cron_on = os.getenv("VORTOONE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
     hb_on = os.getenv("VORTOONE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
@@ -34,12 +35,14 @@ async def scheduler_loop(stop_event, *, cwd, runner, notify):
         while not stop_event.is_set():
             now = datetime.now()
             if cron_on:
-                try:
-                    from src.scheduling.staff_runner import get_staff_service
-                    from src.workflow.staff.routines import Routines
-                    Routines(cwd).dispatch(get_staff_service(cwd), datetime.now(timezone.utc))
-                except Exception as error:  # noqa: BLE001 - one routine tick must not stop cron/heartbeat.
-                    logger.warning('Routine dispatch unavailable (%s)', type(error).__name__)
+                # Staff is registered only by the General host; Project/Scratch still run cron.
+                if current_workspace_scope() == GENERAL:
+                    try:
+                        from src.scheduling.staff_runner import get_staff_service
+                        from src.workflow.staff.routines import Routines
+                        Routines(cwd).dispatch(get_staff_service(cwd), datetime.now(timezone.utc))
+                    except Exception as error:  # noqa: BLE001 - one routine tick must not stop cron/heartbeat.
+                        logger.warning('Routine dispatch unavailable (%s)', type(error).__name__)
                 cron_tasks.add(asyncio.create_task(cron_tick(now)))
                 # Give immediate failures/cancellation their original semantics, while
                 # a long job leaves heartbeat and quiet-hour delivery free to progress.

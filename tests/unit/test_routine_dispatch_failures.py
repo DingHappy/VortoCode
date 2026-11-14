@@ -14,6 +14,7 @@ from tests.unit.test_staff_routines import registered
                                   CollaborationConflict('conflict')])
 async def test_unexpected_routine_dispatch_error_keeps_this_and_next_scheduler_tick_alive(tmp_path, monkeypatch, caplog, error):
     from src.workflow.staff.routines import Routines
+    monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     monkeypatch.setenv('VORTOONE_CRON', '1')
     monkeypatch.setenv('VORTOONE_HEARTBEAT', '1')
     monkeypatch.setattr(heartbeat, 'heartbeat_every_seconds', lambda: 0)
@@ -44,6 +45,7 @@ async def test_unexpected_routine_dispatch_error_keeps_this_and_next_scheduler_t
 
 async def test_routine_dispatch_cancellation_still_stops_the_scheduler(tmp_path, monkeypatch):
     from src.workflow.staff.routines import Routines
+    monkeypatch.setenv('VORTOONE_WORKSPACE_SCOPE', 'general')
     monkeypatch.setenv('VORTOONE_CRON', '1')
     monkeypatch.setattr('src.scheduling.staff_runner.get_staff_service', lambda _: object())
     calls = []
