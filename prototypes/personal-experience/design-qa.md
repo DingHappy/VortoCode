@@ -1,0 +1,76 @@
+# 个人体验设计稿验收
+
+final result: passed
+
+验收日期：2026-11-14。结论只适用于这套离线合成设计稿，不代表原生安装、真实模型、后台权限执行或手机实机验收通过。
+
+## 对照对象与证据
+
+- 视觉参考：主人提供的 agentes.chat「Your own server」截图，1440 × 1202；角色参考为 [`role-family-reference.png`](../../docs/design/personal-experience/assets/role-family-reference.png)，1568 × 1003。
+- 对话参考：上游固定版本 `18a3ae68951d0bda3120c6637681060d7f14488a` 的公开 `docs/media/readme-hero.png`。原图 2880 × 2000，在浏览器并排页中以 1440 × 1000 显示，归一为 1x；实现 [`conversation-dark.png`](../../docs/design/personal-experience/screenshots/conversation-dark.png) 为 1440 × 1000 CSS px、deviceScaleFactor 1。原图未编辑、未纳入公开仓库。
+- 运行位置实现：[`where-comparison.png`](../../docs/design/personal-experience/screenshots/where-comparison.png)，1440 × 1202 CSS px、deviceScaleFactor 1，深色、未配置状态。源图与实现使用相同像素尺寸，未对原图做图像编辑。
+- 完整并排证据保留在本地导出 `exports/vortoone-personal-experience-design-2026-11-14/comparison-runtime.png` 与 `comparison-roles.png`；参考应用截图不纳入公开仓库。两张图在同一浏览器页面内一起捕获，比较时实际打开了合并后的画面。
+- 原参考有 macOS 标题栏，实现有设计审阅工具栏；主体是对应的本机／已有助手选择。按主人补充要求尽量复刻其比例、层级与操作，保留中文、个人模式和自己的品牌；不把未观察的登录后页面称为逐像素复刻。
+- 其它浏览器证据：[`chat.png`](../../docs/design/personal-experience/screenshots/chat.png)、[`settings.png`](../../docs/design/personal-experience/screenshots/settings.png)、[`settings-dark.png`](../../docs/design/personal-experience/screenshots/settings-dark.png)、[`staff-approval.png`](../../docs/design/personal-experience/screenshots/staff-approval.png)、[`recovery-720.png`](../../docs/design/personal-experience/screenshots/recovery-720.png)。默认 1440 × 1000、1x；另检查 960 与 720 宽度，均为 Desktop 小窗口，不当作手机原生验收。
+- 并排角色画面可辨认珊瑚总助手、紫色眼镜、绿色耳机、黄色围巾；另单独打开专员页面核对配饰、透明背景与完整身体。没有用 CSS、SVG 或 emoji 替代角色。
+
+## 五项视觉核对
+
+| 项目 | 结果与有意差异 |
+| --- | --- |
+| 字体与排版 | 中文保留现有 sans 字体，去掉旧的对话衬线欢迎标题。运行位置使用 56px 中文标题，与参考拉丁标题的可见字高对照；卡片标题 30px、说明 26px。消息保留姓名、时间与正文层级，不把不同字形当成精确字体相同。 |
+| 留白与布局 | 运行位置主体拓宽为 1248px，双卡片并排；空间侧栏 280px，桌面详情栏 264px，可收起；消息使用连续记录，过程和文档就近显示。设置收窄为分类加单内容区。1440、960、720 宽度所查主页面无水平溢出。窄窗详情覆盖显示并保留关闭按钮，是有意的抽屉状态。 |
+| 颜色与变量 | 采用接近参考的中性浅色、偏冷侧栏和深色三层背景，以原型内 `--preview-*` 记录待审视觉值。生产 tokens 未修改；正式接入再统一生成。角色色只用于身份，连接中断同时有文字与图标。 |
+| 图片与图标 | 四个生成角色保留所选家族的颜色、体积与配饰；Lucide 为功能图标。1254 × 1254 RGBA 素材在头像尺寸显示，无截断或不透明方底。微量半透明边缘属于 P3。 |
+| 文案与内容 | 安装、启动、使用分开；配置已保存不宣称验证通过；专员建议不冒充已登记。原型顶部明确标记合成内容，示例表单不连接真实服务。 |
+
+## 已发现问题与修复复查
+
+1. [P1，早期运行检查] 位置页面缺少图标导入导致白屏。补齐导入，并增加 15 页离线渲染检查；最终浏览器重新遍历全部页面，无 Runtime.exceptionThrown。
+2. [P2，状态一致性] 恢复页面早期仍显示侧栏已连接。改为连接中断／当前连接未确认，重新捕获 recovery 与 recovery-720；最终画面中的标题、卡片和侧栏一致。
+3. [P2，交互] 早期平面弹层缺少原生焦点约束。换为 dialog.showModal，关闭后恢复入口或页面标题。实测 Tab 留在确认弹窗，Escape 关闭未保存提示后，等待下一次浏览器绘制，焦点回到「返回个人空间」按钮。
+4. [P2，状态表达] 例行开关暂停后仍用「已启用」作可访问名称。改为稳定的「是否启用」标签并由 aria-checked 表达状态。实测重新开启前仍为 false，拒绝后仍为 false。
+5. [P2，流程] 初稿恢复排期直接开关、设置离开不提示、空间内合成记录未完全分隔。分别补主人确认、未保存离开提示和按空间保存演示记录；实测拒绝恢复保持暂停、分类切换保留资料草稿、切换空间恢复各自对话草稿。
+
+上述修复后重新捕获最终各页及深色画面，并查看运行位置并排图、角色并排图、对话、设置和小窗口恢复画面。未发现仍需处理的 P0/P1/P2；没有把原生窗口栏差异或中文适配当作偏差。
+
+### 主人要求基本复刻后的复查
+
+- 原第一稿的运行位置主体过窄、字号偏小、连接块和新对话重复占行、消息错位气泡等，与明确的新目标有差距。本轮舍弃这些旧表现，重排空间头部、搜索、连续消息、消息内过程与文档、可收起详情和设置；不迁移上游代码。
+- [P2] 首次改版中「对话」分组标题被内部新建按钮撑到换行。限制按钮宽度后，1440 的分组标题恢复单行；720 的空间名称不再逐字换行，连接状态按完整词换行。
+- [P2] 初次并排后发现导航行、输入框和过程块比参考过高。减少导航和过程的垂直间距，输入框使用单行起始高度；去掉示例里的重复文档卡，再次捕获并排图核对。
+- 最终并排证据：本地导出的 `comparison-runtime.png`、`comparison-conversation.png`。前一版并排证据保留为 `comparison-runtime-v1.png`。组合图中能辨认主区域比例、标题／卡片正文、消息身份和工具块；另打开原尺寸实现与 720 截图检查文字、头像及控制，不依靠缩略图判定。
+- 参考对话是多人频道，本稿是主人与总助手的个人对话；不复制成员、权限、文案或尚未支持的富文本功能。设置没有拿到同状态的登录后截图，只依据已核对的设置组件与页面源码设计，未声称完成其视觉逐像素验收。
+- 最终复查没有遗留 P0/P1/P2；P3 的角色透明边缘仍按原说明保留。
+
+### 频道与消息回复复查
+
+- 主人补充要求加入 channel。本轮增加侧栏主题频道、频道说明／范围、新建频道与原消息下的回复。只修改合成原型，不增加后台存储、派活或跨人共享权限。
+- 对照证据为本地导出的 `comparison-channels.png`：源图 2880 × 2000 以 1440 × 1000 呈现，实现 [`channel-dark.png`](../../docs/design/personal-experience/screenshots/channel-dark.png) 为同尺寸 1x。两张图在同一浏览器画面内捕获并一起查看，核对列宽、选中频道、消息、头像、过程与交付卡；个人模式、中文与交付回传为有意差异。
+- 字体／文案：沿用本轮 sans 层级；频道名与说明分开，回复注明原消息和计数，交付注明研究助手来源。图片／颜色：复用所选角色与已审中性色，无新图片或上游资产。布局：频道区与旁聊分组，详情仍可收纳，回复栏桌面宽 336px、窄窗覆盖显示。
+- [P2，已修] 允许的 30 字中文频道名在 720 宽度下，标题右缘达 706px，而详情按钮从 664px 开始，形成重叠。改为标题收缩与省略，完整名保留 title；复查右缘约 558px，按钮仍从 664px 开始。证据：[`channel-long-name-720.png`](../../docs/design/personal-experience/screenshots/channel-long-name-720.png)。
+- [P2，已修] 初次窄窗回复截图中，绝对定位的回复栏仍绑定桌面第二列，宽度缩到 41px。窄窗清除 grid-column／grid-row 后复查：720px 窗口中回复栏 x=384、width=336、right=720。实际填写、Escape 关闭与重新打开保留草稿。证据：[`channel-thread-720.png`](../../docs/design/personal-experience/screenshots/channel-thread-720.png) 与 [`channel-thread-960.png`](../../docs/design/personal-experience/screenshots/channel-thread-960.png)。仅检查页面无水平溢出不足以发现这个问题，因此另核对了面板和按钮的位置。
+- 另打开 [`channel-thread-dark.png`](../../docs/design/personal-experience/screenshots/channel-thread-dark.png)、[`channel-create.png`](../../docs/design/personal-experience/screenshots/channel-create.png) 检查可读性与表单，未发现遗留 P0/P1/P2。上游回复面板没有相同状态的实跑截图，未声称其逐像素复刻。
+
+## 实际走过的交互
+
+- 本机模型表单 → 复制同意 → 安装 → 启动 → 使用；未勾同意时安装按钮不可用。所有回执均为合成。
+- 空间 A 写草稿 → 切到 B 为独立草稿 → 切回 A 内容恢复。
+- 研究专员建议 → 提交提议 → 独立主人批准 → 新建例行工作 → 核对排期 → 批准。
+- 暂停排期 → 重新开启弹出确认 → 拒绝，排期仍暂停。
+- 设置搜索 → 修改资料 → 切分类再返回草稿保留 → 离开提示 → 继续编辑／放弃离开。
+- 资料类型空状态 → 文档预览 → v1 历史版 → 关闭预览。
+- 浏览器遍历 16 个页面，检查过浅深色；960、720 宽度另外检查频道回复与长标题。最终遍历未捕获运行异常。
+- 本轮额外实测：示例对话／空白对话切换、详情展开收起、消息发送与原文入口、收起侧栏后用 Cmd+K 恢复搜索、旁聊草稿切空间再打开仍保留、改版后的设置未保存确认、专员批准与拒绝重新开启排期。
+- 频道轮额外实测：两频道独立草稿；回复草稿关闭重开仍在；发送后计数由 2 变 3 且主频道仍为 4 条消息；另一频道回复为 0；重名创建不新增记录；新频道空状态与第一条消息；搜索；另一运行端没有本机创建的频道；设置未保存提示后仍返回原频道；项目频道范围固定，回主要聊天恢复个人范围。
+
+未完整键盘审计所有控件、所有设置字段或浏览器读屏，也未验证真实服务、远程连接与模型。合成批准不能作为安全合同测试的替代。
+
+## 自动检查与后续
+
+- `npm run test:render`：16 页与示例对话状态通过。
+- `npm run build`：通过。
+- `npm run test:sites`：4 项通过，只验证模板产物与本地 worker 合同，未发布。
+- 本轮重新运行仓库 `./scripts/ci-local.sh`：ruff、mypy、Python 7261、e2e 30、Desktop TypeScript、Vitest 1629、Rust 201 与 cargo check 通过。Python 11 项跳过，Rust 2 项 ignored；跳过不算通过，分类见 PR 描述。最终原型调整后另重跑其渲染、构建与 worker 检查。
+- P3：角色透明边缘和不同留白可在生产头像迁移时再微调；尚未制作思考／招呼动画，不阻塞静态方案审阅。
+- 下一步按设计文档 UX-1～UX-4 分步接入原组件；原型的内存状态不得带入生产权限和任务执行。
