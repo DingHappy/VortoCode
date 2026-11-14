@@ -39,7 +39,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Environment=NO_PROXY=127.0.0.1,localhost
 # 代码不在工作目录里：让 `-m src.cli` 找得到包
 Environment=PYTHONPATH=%h/personal_project/VortoCode
-ExecStart=%h/personal_project/VortoCode/.venv/bin/python -m src.cli server --host 0.0.0.0 --port 8081
+ExecStart=%h/personal_project/VortoCode/.venv/bin/python -m src.runtime_entry server --host 0.0.0.0 --port 8081
 Restart=always
 RestartSec=10
 

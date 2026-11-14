@@ -3,28 +3,28 @@
 // 它跑的是通用范围（没有项目目录），不能当项目打开，也不出现在工作台的项目列表里。
 import { invoke } from "@tauri-apps/api/core";
 import type { DesktopProjectProfile } from "../types";
-import { STORAGE_KEYS } from "./storage";
+import { isAssistantProfile, personalSpaceDirectory, personalSpaceRef } from "./personalSpace";
 
 /** 常驻电脑在注册表里的「目录」：不是真实路径，只用来把它和同一服务器上的项目区分开。 */
-export const ASSISTANT_HOST_ROOT = "@assistant";
+export { ASSISTANT_HOST_ROOT } from "./personalSpace";
 
 export function isAssistantHost(project: Pick<DesktopProjectProfile, "kind" | "repoRoot">): boolean {
-  return project.kind === "remote" && project.repoRoot === ASSISTANT_HOST_ROOT;
+  return isAssistantProfile(project);
 }
 
 /** 已登记的常驻电脑（最近登记的在前，取第一台）。 */
 export function findAssistantHost(projects: DesktopProjectProfile[]): DesktopProjectProfile | undefined {
-  return projects.find(project => isAssistantHost(project) && !project.assistantPending);
+  return personalSpaceDirectory(projects).spaces.find(space => space.profile)?.profile;
 }
 
 /** 工作台里能打开的项目：去掉常驻电脑。 */
 export function workProjects(projects: DesktopProjectProfile[]): DesktopProjectProfile[] {
-  return projects.filter((project) => !isAssistantHost(project));
+  return personalSpaceDirectory(projects).projects.map(project => project.profile);
 }
 
 /** 每台电脑各有一个「主要聊天」：本机沿用原来的键，常驻电脑按登记 id 另存。 */
 export function mainChatKey(hostId?: string | null): string {
-  return hostId ? `${STORAGE_KEYS.mainChatSid}:${hostId}` : STORAGE_KEYS.mainChatSid;
+  return personalSpaceRef(hostId).mainChatKey;
 }
 
 /** 原因是 macOS「本地网络」拦截（Rust 侧 network_failure_reason 的那段话）：提示条据此给「重新打开 VortoOne」。 */

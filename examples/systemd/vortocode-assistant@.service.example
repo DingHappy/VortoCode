@@ -40,7 +40,7 @@ WorkingDirectory=/opt/vortocode/assistants/%i
 EnvironmentFile=/etc/vortocode/assistants/%i.env
 # 默认 plan（只读）；要让某个人的助手能直接动手，在他自己的 env 里加 VORTOONE_IM_MODE=build，
 # 或把这行改成 --mode build。给同事用的研究员助手**建议保持 plan**。
-ExecStart=/opt/vortocode/venv/bin/python -m src.cli im dingtalk --mode plan
+ExecStart=/opt/vortocode/venv/bin/python -m src.runtime_entry im dingtalk --mode plan
 Restart=on-failure
 RestartSec=10
 # 长连接断线由 adapter 自己退避重连，这里只兜进程级异常退出。
