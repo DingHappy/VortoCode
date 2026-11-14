@@ -2,22 +2,30 @@
 dialog.settings-redesign.settings-layout {
   --settings-accent: var(--vc-ink);   /* 主按钮墨黑底（DESIGN_SYSTEM：颜色只表达状态） */
   --settings-accent-bg: color-mix(in srgb, var(--settings-accent) 12%, var(--surface-1));
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: var(--vc-settings-nav-w) minmax(0, 1fr);
   width: min(1180px, calc(100vw - 48px)); height: min(790px, calc(100dvh - 48px));
   max-width: none; max-height: none; margin: auto; padding: 0;
   color: var(--n13); background: var(--n1); border: 1px solid var(--line);
   box-shadow: var(--vc-shadow-pop); font-size: var(--vc-size-small);
 }
 .settings-redesign::backdrop, .settings-unsaved::backdrop { background: var(--vc-backdrop); backdrop-filter: blur(3px); }
-.settings-redesign .settings-nav { padding: var(--vc-space-6) 14px 18px; gap: 0; background: var(--surface-1); min-height: 0; }
+.settings-redesign .settings-nav { padding: var(--vc-space-6) var(--vc-space-4); gap: 0; background: var(--vc-sidebar); min-height: 0; }
 .settings-brand { display: flex; align-items: center; gap: var(--vc-space-2); margin: 0 var(--vc-space-2) 22px; }
 .settings-redesign .settings-brand h2 { margin: 0; font-size: var(--vc-size-heading); letter-spacing: -.4px; }
 .settings-brand > span { font-size: var(--vc-size-caption); color: var(--muted); margin-left: auto; }
 .settings-search-wrap { position: relative; margin-bottom: var(--vc-space-4); }
 .settings-search-wrap > svg { position: absolute; left: 11px; top: 11px; color: var(--muted); pointer-events: none; }
 .settings-redesign .settings-search-wrap input.settings-search { margin: 0; width: 100%; padding: var(--vc-space-2) 10px var(--vc-space-2) 33px; font-size: var(--vc-size-caption); background: var(--n1); border: 1px solid var(--line); border-radius: var(--vc-radius-control); }
-.settings-redesign .settings-nav-group { gap: var(--vc-space-1); }
-.settings-redesign .settings-nav-group button { display: flex; gap: 10px; align-items: center; min-height: 40px; font-size: var(--vc-size-caption); font-weight: 500; padding: var(--vc-space-2) 10px; }
+.settings-redesign .settings-nav-group { gap: var(--vc-space-5); }
+.settings-nav-section { display: grid; gap: var(--vc-space-1); min-width: 0; }
+.settings-nav-section h3 { margin: 0; padding: var(--vc-space-2) var(--vc-space-3); color: var(--vc-muted); font-size: var(--vc-size-small); font-weight: var(--vc-weight-medium); }
+.settings-redesign .settings-nav-section > button, .settings-redesign .settings-more > div > button { font-size: var(--vc-size-body); border-radius: var(--vc-radius-control); min-height: var(--vc-control-h-form); }
+.settings-more > div:not([hidden]) { display: grid; gap: var(--vc-space-1); }
+.settings-redesign .settings-nav-group .settings-more-toggle { justify-content: space-between; color: var(--vc-muted); font-size: var(--vc-size-small); }
+.settings-more-toggle > svg { width: var(--vc-icon); height: var(--vc-icon); transition: transform .15s ease; }
+.settings-more-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.settings-more > div[hidden] { display: none; }
+.settings-redesign .settings-nav-group button { display: flex; gap: var(--vc-space-2); align-items: center; min-height: var(--vc-control-h-form); font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); padding: var(--vc-space-2) var(--vc-space-3); }
 .settings-redesign .settings-nav-group button > svg { flex: none; color: var(--muted); }
 .settings-redesign .settings-nav-group button.active { color: var(--settings-accent); background: var(--settings-accent-bg); }
 .settings-redesign .settings-nav-group button.active svg { color: inherit; }
@@ -43,7 +51,7 @@ dialog.settings-redesign.settings-layout {
 .settings-redesign .settings-card-head strong { font-size: var(--vc-size-body); font-weight: 600; }
 .settings-scope-tag { color: var(--muted); font-size: var(--vc-size-caption); padding: 3px var(--vc-space-2); border: 1px solid var(--line-soft); border-radius: var(--vc-radius-inner); white-space: nowrap; }
 .settings-redesign p, .settings-redesign li { overflow-wrap: anywhere; }
-.settings-redesign .settings-card-note, .settings-redesign .settings-intro { color: var(--muted); font-size: var(--vc-size-caption); line-height: 1.8; }
+.settings-redesign .settings-card-note, .settings-redesign .settings-intro { color: var(--muted); font-size: var(--vc-size-small); line-height: 1.7; }
 .settings-redesign .settings-intro { margin-top: 0; }
 .settings-redesign .settings-subhead { font-size: var(--vc-size-small); margin: 22px 0 var(--vc-space-3); }
 .settings-redesign .settings-stack { margin-top: 0; }
@@ -77,7 +85,9 @@ dialog.settings-redesign.settings-layout {
   .settings-redesign .settings-brand h2 { font-size: 16px; }
   .settings-search-wrap { margin-bottom: var(--vc-space-2); }
   .settings-redesign .settings-nav-group { flex-direction: row; overflow-x: auto; margin-bottom: 0; gap: 3px; }
-  .settings-redesign .settings-nav-group button { flex: none; min-height: 34px; padding: var(--vc-space-2) var(--vc-space-2); font-size: var(--vc-size-caption); gap: 6px; }
+  .settings-nav-section, .settings-more > div:not([hidden]) { display: contents; }
+  .settings-nav-section h3 { display: none; }
+  .settings-redesign .settings-nav-group button { flex: none; width: auto; min-height: var(--vc-control-h); padding: var(--vc-space-2) var(--vc-space-2); font-size: var(--vc-size-caption); gap: var(--vc-space-2); }
   .settings-redesign .settings-nav-group button > svg { width: 14px; height: 14px; }
   .settings-redesign .settings-nav-footer { display: none; }
   .settings-redesign .settings-heading { padding: var(--vc-space-4) 18px var(--vc-space-4); }
@@ -96,10 +106,10 @@ dialog.settings-redesign.settings-layout {
 .settings-redesign button:hover:not(:disabled), .settings-unsaved button:hover:not(:disabled) { background: var(--n4); }
 .settings-redesign button.primary:hover:not(:disabled), .settings-unsaved button.primary:hover:not(:disabled) { background: var(--settings-accent); opacity: .88; }
 .settings-redesign button:disabled, .settings-unsaved button:disabled { cursor: default; opacity: .45; }
-.settings-redesign .settings-nav-group button { border: 0; background: transparent; font-size: var(--vc-size-small); }
+.settings-redesign .settings-nav-group button { border: 0; background: transparent; }
 .settings-redesign .settings-nav-group button.active { background: var(--settings-accent-bg); color: var(--settings-accent); }
 .settings-redesign .settings-close { border: 0; background: transparent; padding: var(--vc-space-2); }
-.settings-redesign .settings-card-note, .settings-redesign .settings-intro, .settings-connection-row p, .settings-scope p { font-size: var(--vc-size-caption); }
+.settings-redesign .settings-card-note, .settings-redesign .settings-intro, .settings-connection-row p, .settings-scope p { font-size: var(--vc-size-small); }
 .settings-redesign .settings-card { background: var(--surface-2); }
 .settings-redesign .resident-desktop-pane { background: var(--surface-2); }
 @media (max-width: 760px) { .settings-redesign .settings-nav-group button { font-size: var(--vc-size-caption); } }
@@ -111,7 +121,7 @@ dialog.settings-redesign.settings-layout {
 .settings-runtime-details > summary { cursor: pointer; font-size: var(--vc-size-caption); color: var(--muted); padding: var(--vc-space-1) 0; }
 .settings-runtime-details[open] > summary { margin-bottom: 14px; }
 .settings-redesign .resident-desktop-pane p { line-height: 1.8; }
-.settings-redesign { --settings-accent-text: var(--vc-accent); }
+.settings-redesign { --settings-accent-text: var(--vc-ink); }
 .settings-modal.settings-redesign .settings-scope { color: var(--settings-accent-text); }
 .settings-modal.settings-redesign .settings-nav-group button.active { color: var(--settings-accent-text); }
 .settings-modal.settings-redesign button.primary { background: var(--settings-accent); border-color: var(--settings-accent); color: var(--vc-on-ink); }

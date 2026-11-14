@@ -17,7 +17,7 @@ it("keeps an unknown inspection explicit and prevents choosing before retry", ()
   const html = renderToStaticMarkup(<RuntimeOnboarding {...props} inspectionFailed initialError="读取失败" />);
   expect(html).toContain('role="alert"');
   expect(html).toContain('重新核对已有配置');
-  expect(html.match(/<button disabled=""/g)).toHaveLength(2);
+  expect(html.match(/<button\b(?=[^>]*\bdisabled="")[^>]*>/g)).toHaveLength(2);
 });
 it("remote setup omits project paths and does not claim to copy local model configuration", () => {
   const html = renderToStaticMarkup(<RuntimeOnboarding {...props} initial={{ version: 1, status: "pending", choice: "remote" }} />);

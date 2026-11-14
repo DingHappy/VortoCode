@@ -12,16 +12,20 @@ type LocalResidentViewProps = {
   canUse?: boolean;
   blocked?: boolean;
   onboarding?: boolean;
+  awaitingModel?: boolean;
 };
 const STATE_LABELS: Record<LocalResidentStatus['state'], string> = { not_installed: '尚未安装', stopped: '已停止', cleanup_required: '登录项待清理', starting: '正在启动', running: '正在运行', unavailable: '状态无法确认' };
 
-export function LocalResidentView({ state, onRefresh, onAction, selectedHostId, connected = false, canUse = false, blocked = false, onboarding = false }: LocalResidentViewProps) {
+export function LocalResidentView({ state, onRefresh, onAction, selectedHostId, connected = false, canUse = false, blocked = false, onboarding = false, awaitingModel = false }: LocalResidentViewProps) {
   const [copyModelProfile, setCopyModelProfile] = useState(false);
   const [cronEnabled, setCronEnabled] = useState(false);
   const { value, busy, error, notice, checkedAt } = state;
   const ready = Boolean(value?.supported && value.revision && !error && !busy && !blocked && !['starting', 'unavailable'].includes(value.state));
   const cleanupRequired = value?.state === 'cleanup_required';
   const using = Boolean(!error && value?.state === 'running' && value.projectId && value.projectId === selectedHostId && connected);
+  if (onboarding && awaitingModel && value?.supported && !value.installed && !error && !busy) {
+    return <section className="onboarding-next-step" aria-label="安装准备"><strong>接下来：安装本机常驻助理</strong><p>保存模型配置后继续。安装、启动和连接都由你操作。</p></section>;
+  }
   return <section className="settings-card local-resident-card" aria-label="本机常驻助理">
     <div className="settings-card-head"><strong>本机常驻助理</strong><button disabled={busy} onClick={onRefresh}>{busy ? '正在核对…' : '刷新状态'}</button></div>
     <p className="settings-card-note">退出 Desktop 后仍可运行；这台 Mac 需保持开机，睡眠时暂停。</p>
@@ -69,8 +73,9 @@ export type LocalResidentCardProps = {
   blocked?: boolean;
   client?: LocalResidentClient;
   onboarding?: boolean;
+  awaitingModel?: boolean;
 };
-export function LocalResidentCard({ onUse, selectedHostId, connected, onStatus, onBusyChange, blocked = false, client = localResidentClient, onboarding = false }: LocalResidentCardProps) {
+export function LocalResidentCard({ onUse, selectedHostId, connected, onStatus, onBusyChange, blocked = false, client = localResidentClient, onboarding = false, awaitingModel = false }: LocalResidentCardProps) {
   const [state, setState] = useState<LocalResidentState>(INITIAL_LOCAL_RESIDENT);
   const callbacks = useRef({ onUse, onStatus, onBusyChange, blocked });
   callbacks.current = { onUse, onStatus, onBusyChange, blocked };
@@ -86,5 +91,5 @@ export function LocalResidentCard({ onUse, selectedHostId, connected, onStatus, 
   }, [client]);
   return <LocalResidentView state={state} onRefresh={() => void controller.current?.refresh()} onAction={(action, options) => {
     if (!callbacks.current.blocked) void controller.current?.change(action, options);
-  }} selectedHostId={selectedHostId} connected={connected} canUse={Boolean(onUse)} blocked={blocked} onboarding={onboarding} />;
+  }} selectedHostId={selectedHostId} connected={connected} canUse={Boolean(onUse)} blocked={blocked} onboarding={onboarding} awaitingModel={awaitingModel} />;
 }

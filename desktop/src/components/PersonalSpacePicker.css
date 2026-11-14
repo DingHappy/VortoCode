@@ -3,7 +3,8 @@
 .vc-space-trigger:hover, .vc-space-choice:hover { background: var(--vc-hover); }
 .vc-space-trigger > span, .vc-space-choice > span:first-child { display: grid; gap: var(--vc-space-1); min-width: 0; }
 .vc-space-trigger strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); }
-.vc-space-trigger small { font-size: var(--vc-size-caption); color: var(--vc-muted); line-height: 1.5; }
+.vc-space-trigger small { display: flex; flex-wrap: wrap; gap: 0 var(--vc-space-1); font-size: var(--vc-size-caption); color: var(--vc-muted); line-height: 1.5; }
+.vc-space-connection { white-space: nowrap; }
 .vc-space-trigger svg, .vc-space-choice svg { flex-shrink: 0; width: var(--vc-space-4); height: var(--vc-space-4); }
 .vc-space-trigger:focus-visible, .vc-space-choice:focus-visible { outline: var(--vc-space-1) solid var(--vc-focus-ring); outline-offset: var(--vc-space-1); }
 .vc-space-dialog { width: min(100% - var(--vc-space-8), 32rem); max-height: calc(100% - var(--vc-space-8)); overflow: auto; padding: var(--vc-space-6); color: var(--vc-text); background: var(--vc-surface); border: 1px solid var(--vc-border); border-radius: var(--vc-radius-card); box-shadow: var(--vc-shadow-pop); }
@@ -21,3 +22,9 @@
 .vc-space-current { display: grid; gap: var(--vc-space-1); padding: var(--vc-space-3); border-radius: var(--vc-radius-control); background: var(--vc-fill); }
 .vc-space-dialog p[role="alert"] { color: var(--vc-danger-text); }
 .vc-space-dialog footer { display: flex; justify-content: flex-end; }
+.vc-space-trigger .vc-space-symbol { width: var(--vc-space-6); height: var(--vc-space-6); flex: none; color: var(--vc-text-secondary); }
+.vc-space-trigger > span { flex: 1; min-width: 0; text-align: left; }
+.vc-space-dialog li { border: 1px solid var(--vc-border); border-radius: var(--vc-radius-card); padding: var(--vc-space-3); background: var(--vc-surface); }
+.vc-space-dialog .vc-space-choice { border: 0; padding: var(--vc-space-2); min-height: var(--vc-control-h-hero); }
+.vc-space-dialog li > .vc-preference-details { margin-top: var(--vc-space-1); padding: 0 var(--vc-space-2); }
+.vc-space-dialog li .vc-preference-details summary { font-size: var(--vc-size-caption); }

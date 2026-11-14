@@ -2,6 +2,7 @@
 // 和中转站的「账号」页是两回事；会员 Key 只在 Rust 和配置文件里，界面只看到套餐名和额度。
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
+import { PreferenceDetails } from "../ui";
 
 import { confirmAction } from "../../lib/confirm";
 import { restartSavedSetting } from "../../lib/settingsApply";
@@ -130,10 +131,10 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
       <FeedbackButton title="告诉我们遇到的问题" />
     </div>
     {note && <p role="alert">{note}</p>}
-    <p className="settings-card-note">
+    <PreferenceDetails label={signedIn ? "管理账号包含什么？" : "如何登录？"}>
       {signedIn
         ? "「管理账号」在网页上查看所有登录过的设备、安全记录、会员，修改密码。"
         : "会打开浏览器，在网页上输入密码；Desktop 不经手密码，登录凭证存在 macOS 钥匙串里。目前需要邀请码注册。"}
-    </p>
+    </PreferenceDetails>
   </section>;
 }

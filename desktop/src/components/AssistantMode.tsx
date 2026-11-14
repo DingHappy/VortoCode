@@ -1,6 +1,8 @@
 import { approvalCategory, approvalScope, approvalSource } from "../lib/approval";
 import { COPY } from "../lib/copy.generated";
 import { OwnerAccess } from "./OwnerAccess";
+import { WorkspaceNavigation } from "./WorkspaceNavigation";
+import "./PersonalWorkspace.css";
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode, RefObject } from "react";
 import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, ImagePlus, List, ListChecks, PanelRightClose, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, UserRound, Users, X } from "lucide-react";
@@ -23,9 +25,8 @@ export function BackToAssistant({ onBack }: { onBack: () => void }) {
 
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
 
-/** 助理的几个页面。ADR-016 起侧栏只放会话：动态 / 定时 / 目标是右侧助理面板的标签，资料库、定制在头像菜单里。
- * 这里保留入口定义给面板标签、头像菜单和 ⌘K 搜索共用。 */
-export type AssistantPage = "tasks" | "schedule" | "goals" | "library" | "customize";
+/** 日常页面与对话内面板共用原领域内容；导航不创建第二套状态或权限。 */
+export type AssistantPage = "tasks" | "schedule" | "goals" | "library" | "customize" | "identity" | "audit";
 
 export const ASSISTANT_PAGES: Array<{ id: AssistantPage; label: string; icon: ReactNode; hint: string }> = [
   { id: "tasks", label: "动态", icon: <ListChecks aria-hidden="true" />, hint: "助理在做什么、等你处理的事、派出去的事和 Codex 进度" },
@@ -33,6 +34,8 @@ export const ASSISTANT_PAGES: Array<{ id: AssistantPage; label: string; icon: Re
   { id: "goals", label: "目标", icon: <Target aria-hidden="true" />, hint: "交给助理盯着的个人目标" },
   { id: "library", label: "资料库", icon: <Archive aria-hidden="true" />, hint: "做出来的网页、文档和文件" },
   { id: "customize", label: "定制", icon: <Puzzle aria-hidden="true" />, hint: "插件、连接的服务、个人技能" },
+  { id: "identity", label: "身份与记忆", icon: <UserRound aria-hidden="true" />, hint: "助理资料与记忆" },
+  { id: "audit", label: "审核记录", icon: <ShieldCheck aria-hidden="true" />, hint: "回查已有批准和拒绝记录" },
 ];
 
 const TEAM_BADGE: Record<string, string> = { waiting: "等你", review: "待验收", failed: "失败", done: "已完成", cancelled: "已停" };
@@ -49,10 +52,10 @@ function matches(title: string, query: string): boolean {
 /** 旁聊默认只列最近几条，其余点「显示全部」 */
 export const SIDE_CHAT_LIMIT = 5;
 
-/** 助理模式左侧（ADR-016）：只放会话。新对话、搜索；主要聊天置顶（角标 = 等你的件数）；任务小组；旁聊（含手机、本机的）。 */
+/** 日常入口与会话分组，主要聊天保留唯一待处理角标。 */
 export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
   search, query = "", onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam,
-  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment }: {
+  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment, onPage, onManageStaff }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
   /** 手机上和助理的聊天：点开只读查看 */
@@ -62,7 +65,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   offlineChats?: Array<{ sid: string; title: string }>;
   onOpenOfflineChat?: (sid: string) => void;
   current: string;
-  /** 正在看的整页（资料库、定制）；null = 在看对话 */
+  /** 正在看的整页；null = 在看对话 */
   page?: AssistantPage | null;
   /** 等你处理的件数：「主要聊天」的角标 */
   waiting?: number;
@@ -72,8 +75,9 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   search?: ReactNode;
   query?: string;
   onSelect: (sid: string) => void;
-  /** 旧入口已移走，保留参数兼容调用方 */
+  /** 日常入口打开原有领域页面，不授予操作权限。 */
   onPage?: (page: AssistantPage) => void;
+  onManageStaff?: () => void;
   onNewSideChat: () => void;
   /** 任务小组（ADR-014）：每个小组像一个群聊，点开在中间看经过和成员 */
   teams?: Array<{ id: string; title: string; status: string }>;
@@ -115,6 +119,7 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
       <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
       {search}
     </nav>
+    {onPage && !keyword && <WorkspaceNavigation current={page} onPage={onPage} onStaff={onManageStaff} />}
     <div className="vc-side-recent">
       {mainMatches && <NavItem className="vc-nav-item--recent vc-nav-item--main" icon={<Star aria-hidden="true" />} label="主要聊天"
         title={mainChat.preview || "主要聊天"} current={inChat && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)}
@@ -149,10 +154,10 @@ export type AssistantTab = "feed" | "goals" | "audit" | "schedule" | "identity";
 
 /** 一级入口和右侧面板标签的对应。「资料库」「定制」是独立页面，其余入口打开面板的对应标签。 */
 export const PAGE_PANEL: Record<Exclude<AssistantPage, "library" | "customize">, AssistantTab> = {
-  tasks: "feed", schedule: "schedule", goals: "goals",
+  tasks: "feed", schedule: "schedule", goals: "goals", identity: "identity", audit: "audit",
 };
 export const PANEL_PAGE: Record<AssistantTab, AssistantPage | null> = {
-  feed: "tasks", schedule: "schedule", goals: "goals", identity: null, audit: null,
+  feed: "tasks", schedule: "schedule", goals: "goals", identity: "identity", audit: "audit",
 };
 
 // 五段的名字和说明来自 design/copy.json，iPhone 助理详情用同一份
@@ -164,7 +169,7 @@ const TABS: Array<{ id: AssistantTab; label: string; hint: string; icon: ReactNo
   { id: "identity", icon: <UserRound aria-hidden="true" /> },
 ] as Array<{ id: AssistantTab; icon: ReactNode }>).map(item => ({ ...item, label: COPY.panel[item.id], hint: `${COPY.panel[item.id]} · ${COPY.panel_hint[item.id]}` }));
 
-export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
+export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer, presentation = "panel" }: {
   name: string; connected: boolean; modelLabel?: string;
   avatar?: AssistantAvatar | null;
   host: AssistantHostInfo;
@@ -182,16 +187,20 @@ export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, o
   computer?: ReactNode;
   id?: string;
   toggleRef?: RefObject<HTMLButtonElement | null>;
+  presentation?: "panel" | "page";
 }) {
   const panelId = useId();
   const surface = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (presentation === "page") surface.current?.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
+  }, [presentation, tab]);
   useLayoutEffect(() => {
     const toggle = toggleRef?.current;
     if (toggle && document.activeElement === toggle && toggle.matches(":focus-visible")) {
       surface.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
     }
   }, [toggleRef]);
-  const closePanel = () => { onClose(); toggleRef?.current?.focus({ preventScroll: true }); };
+  const closePanel = () => { onClose(); if (presentation !== "page") toggleRef?.current?.focus({ preventScroll: true }); };
   // 连不上通常是隧道没开或网络断了：服务器上的助理还在干活，只是这台电脑看不到
   const unreachable = host.kind === "resident" && (!connected || host.reachable === false);
   const where = host.kind === "resident"
@@ -200,8 +209,9 @@ export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, o
   const model = !connected ? "" : modelLabel === "未连接模型" ? "还没连接模型" : modelLabel ?? "";
   const badge = waiting || waitingUncertain
     ? waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}` : "";
-  return <aside ref={surface} id={id} className="assistant-panel vc-panel" aria-label="助理">
-    <IconButton className="vc-panel-close" label="收起面板" icon={<PanelRightClose />} onClick={closePanel} />
+  return <aside ref={surface} id={id} className={`assistant-panel vc-panel${presentation === "page" ? " assistant-panel--page" : ""}`} aria-label={presentation === "page" ? COPY.panel[tab] : "助理"}>
+    {presentation === "page" ? <header className="personal-page-heading"><div><h1 id={`${panelId}-heading`} tabIndex={-1}>{COPY.panel[tab]}</h1><p>{COPY.panel_hint[tab]}</p></div><Button variant="text" onClick={closePanel}>返回对话</Button></header>
+      : <IconButton className="vc-panel-close" label="收起面板" icon={<PanelRightClose />} onClick={closePanel} />}
     <div className="vc-panel-card" data-tauri-drag-region="deep">
       <div className="vc-panel-identity-row">
         <AssistantAvatarImage name={name} avatar={avatar} size={32} />
@@ -223,7 +233,7 @@ export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, o
           : computer)}
       </details>
     </div>
-    <div className="vc-panel-tabs" role="tablist" aria-label="助理面板">
+    {presentation !== "page" && <div className="vc-panel-tabs" role="tablist" aria-label="助理面板">
       {TABS.map((item, index) => <HintButton key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} hint={item.hint}
         id={`${panelId}-${item.id}`} aria-controls={`${panelId}-content`} tabIndex={tab === item.id ? 0 : -1}
         className="vc-panel-tab" onClick={() => onTab(item.id)} onKeyDown={event => {
@@ -237,8 +247,8 @@ export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, o
         {item.icon}
         {item.id === "feed" && badge ? <i className={`vc-panel-tab-dot${waitingUncertain && !waiting ? " is-unknown" : ""}`} role="img" aria-label={badge} /> : null}
       </HintButton>)}
-    </div>
-    <div className="assistant-panel-body" role="tabpanel" id={`${panelId}-content`} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}
+    </div>}
+    <div className="assistant-panel-body" role={presentation === "page" ? "region" : "tabpanel"} id={`${panelId}-content`} aria-labelledby={presentation === "page" ? `${panelId}-heading` : `${panelId}-${tab}`} tabIndex={0}
       onKeyDown={event => {
         if (event.target === event.currentTarget && event.key === "Escape" && !event.nativeEvent.isComposing
             && !event.altKey && !event.ctrlKey && !event.metaKey) {

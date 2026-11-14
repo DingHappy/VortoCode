@@ -54,7 +54,7 @@ public enum VCColor {
     public static let paper = ThemeColor(light: RGBA(1, 1, 1, 1), dark: RGBA(1, 1, 1, 1))
 }
 
-/// 字号：7 级，不用 12 号以下，不用半号
+/// 字号：8 级，含首次使用标题；不用 12 号以下，不用半号
 public enum VCFontSize {
     public static let greeting: Double = 34
     public static let title: Double = 22
@@ -63,6 +63,7 @@ public enum VCFontSize {
     public static let body: Double = 14
     public static let small: Double = 13
     public static let caption: Double = 12
+    public static let display: Double = 44
 }
 
 /// 字重：只用三种
@@ -100,6 +101,8 @@ public enum VCControl {
     public static let iconStep: Double = 18
     public static let iconStroke: Double = 1.75
     public static let controlH: Double = 32
-    public static let controlHLg: Double = 34
-    public static let navItemH: Double = 34
+    public static let controlHLg: Double = 40
+    public static let navItemH: Double = 40
+    public static let controlHForm: Double = 40
+    public static let controlHHero: Double = 48
 }

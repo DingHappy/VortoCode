@@ -3,6 +3,17 @@ import { expect, it } from "vitest";
 import { timelineExpanded, TurnTimeline } from "./TurnTimeline";
 import type { TurnActivity } from "../types";
 const items: TurnActivity[] = [{ id: "tool", kind: "tool", status: "completed", label: "读取配置", result: "旧结果仍可查看" }];
+it("names a single action instead of wrapping it in a generic tool count", () => {
+  const html = renderToStaticMarkup(<TurnTimeline items={items} active={false} hasOutput />);
+  expect(html).toContain("读取配置");
+  expect(html).not.toContain("1 条工具记录");
+  expect(html).not.toContain("执行过程</span>");
+});
+it("retains an unsuccessful test receipt in the single-action summary", () => {
+  const html = renderToStaticMarkup(<TurnTimeline items={[{ ...items[0], name: "run_tests", label: "运行检查", result: "测试未过：合成失败" }]} active={false} hasOutput />);
+  expect(html).toContain("运行检查");
+  expect(html).toContain("测试记录 1 条（1 条异常）");
+});
 it("only collapses after actual output, not just when work stops", () => {
   expect(timelineExpanded(items, false, false)).toBe(true);
   expect(timelineExpanded(items, true, true)).toBe(true);

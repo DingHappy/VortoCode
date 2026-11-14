@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import type { SettingsTargetLease } from "../../lib/settingsTarget";
-import { settingsTargetSummary } from "../../lib/settingsTarget";
 import "./SettingsTargetSection.css";
 
 /** Keep original forms mounted, but hide and disable a source that is no longer current. */
@@ -13,8 +12,9 @@ export function SettingsTargetSection({ owner, children, lease, unavailable, lab
   const connected = Boolean(lease?.current()) && !unavailable;
   const stale = Boolean(lease?.target.ready) && !lease?.current();
   return <section className="settings-target-section" aria-label={label ?? `${title}的设置`}>
-    <div className="settings-target-label"><strong>{title}</strong><span>{local ? "本机设置；保存位置和生效范围见各项说明"
-      : lease ? settingsTargetSummary(lease.target) : "目标尚未核对"}</span></div>
+    <div className="settings-target-label"><strong>{title}</strong><span>{local ? "生效范围见各项设置"
+      : owner === "project" ? lease?.target.projectRoot || "项目尚未核对"
+        : lease?.target.runtimeLabel || "目标尚未核对"}</span></div>
     {!local && !connected && <p className="settings-target-warning" role="status">{stale
       ? "运行端、会话或连接已变化。原目标设置已锁定；关闭后重新打开设置再核对。本机设置仍可使用。"
       : unavailable ? "当前目标不提供这项设置。请切到对应的个人空间或项目，再打开设置。"

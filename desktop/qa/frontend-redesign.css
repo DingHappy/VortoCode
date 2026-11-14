@@ -1,0 +1,9 @@
+.qa-redesign-shell { grid-template-rows: auto minmax(0, 1fr); }
+.qa-redesign-controls { display: flex; align-items: center; gap: var(--vc-space-4); padding: var(--vc-space-2) var(--vc-space-4); font-size: var(--vc-size-caption); color: var(--vc-muted); background: var(--vc-sidebar); border-bottom: 1px solid var(--vc-border); }
+.qa-redesign-controls a { color: var(--vc-text); }
+.qa-redesign-controls button { border: 1px solid var(--vc-border); border-radius: var(--vc-radius-control); background: var(--vc-surface); color: var(--vc-text); padding: var(--vc-space-1) var(--vc-space-2); }
+.qa-redesign-footer { margin-top: auto; padding: var(--vc-space-4); }
+.qa-redesign-footer a { display: flex; align-items: center; gap: var(--vc-space-3); color: var(--vc-muted); font-size: var(--vc-size-body); text-decoration: none; }
+.qa-redesign-footer svg { width: var(--vc-icon); height: var(--vc-icon); }
+.qa-redesign-shell .composer-footer { justify-content: space-between; }
+.qa-redesign-shell .composer-wrap > p { font-size: var(--vc-size-caption); color: var(--vc-muted); }

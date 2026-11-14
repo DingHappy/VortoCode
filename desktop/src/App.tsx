@@ -268,8 +268,9 @@ function App() {
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
-  // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
-  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team" | "department">("chat");
+  // 主区复用原领域页面；切换会话时回到对话。
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management" | "team" | "department" | "assistant">("chat");
+  const assistantPageTrigger = useRef<HTMLElement | null>(null);
   // 任务小组（ADR-014 S3）：侧栏「最近」里每个小组一条，点开在中间看群聊
   const [teamList, setTeamList] = useState<TeamSummary[]>([]);
   const [teamReadSource, setTeamReadSource] = useState<{ client: GatewayClient; scope: string } | null>(null);
@@ -2604,19 +2605,19 @@ function App() {
     });
   };
 
-  // 侧栏一级入口。任务 / 定时 / 目标 / 定制各自的页面迁好之前，先打开右侧面板的对应标签；再点一次收起。
+  // 日常功能以原领域组件呈现在主区，右侧助理面板继续用于对话中的按需回查。
   const assistantPage: AssistantPage | null = mainView === "artifacts" ? "library" : mainView === "customize" ? "customize"
-    : mainView === "chat" && inspectorOpen && !computerWorkspace.view ? PANEL_PAGE[assistantTab] : null;
+    : mainView === "assistant" || mainView === "chat" && inspectorOpen && !computerWorkspace.view ? PANEL_PAGE[assistantTab] : null;
   const sidebarSearch = (placeholder: string) => <SidebarSearch open={sidebarSearchOpen} query={sidebarQuery} placeholder={placeholder}
     onOpenChange={setSidebarSearchOpen} onQuery={setSidebarQuery} focusRequest={sidebarSearchFocus} />;
   const openAssistantPage = (page: AssistantPage) => {
+    assistantPageTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (page === "library") {
       setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); return;
     }
     if (page === "customize") { setMainView("customize"); return; }
     const tab = PAGE_PANEL[page];
-    setMainView("chat");
-    if (assistantPage === page) { setInspectorOpen(false); return; }
+    setMainView("assistant");
     if (computerWorkspace.view) computerWorkspace.close();
     if (tab === "goals") setAssistantGoalFocus(null);
     setAssistantTab(tab); setInspectorOpen(true); panelActions.tabOpened(tab);
@@ -2880,12 +2881,13 @@ function App() {
                 ...draftChats.filter(draft => draft.sid !== mainChatSid && !sessions.some(session => session.sid === draft.sid)),
               ]}
               current={activeSid}
-              page={assistantPage === "library" || assistantPage === "customize" ? assistantPage : null}
+              page={mainView === "assistant" || mainView === "artifacts" || mainView === "customize" ? assistantPage : null}
               search={sidebarSearch("搜索聊天")}
               query={sidebarQuery}
               waiting={assistantWaiting}
               waitingUncertain={!activityComplete}
               onPage={openAssistantPage}
+              onManageStaff={() => { setSettingsSection("staff"); setSettingsOpen(true); }}
               onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
               phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
               onOpenPhoneChat={openPhoneChat}
@@ -3015,7 +3017,7 @@ function App() {
             onConnector={(action, connector) => void panelActions.connector(action, connector)}
             skills={<PersonalSkillsCard client={clientRef.current} connection={connection} />}
             connected={connection === "connected"} />
-        ) : mainView === "management" ? null : mainView === "artifacts" ? (
+        ) : mainView === "management" || mainView === "assistant" ? null : mainView === "artifacts" ? (
           <ArtifactCenter
             artifacts={artifacts}
             loading={projectAssetsLoading}
@@ -3255,16 +3257,26 @@ function App() {
         </section>
         )}
 
-        {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
+        {(mainView === "assistant" || mainView === "chat" && inspectorOpen) && appMode === "assistant" && (
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
-          : <AssistantPanel id="assistant-panel" toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} connected={connection === "connected"}
+          : <AssistantPanel id="assistant-panel" presentation={mainView === "assistant" ? "page" : "panel"} toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={openProfileDialog}
             host={onAssistantHost() ? { kind: "resident", name: currentTarget.runtimeLabel, reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => residentHost ? void connectAssistantHost(residentHost) : setSettingsOpen(true)}
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
-            tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting} waitingUncertain={!activityComplete}
+            tab={assistantTab} onClose={() => {
+              setInspectorOpen(false);
+              if (mainView === "assistant") {
+                setMainView("chat");
+                requestAnimationFrame(() => {
+                  const trigger = assistantPageTrigger.current;
+                  if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+                  else (sidebar.collapsed ? sidebar.reopenButton : sidebar.collapseButton).current?.focus({ preventScroll: true });
+                });
+              }
+            }} waiting={assistantWaiting} waitingUncertain={!activityComplete}
             onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setMemoryFocus(0); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
             {assistantTab === "audit" ? <AssistantAudit key={assistantScope} entries={auditEntries} accessClient={ownerAccessClient(activeScope, onAssistantHost(), clientRef.current)} connected={connection === "connected"} />
               : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} changes={clientRef.current} phones={clientRef.current} connected={connection === "connected"}
@@ -3750,7 +3762,7 @@ function App() {
           onOpenResidentSetup={() => setRemoteDialogOpen("assistant")}
           onConnectResident={() => { if (otherResidentHost) void useRegisteredAssistant(otherResidentHost)
             .catch(error => setBanner(errorText(error, "连接常驻助手失败"))); }}
-          onOpenSchedule={() => { setAppMode("assistant"); setMainView("chat"); setAssistantTab("schedule"); setInspectorOpen(true); }}
+          onOpenSchedule={() => { setAppMode("assistant"); openAssistantPage("schedule"); }}
           llmSaveNote={llmSaveNote}
           llmSaveKind={llmSaveKind}
           llmProfileLoading={llmProfileLoading}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Laptop, Server, ArrowRight, ArrowLeft, LoaderCircle } from "lucide-react";
+import { ArrowRight, ArrowLeft, Check, LoaderCircle } from "lucide-react";
 import type { DesktopProjectProfile } from "../types";
 import { isAssistantHost } from "../lib/assistantHost";
 import { completeRuntimeSetup, writeRuntimeSetup, type RuntimeSetupRecord } from "../lib/runtimeOnboarding";
@@ -7,6 +7,8 @@ import { type LocalResidentClient, type LocalResidentStatus } from "../lib/local
 import { useDialogSurface } from "../hooks/useDialogSurface";
 import { LocalResidentCard } from "./settings/LocalResidentCard";
 import { RemoteProjectDialog } from "./RemoteProjectDialog";
+import { RuntimeLocationChoices } from "./RuntimeLocationChoices";
+import { PreferenceDetails } from "./ui";
 import "./RuntimeOnboarding.css";
 
 export interface RuntimeOnboardingProps {
@@ -36,11 +38,14 @@ export function RuntimeOnboarding({ initial, initialError = "", inspectionFailed
   const [localBusy, setLocalBusy] = useState(false);
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [local, setLocal] = useState<LocalResidentStatus | null>(null);
+  const [editingModel, setEditingModel] = useState(false);
   const alive = useRef(true), flight = useRef(false), autoRestored = useRef(false);
   const callbacks = useRef({ onConnect, onComplete, onStatus }); callbacks.current = { onConnect, onComplete, onStatus };
   const blocked = busy || localBusy || remoteBusy || modelBusy;
+  const localPrepared = Boolean(local?.installed || modelReady && !editingModel);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => { heading.current?.focus(); }, [choice, restoring]);
+  useEffect(() => { if (modelReady) setEditingModel(false); }, [modelReady]);
 
   async function finish(profile: DesktopProjectProfile) {
     if (flight.current) throw new Error("正在连接，请稍候");
@@ -70,18 +75,22 @@ export function RuntimeOnboarding({ initial, initialError = "", inspectionFailed
   return <dialog ref={dialog} className="runtime-onboarding" aria-labelledby="runtime-onboarding-title" onCancel={event => { event.preventDefault(); if (!blocked && onCancel) onCancel(); }}>
     <div className="onboarding-shell">
       <header className="onboarding-header"><strong>VortoOne</strong>{onCancel && <button disabled={blocked} onClick={onCancel}>返回当前助手</button>}</header>
-      <ol className="onboarding-steps" aria-label="设置进度"><li aria-current={!choice && !restoring ? "step" : undefined}>运行位置</li><li aria-current={choice || restoring ? "step" : undefined}>准备与连接</li><li>开始使用</li></ol>
+      {(choice || restoring) && <ol className="onboarding-steps" aria-label="设置进度"><li>运行位置</li>
+        <li aria-current={choice === "local" && localPrepared ? undefined : "step"}>{choice === "local" ? "准备模型" : "连接助手"}</li>
+        <li aria-current={choice === "local" && localPrepared ? "step" : undefined}>{choice === "local" ? "安装与连接" : "开始使用"}</li></ol>}
       <h1 ref={heading} tabIndex={-1} id="runtime-onboarding-title">{restoring ? `打开${targetName}` : !choice ? "让助理在哪里运行？" : choice === "local" ? "准备这台 Mac" : "连接已有助手"}</h1>
-      <p className="onboarding-lead">{restoring ? "正在恢复原来的运行位置。无法连接时会留在这里，等你选择。" : !choice ? "先选保存资料和运行助理的电脑，之后进入你的个人空间。" : choice === "local" ? "复用已有服务，或准备程序与独立模型配置，再由你启动和连接。" : "使用那台电脑已有的模型和资料。连接前会核对地址并由原生窗口确认。"}</p>
+      <p className="onboarding-lead">{restoring ? "连接后继续原来的对话。" : !choice ? "选择一台电脑，保存你的资料，运行你的个人助理。" : choice === "local" ? "准备模型和程序，然后启动你的个人助理。" : "使用那台电脑已有的模型和资料。连接前由你核对。"}</p>
       {error && <div role="alert" className="onboarding-error"><p>{error}</p>{inspectionFailed && <button onClick={onInspectAgain}>重新核对已有配置</button>}</div>}
       {restoring && restoreTarget ? <section className="onboarding-panel"><strong>{targetName}</strong><p>原来的对话与资料仍属于这份助手。</p><button className="primary" disabled={blocked} onClick={() => connectKnown(restoreTarget)}>{busy ? <><LoaderCircle className="activity-spinner" />正在连接…</> : "重新连接这份助手"}</button></section>
-        : !choice ? <div className="onboarding-choices">
-          <button disabled={inspectionFailed} onClick={() => choose("local")}><Laptop /><strong>在这台 Mac 运行</strong><span>资料保存在本机。退出 Desktop 后仍可运行；Mac 需开机并登录，睡眠时暂停。</span><ArrowRight /></button>
-          <button disabled={inspectionFailed} onClick={() => choose("remote")}><Server /><strong>连接已有助手</strong><span>助理运行在另一台电脑。关闭 Desktop 后，对方的服务仍可继续运行。</span><ArrowRight /></button>
-        </div> : choice === "local" ? <>
-          {local?.supported && !local.installed && <section className="onboarding-panel" aria-label="准备模型"><h2>先准备模型配置</h2><p>安装时会再次请你同意复制；复制后由常驻助手独立管理。</p>{modelSetup}</section>}
+        : !choice ? <><RuntimeLocationChoices disabled={inspectionFailed} onChoose={choose} />
+          <PreferenceDetails label="如何选择运行位置？"><p>经常开机的电脑适合让助理持续工作。只在这台 Mac 使用时，可以选择本机运行。</p><p>每个运行位置保留自己的对话和资料；切换不会自动搬动或合并原资料。</p></PreferenceDetails>
+        </> : choice === "local" ? <>
+          {local?.supported && !local.installed && (modelReady && !editingModel
+            ? <section className="onboarding-model-saved" aria-label="模型配置已保存"><Check aria-hidden="true" /><div><strong>模型配置已保存</strong><p>安装时仍需你确认复制，之后由常驻助理独立管理。</p></div><button type="button" disabled={blocked} onClick={() => setEditingModel(true)}>修改配置</button></section>
+            : <section className="onboarding-panel" aria-label="准备模型"><h2>先准备模型配置</h2><p>安装时会再次请你同意复制；复制后由常驻助手独立管理。</p>{modelSetup}</section>)}
           <LocalResidentCard onboarding client={localClient} onUse={finish} onStatus={status => { setLocal(status); callbacks.current.onStatus(status); }} onBusyChange={setLocalBusy}
-            blocked={modelBusy || !local?.installed && !modelReady} />
+            awaitingModel={!modelReady || editingModel}
+            blocked={modelBusy || !local?.installed && (!modelReady || editingModel)} />
           <p className="onboarding-note">安装、启动、连接分别由你操作。初次安装关闭定时作业、心跳与即时通讯；连接后进入个人空间。</p>
         </> : <>
           {profiles.some(isAssistantHost) && <section className="onboarding-panel"><h2>已登记的助手</h2><div className="onboarding-known">{profiles.filter(isAssistantHost).map(p => <button key={p.id} disabled={blocked} onClick={() => connectKnown(p)}>{p.name}{p.assistantPending ? " · 待连接" : ""}<ArrowRight /></button>)}</div></section>}
