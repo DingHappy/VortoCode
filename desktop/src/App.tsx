@@ -1819,8 +1819,9 @@ function App() {
     }, {
       prepare: prepareAssistantHost,
       switchWorkspace: body => runWorkspaceSwitch("连接常驻电脑失败", body),
-      persist: selected => persistCurrentResidentSelection(selected, updateLocalResidentStatus, invoke),
+      persist: (selected, current) => persistCurrentResidentSelection(selected, updateLocalResidentStatus, invoke, current),
       connection: () => clientRef.current,
+      connectionEpoch: () => clientRef.current?.connectionEpoch,
       isSelected: selected => remoteProjectRef.current === selected.id && assistantHostRef.current === selected.id,
       discard: (selected, attached) => discardResidentConnection(selected, attached, {
         connection: () => clientRef.current,
