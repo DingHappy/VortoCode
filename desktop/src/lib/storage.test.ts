@@ -38,6 +38,7 @@ afterEach(() => {
 describe("STORAGE_KEYS", () => {
   it("固定住全部 15 个 key 字面量（防拼写漂移）", () => {
     expect(STORAGE_KEYS).toEqual({
+      runtimeSetup: "vortoone.desktop.runtimeSetup",
       baseUrl: "vortocode.desktop.baseUrl",
       sid: "vortocode.desktop.sid",
       repoRoot: "vortocode.desktop.repoRoot",
