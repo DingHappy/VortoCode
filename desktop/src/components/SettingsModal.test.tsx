@@ -86,7 +86,7 @@ it("opens the legacy abilities entry at permissions and exposes seven clear cate
   const markup = renderSettings({ initialSection: "abilities" });
   expect(markup).toContain('id="settings-page-title">权限与自动化');
   for (const label of ["账号与用量", "模型与执行", "电脑与连接", "工具与集成", "个性化", "高级与关于"]) expect(markup).toContain(label);
-  expect(markup).toContain("授权级别按工作区保存");
+  expect(markup).toContain("当前目标尚未连接");
 });
 it("shows a retryable read error without claiming an unknown profile is empty", () => {
   const markup = renderSettings({ initialSection: "model", llmProfile: null, llmProfileError: "读取失败", onReloadLlmProfile: noop });

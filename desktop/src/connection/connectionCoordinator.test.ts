@@ -163,6 +163,16 @@ describe("切换场景", () => {
 });
 
 describe("常驻电脑后台重连", () => {
+  it("does not reconnect an old target after a delayed probe completes on another space", async () => {
+    const probe = deferred<string | null>();
+    let current = true;
+    const connect = vi.fn(async () => true), onUnreachable = vi.fn();
+    const retry = retryResident({ current: () => current, reachable: () => probe.promise, connect, onUnreachable });
+    current = false; probe.resolve(null);
+    expect(await retry).toBe(false);
+    expect(connect).not.toHaveBeenCalled(); expect(onUnreachable).not.toHaveBeenCalled();
+  });
+
   it("退避 10 秒、30 秒、1 分钟，之后每 2 分钟一直试", () => {
     expect([0, 1, 2, 3, 4, 50].map(residentRetryDelay)).toEqual([10_000, 30_000, 60_000, 120_000, 120_000, 120_000]);
   });

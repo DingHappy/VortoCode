@@ -1,3 +1,4 @@
+import { useSettingsTargetFixture } from "./settings-target-fixture";
 // Real SettingsModal + real useLlmProfile, deterministic IPC only. Never reads or writes user settings.
 import { invoke } from "@tauri-apps/api/core";
 import { ManagedRuntimes } from "../src/lib/managedRuntimes";
@@ -187,6 +188,7 @@ mockIPC(async (cmd, raw) => {
 }, { shouldMockEvents: true });
 function Fixture() {
   const [open, setOpen] = useState(true);
+  const settingsTarget = useSettingsTargetFixture(open, staffFixture ? "general" : lifecycleFixture ? fixtureScope : "project", staffFixture?.client);
   const [notice, setNotice] = useState("");
   const onBanner = useCallback((text: string) => setNotice(text), []);
   const restart = useCallback(async () => {
@@ -194,7 +196,8 @@ function Fixture() {
     if (params.get("restart") === "throw") throw new Error("模拟重启失败");
     return params.get("restart") === "ok";
   }, []);
-  const llm = useLlmProfile(open, onBanner, restart);
+  const guardedRestart = useCallback(() => settingsTarget?.current() ? restart() : Promise.resolve(false), [settingsTarget, restart]);
+  const llm = useLlmProfile(open, onBanner, guardedRestart);
   const [process, setProcess] = useState(nativeRuntime);
   const [runtimeConnected, setRuntimeConnected] = useState(params.get("runtime") === "running");
   const [remote, setRemote] = useState(params.get("runtime") === "remote");
@@ -233,7 +236,7 @@ function Fixture() {
   const [trust, setTrust] = useState<TrustStatus>({ level: "ask", effective: "ask", ceiling: "reads", levels: ["ask", "reads", "full"], capability_profile: "local", workspace_scope: "project", local_file_reads: true, supervised: true });
   const noop = () => { };
   return <><main data-profile-checked={llm.llmProfileChecked} data-profile-loading={llm.llmProfileLoading} style={{ padding: 24 }}><p>真实设置组件 · 合成数据验收 · 不连接真实服务</p><button onClick={() => setOpen(true)}>打开设置</button><p role="status">{notice}</p></main>
-    {open && <SettingsModal staffClient={staffFixture?.client} activeScope={lifecycleFixture ? fixtureScope : "project"} connection={runtimeConnected ? "connected" : "disconnected"} connectionText="未连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
+    {open && <SettingsModal runtimeSettings={settingsTarget} staffClient={staffFixture?.client} activeScope={lifecycleFixture ? fixtureScope : "project"} connection={runtimeConnected ? "connected" : "disconnected"} connectionText="未连接" connectionNote="" runtimeStarting={false} projectSwitching={false}
       processStatus={lifecycleFixture ? runtimeControls.target : { running: false, message: "本机引擎未运行" }}
       runtimeIsRemote={remote} runtimeActionBusy={runtimeControls.busy} runtimeActionNote={runtimeControls.note} onReloadRuntime={runtimeControls.reload} recoveryRecord={null} llmProfile={llm.llmProfile}
       llmBaseInput={llm.llmBaseInput} llmModelInput={llm.llmModelInput} llmKeyInput={llm.llmKeyInput} llmFastInput={llm.llmFastInput} llmStrongInput={llm.llmStrongInput}
