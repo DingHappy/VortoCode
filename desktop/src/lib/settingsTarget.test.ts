@@ -54,6 +54,20 @@ it("does not replay a write whose receipt arrives after the owner changes", asyn
   expect(client.write).toHaveBeenCalledExactlyOnceWith("reviewed A");
 });
 
+it("does not select or replay a channel created on the previous space after a late receipt", async () => {
+  const { context } = setup();
+  let finish!: (value: { sid: string }) => void;
+  const client = { createChannel: vi.fn((_name: string, _topic: string) => new Promise<{ sid: string }>(resolve => { finish = resolve; })) };
+  let current = { context, client };
+  const lease = settingsTargetLease(() => current), select = vi.fn();
+  const pending = lease.client!.createChannel("资料研究", "公开资料").then(select);
+  current = { context: { ...context, readKey: "B" }, client };
+  finish({ sid: "saved-on-A" });
+  await expect(pending).rejects.toThrow("未重试");
+  expect(select).not.toHaveBeenCalled();
+  expect(client.createChannel).toHaveBeenCalledExactlyOnceWith("资料研究", "公开资料");
+});
+
 it("detects a transport epoch change even before the next UI context render", async () => {
   const { client, context } = setup();
   const transport = { ...client, connectionEpoch: 1 };

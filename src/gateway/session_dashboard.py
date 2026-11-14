@@ -148,6 +148,8 @@ def session_dashboard_snapshot(repo_root: str, *, live_sessions: Mapping[str, An
             "hook_issues": hook_issues,
             "context": context or (disk.get("context") if isinstance(disk.get("context"), dict) else {}),
         }
+        if "channel" in disk:
+            rows[sid]["channel"] = disk["channel"]
 
     return sorted(
         rows.values(),

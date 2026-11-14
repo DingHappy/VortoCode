@@ -531,6 +531,8 @@ export interface SessionHookIssues {
 
 export interface SessionSummary {
   sid: string;
+  /** Presentation metadata; never a tool grant or a prompt. */
+  channel?: { version: 1; topic: string };
   title: string;
   messages: number;
   updated: number;

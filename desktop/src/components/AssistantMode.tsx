@@ -2,6 +2,8 @@ import { approvalCategory, approvalScope, approvalSource } from "../lib/approval
 import { COPY } from "../lib/copy.generated";
 import { OwnerAccess } from "./OwnerAccess";
 import { WorkspaceNavigation } from "./WorkspaceNavigation";
+import { SidebarChannels } from "./SessionChannels";
+import { sessionChannel } from "../lib/sessionChannels";
 import "./PersonalWorkspace.css";
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode, RefObject } from "react";
@@ -12,7 +14,7 @@ import { tabKeyTarget } from "../lib/iconNavigation";
 import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
 import type { MemorySnapshot } from "../lib/memorySnapshot";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
-import type { AssistantAvatar, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal } from "../types";
+import type { AssistantAvatar, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, SessionSummary } from "../types";
 export { PhoneChatDialog } from "./PhoneChatDialog";
 
 export type AppMode = "assistant" | "work";
@@ -55,7 +57,8 @@ export const SIDE_CHAT_LIMIT = 5;
 /** 日常入口与会话分组，主要聊天保留唯一待处理角标。 */
 export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
   search, query = "", onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat, teams = [], currentTeam = "", onOpenTeam,
-  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment, onPage, onManageStaff }: {
+  departments = [], currentDepartment = "", departmentError = "", onOpenDepartment, onPage, onManageStaff,
+  channels, channelsDisabled, onNewChannel, onDeleteChannel }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
   /** 手机上和助理的聊天：点开只读查看 */
@@ -79,6 +82,10 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   onPage?: (page: AssistantPage) => void;
   onManageStaff?: () => void;
   onNewSideChat: () => void;
+  channels?: SessionSummary[];
+  channelsDisabled?: boolean;
+  onNewChannel?: () => void;
+  onDeleteChannel?: (sid: string) => void;
   /** 任务小组（ADR-014）：每个小组像一个群聊，点开在中间看经过和成员 */
   teams?: Array<{ id: string; title: string; status: string }>;
   currentTeam?: string;
@@ -113,7 +120,8 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   const collapsedLimit = Math.max(SIDE_CHAT_LIMIT, activeIndex + 1);
   const limit = keyword || showAll ? others.length : collapsedLimit;
   const mainMatches = matches("主要聊天", query);
-  const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !departmentGroups.length && !others.length;
+  const channelMatches = channels?.some(row => sessionChannel(row) && matches(`${row.title}\n${sessionChannel(row)!.topic}`, query));
+  const noMatches = Boolean(keyword) && !mainMatches && !groups.length && !departmentGroups.length && !others.length && !channelMatches;
   return <>
     <nav className="vc-side-nav" aria-label="助理">
       <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
@@ -126,6 +134,8 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
         meta={badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
           aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span>
           : mainChat.busy ? <LiveDot /> : undefined} />}
+      {channels && onNewChannel && <SidebarChannels channels={channels} current={inChat ? current : ""} query={query}
+        disabled={channelsDisabled} onSelect={onSelect} onCreate={onNewChannel} onDelete={onDeleteChannel} />}
       {(departmentGroups.length > 0 || departmentError) && <GroupTitle>部门</GroupTitle>}
       {departmentError && <p role="status">{departmentError}</p>}
       {departmentGroups.map(department => <NavItem key={department.id} className="vc-nav-item--recent"

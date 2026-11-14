@@ -21,6 +21,7 @@ export const COPY = {
   /** 会话入口（Desktop 侧栏 / iPhone 抽屉） */
   nav: {
     main_chat: "主要聊天",
+    channels: "频道",
     waiting: "等你处理",
     teams: "任务小组",
     side_chats: "旁聊",
@@ -66,6 +67,21 @@ export const COPY = {
     done: "办好了",
     unknown: "无法确认",
     failed: "失败",
+  },
+  /** 个人空间频道 */
+  channel: {
+    create: "新建频道",
+    name: "频道名称",
+    topic: "频道说明（选填）",
+    name_placeholder: "例如：产品想法",
+    topic_placeholder: "这个频道用来聊什么？",
+    scope_hint: "保存在当前空间。每个频道单独保存对话和输入草稿。",
+    permission_hint: "频道说明只用于展示，不会授予权限，也不会自动分享给专员。",
+    empty: "把一个话题留在这里，之后接着聊。",
+    cancel: "取消",
+    saving: "正在保存…",
+    saved: "频道已保存",
+    remove: "删除频道",
   },
 } as const;
 

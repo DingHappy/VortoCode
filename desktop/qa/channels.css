@@ -1,0 +1,8 @@
+.channel-qa { height: 100vh; display: flex; flex-direction: column; background: var(--vc-bg); color: var(--vc-text); }
+.channel-qa-tools { display: flex; flex-wrap: wrap; gap: var(--vc-space-3); align-items: center; padding: var(--vc-space-2) var(--vc-space-4); font-size: var(--vc-size-caption); background: var(--vc-surface); border-bottom: 1px solid var(--vc-border); }
+.channel-qa-tools button { color: var(--vc-text); }
+.channel-qa .workbench { flex: 1; min-height: 0; grid-template-columns: var(--vc-sidebar-w) minmax(0, 1fr); }
+.channel-qa-space { padding: var(--vc-space-4); font-size: var(--vc-size-small); color: var(--vc-muted); }
+.channel-qa .conversation-scroll { display: flex; }
+.channel-qa .conversation-body { min-width: 0; }
+@media (max-width: 760px) { .channel-qa .workbench { grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); } }

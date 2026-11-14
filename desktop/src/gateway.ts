@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-websocket";
 import { parseMemorySnapshot, type MemorySnapshot } from "./lib/memorySnapshot";
+import { createdChannel } from "./lib/sessionChannels";
 
 import type {
   AgentTurn,
@@ -535,6 +536,12 @@ export class GatewayClient {
   async listSessions(): Promise<SessionSummary[]> {
     const payload = await this.readSnapshot<{ sessions?: SessionSummary[] }>("/api/agent/sessions");
     return payload.sessions ?? [];
+  }
+
+  async createChannel(name: string, topic: string): Promise<SessionSummary> {
+    return createdChannel(await this.request<unknown>("/api/agent/sessions", {
+      method: "POST", body: JSON.stringify({ name, topic }),
+    }));
   }
 
   async renameSession(sid: string, title: string): Promise<void> {

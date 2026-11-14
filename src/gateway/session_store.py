@@ -22,6 +22,45 @@ _MAX_ACTIVITIES = 300     # 生命周期事件含 start/finish 更新；留足�
 _MAX_PROMPT_QUEUE = 20
 
 
+class ChannelNameConflict(ValueError):
+    pass
+
+
+def channel_metadata(value: Any) -> Optional[dict]:
+    """Presentation only; unknown versions/fields never become agent configuration."""
+    if (not isinstance(value, dict) or set(value) != {"version", "topic"}
+            or type(value.get("version")) is not int or value["version"] != 1
+            or not isinstance(value.get("topic"), str) or len(value["topic"]) > 300):
+        return None
+    return {"version": 1, "topic": value["topic"]}
+
+
+def create_channel(repo_root: str, name: str, topic: str = "") -> dict:
+    """Create an empty ordinary sid record, without constructing an Agent or selecting another root."""
+    import uuid
+    from src.workflow.pipeline.pipeline_storage import pipeline_lock
+    if not isinstance(name, str) or not isinstance(topic, str):
+        raise ValueError("频道名称和说明必须是文字")
+    title, topic = name.strip().lstrip("#").strip(), topic.strip()
+    if not 1 <= len(title) <= 30 or any(ord(char) < 32 or ord(char) == 127 for char in title):
+        raise ValueError("频道名称需要 1～30 个字，不能包含换行或控制字符")
+    if len(topic) > 300:
+        raise ValueError("频道说明最多 300 个字")
+    # Only the name check and creation share this lock; no model or execution is held behind it.
+    with pipeline_lock(repo_root, "session-channels", kind="create"):
+        if any(item.get("channel") and item["title"].casefold() == title.casefold()
+               for item in list_sessions(repo_root)):
+            raise ChannelNameConflict("已有同名频道，请换一个名称")
+        sid = uuid.uuid4().hex
+        if _path(repo_root, sid).exists():
+            raise OSError("频道标识冲突，请重试")
+        if not save_session(repo_root, f"sid-{sid}", [], [], None, title=title,
+                            channel={"version": 1, "topic": topic}, durable=True):
+            raise OSError("频道尚未保存，请重试")
+        return {"sid": sid, "title": title, "messages": 0, "updated": _path(repo_root, sid).stat().st_mtime,
+                "channel": {"version": 1, "topic": topic}}
+
+
 def session_has_content(data: dict) -> bool:
     """Context/capability metadata alone is a draft, not a recent conversation."""
     compression = data.get('compression_state')
@@ -70,7 +109,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
                  mode: Optional[str] = None,
                  prompt_queue_paused: Optional[bool] = None,
                  im_inputs: Optional[dict] = None, managed_im: Optional[bool] = None,
-                 durable: bool = False, compression_state: Optional[dict] = None) -> bool:
+                 durable: bool = False, compression_state: Optional[dict] = None,
+                 channel: Optional[dict] = None) -> bool:
     """保存一个 sid 会话。返回保存成功或新空草稿无需保存（非法键/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
@@ -86,7 +126,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     existing: Dict[str, Any] = {}
     if (title is None or context_usage is None or tool_names is None
             or behavior_fp is None or mode is None or prompt_queue_paused is None
-            or im_inputs is None or managed_im is None or compression_state is None) and p.is_file():
+            or im_inputs is None or managed_im is None or compression_state is None
+            or channel is None) and p.is_file():
         try:
             loaded = json.loads(p.read_text(encoding="utf-8"))
             existing = loaded if isinstance(loaded, dict) else {}
@@ -113,6 +154,11 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         "context_usage": dict(context_usage or {}),
         "title": title,
     }
+    normalized_channel = channel_metadata(existing.get("channel") if channel is None else channel)
+    if channel is not None and normalized_channel is None:
+        return False
+    if normalized_channel is not None:
+        data["channel"] = normalized_channel
     if compression_state is None:
         compression_state = existing.get('compression_state')
     if compression_state is not None:
@@ -205,6 +251,9 @@ def load_session(repo_root: str, key: str, *, strict: bool = False, max_bytes: i
     for field in ("im_inputs", "managed_im"):
         if field in data:
             result[field] = data[field]
+    channel = channel_metadata(data.get("channel"))
+    if channel is not None:
+        result["channel"] = channel
     return result
 
 
@@ -241,6 +290,9 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
             "context": data.get("context_usage") or {},
             "hook_issues": hook_issues,
         })
+        channel = channel_metadata(data.get("channel"))
+        if channel is not None:
+            out[-1]["channel"] = channel
     out.sort(key=lambda s: s["updated"], reverse=True)
     return out
 
