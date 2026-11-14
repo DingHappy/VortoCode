@@ -4,6 +4,20 @@ import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantSchedule, A
 import { ConnectionCoordinator } from "../connection/connectionCoordinator";
 import { ownerAccessClient } from "../lib/ownerAccess";
 
+it("shows role portrait, readable original tabs and a separate shared profile entry", () => {
+  const html = renderToStaticMarkup(<AssistantPanel name="总助手" connected host={{ kind: "local", canAddResident: true }}
+    tab="feed" onTab={() => {}} onClose={() => {}} onAddResident={() => {}} onRetryResident={() => {}}
+    onOpenProfile={() => {}} waiting={2}><p>已有工作记录</p></AssistantPanel>);
+  expect(html).toContain('aria-label="角色资料：总助手" aria-haspopup="dialog"');
+  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) {
+    expect(html).toContain(`class="vc-panel-tab-label">${label}</span>`);
+  }
+  expect(html.match(/role="tab"/g)).toHaveLength(5);
+  expect(html).toContain("2 件等你处理");
+  expect(html).toContain("已有工作记录");
+  expect(html).toContain("在本机运行");
+});
+
 it("工作台已撤：没有模式切换，项目界面里只有「回到助理」", () => {
   const html = renderToStaticMarkup(<BackToAssistant onBack={() => {}} />);
   expect(html).toContain("回到助理");

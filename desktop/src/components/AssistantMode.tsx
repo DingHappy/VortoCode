@@ -14,7 +14,7 @@ import { tabKeyTarget } from "../lib/iconNavigation";
 import { MemorySnapshotDialog } from "./MemorySnapshotDialog";
 import type { MemorySnapshot } from "../lib/memorySnapshot";
 import { avatarSrc } from "../lib/avatar";
-import { ROLE_ART } from "./RoleAvatar";
+import { ROLE_ART, RoleAvatar } from "./RoleAvatar";
 import type { AssistantAvatar, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, SessionSummary } from "../types";
 export { PhoneChatDialog } from "./PhoneChatDialog";
 
@@ -184,7 +184,7 @@ const TABS: Array<{ id: AssistantTab; label: string; hint: string; icon: ReactNo
   { id: "identity", icon: <UserRound aria-hidden="true" /> },
 ] as Array<{ id: AssistantTab; icon: ReactNode }>).map(item => ({ ...item, label: COPY.panel[item.id], hint: `${COPY.panel[item.id]} · ${COPY.panel_hint[item.id]}` }));
 
-export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer, presentation = "panel" }: {
+export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, onOpenProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer, presentation = "panel" }: {
   name: string; connected: boolean; modelLabel?: string;
   avatar?: AssistantAvatar | null;
   host: AssistantHostInfo;
@@ -194,6 +194,8 @@ export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, o
   onRetryResident: () => void;
   /** 改名字与「关于你」 */
   onEditProfile?: () => void;
+  /** Shared role profile, also opened by the conversation header and role navigation. */
+  onOpenProfile?: () => void;
   tab: AssistantTab; onTab: (tab: AssistantTab) => void; onClose: () => void;
   /** 等你处理的件数：动态图标上的提示 */
   waiting?: number;
@@ -229,7 +231,9 @@ export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, o
       : <IconButton className="vc-panel-close" label="收起面板" icon={<PanelRightClose />} onClick={closePanel} />}
     <div className="vc-panel-card" data-tauri-drag-region="deep">
       <div className="vc-panel-identity-row">
-        <AssistantAvatarImage name={name} avatar={avatar} size={32} />
+        {onOpenProfile ? <button type="button" className="vc-panel-portrait" aria-label={`角色资料：${name}`} aria-haspopup="dialog" onClick={onOpenProfile}>
+          <RoleAvatar character="general" avatar={avatar} size={presentation === "page" ? "small" : "portrait"} />
+        </button> : <RoleAvatar character="general" avatar={avatar} size={presentation === "page" ? "small" : "portrait"} />}
         <div><strong className="vc-panel-name">{name}</strong>
           <span className={`vc-panel-status${unreachable || !connected ? " is-down" : ""}`}>{status}</span></div>
         {onEditProfile && <IconButton label="修改助理资料" icon={<PencilLine />} onClick={onEditProfile} />}
@@ -259,7 +263,7 @@ export function AssistantPanel({ id, toggleRef, name, avatar, connected, host, o
           event.preventDefault(); onTab(TABS[target].id);
           event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[id="${panelId}-${TABS[target].id}"]`)?.focus();
         }}>
-        {item.icon}
+        {item.icon}<span className="vc-panel-tab-label">{item.label}</span>
         {item.id === "feed" && badge ? <i className={`vc-panel-tab-dot${waitingUncertain && !waiting ? " is-unknown" : ""}`} role="img" aria-label={badge} /> : null}
       </HintButton>)}
     </div>}

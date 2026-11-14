@@ -3023,6 +3023,8 @@ function App() {
         </SettingsModal>
   ) : null;
 
+  const composerSend = <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={attachmentsReading > 0 || (!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>;
+
   return (
     <main className={`app-shell ${appMode === "assistant" ? "vc-product-shell" : ""}`}>
       <div className="banner-slot">
@@ -3401,6 +3403,7 @@ function App() {
               <ContextChips items={contextItems}
                 onRemove={(item) => { markComposerEdited(); setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item))); }} />
               <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}
+                sendControl={appMode === "assistant" ? composerSend : undefined}
                 placeholder={appMode !== "assistant" ? undefined : onAssistantHost()
                   ? "交代一件事，它会在常驻电脑上接着做，做完了回到这里告诉你…" : "交代一件事，做完了回到这里告诉你…"}
                 disabled={runtimeStarting || projectSwitching} onSend={() => void sendPrompt()}
@@ -3437,7 +3440,7 @@ function App() {
                   onChoose={(value) => { setSavedModelChoice(value); persistModelChoice(value); }}
                   onManage={() => { setSettingsSection("model"); setSettingsOpen(true); }} />
                 <ContextStatus key={activeSid} context={currentSession?.context} />
-                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={attachmentsReading > 0 || (!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                {appMode !== "assistant" && composerSend}
                 </div>
               </div>
               </ComposerCommands>
@@ -3464,6 +3467,7 @@ function App() {
           : <AssistantPanel id="assistant-panel" presentation={mainView === "assistant" ? "page" : "panel"} toggleRef={assistantPanelToggleRef} name={assistantProfile.name || "VortoOne"} avatar={assistantAvatar} connected={connection === "connected"}
             computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={openProfileDialog}
+            onOpenProfile={() => openRoleProfile()}
             host={onAssistantHost() ? { kind: "resident", name: currentTarget.runtimeLabel, reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => residentHost ? void connectAssistantHost(residentHost) : setSettingsOpen(true)}
