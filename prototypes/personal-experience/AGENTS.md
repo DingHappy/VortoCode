@@ -6,6 +6,7 @@
 - Learn agentes.chat installation, onboarding, navigation and settings as one coherent personal experience. Independently implement; retain VortoOne branding and the current license.
 - One personal space per runtime; multiple explicitly registered projects. No company invitations, new public CLI, automatic staff creation or permission expansion.
 - This is a synthetic, in-memory design artifact. Do not connect to production, install services, call models, publish, or deploy.
+- Owner clarification: closely recreate agentes.chat's visual structure and interaction patterns. Old layouts, duplicate entry points and verbose explanations may be discarded; do not keep them merely for continuity. Preserve VortoOne branding, the selected role family, existing data and all permission contracts. Implement independently, without copying upstream code or assets. The current revision remains a design prototype; production migration is separate.
 
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 

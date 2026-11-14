@@ -14,20 +14,22 @@ import {
   FileText,
   Folder,
   Laptop,
-  ListChecks,
   Menu,
   MessageSquare,
   Monitor,
   Moon,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelRight,
+  Paperclip,
   Plus,
   Search,
   Server,
   Settings,
   ShieldCheck,
-  SquarePen,
   Sun,
   Users,
+  UserRound,
   X,
 } from "lucide-react";
 import general from "../../../docs/design/personal-experience/assets/general.png";
@@ -37,6 +39,31 @@ import calendar from "../../../docs/design/personal-experience/assets/calendar.p
 import family from "../../../docs/design/personal-experience/assets/role-family-reference.png";
 
 const ART = { general, research, development, calendar };
+const EXAMPLE_MESSAGES = [
+  {
+    role: "user",
+    text: "把今天要处理的事整理一下，先列出需要我决定的部分。",
+    time: "09:02",
+  },
+  {
+    role: "assistant",
+    text: "我先整理已有记录。需要你决定的事项单独列出，其余保留来源和当前进展。",
+    time: "09:02",
+    progress: true,
+  },
+  {
+    role: "assistant",
+    text: "今天有两件事：\n1. 项目周报已经整理成草稿，保存到邮箱前需要你确认。\n2. 本周公开资料摘要已交回，可以回查原文和历史版本。",
+    time: "09:03",
+  },
+  { role: "user", text: "先给我看资料摘要，周报暂时不要发送。", time: "09:04" },
+  {
+    role: "assistant",
+    text: "资料已放在下面。周报保持草稿，没有发送。",
+    time: "09:04",
+    document: true,
+  },
+];
 const ROLES = [
   {
     id: "general",
@@ -93,13 +120,13 @@ const SCREENS = [
   ["brand", "14 · 角色规范"],
 ];
 const CATEGORIES = [
-  ["personal", "个性化"],
-  ["model", "模型与执行"],
-  ["computer", "电脑与连接"],
-  ["staff", "团队与权限"],
-  ["permissions", "权限与自动化"],
-  ["tools", "工具与集成"],
-  ["about", "高级与关于"],
+  ["personal", "个性化", UserRound],
+  ["model", "模型与执行", Server],
+  ["computer", "电脑与连接", Laptop],
+  ["staff", "团队与权限", Users],
+  ["permissions", "权限与自动化", ShieldCheck],
+  ["tools", "工具与集成", Plus],
+  ["about", "高级与关于", CircleHelp],
 ];
 const SETUP = [
   "download",
@@ -247,8 +274,14 @@ export function App() {
     [chatId, setChatId] = useState("main"),
     [chats, setChats] = usePreviewSpaceState(space, []),
     [drafts, setDrafts] = useState({}),
-    [messages, setMessages] = useState({}),
-    [process, setProcess] = useState(false);
+    [messages, setMessages] = useState(() =>
+      new URLSearchParams(location.search).get("example") === "conversation"
+        ? { "这台 Mac:个人空间:main": EXAMPLE_MESSAGES }
+        : {},
+    ),
+    [process, setProcess] = useState(
+      new URLSearchParams(location.search).get("example") === "conversation",
+    );
   const [model, setModel] = useState(""),
     [endpoint, setEndpoint] = useState(""),
     [apiKey, setApiKey] = useState(""),
@@ -421,10 +454,16 @@ export function App() {
   function setup() {
     return (
       <div
-        className={`setup ${["where", "welcome"].includes(route) ? "wide" : ""}`}
+        className={`setup ${["where", "welcome"].includes(route) ? "wide" : ""} ${route === "where" ? "location-setup" : ""}`}
       >
         <header className="setup-brand">
-          <strong>VortoOne</strong>
+          {route === "where" ? (
+            <button className="setup-back" onClick={() => go("welcome")}>
+              <ChevronRight /> VortoOne
+            </button>
+          ) : (
+            <strong>VortoOne</strong>
+          )}
           <Button onClick={() => go("chat")}>
             先看看界面
             <ArrowRight />
@@ -481,7 +520,7 @@ export function App() {
           </section>
         ) : route === "welcome" ? (
           <section className="welcome">
-            <Avatar size={240} />
+            <Avatar size={180} />
             <p className="eyebrow">你的个人助理</p>
             <h1>
               把事情交代清楚，
@@ -522,10 +561,9 @@ export function App() {
             )}
             {route === "where" ? (
               <>
-                <p className="eyebrow">你的资料，你的运行位置</p>
-                <h1>让助理在哪里运行？</h1>
+                <h1>你自己的助手。</h1>
                 <p className="lead">
-                  选择一台电脑，保存你的资料，运行你的个人助理。
+                  VortoOne 在你的电脑上运行，资料也保存在那里。
                 </p>
                 <div className="location-cards">
                   <button onClick={() => go("remote")}>
@@ -536,10 +574,9 @@ export function App() {
                     </span>
                     <h2>连接已有助手</h2>
                     <p>
-                      助理在另一台电脑上运行。关闭这里的窗口，它仍可以继续工作。
+                      在另一台电脑上运行：Mac mini、备用电脑，或你自己的服务器。
                     </p>
                     <span className="card-action">
-                      连接另一台电脑
                       <ChevronRight />
                     </span>
                   </button>
@@ -549,11 +586,10 @@ export function App() {
                     </span>
                     <h2>在这台 Mac 运行</h2>
                     <p>
-                      资料保存在本机。退出 Desktop 后仍可运行；Mac
-                      需开机并登录，睡眠时暂停。
+                      让这台 Mac
+                      成为助手的运行端。开机并登录时可以工作，睡眠时暂停。
                     </p>
                     <span className="card-action">
-                      准备这台 Mac
                       <ChevronRight />
                     </span>
                   </button>
@@ -849,26 +885,18 @@ export function App() {
   function navigation() {
     return (
       <aside className="sidebar" aria-label="个人空间导航">
-        <header>
-          <strong>VortoOne</strong>
-          <button
-            className="icon-button"
-            aria-label="收起侧栏"
-            onClick={() => setSidebar(false)}
-          >
-            <Menu />
-          </button>
-        </header>
         <div className="space-switch">
           <button
+            aria-label={`选择空间，当前${space}`}
             onClick={() => setSpaceMenu(!spaceMenu)}
             aria-expanded={spaceMenu}
           >
-            <Laptop />
+            <Avatar size={44} />
             <span>
-              <strong>{space}</strong>
+              <strong>我的个人空间</strong>
               <small>
-                个人空间 · {route === "recovery" ? "连接中断" : "已连接"}
+                <span>{space}</span>
+                <span>· {route === "recovery" ? "连接中断" : "已连接"}</span>
               </small>
             </span>
             <ChevronsUpDown />
@@ -904,28 +932,25 @@ export function App() {
             </div>
           )}
         </div>
-        <button
-          className="new-chat"
-          onClick={() => {
-            const id = `side-${++sequence.current}`;
-            setChats((values) => [...values, id]);
-            setChatId(id);
-            go("chat");
-          }}
-        >
-          <SquarePen />
-          新对话
-        </button>
-        <label className="sidebar-search">
-          <Search />
-          <input
-            aria-label="搜索对话"
-            placeholder="搜索对话"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <kbd>⌘ K</kbd>
-        </label>
+        <div className="sidebar-search-row">
+          <label className="sidebar-search">
+            <Search />
+            <input
+              aria-label="搜索对话"
+              placeholder="搜索对话…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <kbd>⌘ K</kbd>
+          </label>
+          <button
+            className="icon-button"
+            aria-label="收起侧栏"
+            onClick={() => setSidebar(false)}
+          >
+            <PanelLeftClose />
+          </button>
+        </div>
         <nav>
           {[
             ["chat", MessageSquare, "主要聊天"],
@@ -964,7 +989,21 @@ export function App() {
           )}
         </nav>
         <div className="recent">
-          <p>最近对话</p>
+          <div className="nav-group-head">
+            <span>对话</span>
+            <button
+              className="icon-button"
+              aria-label="新对话"
+              onClick={() => {
+                const id = `side-${++sequence.current}`;
+                setChats((values) => [...values, id]);
+                setChatId(id);
+                go("chat");
+              }}
+            >
+              <Plus />
+            </button>
+          </div>
           {chats
             .filter((id) => !search || id.includes(search))
             .map((id, index) => (
@@ -979,12 +1018,41 @@ export function App() {
                 旁聊 {index + 1}
               </button>
             ))}
-          {!chats.length && <span>岔开的话题可以另开一段对话。</span>}
+          {!chats.length && <span>还没有旁聊</span>}
+        </div>
+        <div className="staff-shortcuts">
+          <button className="nav-group-head" onClick={() => go("staff")}>
+            <span>助手</span>
+            <ChevronRight />
+          </button>
+          {ROLES.filter((item) => staff.includes(item.id)).map((item) => (
+            <button
+              className="staff-shortcut"
+              key={item.id}
+              onClick={() =>
+                item.id === "general" ? go("chat") : setRole(item)
+              }
+            >
+              <Avatar kind={item.id} size={44} />
+              <span>
+                <strong>{item.id === "general" ? savedName : item.name}</strong>
+                <small>{item.title}</small>
+              </span>
+            </button>
+          ))}
         </div>
         <footer>
-          <button onClick={() => go("settings")}>
+          <button
+            className="owner-settings"
+            aria-label="设置"
+            onClick={() => go("settings")}
+          >
+            <UserRound />
+            <span>
+              <strong>我的设置</strong>
+              <small>个人空间</small>
+            </span>
             <Settings />
-            设置
           </button>
           <span>
             {route === "recovery" ? <Clock3 /> : <Check />}
@@ -998,18 +1066,22 @@ export function App() {
 
   function chat() {
     return (
-      <section className={`chat ${thread.length ? "has-messages" : ""}`}>
+      <section
+        className={`chat ${thread.length ? "has-messages" : ""} ${process ? "with-detail" : ""}`}
+      >
         <header className="conversation-head">
           <div>
-            <strong>{chatId === "main" ? "主要聊天" : "新的旁聊"}</strong>
+            <MessageSquare />
+            <h1 tabIndex={-1}>{chatId === "main" ? "主要聊天" : "新的旁聊"}</h1>
             <span>{project}</span>
           </div>
           <button
             className="icon-button"
-            aria-label="查看工作动态"
+            aria-label="对话详情"
+            aria-expanded={process}
             onClick={() => setProcess(!process)}
           >
-            <ListChecks />
+            <PanelRight />
           </button>
         </header>
         <div className="chat-body">
@@ -1033,7 +1105,7 @@ export function App() {
           )}
           {!thread.length ? (
             <div className="chat-welcome">
-              <Avatar size={190} />
+              <Avatar size={140} />
               <h1>今天，想先做什么？</h1>
               <p>交代一件事。进展、结果和需要你决定的地方，都会留在这里。</p>
               <div className="suggestions">
@@ -1049,13 +1121,53 @@ export function App() {
             </div>
           ) : (
             <div className="messages">
+              <div className="message-date">
+                <span>今天</span>
+              </div>
               {thread.map((item, index) => (
                 <article key={index} className={item.role}>
-                  {item.role === "assistant" && <Avatar size={48} />}
+                  {item.role === "assistant" ? (
+                    <Avatar size={44} />
+                  ) : (
+                    <span className="owner-avatar">
+                      <UserRound />
+                    </span>
+                  )}
                   <div>
+                    <header className="message-meta">
+                      <strong>
+                        {item.role === "assistant" ? savedName : "你"}
+                      </strong>
+                      <time>{item.time || "现在"}</time>
+                    </header>
+                    {item.progress && (
+                      <Detail title="整理了 3 条记录">
+                        <ul>
+                          <li>核对已有工作记录</li>
+                          <li>区分草稿与已交付资料</li>
+                          <li>整理需要主人决定的事项</li>
+                        </ul>
+                      </Detail>
+                    )}
                     {item.text.split("\n").map((line, i) => (
                       <p key={i}>{line || "\u00a0"}</p>
                     ))}
+                    {item.document && (
+                      <button
+                        className="message-document"
+                        onClick={() => {
+                          go("library");
+                          setDocumentOpen(true);
+                        }}
+                      >
+                        <FileText />
+                        <span>
+                          <strong>本周资料摘要</strong>
+                          <small>文档 · v2 · 查看原文</small>
+                        </span>
+                        <ChevronRight />
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -1077,6 +1189,7 @@ export function App() {
           <div className="composer">
             <textarea
               aria-label="交代一件事"
+              rows={1}
               placeholder="交代一件事…"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -1099,7 +1212,7 @@ export function App() {
                   setNotice("设计稿不读取文件；产品沿用原附件与引用入口。")
                 }
               >
-                <Plus />
+                <Paperclip />
               </button>
               <span>
                 默认模型
@@ -1120,21 +1233,54 @@ export function App() {
         {process && (
           <aside className="work-detail">
             <header>
-              <h2>工作动态</h2>
+              <h2>本次对话</h2>
               <button
                 className="icon-button"
-                aria-label="收起工作动态"
+                aria-label="收起对话详情"
                 onClick={() => setProcess(false)}
               >
                 <X />
               </button>
             </header>
-            <Avatar size={80} />
-            <strong>{savedName}</strong>
-            <p>还没有正在运行的工作。</p>
-            <Detail title="查看已完成的记录">
-              <p>演示环境不对应真实执行。产品保留来源、结果和失败记录。</p>
-            </Detail>
+            <h3>当前助手</h3>
+            <div className="detail-person">
+              <Avatar size={52} />
+              <span>
+                <strong>{savedName}</strong>
+                <small>总助手</small>
+              </span>
+            </div>
+            <h3>资料范围</h3>
+            <div className="detail-line">
+              <Folder />
+              <span>
+                {project}
+                <small>沿用这份会话的权限</small>
+              </span>
+            </div>
+            <h3>运行位置</h3>
+            <div className="detail-line">
+              <Laptop />
+              <span>
+                {space}
+                <small>这份个人空间的资料与配置</small>
+              </span>
+            </div>
+            <h3>记录与结果</h3>
+            <button className="detail-link" onClick={() => go("library")}>
+              <FileText />
+              交付资料
+              <ChevronRight />
+            </button>
+            <button
+              className="detail-link"
+              onClick={() => settingsLink("permissions")}
+            >
+              <ShieldCheck />
+              确认与审核记录
+              <ChevronRight />
+            </button>
+            <p className="detail-footnote">尚未确认的动作仍需由你决定。</p>
           </aside>
         )}
       </section>
@@ -1325,7 +1471,16 @@ export function App() {
     return (
       <section className="preferences">
         <nav aria-label="设置分类">
-          <h1>设置</h1>
+          <div className="settings-heading">
+            <button
+              className="icon-button"
+              aria-label="返回个人空间"
+              onClick={() => go("chat")}
+            >
+              <ArrowLeft />
+            </button>
+            <h1>设置</h1>
+          </div>
           <label className="sidebar-search">
             <Search />
             <input
@@ -1337,7 +1492,7 @@ export function App() {
           </label>
           {CATEGORIES.filter(
             ([, title]) => !settingsQuery || title.includes(settingsQuery),
-          ).map(([id, title]) => (
+          ).map(([id, title, Icon]) => (
             <button
               key={id}
               aria-current={category === id ? "page" : undefined}
@@ -1346,23 +1501,30 @@ export function App() {
                 setSettingsQuery("");
               }}
             >
+              <Icon />
               {title}
             </button>
           ))}
-          <p>
-            保存位置随每项说明，
-            <br />
-            不会自动同步到其它电脑。
-          </p>
-          <Button onClick={() => go("chat")}>
-            <ArrowLeft />
-            返回个人空间
-          </Button>
+          <div className="settings-space">
+            <Laptop />
+            <span>
+              {space}
+              <small>当前个人空间</small>
+            </span>
+          </div>
         </nav>
         <div className="preferences-content">
           <Head
             title={CATEGORIES.find(([id]) => id === category)?.[1]}
-            description="只显示当前需要调整的选项，详细说明随时可查。"
+            description={
+              category === "personal"
+                ? "助理资料与界面外观。"
+                : category === "computer"
+                  ? "管理助手的运行位置与连接。"
+                  : category === "permissions"
+                    ? "核对具体动作的权限与确认记录。"
+                    : undefined
+            }
           />
           <div className="settings-source">
             当前空间<strong>{space}</strong>
@@ -1634,6 +1796,20 @@ export function App() {
     <div className="prototype-root">
       <div className="review-toolbar">
         <span>设计演示 · 合成内容，不安装、不联网</span>
+        {["chat", "approval"].includes(route) && (
+          <button
+            className="review-example"
+            onClick={() => {
+              setMessages((values) => ({
+                ...values,
+                [draftKey]: thread.length ? [] : EXAMPLE_MESSAGES,
+              }));
+              setProcess(!thread.length);
+            }}
+          >
+            {thread.length ? "看空白对话" : "看示例对话"}
+          </button>
+        )}
         <select
           aria-label="切换设计页面"
           value={route}

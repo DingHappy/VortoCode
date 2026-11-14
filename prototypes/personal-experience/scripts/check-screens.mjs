@@ -39,6 +39,26 @@ try {
     );
     console.log(`PASS ${screen}`);
   }
+  globalThis.location = {
+    search: "?screen=chat&theme=dark&example=conversation",
+  };
+  const conversation = renderToString(React.createElement(App));
+  assert.match(
+    conversation,
+    /09:02/,
+    "the example conversation renders message metadata",
+  );
+  assert.match(
+    conversation,
+    /本周资料摘要/,
+    "the example renders the document handoff",
+  );
+  assert.match(
+    conversation,
+    /本次对话/,
+    "the example renders its optional details",
+  );
+  console.log("PASS conversation example");
 } finally {
   globalThis.location = previousLocation;
   await server.close();

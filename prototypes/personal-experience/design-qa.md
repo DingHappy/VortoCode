@@ -7,9 +7,10 @@ final result: passed
 ## 对照对象与证据
 
 - 视觉参考：主人提供的 agentes.chat「Your own server」截图，1440 × 1202；角色参考为 [`role-family-reference.png`](../../docs/design/personal-experience/assets/role-family-reference.png)，1568 × 1003。
+- 对话参考：上游固定版本 `18a3ae68951d0bda3120c6637681060d7f14488a` 的公开 `docs/media/readme-hero.png`。原图 2880 × 2000，在浏览器并排页中以 1440 × 1000 显示，归一为 1x；实现 [`conversation-dark.png`](../../docs/design/personal-experience/screenshots/conversation-dark.png) 为 1440 × 1000 CSS px、deviceScaleFactor 1。原图未编辑、未纳入公开仓库。
 - 运行位置实现：[`where-comparison.png`](../../docs/design/personal-experience/screenshots/where-comparison.png)，1440 × 1202 CSS px、deviceScaleFactor 1，深色、未配置状态。源图与实现使用相同像素尺寸，未对原图做图像编辑。
 - 完整并排证据保留在本地导出 `exports/vortoone-personal-experience-design-2026-11-14/comparison-runtime.png` 与 `comparison-roles.png`；参考应用截图不纳入公开仓库。两张图在同一浏览器页面内一起捕获，比较时实际打开了合并后的画面。
-- 原参考有 macOS 标题栏，实现有设计审阅工具栏；主体是对应的本机／已有助手选择。VortoOne 使用中文、既有设计变量和自己的品牌，是产品适配，不以逐像素复制为目标。
+- 原参考有 macOS 标题栏，实现有设计审阅工具栏；主体是对应的本机／已有助手选择。按主人补充要求尽量复刻其比例、层级与操作，保留中文、个人模式和自己的品牌；不把未观察的登录后页面称为逐像素复刻。
 - 其它浏览器证据：[`chat.png`](../../docs/design/personal-experience/screenshots/chat.png)、[`settings.png`](../../docs/design/personal-experience/screenshots/settings.png)、[`settings-dark.png`](../../docs/design/personal-experience/screenshots/settings-dark.png)、[`staff-approval.png`](../../docs/design/personal-experience/screenshots/staff-approval.png)、[`recovery-720.png`](../../docs/design/personal-experience/screenshots/recovery-720.png)。默认 1440 × 1000、1x；另检查 960 与 720 宽度，均为 Desktop 小窗口，不当作手机原生验收。
 - 并排角色画面可辨认珊瑚总助手、紫色眼镜、绿色耳机、黄色围巾；另单独打开专员页面核对配饰、透明背景与完整身体。没有用 CSS、SVG 或 emoji 替代角色。
 
@@ -17,9 +18,9 @@ final result: passed
 
 | 项目 | 结果与有意差异 |
 | --- | --- |
-| 字体与排版 | 中文采用现有 sans 字体与正文变量；对话欢迎标题沿用既有 display 字体。英文参考的超大标题未逐像素照搬。标题、正文、帮助三级可辨，表单标签及错误保持可读。 |
-| 留白与布局 | 两条运行路径使用同级并排卡片，说明和主动作分开；日常使用以侧栏和对话为主，设置切为自己的两栏。1440、960、720 宽度所查主页面无水平溢出。 |
-| 颜色与变量 | 直接引入产品 tokens；浅深色使用中性背景、边框和文字。角色色只用于身份，连接中断同时有文字与图标。与原图色值有意不同。 |
+| 字体与排版 | 中文保留现有 sans 字体，去掉旧的对话衬线欢迎标题。运行位置使用 56px 中文标题，与参考拉丁标题的可见字高对照；卡片标题 30px、说明 26px。消息保留姓名、时间与正文层级，不把不同字形当成精确字体相同。 |
+| 留白与布局 | 运行位置主体拓宽为 1248px，双卡片并排；空间侧栏 280px，桌面详情栏 264px，可收起；消息使用连续记录，过程和文档就近显示。设置收窄为分类加单内容区。1440、960、720 宽度所查主页面无水平溢出。窄窗详情覆盖显示并保留关闭按钮，是有意的抽屉状态。 |
+| 颜色与变量 | 采用接近参考的中性浅色、偏冷侧栏和深色三层背景，以原型内 `--preview-*` 记录待审视觉值。生产 tokens 未修改；正式接入再统一生成。角色色只用于身份，连接中断同时有文字与图标。 |
 | 图片与图标 | 四个生成角色保留所选家族的颜色、体积与配饰；Lucide 为功能图标。1254 × 1254 RGBA 素材在头像尺寸显示，无截断或不透明方底。微量半透明边缘属于 P3。 |
 | 文案与内容 | 安装、启动、使用分开；配置已保存不宣称验证通过；专员建议不冒充已登记。原型顶部明确标记合成内容，示例表单不连接真实服务。 |
 
@@ -33,6 +34,15 @@ final result: passed
 
 上述修复后重新捕获最终各页及深色画面，并查看运行位置并排图、角色并排图、对话、设置和小窗口恢复画面。未发现仍需处理的 P0/P1/P2；没有把原生窗口栏差异或中文适配当作偏差。
 
+### 主人要求基本复刻后的复查
+
+- 原第一稿的运行位置主体过窄、字号偏小、连接块和新对话重复占行、消息错位气泡等，与明确的新目标有差距。本轮舍弃这些旧表现，重排空间头部、搜索、连续消息、消息内过程与文档、可收起详情和设置；不迁移上游代码。
+- [P2] 首次改版中「对话」分组标题被内部新建按钮撑到换行。限制按钮宽度后，1440 的分组标题恢复单行；720 的空间名称不再逐字换行，连接状态按完整词换行。
+- [P2] 初次并排后发现导航行、输入框和过程块比参考过高。减少导航和过程的垂直间距，输入框使用单行起始高度；去掉示例里的重复文档卡，再次捕获并排图核对。
+- 最终并排证据：本地导出的 `comparison-runtime.png`、`comparison-conversation.png`。前一版并排证据保留为 `comparison-runtime-v1.png`。组合图中能辨认主区域比例、标题／卡片正文、消息身份和工具块；另打开原尺寸实现与 720 截图检查文字、头像及控制，不依靠缩略图判定。
+- 参考对话是多人频道，本稿是主人与总助手的个人对话；不复制成员、权限、文案或尚未支持的富文本功能。设置没有拿到同状态的登录后截图，只依据已核对的设置组件与页面源码设计，未声称完成其视觉逐像素验收。
+- 最终复查没有遗留 P0/P1/P2；P3 的角色透明边缘仍按原说明保留。
+
 ## 实际走过的交互
 
 - 本机模型表单 → 复制同意 → 安装 → 启动 → 使用；未勾同意时安装按钮不可用。所有回执均为合成。
@@ -42,14 +52,15 @@ final result: passed
 - 设置搜索 → 修改资料 → 切分类再返回草稿保留 → 离开提示 → 继续编辑／放弃离开。
 - 资料类型空状态 → 文档预览 → v1 历史版 → 关闭预览。
 - 浏览器遍历 15 个页面，检查过浅深色；960、720 宽度检查运行位置、对话、专员、定时、资料库、设置、确认入口与恢复。最终遍历未捕获运行异常。
+- 本轮额外实测：示例对话／空白对话切换、详情展开收起、消息发送与原文入口、收起侧栏后用 Cmd+K 恢复搜索、旁聊草稿切空间再打开仍保留、改版后的设置未保存确认、专员批准与拒绝重新开启排期。
 
 未完整键盘审计所有控件、所有设置字段或浏览器读屏，也未验证真实服务、远程连接与模型。合成批准不能作为安全合同测试的替代。
 
 ## 自动检查与后续
 
-- `npm run test:render`：15 页通过。
+- `npm run test:render`：15 页与示例对话状态通过。
 - `npm run build`：通过。
 - `npm run test:sites`：4 项通过，只验证模板产物与本地 worker 合同，未发布。
-- 仓库 `./scripts/ci-local.sh`：ruff、mypy、Python 7261、e2e 30、Desktop TypeScript、Vitest 1629、Rust 201 与 cargo check 通过。Python 11 项跳过，Rust 2 项 ignored；跳过不算通过，分类见 PR 描述。
+- 本轮重新运行仓库 `./scripts/ci-local.sh`：ruff、mypy、Python 7261、e2e 30、Desktop TypeScript、Vitest 1629、Rust 201 与 cargo check 通过。Python 11 项跳过，Rust 2 项 ignored；跳过不算通过，分类见 PR 描述。最终原型调整后另重跑其渲染、构建与 worker 检查。
 - P3：角色透明边缘和不同留白可在生产头像迁移时再微调；尚未制作思考／招呼动画，不阻塞静态方案审阅。
 - 下一步按设计文档 UX-1～UX-4 分步接入原组件；原型的内存状态不得带入生产权限和任务执行。
