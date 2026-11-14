@@ -24,6 +24,12 @@
     ]
   },
   {
+    "path": "/api/agent/sessions",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/agent/sessions/{sid}",
     "methods": [
       "DELETE"

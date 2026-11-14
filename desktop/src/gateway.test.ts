@@ -39,6 +39,17 @@ const CURSOR_KEY = `vortocode.desktop.eventCursor:${SID}`;
 const SETTINGS = { baseUrl: "http://127.0.0.1:8080", token: "" };
 
 describe("registered remote transport", () => {
+  it("creates a saved channel through the registered owner transport using presentation fields only", async () => {
+    const session = { sid: "channel1", title: "资料研究", messages: 0, updated: 1, channel: { version: 1, topic: "公开资料" } };
+    vi.mocked(invoke).mockResolvedValueOnce({ status: 200, body: JSON.stringify({ session }) });
+    const client = new GatewayClient({ ...SETTINGS, remoteProjectId: "registered" });
+    expect(await client.createChannel("资料研究", "公开资料")).toEqual(session);
+    expect(invoke).toHaveBeenLastCalledWith("remote_http_request", { projectId: "registered", method: "POST",
+      path: "/api/agent/sessions", body: JSON.stringify({ name: "资料研究", topic: "公开资料" }) });
+    vi.mocked(invoke).mockResolvedValueOnce({ status: 200, body: JSON.stringify({ session: { ...session, sid: "../escape" } }) });
+    await expect(client.createChannel("研究", "")).rejects.toThrow("未自动重试");
+    expect(tauriFetch).not.toHaveBeenCalled();
+  });
   it("provides a safe read identity that changes with client ownership and disconnect", async () => {
     const a = new GatewayClient({ ...SETTINGS, token: "private-credential", remoteProjectId: "a" });
     const b = new GatewayClient({ ...SETTINGS, remoteProjectId: "a" });

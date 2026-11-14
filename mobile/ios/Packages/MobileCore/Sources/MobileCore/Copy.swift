@@ -23,6 +23,7 @@ public enum VCCopy {
     /// 会话入口（Desktop 侧栏 / iPhone 抽屉）
     public enum Nav {
         public static let mainChat = "主要聊天"
+        public static let channels = "频道"
         public static let waiting = "等你处理"
         public static let teams = "任务小组"
         public static let sideChats = "旁聊"
@@ -105,5 +106,21 @@ public enum VCCopy {
         public static let done = "办好了"
         public static let unknown = "无法确认"
         public static let failed = "失败"
+    }
+
+    /// 个人空间频道
+    public enum Channel {
+        public static let create = "新建频道"
+        public static let name = "频道名称"
+        public static let topic = "频道说明（选填）"
+        public static let namePlaceholder = "例如：产品想法"
+        public static let topicPlaceholder = "这个频道用来聊什么？"
+        public static let scopeHint = "保存在当前空间。每个频道单独保存对话和输入草稿。"
+        public static let permissionHint = "频道说明只用于展示，不会授予权限，也不会自动分享给专员。"
+        public static let empty = "把一个话题留在这里，之后接着聊。"
+        public static let cancel = "取消"
+        public static let saving = "正在保存…"
+        public static let saved = "频道已保存"
+        public static let remove = "删除频道"
     }
 }

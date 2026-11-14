@@ -9,6 +9,7 @@ import weakref
 from typing import Any
 
 from fastapi import Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable, SessionCapacityError
@@ -780,6 +781,29 @@ async def agent_sessions_list():
     """返回磁盘会话与当前进程实时状态合并后的权威 Dashboard 快照。"""
     import os
     return {"sessions": _session_dashboard_snapshot(os.getcwd())}
+
+
+class ChannelCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(strict=True, min_length=1, max_length=64)
+    topic: str = Field(default="", strict=True, max_length=300)
+
+
+@router.post("/api/agent/sessions")
+def agent_channel_create(body: ChannelCreate):
+    """Owner-authenticated presentation metadata. Scope remains this runtime's existing cwd."""
+    from src.gateway.session_store import create_channel, ChannelNameConflict
+    from src.workflow.pipeline.pipeline_storage import PipelineBusy
+    try:
+        return {"session": create_channel(os.getcwd(), body.name, body.topic)}
+    except ChannelNameConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except PipelineBusy as error:
+        raise HTTPException(status_code=409, detail="频道正在创建，请稍后重试") from error
+    except OSError as error:
+        raise HTTPException(status_code=503, detail="频道尚未保存，请稍后重试") from error
 
 
 @router.get("/api/agent/activity/{sid}/{rid}")

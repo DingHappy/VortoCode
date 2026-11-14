@@ -1,4 +1,6 @@
 import { settingsTargetLease, type SettingsTargetLease } from "./lib/settingsTarget";
+import { sessionChannel } from "./lib/sessionChannels";
+import { ChannelWelcome, CreateChannelDialog } from "./components/SessionChannels";
 import { desktopContext, retryAssistant } from "./lib/desktopContext";
 import { PersonalSpacePicker } from "./components/PersonalSpacePicker";
 import { AssistantTimeline } from "./components/AssistantTimeline";
@@ -364,6 +366,7 @@ function App() {
   const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   const [profileDialogLease, setProfileDialogLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
+  const [channelDialogLease, setChannelDialogLease] = useState<SettingsTargetLease<GatewayClient> | null>(null);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
   // 常驻电脑连不上时在本机聊过的会话：连回常驻电脑后列在「本机（离线时）」，见 lib/offlineChats.ts
   const [offlineChatIds, setOfflineChatIds] = useState(() => listOfflineChats());
@@ -583,6 +586,7 @@ function App() {
   } = useWorkspaceFiles({ clientRef, remoteProjectRef, repoRoot, runtimeWorkdir: runtime.workdir, connection, protocolVersion, onBanner: setBanner });
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
+  const currentChannel = appMode === "assistant" && activeSid !== mainChatSid ? sessionChannel(currentSession) : null;
   /** 精选目录装完东西后递增，让插件页的 MCP 服务 / 项目技能卡重新加载。 */
   const [pluginsRevision, setPluginsRevision] = useState(0);
   /** 启动时自动检查更新（每天最多一次，设置里可关）；有新版才非空。 */
@@ -2874,8 +2878,22 @@ function App() {
               currentTeam={mainView === "team" ? openTeamId ?? "" : ""}
               onOpenTeam={openTeamChat}
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
+              channels={sessions.filter(session => session.sid !== mainChatSid && !isPhoneSession(session.sid) && sessionChannel(session))}
+              channelsDisabled={!currentTarget.space || !currentTarget.ready || coordinator.switching}
+              onNewChannel={() => setChannelDialogLease(settingsTargetLease(() => ({ context: settingsTargetRef.current, client: clientRef.current })))}
+              onDeleteChannel={sid => { void (async () => {
+                const row = sessions.find(session => session.sid === sid);
+                const lease = settingsTargetLease(() => ({ context: settingsTargetRef.current, client: clientRef.current }));
+                if (!row || !lease.current() || !lease.target.space) return;
+                if (!await confirmAction(`删除频道“${row.title}”及其对话记录？此操作不可撤销。`)) return;
+                try {
+                  await lease.client!.deleteSession(sid);
+                  if (sid === activeSid) await openMainChat();
+                  else await refreshSessions();
+                } catch (error) { setBanner(errorText(error, "删除频道失败，请到原空间核对")); }
+              })(); }}
               sideChats={[
-                ...sessions.filter(session => session.sid !== mainChatSid && !isPhoneSession(session.sid)
+                ...sessions.filter(session => session.sid !== mainChatSid && !isPhoneSession(session.sid) && !sessionChannel(session)
                   && (session.messages > 0 || session.sid === activeSid || draftChats.some(draft => draft.sid === session.sid)))
                   .map(session => ({ sid: session.sid, title: session.title || draftChats.find(draft => draft.sid === session.sid)?.title || "新的旁聊", busy: session.status === "working" })),
                 ...draftChats.filter(draft => draft.sid !== mainChatSid && !sessions.some(session => session.sid === draft.sid)),
@@ -3033,9 +3051,10 @@ function App() {
             onOpenExternal={() => void openSelectedArtifact()}
           />
         ) : (
-        <section className={`conversation ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
+        <section className={`conversation ${currentChannel ? "conversation-channel" : ""} ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
           <ConversationHeader
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
+            channelTopic={currentChannel?.topic}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
             panelOpen={inspectorOpen} panelLabel={appMode === "assistant" ? "助理面板" : "任务动态"}
             panelId={appMode === "assistant" && !computerWorkspace.view ? "assistant-panel" : undefined} panelButtonRef={assistantPanelToggleRef}
@@ -3072,6 +3091,7 @@ function App() {
             }}
           >
             {messages.length === 0 && !streaming && (
+              currentChannel ? <ChannelWelcome title={currentSession!.title} topic={currentChannel.topic} /> :
               <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"}>
                 {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && (
                   <FirstRunCard signedIn={Boolean(vortoAccount.status?.signedIn)}
@@ -3654,6 +3674,16 @@ function App() {
             <button className="primary" onClick={() => bringOfflineChat(chat)}>带回常驻电脑</button>
           </>} />;
       })()}
+      {channelDialogLease && <CreateChannelDialog lease={channelDialogLease} onClose={() => setChannelDialogLease(null)}
+        onCreated={row => {
+          if (!channelDialogLease.current()) return;
+          setSessions(previous => [row, ...previous.filter(item => item.sid !== row.sid)]);
+          void refreshSessions(); // Invalidate any pre-creation list read before opening the saved SID.
+          setChannelDialogLease(null); setMainView("chat"); setInspectorOpen(false);
+          void switchSession(row.sid).then(connected => {
+            if (!connected) setBanner("频道已保存，连接尚未完成。请从原空间的频道列表重新打开。");
+          }).catch(error => setBanner(errorText(error, "频道已保存，连接失败。请从原空间的频道列表重新打开。")));
+        }} />}
       {profileDialogLease && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogLease(null)}
         onSave={async (next) => {
           if (!profileDialogLease.client) throw new Error("还没连上助理");
