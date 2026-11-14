@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 FRONTENDS = {"web", "im"}          # 前端/传输层：可以依赖下层，反之不行
-ENTRYPOINTS = {"cli.py"}                  # 命令行入口负责把各端装起来
+ENTRYPOINTS = {"cli.py", "runtime_entry.py"}                  # 显式进程入口负责装配服务，业务层不能反向依赖入口
 
 
 def _imports(path, root=SRC):
